@@ -23,11 +23,23 @@ Joshua reports that Rex is already downloaded and acts as his VPS client. This r
 
 Discuss other choices collaboratively when a concrete next step needs them. The open-decision list below is context, not an upfront questionnaire or a requirement to finalize the whole system before learning or planning can continue.
 
-## Transcript intake has not started
+## PDF-only inventory preserved for review
 
-Joshua plans to upload conversation transcripts for exhaustive actionable-item extraction. **No transcripts have arrived.** There is no extracted backlog, deduplicated task count, ranking, dependency graph, or started parallel work stream to report.
+Joshua initially uploaded four attachments, then selected **only the two PDFs** as authoritative: P1 (12 pages) and P2 (8 pages). Markdown sources and PDF/Markdown comparison are excluded. The [transcript planning thread](https://ampcode.com/threads/T-01a1ccbc-8e96-7143-95cc-2469bbc43e3c) performed the extraction, conceptual deduplication, priority/dependency ordering, and proposed-stream analysis; repository preservation did not duplicate that work.
 
-When those transcripts are supplied, the intended planning sequence is:
+The derived review package is preserved without changing its transferred bytes:
+
+- [PDF work inventory](planning/teerex-pdf-work-inventory.md): four historical requests, 62 assistant-candidate entries with retained subrequirements, 12 verification gates, ten separately sourced current-direction items, and seven stream roles including the existing preservation role. Source filenames, hashes, physical page locators, conflicts/non-actions, priorities, and dependencies remain attached to the analysis.
+- [Extractor's validation record](planning/teerex-pdf-inventory-validation.json): source identities/hashes, inventory checksum, counts, structural checks, and limits at handoff. Its statements about no publication or implementation describe the extraction step, not a claim that this copy is unpublished.
+- [Original review artifact, revision 1 at preservation](https://ampcode.com/artifacts/teerex-work-inventory-be8ac399-5274-44c5-8f52-8b322e298866): private and may require Amp access; the repository copy is independently readable.
+
+Preservation verified both transfer SHA-256 hashes, the inventory byte count, unique row IDs/counts, candidate/gate PDF citations, explicit page-range bounds, and inclusion of every candidate in the priority queue. Those checks complement the extractor's reported reading of all 20 PDF pages; this step did not independently reread the raw PDFs, revalidate Rex APIs, or prove semantic exhaustiveness. The earlier Rex research and its provenance are unchanged.
+
+**Preserved for review does not mean approved for implementation.** Rankings and streams are recommendations; the historical first-build alternatives are assistant suggestions, not Joshua's choices. The proposed first stream is S1: installed-Rex discovery plus one bounded, read-only, target-attributed observation on the M5 MacBook. It has not been started. Raw output capture, atomic writes, enforced ownership/human revocation, and isolation still require evidence; the Zig/external-client versus hosted-Lua boundary is not selected.
+
+Only the derived inventory and validation record are included. Raw PDFs, extracted page text, private source manifest, attachment URLs, and Markdown transcript sources are not published here. No raw-source publication or machine/runner access is authorized by preservation.
+
+The planning workflow retained for future updates is:
 
 1. **Inventory sources.** Give every supplied transcript a stable source identity and retain its original ordering and available dates/participants. Establish what may be committed before publishing raw transcripts; they may contain private details or secrets.
 2. **Extract exhaustively.** Capture actionable requests, candidate work, constraints, and unresolved questions. Preserve an exact source locator and enough quoted context to distinguish an explicit request from an inference. Do not present extracted suggestions as approved implementation work.
@@ -47,4 +59,4 @@ The planning output should make each action traceable to its sources, show what 
 | Removal and data | Removing code does not decide whether configuration, user data, background work, or shared dependencies are retained, migrated, or deleted. In-use removal behavior is unspecified. |
 | Agent permissions | First-class use does not grant unrestricted install/remove/control authority. Authentication, authorization, confirmations, auditability, and human override are not selected. |
 
-Those choices will be worked through collaboratively as they arise; this document records them without duplicating questions or choosing answers implicitly. No runner access, destructive removal, installer execution, configuration changes, or VPS deployment is authorized by this direction record. No implementation is requested yet; transcript intake is still pending.
+Those choices will be worked through collaboratively as they arise; this document records them without duplicating questions or choosing answers implicitly. No runner access, destructive removal, installer execution, configuration changes, or VPS deployment is authorized by this direction record. This is planning preservation only; no candidate implementation or new stream has been started.

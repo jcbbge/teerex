@@ -10,7 +10,8 @@ Joshua Gantt's personal, opinionated collection of Rex extensions, utilities, sc
 2. [Research index](research/README.md) — the three completed investigations and their evidence boundaries.
 3. [Cartridge organization](items/README.md) — how each future item stays independent.
 4. [All-items collection](collections/all.md) — the planned opt-in way to install every ready item, **not available yet**.
-5. [Product direction and transcript planning](docs/direction.md) — accepted goals, the planned backlog-extraction workflow, and unresolved decisions.
+5. [Product direction and transcript planning](docs/direction.md) — accepted goals, source selection, review status, and unresolved decisions.
+6. [PDF-only work inventory](docs/planning/teerex-pdf-work-inventory.md) — 62 assistant-candidate entries, verification gates, priorities/dependencies, and proposed streams; **not approved features or started implementation**.
 
 ## What is preserved
 
@@ -22,7 +23,8 @@ Joshua Gantt's personal, opinionated collection of Rex extensions, utilities, sc
 | `research/api/catalog.json` | 524 indexed names/topics and provenance locations, without copied descriptions or full schemas. |
 | `research/provenance/` | Original acquisition manifest and capture checksums; explains what is and is not included. |
 | `docs/learning/` | Small learning steps, beginning with the installed version and available API. |
-| `docs/direction.md` | Cartridge/console direction and the future transcript-to-workstream planning process. |
+| `docs/direction.md` | Cartridge/console direction, PDF-only review status, and the transcript-to-workstream planning process. |
+| `docs/planning/` | Derived PDF inventory and its original validation record; no raw transcripts or private manifest. |
 | `items/` | Future self-contained cartridges; currently only the organization contract. |
 | `collections/` | Future opt-in groups of items; currently the all-items policy. |
 

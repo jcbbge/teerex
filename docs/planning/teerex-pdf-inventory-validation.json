@@ -1,0 +1,48 @@
+{
+  "authoritative_inputs": "PDF only; Markdown attachments excluded",
+  "sources": [
+    {
+      "alias": "P1",
+      "filename": "5c718d7e-is-the-rex-multiplexer-from-super-logical-built-us.pdf",
+      "pages": 12,
+      "sha256": "8b873b839934d5123d30691ce93c99a3d117ed4a4f9470ac0a10121f144ececf"
+    },
+    {
+      "alias": "P2",
+      "filename": "d07903d2-hmm.you-can-t-experience-joy-but-what-if-your-se.pdf",
+      "pages": 8,
+      "sha256": "87aac215494df7bd66ed3602caa989def6cd8d9cebb64ca412a0bc607584b9a0"
+    }
+  ],
+  "inventory": {
+    "filename": "teerex-pdf-work-inventory.md",
+    "sha256": "c1a721f86e7e3deb4b6aee021248bc54eac551a0cde42bf758afc2794080c376",
+    "bytes": 46837
+  },
+  "counts": {
+    "historical_requests": 4,
+    "current_direction_items": 10,
+    "verification_gates": 12,
+    "assistant_candidate_entries": 62,
+    "candidate_groups": {
+      "A": 12,
+      "B": 18,
+      "C": 32
+    },
+    "stream_roles": 7
+  },
+  "checks": {
+    "all_expected_ids_unique": true,
+    "all_candidate_and_verification_rows_have_pdf_citations": true,
+    "explicit_pdf_page_ranges_in_bounds": true,
+    "all_candidates_in_priority_queue": true,
+    "no_markdown_source_locators_or_private_attachment_urls": true,
+    "pdf_hashes_unchanged": true,
+    "all_20_pdf_pages_have_extractable_text": true
+  },
+  "limits": [
+    "Structural checks do not independently prove semantic exhaustiveness; page-by-page human/agent reading and the coverage ledger supply that analysis.",
+    "No installed Rex or API validation performed.",
+    "No code implementation or public publication performed."
+  ]
+}
