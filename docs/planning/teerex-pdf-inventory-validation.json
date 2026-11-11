@@ -1,5 +1,6 @@
 {
-  "authoritative_inputs": "PDF only; Markdown attachments excluded",
+  "authoritative_inputs": "PDF only; Markdown attachments excluded; no PDF/Markdown comparison",
+  "review_revision": "original-phases-and-four-dimension-scoring",
   "sources": [
     {
       "alias": "P1",
@@ -16,8 +17,18 @@
   ],
   "inventory": {
     "filename": "teerex-pdf-work-inventory.md",
-    "sha256": "c1a721f86e7e3deb4b6aee021248bc54eac551a0cde42bf758afc2794080c376",
-    "bytes": 46837
+    "sha256": "7b96a45fcc154899279424bf3cf24a8c87c7e60152289c7e417e1de4624ce44e",
+    "bytes": 85442
+  },
+  "non_rex_handoff": {
+    "filename": "teerex-non-rex-handoff.md",
+    "sha256": "7b17c3c26294562011729796de4d0582a588f0d9421e1b44f2f98ebe2e51d2fa",
+    "bytes": 21420,
+    "source_transfer": {
+      "sha256": "7beb641647b093e6cf8e91c6ac0891175a1e6da21c0fd8595d105ff42ced489b",
+      "bytes": 21421,
+      "normalization": "Repository preservation removed one extra final blank line; no content changes."
+    }
   },
   "counts": {
     "historical_requests": 4,
@@ -29,20 +40,273 @@
       "B": 18,
       "C": 32
     },
+    "original_phase_groups": {
+      "phase_1": 6,
+      "phase_2": 9,
+      "phase_3": 8
+    },
+    "scored_original_groups": 23,
+    "scored_aggregate_recaps": 2,
+    "scored_subutility_variants": 9,
+    "classified_candidate_entries": 62,
+    "handoff_units": 8,
     "stream_roles": 7
   },
+  "boundary_counts": {
+    "M": 13,
+    "N": 30,
+    "R": 19
+  },
+  "phase_assessments": [
+    {
+      "phase": 1,
+      "title": "1. An “abandoned thought” recovery tool",
+      "ids_and_source": "A01–A02; P1:p2 and first-build recap p5",
+      "boundary": "M",
+      "impact": 8,
+      "feasibility": 8,
+      "effort": 3,
+      "viability": 8
+    },
+    {
+      "phase": 1,
+      "title": "2. A friction detector that proposes your next internal tool",
+      "ids_and_source": "A03–A05; P1:pp2–3",
+      "boundary": "M",
+      "impact": 5,
+      "feasibility": 5,
+      "effort": 7,
+      "viability": 4
+    },
+    {
+      "phase": 1,
+      "title": "3. Executable support evidence for your own CLI or developer product",
+      "ids_and_source": "A06–A07; P1:p3",
+      "boundary": "N",
+      "impact": 6,
+      "feasibility": 6,
+      "effort": 7,
+      "viability": 5
+    },
+    {
+      "phase": 1,
+      "title": "4. A terminal “flight recorder” for intermittent failures",
+      "ids_and_source": "A08–A09; P1:p4",
+      "boundary": "M",
+      "impact": 6,
+      "feasibility": 5,
+      "effort": 6,
+      "viability": 5
+    },
+    {
+      "phase": 1,
+      "title": "5. A least-authority terminal assistant",
+      "ids_and_source": "A10–A11; P1:p4",
+      "boundary": "M",
+      "impact": 8,
+      "feasibility": 4,
+      "effort": 8,
+      "viability": 5
+    },
+    {
+      "phase": 1,
+      "title": "6. A “shipping receipt” generated from the work itself",
+      "ids_and_source": "A12; P1:p5",
+      "boundary": "M",
+      "impact": 7,
+      "feasibility": 8,
+      "effort": 3,
+      "viability": 8
+    },
+    {
+      "phase": 2,
+      "title": "1. Give every task a living contract—not a prompt",
+      "ids_and_source": "B01–B02; P1:pp6–7",
+      "boundary": "N",
+      "impact": 6,
+      "feasibility": 9,
+      "effort": 3,
+      "viability": 6
+    },
+    {
+      "phase": 2,
+      "title": "2. Let me fork experiments, not just generate suggestions",
+      "ids_and_source": "B03–B05; P1:p7",
+      "boundary": "N",
+      "impact": 7,
+      "feasibility": 6,
+      "effort": 7,
+      "viability": 4
+    },
+    {
+      "phase": 2,
+      "title": "3. Give me causal memory, not conversation memory",
+      "ids_and_source": "B06–B07; P1:p8",
+      "boundary": "N",
+      "impact": 7,
+      "feasibility": 6,
+      "effort": 6,
+      "viability": 5
+    },
+    {
+      "phase": 2,
+      "title": "4. Make your interruptions instantly meaningful",
+      "ids_and_source": "B08–B09; P1:pp8–9",
+      "boundary": "N",
+      "impact": 8,
+      "feasibility": 5,
+      "effort": 7,
+      "viability": 5
+    },
+    {
+      "phase": 2,
+      "title": "5. Give us a shared view of what is known",
+      "ids_and_source": "B10–B11; P1:p9",
+      "boundary": "N",
+      "impact": 6,
+      "feasibility": 7,
+      "effort": 5,
+      "viability": 5
+    },
+    {
+      "phase": 2,
+      "title": "6. Let me ask questions with the homework already done",
+      "ids_and_source": "B12; P1:pp9–10",
+      "boundary": "N",
+      "impact": 6,
+      "feasibility": 9,
+      "effort": 2,
+      "viability": 7
+    },
+    {
+      "phase": 2,
+      "title": "7. Give me an attention budget, not just a token budget",
+      "ids_and_source": "B13–B14; P1:p10",
+      "boundary": "N",
+      "impact": 7,
+      "feasibility": 8,
+      "effort": 3,
+      "viability": 6
+    },
+    {
+      "phase": 2,
+      "title": "8. Make handoff a first-class artifact",
+      "ids_and_source": "B15–B16; P1:pp10–11",
+      "boundary": "N",
+      "impact": 8,
+      "feasibility": 9,
+      "effort": 3,
+      "viability": 8
+    },
+    {
+      "phase": 2,
+      "title": "Unnumbered: The fringe feature I'd most want: a counterfactual ledger",
+      "ids_and_source": "B17; P1:p11",
+      "boundary": "N",
+      "impact": 6,
+      "feasibility": 9,
+      "effort": 2,
+      "viability": 7
+    },
+    {
+      "phase": 3,
+      "title": "1. Give me a terminal proprioception packet",
+      "ids_and_source": "C01–C04; P2:p2",
+      "boundary": "R",
+      "impact": 9,
+      "feasibility": 7,
+      "effort": 4,
+      "viability": 9
+    },
+    {
+      "phase": 3,
+      "title": "2. Give me guarded gestures, not raw keystrokes",
+      "ids_and_source": "C05–C07; P2:pp2–3",
+      "boundary": "R",
+      "impact": 8,
+      "feasibility": 4,
+      "effort": 8,
+      "viability": 5
+    },
+    {
+      "phase": 3,
+      "title": "3. Put the fast reflexes in Lua, not in my conversation loop",
+      "ids_and_source": "C08–C11; P2:pp3–4",
+      "boundary": "R",
+      "impact": 9,
+      "feasibility": 7,
+      "effort": 5,
+      "viability": 8
+    },
+    {
+      "phase": 3,
+      "title": "4. Let background terminals exist without becoming your wallpaper",
+      "ids_and_source": "C12–C15; P2:p4",
+      "boundary": "R",
+      "impact": 7,
+      "feasibility": 6,
+      "effort": 5,
+      "viability": 7
+    },
+    {
+      "phase": 3,
+      "title": "5. Give us an explicit “your hands / my hands” clutch",
+      "ids_and_source": "C16–C17; P2:p5",
+      "boundary": "R",
+      "impact": 8,
+      "feasibility": 3,
+      "effort": 7,
+      "viability": 5
+    },
+    {
+      "phase": 3,
+      "title": "6. Build a learned maneuver library—without blindly replaying macros",
+      "ids_and_source": "C18–C20; P2:pp5–6",
+      "boundary": "M",
+      "impact": 5,
+      "feasibility": 3,
+      "effort": 9,
+      "viability": 3
+    },
+    {
+      "phase": 3,
+      "title": "7. Give me a perception cache, not an endless screenshot feed",
+      "ids_and_source": "C21–C24; P2:p6",
+      "boundary": "M",
+      "impact": 7,
+      "feasibility": 6,
+      "effort": 6,
+      "viability": 6
+    },
+    {
+      "phase": 3,
+      "title": "8. Make the installed Rex server teach me how to use it",
+      "ids_and_source": "C25–C28; P2:p7",
+      "boundary": "R",
+      "impact": 8,
+      "feasibility": 7,
+      "effort": 4,
+      "viability": 8
+    }
+  ],
   "checks": {
-    "all_expected_ids_unique": true,
+    "original_numbered_titles_match_normalized_pdf_text_in_order": true,
+    "all_original_groups_have_four_valid_scores_scope_and_confidence": true,
+    "all_expected_detailed_ids_unique": true,
+    "every_candidate_has_exactly_one_boundary_register_entry": true,
     "all_candidate_and_verification_rows_have_pdf_citations": true,
     "explicit_pdf_page_ranges_in_bounds": true,
-    "all_candidates_in_priority_queue": true,
+    "all_candidates_in_secondary_priority_queue": true,
+    "all_20_pages_in_coverage_ledger": true,
     "no_markdown_source_locators_or_private_attachment_urls": true,
     "pdf_hashes_unchanged": true,
-    "all_20_pdf_pages_have_extractable_text": true
+    "all_20_pdf_pages_have_extractable_text": true,
+    "non_rex_handoff_derived_from_same_review": true
   },
   "limits": [
-    "Structural checks do not independently prove semantic exhaustiveness; page-by-page human/agent reading and the coverage ledger supply that analysis.",
-    "No installed Rex or API validation performed.",
-    "No code implementation or public publication performed."
+    "Scores are judgments, not measurements or implementation approvals.",
+    "Structural checks do not independently prove semantic exhaustiveness; PDF reading and the coverage ledger supply that analysis.",
+    "Rex installed API/capture/lifetime/atomic-input/enforced-ownership behavior was not tested.",
+    "No code implementation, new agent/stream, commit, push or public publication performed by this thread."
   ]
 }

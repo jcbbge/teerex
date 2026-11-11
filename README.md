@@ -11,7 +11,8 @@ Joshua Gantt's personal, opinionated collection of Rex extensions, utilities, sc
 3. [Cartridge organization](items/README.md) — how each future item stays independent.
 4. [All-items collection](collections/all.md) — the planned opt-in way to install every ready item, **not available yet**.
 5. [Product direction and transcript planning](docs/direction.md) — accepted goals, source selection, review status, and unresolved decisions.
-6. [PDF-only work inventory](docs/planning/teerex-pdf-work-inventory.md) — 62 assistant-candidate entries, verification gates, priorities/dependencies, and proposed streams; **not approved features or started implementation**.
+6. [PDF-only work inventory](docs/planning/teerex-pdf-work-inventory.md) — the original three suggestion phases, 23 scored proposal groups, Rex/non-Rex boundaries, and 62 retained subrequirement/recap entries; **not approved features or started implementation**.
+7. [Non-Rex handoff](docs/planning/teerex-non-rex-handoff.md) — eight optional ownership groups for general-purpose work, separated from Rex adapters; no new assignments.
 
 ## What is preserved
 
@@ -24,7 +25,7 @@ Joshua Gantt's personal, opinionated collection of Rex extensions, utilities, sc
 | `research/provenance/` | Original acquisition manifest and capture checksums; explains what is and is not included. |
 | `docs/learning/` | Small learning steps, beginning with the installed version and available API. |
 | `docs/direction.md` | Cartridge/console direction, PDF-only review status, and the transcript-to-workstream planning process. |
-| `docs/planning/` | Derived PDF inventory and its original validation record; no raw transcripts or private manifest. |
+| `docs/planning/` | Phase-based PDF review, non-Rex handoff, and extractor's validation record; no raw transcripts or private manifest. |
 | `items/` | Future self-contained cartridges; currently only the organization contract. |
 | `collections/` | Future opt-in groups of items; currently the all-items policy. |
 
