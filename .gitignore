@@ -1,0 +1,14 @@
+# Personal observations may include terminal text, paths, hosts, and tokens.
+local/
+.env
+.env.*
+
+# Keep third-party captures and binaries out of the research repository.
+rex-index/
+runtime/
+snapshot/
+packaging/
+evidence/
+*.tar.gz
+*.bin
+.DS_Store

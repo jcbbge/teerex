@@ -1,0 +1,446 @@
+{
+  "checked_at": "2026-11-11",
+  "runtime": {
+    "rex_version": "0.1.0-preview.15",
+    "platform": "linux_amd64",
+    "commit": "99caa8e07107e0ec57eeaa868f9f589ccd8bd7cb",
+    "built_at": "2026-11-10T21:59:52Z",
+    "dirty": false,
+    "api_revision": 13
+  },
+  "source_status": "Application proprietary/unavailable; official packaging sources downloaded",
+  "urls": {
+    "website": "https://www.superlogical.com/",
+    "docs": "https://www.superlogical.com/rex/docs/llms-full.txt",
+    "installer": "https://pkgs.superlogical.com/rex/install.sh",
+    "nix_immutable": "https://pkgs.superlogical.com/rex/nix/preview/0.1.0-preview.15.tar.gz",
+    "release": "https://blob.superlogical.com/api/releases/rex/preview",
+    "github_org": "https://api.github.com/orgs/superlogical",
+    "github_repos": "https://api.github.com/orgs/superlogical/repos?per_page=100",
+    "github_search": "https://api.github.com/search/repositories?q=rex+superlogical&per_page=30"
+  },
+  "runtime_capture": {
+    "transport": "isolated Unix socket only",
+    "config": "/dev/null",
+    "restore": false,
+    "sessions_created": 0,
+    "stopped": true,
+    "commands": [
+      "rex version",
+      "rex help",
+      "rex server run --help",
+      "rex api --help",
+      "rex api list --json",
+      "rex api call server.version",
+      "rex api describe session.bootstrap --json",
+      "rex api describe com.superlogical.terminal.format --json",
+      "rex api call help.all",
+      "rex api call block_creator.list"
+    ],
+    "http_gets": [
+      "/api/help",
+      "/llms.txt"
+    ]
+  },
+  "docs_pages": [
+    {
+      "path": "docs/installation.md",
+      "url": "https://www.superlogical.com/rex/docs/installation",
+      "full_export_line": 1
+    },
+    {
+      "path": "docs/customize/config.md",
+      "url": "https://www.superlogical.com/rex/docs/customize/config",
+      "full_export_line": 30
+    },
+    {
+      "path": "docs/customize/keyboard-shortcuts.md",
+      "url": "https://www.superlogical.com/rex/docs/customize/keyboard-shortcuts",
+      "full_export_line": 180
+    },
+    {
+      "path": "docs/customize/key-sequences.md",
+      "url": "https://www.superlogical.com/rex/docs/customize/key-sequences",
+      "full_export_line": 404
+    },
+    {
+      "path": "docs/customize/key-modes.md",
+      "url": "https://www.superlogical.com/rex/docs/customize/key-modes",
+      "full_export_line": 507
+    },
+    {
+      "path": "docs/customize/actions.md",
+      "url": "https://www.superlogical.com/rex/docs/customize/actions",
+      "full_export_line": 667
+    },
+    {
+      "path": "docs/automate/cli.md",
+      "url": "https://www.superlogical.com/rex/docs/automate/cli",
+      "full_export_line": 913
+    },
+    {
+      "path": "docs/automate/agent-skill.md",
+      "url": "https://www.superlogical.com/rex/docs/automate/agent-skill",
+      "full_export_line": 1106
+    },
+    {
+      "path": "docs/automate/lua-scripts.md",
+      "url": "https://www.superlogical.com/rex/docs/automate/lua-scripts",
+      "full_export_line": 1287
+    },
+    {
+      "path": "docs/automate/lua-events.md",
+      "url": "https://www.superlogical.com/rex/docs/automate/lua-events",
+      "full_export_line": 1664
+    },
+    {
+      "path": "docs/automate/shell-scripting.md",
+      "url": "https://www.superlogical.com/rex/docs/automate/shell-scripting",
+      "full_export_line": 1883
+    },
+    {
+      "path": "docs/automate/server-api.md",
+      "url": "https://www.superlogical.com/rex/docs/automate/server-api",
+      "full_export_line": 2121
+    },
+    {
+      "path": "docs/build/program-status.md",
+      "url": "https://www.superlogical.com/rex/docs/build/program-status",
+      "full_export_line": 2374
+    },
+    {
+      "path": "docs/reference/cli.md",
+      "url": "https://www.superlogical.com/rex/docs/reference/cli",
+      "full_export_line": 2695
+    },
+    {
+      "path": "docs/reference/api.md",
+      "url": "https://www.superlogical.com/rex/docs/reference/api",
+      "full_export_line": 4293
+    },
+    {
+      "path": "docs/reference/mac-actions.md",
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions",
+      "full_export_line": 5845
+    },
+    {
+      "path": "docs/reference/mac-settings.md",
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-settings",
+      "full_export_line": 6017
+    },
+    {
+      "path": "docs/reference/ios-actions.md",
+      "url": "https://www.superlogical.com/rex/docs/reference/ios-actions",
+      "full_export_line": 6460
+    },
+    {
+      "path": "docs/reference/ios-settings.md",
+      "url": "https://www.superlogical.com/rex/docs/reference/ios-settings",
+      "full_export_line": 6588
+    },
+    {
+      "path": "docs/reference/lua.md",
+      "url": "https://www.superlogical.com/rex/docs/reference/lua",
+      "full_export_line": 6664
+    },
+    {
+      "path": "docs/reference/events.md",
+      "url": "https://www.superlogical.com/rex/docs/reference/events",
+      "full_export_line": 7130
+    },
+    {
+      "path": "docs/reference/privacy.md",
+      "url": "https://www.superlogical.com/rex/docs/reference/privacy",
+      "full_export_line": 7296
+    },
+    {
+      "path": "docs/linux/installation.md",
+      "url": "https://www.superlogical.com/rex/docs/linux/installation",
+      "full_export_line": 7441
+    },
+    {
+      "path": "docs/freebsd/installation.md",
+      "url": "https://www.superlogical.com/rex/docs/freebsd/installation",
+      "full_export_line": 7880
+    },
+    {
+      "path": "docs/linux/server-modes.md",
+      "url": "https://www.superlogical.com/rex/docs/linux/server-modes",
+      "full_export_line": 8079
+    },
+    {
+      "path": "docs/linux/shared-server.md",
+      "url": "https://www.superlogical.com/rex/docs/linux/shared-server",
+      "full_export_line": 8304
+    },
+    {
+      "path": "docs/linux/login-server.md",
+      "url": "https://www.superlogical.com/rex/docs/linux/login-server",
+      "full_export_line": 8664
+    },
+    {
+      "path": "docs/linux/remote-access.md",
+      "url": "https://www.superlogical.com/rex/docs/linux/remote-access",
+      "full_export_line": 9004
+    },
+    {
+      "path": "docs/linux/upgrading.md",
+      "url": "https://www.superlogical.com/rex/docs/linux/upgrading",
+      "full_export_line": 9314
+    },
+    {
+      "path": "docs/beta/community-mcp.md",
+      "url": "https://www.superlogical.com/rex/docs/beta/community-mcp",
+      "full_export_line": 9582
+    }
+  ],
+  "input_files": [
+    {
+      "path": "snapshot/docs.md",
+      "bytes": 8036,
+      "sha256": "8cf84be7ff5e7003724345f813417c991c339914241567c9f4cab64de6416a14"
+    },
+    {
+      "path": "snapshot/llms-full.headers",
+      "bytes": 311,
+      "sha256": "8e5e55a00bdadf8f0e32587868cf622bb8acb10bcc11a3e355bad8dde02b284b"
+    },
+    {
+      "path": "snapshot/llms-full.txt",
+      "bytes": 505779,
+      "sha256": "226e2259aba58bb870597a39c7bb7813097a02e5bb425d833c9dfccfca5150fa"
+    },
+    {
+      "path": "evidence/github-org.headers",
+      "bytes": 1323,
+      "sha256": "5d992f267369c0401f762d3992cf5fb2e30a41f07b6fd81b3996b1834346c065"
+    },
+    {
+      "path": "evidence/github-org.json",
+      "bytes": 1236,
+      "sha256": "b87be3d361b973d6e6524634339b4407894e6fe07f96ecb38978f5f9134bf9a2"
+    },
+    {
+      "path": "evidence/github-repos.headers",
+      "bytes": 1272,
+      "sha256": "0bea44957aafc26eef6d9c178667f3fbd22866d3b5da3cfc2be3ed3206d98bd7"
+    },
+    {
+      "path": "evidence/github-repos.json",
+      "bytes": 5,
+      "sha256": "2ba33ca0557f1bb5b7ba88d67f9d0093c7185a36ec51fe2b7bd9372d3e001d6d"
+    },
+    {
+      "path": "evidence/github-search.headers",
+      "bytes": 1153,
+      "sha256": "cce00c5f4c7bd4c3e325c4a42c00e265c92fdef68820f748b01bd3e32b49e942"
+    },
+    {
+      "path": "evidence/github-search.json",
+      "bytes": 145005,
+      "sha256": "597c300679071f112c3d9fbe81799ec3e1231d69f2d38d6433290edf11a1268a"
+    },
+    {
+      "path": "evidence/home.html",
+      "bytes": 28695,
+      "sha256": "421fea5c625529f778f1e9057a2cf4a17f01ca4043af157e304c451e350dff7a"
+    },
+    {
+      "path": "evidence/install.headers",
+      "bytes": 1025,
+      "sha256": "7283f8e4662e0a2fe69f3d3fd68db5a204ecaecc76df5c86dddb1b0006e0b3a3"
+    },
+    {
+      "path": "evidence/install.response",
+      "bytes": 75267,
+      "sha256": "68b179d08bf38466422e5e52efdf507b61498f8001f554f24a589adae896b6a1"
+    },
+    {
+      "path": "evidence/nix-immutable.headers",
+      "bytes": 1077,
+      "sha256": "de16ee9d32ef2e6fd293322a3503b39f5369ed85fc82b10a98e1beee198edf3c"
+    },
+    {
+      "path": "evidence/nix-preview-immutable.tar.gz",
+      "bytes": 37137,
+      "sha256": "ae3e3fa81af3daf9453a88400f02fbab5ff88234a55a366eac1aada36699892d"
+    },
+    {
+      "path": "evidence/nix-preview.headers",
+      "bytes": 1142,
+      "sha256": "2c9062417455965ead1c10dce63ccae306d28c8a0eed9eb5d9285ee40936b4ff"
+    },
+    {
+      "path": "evidence/nix-preview.response",
+      "bytes": 37137,
+      "sha256": "ae3e3fa81af3daf9453a88400f02fbab5ff88234a55a366eac1aada36699892d"
+    },
+    {
+      "path": "evidence/reference-api.headers",
+      "bytes": 459,
+      "sha256": "3cf1f1e71ad99a0ad2bde1bcd4c02bbf39ae136572b548f9a2a68cf20ccd643c"
+    },
+    {
+      "path": "evidence/reference-api.html",
+      "bytes": 209165,
+      "sha256": "d83afa834bea94e72380a9d46d1df4bc119c740ab572d9d3e70ae4a63839a194"
+    },
+    {
+      "path": "evidence/reference-cli.headers",
+      "bytes": 459,
+      "sha256": "9761c79dd3f223d5e41ea48d995ac297e5187ced3f8fc4b52e91010755138be0"
+    },
+    {
+      "path": "evidence/reference-cli.html",
+      "bytes": 253132,
+      "sha256": "83c1112f41ae8b14e7eec44f946a63646913e16fe5291d47757c401529e26489"
+    },
+    {
+      "path": "evidence/reference-lua.headers",
+      "bytes": 459,
+      "sha256": "4c8a5b27a8b76fde4a9ce6748e14de46b13c9e0e4c386676a02cccfc8cab8d73"
+    },
+    {
+      "path": "evidence/reference-lua.html",
+      "bytes": 84009,
+      "sha256": "088413a0e2329f0906fd298b57054fa2e3489a932c20cbb8e5bc09d16ecace89"
+    },
+    {
+      "path": "evidence/release-preview.headers",
+      "bytes": 340,
+      "sha256": "a7e415b31cc8e7cdb216153d1815152589166adab87a30178b988ceabb788632"
+    },
+    {
+      "path": "evidence/release-preview.json",
+      "bytes": 5739,
+      "sha256": "3961d3a3aa8c74ad6e364dcd43c6bd98cdedbe23f42ec128f04b58c4c5ee4865"
+    },
+    {
+      "path": "evidence/testing.html",
+      "bytes": 19624,
+      "sha256": "f2ae5fa2b98594d65cbb1498bfaa4ebce6629336fbe2effc428bd000fa52547c"
+    },
+    {
+      "path": "runtime/api-help.txt",
+      "bytes": 1141,
+      "sha256": "2c59c5f645db125e58c49db54118d16105917322b15bf81d9ba442f44dc18b76"
+    },
+    {
+      "path": "runtime/api-list.json",
+      "bytes": 310652,
+      "sha256": "f9033ae2b7e71185b7986b84b0acc8f0c0dcc8c7f67bae5c8a67b11f341a6946"
+    },
+    {
+      "path": "runtime/block-creators.json",
+      "bytes": 57090,
+      "sha256": "26ca2c5d2be107203e4ea6490110dfaa7ed850c1a4510b93473af769a182f7ac"
+    },
+    {
+      "path": "runtime/cli-help.txt",
+      "bytes": 2040,
+      "sha256": "b10636fcf90c97c58b521b961b07e2715823db234aaed91be6122be89b0b8e94"
+    },
+    {
+      "path": "runtime/help-all.json",
+      "bytes": 310507,
+      "sha256": "f479d58d8ec20118ae6447a2827bd93845525ba40fa50d7a336cc46ea53de966"
+    },
+    {
+      "path": "runtime/http-help.json",
+      "bytes": 310652,
+      "sha256": "f9033ae2b7e71185b7986b84b0acc8f0c0dcc8c7f67bae5c8a67b11f341a6946"
+    },
+    {
+      "path": "runtime/llms.txt",
+      "bytes": 326530,
+      "sha256": "f41a2be97101d2f4dcc88d0423a64bf4ad07f5c78fb038c61dd9a49b32bacddd"
+    },
+    {
+      "path": "runtime/server-run-help.txt",
+      "bytes": 3320,
+      "sha256": "caaa0f1a8304898bf8ddd56a82fc8df81add03c43c3261f5ee489e37bd899dc8"
+    },
+    {
+      "path": "runtime/server-version.json",
+      "bytes": 178,
+      "sha256": "9715159a40c975b78a11f0e7ee03ff439a9713847b5cb89a3649d5b04a4a914c"
+    },
+    {
+      "path": "runtime/session-bootstrap.json",
+      "bytes": 23336,
+      "sha256": "8b1a810a0e335331aca4f07237eb6115ec488ff1c10f2a9b7dafcf9256ee6594"
+    },
+    {
+      "path": "runtime/terminal-format.json",
+      "bytes": 3546,
+      "sha256": "19575a7cc3220e44cfda977c0bb5bf277bc1e4af7912a0e29c3cd5c77b85d12b"
+    },
+    {
+      "path": "runtime/version.txt",
+      "bytes": 134,
+      "sha256": "ed383e2f5db5b7165f18d101565c2dc2e7426f5668625d52c4ae50b4d39bc558"
+    },
+    {
+      "path": "packaging/install.sh",
+      "bytes": 75267,
+      "sha256": "68b179d08bf38466422e5e52efdf507b61498f8001f554f24a589adae896b6a1"
+    },
+    {
+      "path": "packaging/rex/50-rex.conf",
+      "bytes": 507,
+      "sha256": "e8f7495f96b6e59ecd7fd6513b6b6def50a2df44179ceb3377612db441847a4b"
+    },
+    {
+      "path": "packaging/rex/flake.lock",
+      "bytes": 614,
+      "sha256": "5c9455a7363d59be64c8ff9a87df2743f3126983d9b155be94d33c8946f51ae7"
+    },
+    {
+      "path": "packaging/rex/flake.nix",
+      "bytes": 17916,
+      "sha256": "c9d58bca0a5fa3f19b1f2163f613070abce25362cbc71a9e93ad389fae84ace8"
+    },
+    {
+      "path": "packaging/rex/home-manager-module.nix",
+      "bytes": 32981,
+      "sha256": "aa06e1af5dd4c5762261c74b0b452acb4b17284852f4e464cd974203d0092ac0"
+    },
+    {
+      "path": "packaging/rex/nixos-module.nix",
+      "bytes": 66734,
+      "sha256": "ee87bac55638d42cced9bb26205b839a5cc124028f2998e03a10ea408b736efd"
+    },
+    {
+      "path": "packaging/rex/sources.json",
+      "bytes": 865,
+      "sha256": "de2991c7b5ff80ebb60a68f55d0fe4ec4560a544358d3f2b02e10c732b463f8f"
+    },
+    {
+      "path": "packaging/rex/update.sh",
+      "bytes": 4162,
+      "sha256": "879a255d2bbfad162695f138ae419531d1caa44a3bb6e190c623a1879b7364e6"
+    },
+    {
+      "path": "packaging/rex/xterm-rex.bin",
+      "bytes": 3895,
+      "sha256": "faa68e623a993749159cd59536114c3f739e825f5027f10047b78defa77ef282"
+    }
+  ],
+  "inventory_counts": {
+    "Accessible source": 7,
+    "Documentation": 30,
+    "Block-plugin flag": 2,
+    "Lua signature": 29,
+    "Mac action": 116,
+    "Registered flavor": 2,
+    "iOS action": 82,
+    "Unresolved contract": 3,
+    "Unretrieved source reference": 7,
+    "Block event": 14,
+    "Block method": 20,
+    "CLI command": 106,
+    "Control method": 74,
+    "HTTP endpoint": 5,
+    "Server/session event": 27
+  }
+}

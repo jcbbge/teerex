@@ -1,0 +1,5272 @@
+{
+  "version": {
+    "rex_version": "0.1.0-preview.15",
+    "platform": "linux_amd64",
+    "commit": "99caa8e07107e0ec57eeaa868f9f589ccd8bd7cb",
+    "built_at": "2026-11-10T21:59:52Z",
+    "dirty": false,
+    "api_revision": 13
+  },
+  "website_capture": "2026-11-11T20:11:44Z",
+  "counts": {
+    "Accessible source": 7,
+    "Documentation": 30,
+    "Block-plugin flag": 2,
+    "Lua signature": 29,
+    "Mac action": 116,
+    "Registered flavor": 2,
+    "iOS action": 82,
+    "Unresolved contract": 3,
+    "Unretrieved source reference": 7,
+    "Block event": 14,
+    "Block method": 20,
+    "CLI command": 106,
+    "Control method": 74,
+    "HTTP endpoint": 5,
+    "Server/session event": 27
+  },
+  "path_scope": "Paths and schema pointers refer to the private original rex-index capture, NOT files shipped in teerex. Names and locations only; descriptions, schema bodies and examples omitted.",
+  "archive_sha256": "2868bc4e5d5bc3da0876cf7d0f7a2b5d7a34c39adac6f77a4c90a6333e8ee112",
+  "entries": [
+    {
+      "name": "packaging/install.sh",
+      "category": "Delivery",
+      "kind": "Accessible source",
+      "path": "packaging/install.sh",
+      "line": 1,
+      "end": 1,
+      "url": "https://pkgs.superlogical.com/rex/install.sh",
+      "pointer": ""
+    },
+    {
+      "name": "packaging/rex/50-rex.conf",
+      "category": "Delivery",
+      "kind": "Accessible source",
+      "path": "packaging/rex/50-rex.conf",
+      "line": 1,
+      "end": 1,
+      "url": "https://pkgs.superlogical.com/rex/nix/preview/0.1.0-preview.15.tar.gz",
+      "pointer": ""
+    },
+    {
+      "name": "packaging/rex/flake.nix",
+      "category": "Delivery",
+      "kind": "Accessible source",
+      "path": "packaging/rex/flake.nix",
+      "line": 1,
+      "end": 1,
+      "url": "https://pkgs.superlogical.com/rex/nix/preview/0.1.0-preview.15.tar.gz",
+      "pointer": ""
+    },
+    {
+      "name": "packaging/rex/home-manager-module.nix",
+      "category": "Delivery",
+      "kind": "Accessible source",
+      "path": "packaging/rex/home-manager-module.nix",
+      "line": 1,
+      "end": 1,
+      "url": "https://pkgs.superlogical.com/rex/nix/preview/0.1.0-preview.15.tar.gz",
+      "pointer": ""
+    },
+    {
+      "name": "packaging/rex/nixos-module.nix",
+      "category": "Delivery",
+      "kind": "Accessible source",
+      "path": "packaging/rex/nixos-module.nix",
+      "line": 1,
+      "end": 1,
+      "url": "https://pkgs.superlogical.com/rex/nix/preview/0.1.0-preview.15.tar.gz",
+      "pointer": ""
+    },
+    {
+      "name": "packaging/rex/sources.json",
+      "category": "Delivery",
+      "kind": "Accessible source",
+      "path": "packaging/rex/sources.json",
+      "line": 1,
+      "end": 1,
+      "url": "https://pkgs.superlogical.com/rex/nix/preview/0.1.0-preview.15.tar.gz",
+      "pointer": ""
+    },
+    {
+      "name": "packaging/rex/update.sh",
+      "category": "Delivery",
+      "kind": "Accessible source",
+      "path": "packaging/rex/update.sh",
+      "line": 1,
+      "end": 1,
+      "url": "https://pkgs.superlogical.com/rex/nix/preview/0.1.0-preview.15.tar.gz",
+      "pointer": ""
+    },
+    {
+      "name": "Installation",
+      "category": "Delivery",
+      "kind": "Documentation",
+      "path": "docs/installation.md",
+      "line": 1,
+      "end": 29,
+      "url": "https://www.superlogical.com/rex/docs/installation",
+      "pointer": ""
+    },
+    {
+      "name": "Installing on FreeBSD",
+      "category": "Delivery",
+      "kind": "Documentation",
+      "path": "docs/freebsd/installation.md",
+      "line": 1,
+      "end": 199,
+      "url": "https://www.superlogical.com/rex/docs/freebsd/installation",
+      "pointer": ""
+    },
+    {
+      "name": "Installing on Linux",
+      "category": "Delivery",
+      "kind": "Documentation",
+      "path": "docs/linux/installation.md",
+      "line": 1,
+      "end": 439,
+      "url": "https://www.superlogical.com/rex/docs/linux/installation",
+      "pointer": ""
+    },
+    {
+      "name": "Login Server",
+      "category": "Delivery",
+      "kind": "Documentation",
+      "path": "docs/linux/login-server.md",
+      "line": 1,
+      "end": 340,
+      "url": "https://www.superlogical.com/rex/docs/linux/login-server",
+      "pointer": ""
+    },
+    {
+      "name": "Remote Access",
+      "category": "Delivery",
+      "kind": "Documentation",
+      "path": "docs/linux/remote-access.md",
+      "line": 1,
+      "end": 310,
+      "url": "https://www.superlogical.com/rex/docs/linux/remote-access",
+      "pointer": ""
+    },
+    {
+      "name": "Server Modes",
+      "category": "Delivery",
+      "kind": "Documentation",
+      "path": "docs/linux/server-modes.md",
+      "line": 1,
+      "end": 225,
+      "url": "https://www.superlogical.com/rex/docs/linux/server-modes",
+      "pointer": ""
+    },
+    {
+      "name": "Shared Server",
+      "category": "Delivery",
+      "kind": "Documentation",
+      "path": "docs/linux/shared-server.md",
+      "line": 1,
+      "end": 360,
+      "url": "https://www.superlogical.com/rex/docs/linux/shared-server",
+      "pointer": ""
+    },
+    {
+      "name": "Upgrading",
+      "category": "Delivery",
+      "kind": "Documentation",
+      "path": "docs/linux/upgrading.md",
+      "line": 1,
+      "end": 268,
+      "url": "https://www.superlogical.com/rex/docs/linux/upgrading",
+      "pointer": ""
+    },
+    {
+      "name": "--block-dir DIR",
+      "category": "Extensions",
+      "kind": "Block-plugin flag",
+      "path": "runtime/server-run-help.txt",
+      "line": 16,
+      "end": 16,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli",
+      "pointer": ""
+    },
+    {
+      "name": "--block-plugin-reload",
+      "category": "Extensions",
+      "kind": "Block-plugin flag",
+      "path": "runtime/server-run-help.txt",
+      "line": 17,
+      "end": 17,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli",
+      "pointer": ""
+    },
+    {
+      "name": "Configuration File",
+      "category": "Extensions",
+      "kind": "Documentation",
+      "path": "docs/customize/config.md",
+      "line": 1,
+      "end": 150,
+      "url": "https://www.superlogical.com/rex/docs/customize/config",
+      "pointer": ""
+    },
+    {
+      "name": "Custom Actions",
+      "category": "Extensions",
+      "kind": "Documentation",
+      "path": "docs/customize/actions.md",
+      "line": 1,
+      "end": 246,
+      "url": "https://www.superlogical.com/rex/docs/customize/actions",
+      "pointer": ""
+    },
+    {
+      "name": "Key Modes",
+      "category": "Extensions",
+      "kind": "Documentation",
+      "path": "docs/customize/key-modes.md",
+      "line": 1,
+      "end": 160,
+      "url": "https://www.superlogical.com/rex/docs/customize/key-modes",
+      "pointer": ""
+    },
+    {
+      "name": "Key Sequences",
+      "category": "Extensions",
+      "kind": "Documentation",
+      "path": "docs/customize/key-sequences.md",
+      "line": 1,
+      "end": 103,
+      "url": "https://www.superlogical.com/rex/docs/customize/key-sequences",
+      "pointer": ""
+    },
+    {
+      "name": "Keyboard Shortcuts",
+      "category": "Extensions",
+      "kind": "Documentation",
+      "path": "docs/customize/keyboard-shortcuts.md",
+      "line": 1,
+      "end": 224,
+      "url": "https://www.superlogical.com/rex/docs/customize/keyboard-shortcuts",
+      "pointer": ""
+    },
+    {
+      "name": "Lua API",
+      "category": "Extensions",
+      "kind": "Documentation",
+      "path": "docs/reference/lua.md",
+      "line": 1,
+      "end": 466,
+      "url": "https://www.superlogical.com/rex/docs/reference/lua",
+      "pointer": ""
+    },
+    {
+      "name": "Lua Events",
+      "category": "Extensions",
+      "kind": "Documentation",
+      "path": "docs/automate/lua-events.md",
+      "line": 1,
+      "end": 219,
+      "url": "https://www.superlogical.com/rex/docs/automate/lua-events",
+      "pointer": ""
+    },
+    {
+      "name": "Lua Scripts",
+      "category": "Extensions",
+      "kind": "Documentation",
+      "path": "docs/automate/lua-scripts.md",
+      "line": 1,
+      "end": 377,
+      "url": "https://www.superlogical.com/rex/docs/automate/lua-scripts",
+      "pointer": ""
+    },
+    {
+      "name": "Mac Actions",
+      "category": "Extensions",
+      "kind": "Documentation",
+      "path": "docs/reference/mac-actions.md",
+      "line": 1,
+      "end": 172,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions",
+      "pointer": ""
+    },
+    {
+      "name": "iOS Actions",
+      "category": "Extensions",
+      "kind": "Documentation",
+      "path": "docs/reference/ios-actions.md",
+      "line": 1,
+      "end": 128,
+      "url": "https://www.superlogical.com/rex/docs/reference/ios-actions",
+      "pointer": ""
+    },
+    {
+      "name": "rex.action{ ... }",
+      "category": "Extensions",
+      "kind": "Lua signature",
+      "path": "docs/reference/lua.md",
+      "line": 123,
+      "end": 144,
+      "url": "https://www.superlogical.com/rex/docs/reference/lua#rexaction123--125",
+      "pointer": ""
+    },
+    {
+      "name": "rex.after(seconds, fn)",
+      "category": "Extensions",
+      "kind": "Lua signature",
+      "path": "docs/reference/lua.md",
+      "line": 407,
+      "end": 415,
+      "url": "https://www.superlogical.com/rex/docs/reference/lua#rexafterseconds-fn",
+      "pointer": ""
+    },
+    {
+      "name": "rex.bind(key, action[, args])",
+      "category": "Extensions",
+      "kind": "Lua signature",
+      "path": "docs/reference/lua.md",
+      "line": 57,
+      "end": 68,
+      "url": "https://www.superlogical.com/rex/docs/reference/lua#rexbindkey-action-args",
+      "pointer": ""
+    },
+    {
+      "name": "rex.bind(key, fn)",
+      "category": "Extensions",
+      "kind": "Lua signature",
+      "path": "docs/reference/lua.md",
+      "line": 69,
+      "end": 76,
+      "url": "https://www.superlogical.com/rex/docs/reference/lua#rexbindkey-fn",
+      "pointer": ""
+    },
+    {
+      "name": "rex.bindings([filter])",
+      "category": "Extensions",
+      "kind": "Lua signature",
+      "path": "docs/reference/lua.md",
+      "line": 98,
+      "end": 113,
+      "url": "https://www.superlogical.com/rex/docs/reference/lua#rexbindingsfilter",
+      "pointer": ""
+    },
+    {
+      "name": "rex.block.call(creator, method[, args])",
+      "category": "Extensions",
+      "kind": "Lua signature",
+      "path": "docs/reference/lua.md",
+      "line": 230,
+      "end": 255,
+      "url": "https://www.superlogical.com/rex/docs/reference/lua#rexblockcallcreator-method-args",
+      "pointer": ""
+    },
+    {
+      "name": "rex.call(method[, args])",
+      "category": "Extensions",
+      "kind": "Lua signature",
+      "path": "docs/reference/lua.md",
+      "line": 219,
+      "end": 229,
+      "url": "https://www.superlogical.com/rex/docs/reference/lua#rexcallmethod-args",
+      "pointer": ""
+    },
+    {
+      "name": "rex.client.queue(name[, args])",
+      "category": "Extensions",
+      "kind": "Lua signature",
+      "path": "docs/reference/lua.md",
+      "line": 155,
+      "end": 170,
+      "url": "https://www.superlogical.com/rex/docs/reference/lua#rexclientqueuename-args",
+      "pointer": ""
+    },
+    {
+      "name": "rex.every(seconds, fn)",
+      "category": "Extensions",
+      "kind": "Lua signature",
+      "path": "docs/reference/lua.md",
+      "line": 416,
+      "end": 433,
+      "url": "https://www.superlogical.com/rex/docs/reference/lua#rexeveryseconds-fn",
+      "pointer": ""
+    },
+    {
+      "name": "rex.exec(argv[, opts])",
+      "category": "Extensions",
+      "kind": "Lua signature",
+      "path": "docs/reference/lua.md",
+      "line": 337,
+      "end": 380,
+      "url": "https://www.superlogical.com/rex/docs/reference/lua#rexexecargv-opts",
+      "pointer": ""
+    },
+    {
+      "name": "rex.exec.start(argv[, opts])",
+      "category": "Extensions",
+      "kind": "Lua signature",
+      "path": "docs/reference/lua.md",
+      "line": 381,
+      "end": 406,
+      "url": "https://www.superlogical.com/rex/docs/reference/lua#rexexecstartargv-opts",
+      "pointer": ""
+    },
+    {
+      "name": "rex.host{ ... }",
+      "category": "Extensions",
+      "kind": "Lua signature",
+      "path": "docs/reference/lua.md",
+      "line": 307,
+      "end": 318,
+      "url": "https://www.superlogical.com/rex/docs/reference/lua#rexhost123--125",
+      "pointer": ""
+    },
+    {
+      "name": "rex.invoke(name[, args])",
+      "category": "Extensions",
+      "kind": "Lua signature",
+      "path": "docs/reference/lua.md",
+      "line": 145,
+      "end": 154,
+      "url": "https://www.superlogical.com/rex/docs/reference/lua#rexinvokename-args",
+      "pointer": ""
+    },
+    {
+      "name": "rex.json.decode(text)",
+      "category": "Extensions",
+      "kind": "Lua signature",
+      "path": "docs/reference/lua.md",
+      "line": 447,
+      "end": 451,
+      "url": "https://www.superlogical.com/rex/docs/reference/lua#rexjsondecodetext",
+      "pointer": ""
+    },
+    {
+      "name": "rex.json.encode(value[, opts])",
+      "category": "Extensions",
+      "kind": "Lua signature",
+      "path": "docs/reference/lua.md",
+      "line": 434,
+      "end": 446,
+      "url": "https://www.superlogical.com/rex/docs/reference/lua#rexjsonencodevalue-opts",
+      "pointer": ""
+    },
+    {
+      "name": "rex.layout",
+      "category": "Extensions",
+      "kind": "Lua signature",
+      "path": "docs/reference/lua.md",
+      "line": 256,
+      "end": 281,
+      "url": "https://www.superlogical.com/rex/docs/reference/lua#rexlayout",
+      "pointer": ""
+    },
+    {
+      "name": "rex.log([level, ]message)",
+      "category": "Extensions",
+      "kind": "Lua signature",
+      "path": "docs/reference/lua.md",
+      "line": 452,
+      "end": 466,
+      "url": "https://www.superlogical.com/rex/docs/reference/lua#rexloglevel-message",
+      "pointer": ""
+    },
+    {
+      "name": "rex.mode(name[, options])",
+      "category": "Extensions",
+      "kind": "Lua signature",
+      "path": "docs/reference/lua.md",
+      "line": 93,
+      "end": 97,
+      "url": "https://www.superlogical.com/rex/docs/reference/lua#rexmodename-options",
+      "pointer": ""
+    },
+    {
+      "name": "rex.modes()",
+      "category": "Extensions",
+      "kind": "Lua signature",
+      "path": "docs/reference/lua.md",
+      "line": 114,
+      "end": 122,
+      "url": "https://www.superlogical.com/rex/docs/reference/lua#rexmodes",
+      "pointer": ""
+    },
+    {
+      "name": "rex.on(event, fn)",
+      "category": "Extensions",
+      "kind": "Lua signature",
+      "path": "docs/reference/lua.md",
+      "line": 282,
+      "end": 288,
+      "url": "https://www.superlogical.com/rex/docs/reference/lua#rexonevent-fn",
+      "pointer": ""
+    },
+    {
+      "name": "rex.server(label)",
+      "category": "Extensions",
+      "kind": "Lua signature",
+      "path": "docs/reference/lua.md",
+      "line": 324,
+      "end": 336,
+      "url": "https://www.superlogical.com/rex/docs/reference/lua#rexserverlabel",
+      "pointer": ""
+    },
+    {
+      "name": "rex.servers()",
+      "category": "Extensions",
+      "kind": "Lua signature",
+      "path": "docs/reference/lua.md",
+      "line": 319,
+      "end": 323,
+      "url": "https://www.superlogical.com/rex/docs/reference/lua#rexservers",
+      "pointer": ""
+    },
+    {
+      "name": "rex.session.<method>(args)",
+      "category": "Extensions",
+      "kind": "Lua signature",
+      "path": "docs/reference/lua.md",
+      "line": 171,
+      "end": 218,
+      "url": "https://www.superlogical.com/rex/docs/reference/lua#rexsessionltmethodgtargs",
+      "pointer": ""
+    },
+    {
+      "name": "rex.sleep(seconds)",
+      "category": "Extensions",
+      "kind": "Lua signature",
+      "path": "docs/reference/lua.md",
+      "line": 297,
+      "end": 300,
+      "url": "https://www.superlogical.com/rex/docs/reference/lua#rexsleepseconds",
+      "pointer": ""
+    },
+    {
+      "name": "rex.stop([code])",
+      "category": "Extensions",
+      "kind": "Lua signature",
+      "path": "docs/reference/lua.md",
+      "line": 301,
+      "end": 306,
+      "url": "https://www.superlogical.com/rex/docs/reference/lua#rexstopcode",
+      "pointer": ""
+    },
+    {
+      "name": "rex.unbind(binding)",
+      "category": "Extensions",
+      "kind": "Lua signature",
+      "path": "docs/reference/lua.md",
+      "line": 89,
+      "end": 92,
+      "url": "https://www.superlogical.com/rex/docs/reference/lua#rexunbindbinding",
+      "pointer": ""
+    },
+    {
+      "name": "rex.unbind(key[, target])",
+      "category": "Extensions",
+      "kind": "Lua signature",
+      "path": "docs/reference/lua.md",
+      "line": 77,
+      "end": 84,
+      "url": "https://www.superlogical.com/rex/docs/reference/lua#rexunbindkey-target",
+      "pointer": ""
+    },
+    {
+      "name": "rex.unbind{ mode = name }",
+      "category": "Extensions",
+      "kind": "Lua signature",
+      "path": "docs/reference/lua.md",
+      "line": 85,
+      "end": 88,
+      "url": "https://www.superlogical.com/rex/docs/reference/lua#rexunbind123-mode--name-125",
+      "pointer": ""
+    },
+    {
+      "name": "rex.wait(event[, filter][, timeout])",
+      "category": "Extensions",
+      "kind": "Lua signature",
+      "path": "docs/reference/lua.md",
+      "line": 289,
+      "end": 296,
+      "url": "https://www.superlogical.com/rex/docs/reference/lua#rexwaitevent-filter-timeout",
+      "pointer": ""
+    },
+    {
+      "name": "client.agents.setup",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 43,
+      "end": 43,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-client-agents-setup",
+      "pointer": ""
+    },
+    {
+      "name": "client.appearance.switch_mode",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 169,
+      "end": 169,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-client-appearance-switch-mode",
+      "pointer": ""
+    },
+    {
+      "name": "client.close",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 19,
+      "end": 19,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-client-close",
+      "pointer": ""
+    },
+    {
+      "name": "client.config.copy_path",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 170,
+      "end": 170,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-client-config-copy-path",
+      "pointer": ""
+    },
+    {
+      "name": "client.config.reload",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 171,
+      "end": 171,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-client-config-reload",
+      "pointer": ""
+    },
+    {
+      "name": "client.debug.copy",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 32,
+      "end": 32,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-client-debug-copy",
+      "pointer": ""
+    },
+    {
+      "name": "client.diagnostics",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 27,
+      "end": 27,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-client-diagnostics",
+      "pointer": ""
+    },
+    {
+      "name": "client.find.next",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 149,
+      "end": 149,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-client-find-next",
+      "pointer": ""
+    },
+    {
+      "name": "client.find.open",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 148,
+      "end": 148,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-client-find-open",
+      "pointer": ""
+    },
+    {
+      "name": "client.find.previous",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 150,
+      "end": 150,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-client-find-previous",
+      "pointer": ""
+    },
+    {
+      "name": "client.font.decrease",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 157,
+      "end": 157,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-client-font-decrease",
+      "pointer": ""
+    },
+    {
+      "name": "client.font.increase",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 156,
+      "end": 156,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-client-font-increase",
+      "pointer": ""
+    },
+    {
+      "name": "client.font.reset",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 158,
+      "end": 158,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-client-font-reset",
+      "pointer": ""
+    },
+    {
+      "name": "client.host.add",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 67,
+      "end": 67,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-client-host-add",
+      "pointer": ""
+    },
+    {
+      "name": "client.host.remove",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 68,
+      "end": 68,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-client-host-remove",
+      "pointer": ""
+    },
+    {
+      "name": "client.host.switch",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 66,
+      "end": 66,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-client-host-switch",
+      "pointer": ""
+    },
+    {
+      "name": "client.key.forward",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 129,
+      "end": 129,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-client-key-forward",
+      "pointer": ""
+    },
+    {
+      "name": "client.mode.enter",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 140,
+      "end": 140,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-client-mode-enter",
+      "pointer": ""
+    },
+    {
+      "name": "client.mode.exit",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 141,
+      "end": 141,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-client-mode-exit",
+      "pointer": ""
+    },
+    {
+      "name": "client.mode.exit_all",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 142,
+      "end": 142,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-client-mode-exit-all",
+      "pointer": ""
+    },
+    {
+      "name": "client.notice.dismiss",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 41,
+      "end": 41,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-client-notice-dismiss",
+      "pointer": ""
+    },
+    {
+      "name": "client.onboarding",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 28,
+      "end": 28,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-client-onboarding",
+      "pointer": ""
+    },
+    {
+      "name": "client.pair_device",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 33,
+      "end": 33,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-client-pair-device",
+      "pointer": ""
+    },
+    {
+      "name": "client.palette.toggle",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 25,
+      "end": 25,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-client-palette-toggle",
+      "pointer": ""
+    },
+    {
+      "name": "client.pane_header.reveal",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 166,
+      "end": 166,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-client-pane-header-reveal",
+      "pointer": ""
+    },
+    {
+      "name": "client.permissions",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 29,
+      "end": 29,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-client-permissions",
+      "pointer": ""
+    },
+    {
+      "name": "client.prompt.next",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 131,
+      "end": 131,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-client-prompt-next",
+      "pointer": ""
+    },
+    {
+      "name": "client.prompt.previous",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 130,
+      "end": 130,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-client-prompt-previous",
+      "pointer": ""
+    },
+    {
+      "name": "client.quick_look",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 134,
+      "end": 134,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-client-quick-look",
+      "pointer": ""
+    },
+    {
+      "name": "client.scroll.page_down",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 133,
+      "end": 133,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-client-scroll-page-down",
+      "pointer": ""
+    },
+    {
+      "name": "client.scroll.page_up",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 132,
+      "end": 132,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-client-scroll-page-up",
+      "pointer": ""
+    },
+    {
+      "name": "client.server.restart",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 44,
+      "end": 44,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-client-server-restart",
+      "pointer": ""
+    },
+    {
+      "name": "client.settings",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 26,
+      "end": 26,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-client-settings",
+      "pointer": ""
+    },
+    {
+      "name": "client.shortcuts.edit",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 42,
+      "end": 42,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-client-shortcuts-edit",
+      "pointer": ""
+    },
+    {
+      "name": "client.sidebar.activity.by_priority",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 162,
+      "end": 162,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-client-sidebar-activity-by-priority",
+      "pointer": ""
+    },
+    {
+      "name": "client.sidebar.activity.by_session",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 161,
+      "end": 161,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-client-sidebar-activity-by-session",
+      "pointer": ""
+    },
+    {
+      "name": "client.sidebar.activity.toggle",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 160,
+      "end": 160,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-client-sidebar-activity-toggle",
+      "pointer": ""
+    },
+    {
+      "name": "client.sidebar.filter.focus",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 163,
+      "end": 163,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-client-sidebar-filter-focus",
+      "pointer": ""
+    },
+    {
+      "name": "client.sidebar.toggle",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 159,
+      "end": 159,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-client-sidebar-toggle",
+      "pointer": ""
+    },
+    {
+      "name": "client.tab.close",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 75,
+      "end": 75,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-client-tab-close",
+      "pointer": ""
+    },
+    {
+      "name": "client.tab.close_others",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 76,
+      "end": 76,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-client-tab-close-others",
+      "pointer": ""
+    },
+    {
+      "name": "client.tab.goto",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 80,
+      "end": 80,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-client-tab-goto",
+      "pointer": ""
+    },
+    {
+      "name": "client.tab.move",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 81,
+      "end": 81,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-client-tab-move",
+      "pointer": ""
+    },
+    {
+      "name": "client.tab.move.backward",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 82,
+      "end": 82,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-client-tab-move-backward",
+      "pointer": ""
+    },
+    {
+      "name": "client.tab.move.forward",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 83,
+      "end": 83,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-client-tab-move-forward",
+      "pointer": ""
+    },
+    {
+      "name": "client.tab.move_to_new_window",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 84,
+      "end": 84,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-client-tab-move-to-new-window",
+      "pointer": ""
+    },
+    {
+      "name": "client.tab.new",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 74,
+      "end": 74,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-client-tab-new",
+      "pointer": ""
+    },
+    {
+      "name": "client.tab.next",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 78,
+      "end": 78,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-client-tab-next",
+      "pointer": ""
+    },
+    {
+      "name": "client.tab.previous",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 79,
+      "end": 79,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-client-tab-previous",
+      "pointer": ""
+    },
+    {
+      "name": "client.tab.rename",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 77,
+      "end": 77,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-client-tab-rename",
+      "pointer": ""
+    },
+    {
+      "name": "client.tab_style.toggle",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 164,
+      "end": 164,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-client-tab-style-toggle",
+      "pointer": ""
+    },
+    {
+      "name": "client.theme.change",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 167,
+      "end": 167,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-client-theme-change",
+      "pointer": ""
+    },
+    {
+      "name": "client.theme.import",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 168,
+      "end": 168,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-client-theme-import",
+      "pointer": ""
+    },
+    {
+      "name": "client.toolbar.reveal",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 165,
+      "end": 165,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-client-toolbar-reveal",
+      "pointer": ""
+    },
+    {
+      "name": "client.update.accept",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 34,
+      "end": 34,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-client-update-accept",
+      "pointer": ""
+    },
+    {
+      "name": "client.update.accept_when_idle",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 35,
+      "end": 35,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-client-update-accept-when-idle",
+      "pointer": ""
+    },
+    {
+      "name": "client.update.check",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 36,
+      "end": 36,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-client-update-check",
+      "pointer": ""
+    },
+    {
+      "name": "client.update.install",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 38,
+      "end": 38,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-client-update-install",
+      "pointer": ""
+    },
+    {
+      "name": "client.update.set_automation",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 39,
+      "end": 39,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-client-update-set-automation",
+      "pointer": ""
+    },
+    {
+      "name": "client.update.set_channel",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 40,
+      "end": 40,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-client-update-set-channel",
+      "pointer": ""
+    },
+    {
+      "name": "client.update.status",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 37,
+      "end": 37,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-client-update-status",
+      "pointer": ""
+    },
+    {
+      "name": "client.version.copy",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 31,
+      "end": 31,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-client-version-copy",
+      "pointer": ""
+    },
+    {
+      "name": "client.visibility.toggle",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 30,
+      "end": 30,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-client-visibility-toggle",
+      "pointer": ""
+    },
+    {
+      "name": "client.window.close",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 17,
+      "end": 17,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-client-window-close",
+      "pointer": ""
+    },
+    {
+      "name": "client.window.fullscreen.toggle",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 18,
+      "end": 18,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-client-window-fullscreen-toggle",
+      "pointer": ""
+    },
+    {
+      "name": "client.window.new",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 16,
+      "end": 16,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-client-window-new",
+      "pointer": ""
+    },
+    {
+      "name": "pane.balance",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 115,
+      "end": 115,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-pane-balance",
+      "pointer": ""
+    },
+    {
+      "name": "pane.close",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 113,
+      "end": 113,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-pane-close",
+      "pointer": ""
+    },
+    {
+      "name": "pane.close_others",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 114,
+      "end": 114,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-pane-close-others",
+      "pointer": ""
+    },
+    {
+      "name": "pane.copy",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 126,
+      "end": 126,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-pane-copy",
+      "pointer": ""
+    },
+    {
+      "name": "pane.copy_id",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 123,
+      "end": 123,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-pane-copy-id",
+      "pointer": ""
+    },
+    {
+      "name": "pane.float",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 108,
+      "end": 108,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-pane-float",
+      "pointer": ""
+    },
+    {
+      "name": "pane.focus",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 96,
+      "end": 96,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-pane-focus",
+      "pointer": ""
+    },
+    {
+      "name": "pane.focus.down",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 100,
+      "end": 100,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-pane-focus-down",
+      "pointer": ""
+    },
+    {
+      "name": "pane.focus.left",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 97,
+      "end": 97,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-pane-focus-left",
+      "pointer": ""
+    },
+    {
+      "name": "pane.focus.right",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 98,
+      "end": 98,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-pane-focus-right",
+      "pointer": ""
+    },
+    {
+      "name": "pane.focus.up",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 99,
+      "end": 99,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-pane-focus-up",
+      "pointer": ""
+    },
+    {
+      "name": "pane.focus_next",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 101,
+      "end": 101,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-pane-focus-next",
+      "pointer": ""
+    },
+    {
+      "name": "pane.focus_previous",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 102,
+      "end": 102,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-pane-focus-previous",
+      "pointer": ""
+    },
+    {
+      "name": "pane.go_to",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 120,
+      "end": 120,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-pane-go-to",
+      "pointer": ""
+    },
+    {
+      "name": "pane.go_to_directory",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 119,
+      "end": 119,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-pane-go-to-directory",
+      "pointer": ""
+    },
+    {
+      "name": "pane.insert_path",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 122,
+      "end": 122,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-pane-insert-path",
+      "pointer": ""
+    },
+    {
+      "name": "pane.minimize_all_floating",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 111,
+      "end": 111,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-pane-minimize-all-floating",
+      "pointer": ""
+    },
+    {
+      "name": "pane.minimize_floating",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 110,
+      "end": 110,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-pane-minimize-floating",
+      "pointer": ""
+    },
+    {
+      "name": "pane.move",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 103,
+      "end": 103,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-pane-move",
+      "pointer": ""
+    },
+    {
+      "name": "pane.move.down",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 107,
+      "end": 107,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-pane-move-down",
+      "pointer": ""
+    },
+    {
+      "name": "pane.move.left",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 104,
+      "end": 104,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-pane-move-left",
+      "pointer": ""
+    },
+    {
+      "name": "pane.move.right",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 105,
+      "end": 105,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-pane-move-right",
+      "pointer": ""
+    },
+    {
+      "name": "pane.move.up",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 106,
+      "end": 106,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-pane-move-up",
+      "pointer": ""
+    },
+    {
+      "name": "pane.move_to_new_tab",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 117,
+      "end": 117,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-pane-move-to-new-tab",
+      "pointer": ""
+    },
+    {
+      "name": "pane.move_to_tab",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 118,
+      "end": 118,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-pane-move-to-tab",
+      "pointer": ""
+    },
+    {
+      "name": "pane.new_floating",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 109,
+      "end": 109,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-pane-new-floating",
+      "pointer": ""
+    },
+    {
+      "name": "pane.paste",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 125,
+      "end": 125,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-pane-paste",
+      "pointer": ""
+    },
+    {
+      "name": "pane.rename",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 124,
+      "end": 124,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-pane-rename",
+      "pointer": ""
+    },
+    {
+      "name": "pane.resize",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 116,
+      "end": 116,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-pane-resize",
+      "pointer": ""
+    },
+    {
+      "name": "pane.select_all",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 127,
+      "end": 127,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-pane-select-all",
+      "pointer": ""
+    },
+    {
+      "name": "pane.send_key",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 128,
+      "end": 128,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-pane-send-key",
+      "pointer": ""
+    },
+    {
+      "name": "pane.split",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 90,
+      "end": 90,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-pane-split",
+      "pointer": ""
+    },
+    {
+      "name": "pane.split.auto",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 95,
+      "end": 95,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-pane-split-auto",
+      "pointer": ""
+    },
+    {
+      "name": "pane.split.down",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 94,
+      "end": 94,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-pane-split-down",
+      "pointer": ""
+    },
+    {
+      "name": "pane.split.left",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 91,
+      "end": 91,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-pane-split-left",
+      "pointer": ""
+    },
+    {
+      "name": "pane.split.right",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 92,
+      "end": 92,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-pane-split-right",
+      "pointer": ""
+    },
+    {
+      "name": "pane.split.up",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 93,
+      "end": 93,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-pane-split-up",
+      "pointer": ""
+    },
+    {
+      "name": "pane.view_activity",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 121,
+      "end": 121,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-pane-view-activity",
+      "pointer": ""
+    },
+    {
+      "name": "pane.zoom",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 112,
+      "end": 112,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-pane-zoom",
+      "pointer": ""
+    },
+    {
+      "name": "session.close",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 56,
+      "end": 56,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-session-close",
+      "pointer": ""
+    },
+    {
+      "name": "session.collapse",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 58,
+      "end": 58,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-session-collapse",
+      "pointer": ""
+    },
+    {
+      "name": "session.collapse_others",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 60,
+      "end": 60,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-session-collapse-others",
+      "pointer": ""
+    },
+    {
+      "name": "session.expand",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 59,
+      "end": 59,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-session-expand",
+      "pointer": ""
+    },
+    {
+      "name": "session.new",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 50,
+      "end": 50,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-session-new",
+      "pointer": ""
+    },
+    {
+      "name": "session.next",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 53,
+      "end": 53,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-session-next",
+      "pointer": ""
+    },
+    {
+      "name": "session.previous",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 54,
+      "end": 54,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-session-previous",
+      "pointer": ""
+    },
+    {
+      "name": "session.refresh",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 57,
+      "end": 57,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-session-refresh",
+      "pointer": ""
+    },
+    {
+      "name": "session.rename",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 55,
+      "end": 55,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-session-rename",
+      "pointer": ""
+    },
+    {
+      "name": "session.select",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 52,
+      "end": 52,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-session-select",
+      "pointer": ""
+    },
+    {
+      "name": "session.switch",
+      "category": "Extensions",
+      "kind": "Mac action",
+      "path": "docs/reference/mac-actions.md",
+      "line": 51,
+      "end": 51,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-actions#action-session-switch",
+      "pointer": ""
+    },
+    {
+      "name": "com.superlogical.onboarding.onboarding",
+      "category": "Extensions",
+      "kind": "Registered flavor",
+      "path": "runtime/block-creators.json",
+      "line": 1,
+      "end": 1,
+      "url": "https://www.superlogical.com/rex/docs/reference/api#block_creatorlist",
+      "pointer": "runtime/block-creators.json#/creators/0/flavors/0"
+    },
+    {
+      "name": "com.superlogical.terminal.shell",
+      "category": "Extensions",
+      "kind": "Registered flavor",
+      "path": "runtime/block-creators.json",
+      "line": 1,
+      "end": 1,
+      "url": "https://www.superlogical.com/rex/docs/reference/api#block_creatorlist",
+      "pointer": "runtime/block-creators.json#/creators/1/flavors/0"
+    },
+    {
+      "name": "client.agents.setup",
+      "category": "Extensions",
+      "kind": "iOS action",
+      "path": "docs/reference/ios-actions.md",
+      "line": 29,
+      "end": 29,
+      "url": "https://www.superlogical.com/rex/docs/reference/ios-actions#action-client-agents-setup",
+      "pointer": ""
+    },
+    {
+      "name": "client.appearance.switch_mode",
+      "category": "Extensions",
+      "kind": "iOS action",
+      "path": "docs/reference/ios-actions.md",
+      "line": 42,
+      "end": 42,
+      "url": "https://www.superlogical.com/rex/docs/reference/ios-actions#action-client-appearance-switch-mode",
+      "pointer": ""
+    },
+    {
+      "name": "client.close",
+      "category": "Extensions",
+      "kind": "iOS action",
+      "path": "docs/reference/ios-actions.md",
+      "line": 18,
+      "end": 18,
+      "url": "https://www.superlogical.com/rex/docs/reference/ios-actions#action-client-close",
+      "pointer": ""
+    },
+    {
+      "name": "client.config.copy_path",
+      "category": "Extensions",
+      "kind": "iOS action",
+      "path": "docs/reference/ios-actions.md",
+      "line": 37,
+      "end": 37,
+      "url": "https://www.superlogical.com/rex/docs/reference/ios-actions#action-client-config-copy-path",
+      "pointer": ""
+    },
+    {
+      "name": "client.debug.copy",
+      "category": "Extensions",
+      "kind": "iOS action",
+      "path": "docs/reference/ios-actions.md",
+      "line": 27,
+      "end": 27,
+      "url": "https://www.superlogical.com/rex/docs/reference/ios-actions#action-client-debug-copy",
+      "pointer": ""
+    },
+    {
+      "name": "client.diagnostics",
+      "category": "Extensions",
+      "kind": "iOS action",
+      "path": "docs/reference/ios-actions.md",
+      "line": 28,
+      "end": 28,
+      "url": "https://www.superlogical.com/rex/docs/reference/ios-actions#action-client-diagnostics",
+      "pointer": ""
+    },
+    {
+      "name": "client.font.decrease",
+      "category": "Extensions",
+      "kind": "iOS action",
+      "path": "docs/reference/ios-actions.md",
+      "line": 39,
+      "end": 39,
+      "url": "https://www.superlogical.com/rex/docs/reference/ios-actions#action-client-font-decrease",
+      "pointer": ""
+    },
+    {
+      "name": "client.font.increase",
+      "category": "Extensions",
+      "kind": "iOS action",
+      "path": "docs/reference/ios-actions.md",
+      "line": 38,
+      "end": 38,
+      "url": "https://www.superlogical.com/rex/docs/reference/ios-actions#action-client-font-increase",
+      "pointer": ""
+    },
+    {
+      "name": "client.font.reset",
+      "category": "Extensions",
+      "kind": "iOS action",
+      "path": "docs/reference/ios-actions.md",
+      "line": 40,
+      "end": 40,
+      "url": "https://www.superlogical.com/rex/docs/reference/ios-actions#action-client-font-reset",
+      "pointer": ""
+    },
+    {
+      "name": "client.host.add",
+      "category": "Extensions",
+      "kind": "iOS action",
+      "path": "docs/reference/ios-actions.md",
+      "line": 64,
+      "end": 64,
+      "url": "https://www.superlogical.com/rex/docs/reference/ios-actions#action-client-host-add",
+      "pointer": ""
+    },
+    {
+      "name": "client.host.remove",
+      "category": "Extensions",
+      "kind": "iOS action",
+      "path": "docs/reference/ios-actions.md",
+      "line": 65,
+      "end": 65,
+      "url": "https://www.superlogical.com/rex/docs/reference/ios-actions#action-client-host-remove",
+      "pointer": ""
+    },
+    {
+      "name": "client.keyboard.hide",
+      "category": "Extensions",
+      "kind": "iOS action",
+      "path": "docs/reference/ios-actions.md",
+      "line": 45,
+      "end": 45,
+      "url": "https://www.superlogical.com/rex/docs/reference/ios-actions#action-client-keyboard-hide",
+      "pointer": ""
+    },
+    {
+      "name": "client.keyboard.show",
+      "category": "Extensions",
+      "kind": "iOS action",
+      "path": "docs/reference/ios-actions.md",
+      "line": 44,
+      "end": 44,
+      "url": "https://www.superlogical.com/rex/docs/reference/ios-actions#action-client-keyboard-show",
+      "pointer": ""
+    },
+    {
+      "name": "client.palette.toggle",
+      "category": "Extensions",
+      "kind": "iOS action",
+      "path": "docs/reference/ios-actions.md",
+      "line": 25,
+      "end": 25,
+      "url": "https://www.superlogical.com/rex/docs/reference/ios-actions#action-client-palette-toggle",
+      "pointer": ""
+    },
+    {
+      "name": "client.prompt.next",
+      "category": "Extensions",
+      "kind": "iOS action",
+      "path": "docs/reference/ios-actions.md",
+      "line": 123,
+      "end": 123,
+      "url": "https://www.superlogical.com/rex/docs/reference/ios-actions#action-client-prompt-next",
+      "pointer": ""
+    },
+    {
+      "name": "client.prompt.previous",
+      "category": "Extensions",
+      "kind": "iOS action",
+      "path": "docs/reference/ios-actions.md",
+      "line": 122,
+      "end": 122,
+      "url": "https://www.superlogical.com/rex/docs/reference/ios-actions#action-client-prompt-previous",
+      "pointer": ""
+    },
+    {
+      "name": "client.scroll.page_down",
+      "category": "Extensions",
+      "kind": "iOS action",
+      "path": "docs/reference/ios-actions.md",
+      "line": 125,
+      "end": 125,
+      "url": "https://www.superlogical.com/rex/docs/reference/ios-actions#action-client-scroll-page-down",
+      "pointer": ""
+    },
+    {
+      "name": "client.scroll.page_up",
+      "category": "Extensions",
+      "kind": "iOS action",
+      "path": "docs/reference/ios-actions.md",
+      "line": 124,
+      "end": 124,
+      "url": "https://www.superlogical.com/rex/docs/reference/ios-actions#action-client-scroll-page-up",
+      "pointer": ""
+    },
+    {
+      "name": "client.settings",
+      "category": "Extensions",
+      "kind": "iOS action",
+      "path": "docs/reference/ios-actions.md",
+      "line": 24,
+      "end": 24,
+      "url": "https://www.superlogical.com/rex/docs/reference/ios-actions#action-client-settings",
+      "pointer": ""
+    },
+    {
+      "name": "client.sidebar.activity.toggle",
+      "category": "Extensions",
+      "kind": "iOS action",
+      "path": "docs/reference/ios-actions.md",
+      "line": 36,
+      "end": 36,
+      "url": "https://www.superlogical.com/rex/docs/reference/ios-actions#action-client-sidebar-activity-toggle",
+      "pointer": ""
+    },
+    {
+      "name": "client.sidebar.filter.focus",
+      "category": "Extensions",
+      "kind": "iOS action",
+      "path": "docs/reference/ios-actions.md",
+      "line": 43,
+      "end": 43,
+      "url": "https://www.superlogical.com/rex/docs/reference/ios-actions#action-client-sidebar-filter-focus",
+      "pointer": ""
+    },
+    {
+      "name": "client.sidebar.toggle",
+      "category": "Extensions",
+      "kind": "iOS action",
+      "path": "docs/reference/ios-actions.md",
+      "line": 35,
+      "end": 35,
+      "url": "https://www.superlogical.com/rex/docs/reference/ios-actions#action-client-sidebar-toggle",
+      "pointer": ""
+    },
+    {
+      "name": "client.tab.close",
+      "category": "Extensions",
+      "kind": "iOS action",
+      "path": "docs/reference/ios-actions.md",
+      "line": 78,
+      "end": 78,
+      "url": "https://www.superlogical.com/rex/docs/reference/ios-actions#action-client-tab-close",
+      "pointer": ""
+    },
+    {
+      "name": "client.tab.close_others",
+      "category": "Extensions",
+      "kind": "iOS action",
+      "path": "docs/reference/ios-actions.md",
+      "line": 79,
+      "end": 79,
+      "url": "https://www.superlogical.com/rex/docs/reference/ios-actions#action-client-tab-close-others",
+      "pointer": ""
+    },
+    {
+      "name": "client.tab.goto",
+      "category": "Extensions",
+      "kind": "iOS action",
+      "path": "docs/reference/ios-actions.md",
+      "line": 74,
+      "end": 74,
+      "url": "https://www.superlogical.com/rex/docs/reference/ios-actions#action-client-tab-goto",
+      "pointer": ""
+    },
+    {
+      "name": "client.tab.move",
+      "category": "Extensions",
+      "kind": "iOS action",
+      "path": "docs/reference/ios-actions.md",
+      "line": 80,
+      "end": 80,
+      "url": "https://www.superlogical.com/rex/docs/reference/ios-actions#action-client-tab-move",
+      "pointer": ""
+    },
+    {
+      "name": "client.tab.move.backward",
+      "category": "Extensions",
+      "kind": "iOS action",
+      "path": "docs/reference/ios-actions.md",
+      "line": 75,
+      "end": 75,
+      "url": "https://www.superlogical.com/rex/docs/reference/ios-actions#action-client-tab-move-backward",
+      "pointer": ""
+    },
+    {
+      "name": "client.tab.move.forward",
+      "category": "Extensions",
+      "kind": "iOS action",
+      "path": "docs/reference/ios-actions.md",
+      "line": 76,
+      "end": 76,
+      "url": "https://www.superlogical.com/rex/docs/reference/ios-actions#action-client-tab-move-forward",
+      "pointer": ""
+    },
+    {
+      "name": "client.tab.move_to_new_window",
+      "category": "Extensions",
+      "kind": "iOS action",
+      "path": "docs/reference/ios-actions.md",
+      "line": 81,
+      "end": 81,
+      "url": "https://www.superlogical.com/rex/docs/reference/ios-actions#action-client-tab-move-to-new-window",
+      "pointer": ""
+    },
+    {
+      "name": "client.tab.new",
+      "category": "Extensions",
+      "kind": "iOS action",
+      "path": "docs/reference/ios-actions.md",
+      "line": 71,
+      "end": 71,
+      "url": "https://www.superlogical.com/rex/docs/reference/ios-actions#action-client-tab-new",
+      "pointer": ""
+    },
+    {
+      "name": "client.tab.next",
+      "category": "Extensions",
+      "kind": "iOS action",
+      "path": "docs/reference/ios-actions.md",
+      "line": 73,
+      "end": 73,
+      "url": "https://www.superlogical.com/rex/docs/reference/ios-actions#action-client-tab-next",
+      "pointer": ""
+    },
+    {
+      "name": "client.tab.previous",
+      "category": "Extensions",
+      "kind": "iOS action",
+      "path": "docs/reference/ios-actions.md",
+      "line": 72,
+      "end": 72,
+      "url": "https://www.superlogical.com/rex/docs/reference/ios-actions#action-client-tab-previous",
+      "pointer": ""
+    },
+    {
+      "name": "client.tab.rename",
+      "category": "Extensions",
+      "kind": "iOS action",
+      "path": "docs/reference/ios-actions.md",
+      "line": 77,
+      "end": 77,
+      "url": "https://www.superlogical.com/rex/docs/reference/ios-actions#action-client-tab-rename",
+      "pointer": ""
+    },
+    {
+      "name": "client.theme.change",
+      "category": "Extensions",
+      "kind": "iOS action",
+      "path": "docs/reference/ios-actions.md",
+      "line": 41,
+      "end": 41,
+      "url": "https://www.superlogical.com/rex/docs/reference/ios-actions#action-client-theme-change",
+      "pointer": ""
+    },
+    {
+      "name": "client.version.copy",
+      "category": "Extensions",
+      "kind": "iOS action",
+      "path": "docs/reference/ios-actions.md",
+      "line": 26,
+      "end": 26,
+      "url": "https://www.superlogical.com/rex/docs/reference/ios-actions#action-client-version-copy",
+      "pointer": ""
+    },
+    {
+      "name": "client.window.close",
+      "category": "Extensions",
+      "kind": "iOS action",
+      "path": "docs/reference/ios-actions.md",
+      "line": 17,
+      "end": 17,
+      "url": "https://www.superlogical.com/rex/docs/reference/ios-actions#action-client-window-close",
+      "pointer": ""
+    },
+    {
+      "name": "client.window.new",
+      "category": "Extensions",
+      "kind": "iOS action",
+      "path": "docs/reference/ios-actions.md",
+      "line": 16,
+      "end": 16,
+      "url": "https://www.superlogical.com/rex/docs/reference/ios-actions#action-client-window-new",
+      "pointer": ""
+    },
+    {
+      "name": "pane.balance",
+      "category": "Extensions",
+      "kind": "iOS action",
+      "path": "docs/reference/ios-actions.md",
+      "line": 112,
+      "end": 112,
+      "url": "https://www.superlogical.com/rex/docs/reference/ios-actions#action-pane-balance",
+      "pointer": ""
+    },
+    {
+      "name": "pane.close",
+      "category": "Extensions",
+      "kind": "iOS action",
+      "path": "docs/reference/ios-actions.md",
+      "line": 103,
+      "end": 103,
+      "url": "https://www.superlogical.com/rex/docs/reference/ios-actions#action-pane-close",
+      "pointer": ""
+    },
+    {
+      "name": "pane.close_others",
+      "category": "Extensions",
+      "kind": "iOS action",
+      "path": "docs/reference/ios-actions.md",
+      "line": 106,
+      "end": 106,
+      "url": "https://www.superlogical.com/rex/docs/reference/ios-actions#action-pane-close-others",
+      "pointer": ""
+    },
+    {
+      "name": "pane.copy",
+      "category": "Extensions",
+      "kind": "iOS action",
+      "path": "docs/reference/ios-actions.md",
+      "line": 119,
+      "end": 119,
+      "url": "https://www.superlogical.com/rex/docs/reference/ios-actions#action-pane-copy",
+      "pointer": ""
+    },
+    {
+      "name": "pane.copy_id",
+      "category": "Extensions",
+      "kind": "iOS action",
+      "path": "docs/reference/ios-actions.md",
+      "line": 110,
+      "end": 110,
+      "url": "https://www.superlogical.com/rex/docs/reference/ios-actions#action-pane-copy-id",
+      "pointer": ""
+    },
+    {
+      "name": "pane.float",
+      "category": "Extensions",
+      "kind": "iOS action",
+      "path": "docs/reference/ios-actions.md",
+      "line": 114,
+      "end": 114,
+      "url": "https://www.superlogical.com/rex/docs/reference/ios-actions#action-pane-float",
+      "pointer": ""
+    },
+    {
+      "name": "pane.focus.down",
+      "category": "Extensions",
+      "kind": "iOS action",
+      "path": "docs/reference/ios-actions.md",
+      "line": 96,
+      "end": 96,
+      "url": "https://www.superlogical.com/rex/docs/reference/ios-actions#action-pane-focus-down",
+      "pointer": ""
+    },
+    {
+      "name": "pane.focus.left",
+      "category": "Extensions",
+      "kind": "iOS action",
+      "path": "docs/reference/ios-actions.md",
+      "line": 93,
+      "end": 93,
+      "url": "https://www.superlogical.com/rex/docs/reference/ios-actions#action-pane-focus-left",
+      "pointer": ""
+    },
+    {
+      "name": "pane.focus.right",
+      "category": "Extensions",
+      "kind": "iOS action",
+      "path": "docs/reference/ios-actions.md",
+      "line": 94,
+      "end": 94,
+      "url": "https://www.superlogical.com/rex/docs/reference/ios-actions#action-pane-focus-right",
+      "pointer": ""
+    },
+    {
+      "name": "pane.focus.up",
+      "category": "Extensions",
+      "kind": "iOS action",
+      "path": "docs/reference/ios-actions.md",
+      "line": 95,
+      "end": 95,
+      "url": "https://www.superlogical.com/rex/docs/reference/ios-actions#action-pane-focus-up",
+      "pointer": ""
+    },
+    {
+      "name": "pane.focus_next",
+      "category": "Extensions",
+      "kind": "iOS action",
+      "path": "docs/reference/ios-actions.md",
+      "line": 92,
+      "end": 92,
+      "url": "https://www.superlogical.com/rex/docs/reference/ios-actions#action-pane-focus-next",
+      "pointer": ""
+    },
+    {
+      "name": "pane.focus_previous",
+      "category": "Extensions",
+      "kind": "iOS action",
+      "path": "docs/reference/ios-actions.md",
+      "line": 91,
+      "end": 91,
+      "url": "https://www.superlogical.com/rex/docs/reference/ios-actions#action-pane-focus-previous",
+      "pointer": ""
+    },
+    {
+      "name": "pane.go_to",
+      "category": "Extensions",
+      "kind": "iOS action",
+      "path": "docs/reference/ios-actions.md",
+      "line": 126,
+      "end": 126,
+      "url": "https://www.superlogical.com/rex/docs/reference/ios-actions#action-pane-go-to",
+      "pointer": ""
+    },
+    {
+      "name": "pane.go_to_directory",
+      "category": "Extensions",
+      "kind": "iOS action",
+      "path": "docs/reference/ios-actions.md",
+      "line": 108,
+      "end": 108,
+      "url": "https://www.superlogical.com/rex/docs/reference/ios-actions#action-pane-go-to-directory",
+      "pointer": ""
+    },
+    {
+      "name": "pane.insert_path",
+      "category": "Extensions",
+      "kind": "iOS action",
+      "path": "docs/reference/ios-actions.md",
+      "line": 109,
+      "end": 109,
+      "url": "https://www.superlogical.com/rex/docs/reference/ios-actions#action-pane-insert-path",
+      "pointer": ""
+    },
+    {
+      "name": "pane.minimize_all_floating",
+      "category": "Extensions",
+      "kind": "iOS action",
+      "path": "docs/reference/ios-actions.md",
+      "line": 117,
+      "end": 117,
+      "url": "https://www.superlogical.com/rex/docs/reference/ios-actions#action-pane-minimize-all-floating",
+      "pointer": ""
+    },
+    {
+      "name": "pane.minimize_floating",
+      "category": "Extensions",
+      "kind": "iOS action",
+      "path": "docs/reference/ios-actions.md",
+      "line": 116,
+      "end": 116,
+      "url": "https://www.superlogical.com/rex/docs/reference/ios-actions#action-pane-minimize-floating",
+      "pointer": ""
+    },
+    {
+      "name": "pane.move.down",
+      "category": "Extensions",
+      "kind": "iOS action",
+      "path": "docs/reference/ios-actions.md",
+      "line": 100,
+      "end": 100,
+      "url": "https://www.superlogical.com/rex/docs/reference/ios-actions#action-pane-move-down",
+      "pointer": ""
+    },
+    {
+      "name": "pane.move.left",
+      "category": "Extensions",
+      "kind": "iOS action",
+      "path": "docs/reference/ios-actions.md",
+      "line": 97,
+      "end": 97,
+      "url": "https://www.superlogical.com/rex/docs/reference/ios-actions#action-pane-move-left",
+      "pointer": ""
+    },
+    {
+      "name": "pane.move.right",
+      "category": "Extensions",
+      "kind": "iOS action",
+      "path": "docs/reference/ios-actions.md",
+      "line": 98,
+      "end": 98,
+      "url": "https://www.superlogical.com/rex/docs/reference/ios-actions#action-pane-move-right",
+      "pointer": ""
+    },
+    {
+      "name": "pane.move.up",
+      "category": "Extensions",
+      "kind": "iOS action",
+      "path": "docs/reference/ios-actions.md",
+      "line": 99,
+      "end": 99,
+      "url": "https://www.superlogical.com/rex/docs/reference/ios-actions#action-pane-move-up",
+      "pointer": ""
+    },
+    {
+      "name": "pane.move_to_new_tab",
+      "category": "Extensions",
+      "kind": "iOS action",
+      "path": "docs/reference/ios-actions.md",
+      "line": 102,
+      "end": 102,
+      "url": "https://www.superlogical.com/rex/docs/reference/ios-actions#action-pane-move-to-new-tab",
+      "pointer": ""
+    },
+    {
+      "name": "pane.move_to_tab",
+      "category": "Extensions",
+      "kind": "iOS action",
+      "path": "docs/reference/ios-actions.md",
+      "line": 107,
+      "end": 107,
+      "url": "https://www.superlogical.com/rex/docs/reference/ios-actions#action-pane-move-to-tab",
+      "pointer": ""
+    },
+    {
+      "name": "pane.new_floating",
+      "category": "Extensions",
+      "kind": "iOS action",
+      "path": "docs/reference/ios-actions.md",
+      "line": 115,
+      "end": 115,
+      "url": "https://www.superlogical.com/rex/docs/reference/ios-actions#action-pane-new-floating",
+      "pointer": ""
+    },
+    {
+      "name": "pane.paste",
+      "category": "Extensions",
+      "kind": "iOS action",
+      "path": "docs/reference/ios-actions.md",
+      "line": 118,
+      "end": 118,
+      "url": "https://www.superlogical.com/rex/docs/reference/ios-actions#action-pane-paste",
+      "pointer": ""
+    },
+    {
+      "name": "pane.rename",
+      "category": "Extensions",
+      "kind": "iOS action",
+      "path": "docs/reference/ios-actions.md",
+      "line": 111,
+      "end": 111,
+      "url": "https://www.superlogical.com/rex/docs/reference/ios-actions#action-pane-rename",
+      "pointer": ""
+    },
+    {
+      "name": "pane.resize",
+      "category": "Extensions",
+      "kind": "iOS action",
+      "path": "docs/reference/ios-actions.md",
+      "line": 113,
+      "end": 113,
+      "url": "https://www.superlogical.com/rex/docs/reference/ios-actions#action-pane-resize",
+      "pointer": ""
+    },
+    {
+      "name": "pane.select_all",
+      "category": "Extensions",
+      "kind": "iOS action",
+      "path": "docs/reference/ios-actions.md",
+      "line": 120,
+      "end": 120,
+      "url": "https://www.superlogical.com/rex/docs/reference/ios-actions#action-pane-select-all",
+      "pointer": ""
+    },
+    {
+      "name": "pane.send_key",
+      "category": "Extensions",
+      "kind": "iOS action",
+      "path": "docs/reference/ios-actions.md",
+      "line": 121,
+      "end": 121,
+      "url": "https://www.superlogical.com/rex/docs/reference/ios-actions#action-pane-send-key",
+      "pointer": ""
+    },
+    {
+      "name": "pane.split",
+      "category": "Extensions",
+      "kind": "iOS action",
+      "path": "docs/reference/ios-actions.md",
+      "line": 104,
+      "end": 104,
+      "url": "https://www.superlogical.com/rex/docs/reference/ios-actions#action-pane-split",
+      "pointer": ""
+    },
+    {
+      "name": "pane.split.auto",
+      "category": "Extensions",
+      "kind": "iOS action",
+      "path": "docs/reference/ios-actions.md",
+      "line": 105,
+      "end": 105,
+      "url": "https://www.superlogical.com/rex/docs/reference/ios-actions#action-pane-split-auto",
+      "pointer": ""
+    },
+    {
+      "name": "pane.split.down",
+      "category": "Extensions",
+      "kind": "iOS action",
+      "path": "docs/reference/ios-actions.md",
+      "line": 90,
+      "end": 90,
+      "url": "https://www.superlogical.com/rex/docs/reference/ios-actions#action-pane-split-down",
+      "pointer": ""
+    },
+    {
+      "name": "pane.split.left",
+      "category": "Extensions",
+      "kind": "iOS action",
+      "path": "docs/reference/ios-actions.md",
+      "line": 87,
+      "end": 87,
+      "url": "https://www.superlogical.com/rex/docs/reference/ios-actions#action-pane-split-left",
+      "pointer": ""
+    },
+    {
+      "name": "pane.split.right",
+      "category": "Extensions",
+      "kind": "iOS action",
+      "path": "docs/reference/ios-actions.md",
+      "line": 88,
+      "end": 88,
+      "url": "https://www.superlogical.com/rex/docs/reference/ios-actions#action-pane-split-right",
+      "pointer": ""
+    },
+    {
+      "name": "pane.split.up",
+      "category": "Extensions",
+      "kind": "iOS action",
+      "path": "docs/reference/ios-actions.md",
+      "line": 89,
+      "end": 89,
+      "url": "https://www.superlogical.com/rex/docs/reference/ios-actions#action-pane-split-up",
+      "pointer": ""
+    },
+    {
+      "name": "pane.view_activity",
+      "category": "Extensions",
+      "kind": "iOS action",
+      "path": "docs/reference/ios-actions.md",
+      "line": 127,
+      "end": 127,
+      "url": "https://www.superlogical.com/rex/docs/reference/ios-actions#action-pane-view-activity",
+      "pointer": ""
+    },
+    {
+      "name": "pane.zoom",
+      "category": "Extensions",
+      "kind": "iOS action",
+      "path": "docs/reference/ios-actions.md",
+      "line": 101,
+      "end": 101,
+      "url": "https://www.superlogical.com/rex/docs/reference/ios-actions#action-pane-zoom",
+      "pointer": ""
+    },
+    {
+      "name": "session.close",
+      "category": "Extensions",
+      "kind": "iOS action",
+      "path": "docs/reference/ios-actions.md",
+      "line": 56,
+      "end": 56,
+      "url": "https://www.superlogical.com/rex/docs/reference/ios-actions#action-session-close",
+      "pointer": ""
+    },
+    {
+      "name": "session.new",
+      "category": "Extensions",
+      "kind": "iOS action",
+      "path": "docs/reference/ios-actions.md",
+      "line": 51,
+      "end": 51,
+      "url": "https://www.superlogical.com/rex/docs/reference/ios-actions#action-session-new",
+      "pointer": ""
+    },
+    {
+      "name": "session.next",
+      "category": "Extensions",
+      "kind": "iOS action",
+      "path": "docs/reference/ios-actions.md",
+      "line": 53,
+      "end": 53,
+      "url": "https://www.superlogical.com/rex/docs/reference/ios-actions#action-session-next",
+      "pointer": ""
+    },
+    {
+      "name": "session.previous",
+      "category": "Extensions",
+      "kind": "iOS action",
+      "path": "docs/reference/ios-actions.md",
+      "line": 54,
+      "end": 54,
+      "url": "https://www.superlogical.com/rex/docs/reference/ios-actions#action-session-previous",
+      "pointer": ""
+    },
+    {
+      "name": "session.refresh",
+      "category": "Extensions",
+      "kind": "iOS action",
+      "path": "docs/reference/ios-actions.md",
+      "line": 57,
+      "end": 57,
+      "url": "https://www.superlogical.com/rex/docs/reference/ios-actions#action-session-refresh",
+      "pointer": ""
+    },
+    {
+      "name": "session.rename",
+      "category": "Extensions",
+      "kind": "iOS action",
+      "path": "docs/reference/ios-actions.md",
+      "line": 55,
+      "end": 55,
+      "url": "https://www.superlogical.com/rex/docs/reference/ios-actions#action-session-rename",
+      "pointer": ""
+    },
+    {
+      "name": "session.select",
+      "category": "Extensions",
+      "kind": "iOS action",
+      "path": "docs/reference/ios-actions.md",
+      "line": 52,
+      "end": 52,
+      "url": "https://www.superlogical.com/rex/docs/reference/ios-actions#action-session-select",
+      "pointer": ""
+    },
+    {
+      "name": "session.switch",
+      "category": "Extensions",
+      "kind": "iOS action",
+      "path": "docs/reference/ios-actions.md",
+      "line": 58,
+      "end": 58,
+      "url": "https://www.superlogical.com/rex/docs/reference/ios-actions#action-session-switch",
+      "pointer": ""
+    },
+    {
+      "name": "Application source and redistribution terms",
+      "category": "Gaps",
+      "kind": "Unresolved contract",
+      "path": "README.md",
+      "line": 18,
+      "end": 18,
+      "url": "https://pkgs.superlogical.com/rex/nix/preview/0.1.0-preview.15.tar.gz",
+      "pointer": ""
+    },
+    {
+      "name": "Graphical block renderer SDK",
+      "category": "Gaps",
+      "kind": "Unresolved contract",
+      "path": "README.md",
+      "line": 79,
+      "end": 79,
+      "url": "https://www.superlogical.com/rex/docs/reference/api",
+      "pointer": ""
+    },
+    {
+      "name": "Plugin executable ABI",
+      "category": "Gaps",
+      "kind": "Unresolved contract",
+      "path": "README.md",
+      "line": 69,
+      "end": 69,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli",
+      "pointer": ""
+    },
+    {
+      "name": ".github/scripts/pack-flake.js",
+      "category": "Internals",
+      "kind": "Unretrieved source reference",
+      "path": "packaging/rex/flake.nix",
+      "line": 137,
+      "end": 137,
+      "url": "",
+      "pointer": ""
+    },
+    {
+      "name": "internal/install/units/rex.service",
+      "category": "Internals",
+      "kind": "Unretrieved source reference",
+      "path": "packaging/rex/home-manager-module.nix",
+      "line": 108,
+      "end": 108,
+      "url": "",
+      "pointer": ""
+    },
+    {
+      "name": "internal/pam/pam_dlopen.go",
+      "category": "Internals",
+      "kind": "Unretrieved source reference",
+      "path": "packaging/rex/flake.nix",
+      "line": 199,
+      "end": 199,
+      "url": "",
+      "pointer": ""
+    },
+    {
+      "name": "internal/sshconfig",
+      "category": "Internals",
+      "kind": "Unretrieved source reference",
+      "path": "packaging/rex/nixos-module.nix",
+      "line": 933,
+      "end": 933,
+      "url": "",
+      "pointer": ""
+    },
+    {
+      "name": "internal/terminfo.Lookup",
+      "category": "Internals",
+      "kind": "Unretrieved source reference",
+      "path": "packaging/rex/nixos-module.nix",
+      "line": 32,
+      "end": 32,
+      "url": "",
+      "pointer": ""
+    },
+    {
+      "name": "packaging/nfpm/nfpm.yaml",
+      "category": "Internals",
+      "kind": "Unretrieved source reference",
+      "path": "packaging/install.sh",
+      "line": 118,
+      "end": 118,
+      "url": "",
+      "pointer": ""
+    },
+    {
+      "name": "packaging/systemd/rex.service",
+      "category": "Internals",
+      "kind": "Unretrieved source reference",
+      "path": "packaging/rex/home-manager-module.nix",
+      "line": 104,
+      "end": 104,
+      "url": "",
+      "pointer": ""
+    },
+    {
+      "name": "com.superlogical.onboarding.step_changed",
+      "category": "Public",
+      "kind": "Block event",
+      "path": "runtime/block-creators.json",
+      "line": 1,
+      "end": 1,
+      "url": "https://www.superlogical.com/rex/docs/reference/events",
+      "pointer": "runtime/block-creators.json#/creators/0/api/events/step_changed"
+    },
+    {
+      "name": "com.superlogical.terminal.bell",
+      "category": "Public",
+      "kind": "Block event",
+      "path": "runtime/block-creators.json",
+      "line": 1,
+      "end": 1,
+      "url": "https://www.superlogical.com/rex/docs/reference/events",
+      "pointer": "runtime/block-creators.json#/creators/1/api/events/bell"
+    },
+    {
+      "name": "com.superlogical.terminal.child_exited",
+      "category": "Public",
+      "kind": "Block event",
+      "path": "runtime/block-creators.json",
+      "line": 1,
+      "end": 1,
+      "url": "https://www.superlogical.com/rex/docs/reference/events",
+      "pointer": "runtime/block-creators.json#/creators/1/api/events/child_exited"
+    },
+    {
+      "name": "com.superlogical.terminal.clipboard_written",
+      "category": "Public",
+      "kind": "Block event",
+      "path": "runtime/block-creators.json",
+      "line": 1,
+      "end": 1,
+      "url": "https://www.superlogical.com/rex/docs/reference/events",
+      "pointer": "runtime/block-creators.json#/creators/1/api/events/clipboard_written"
+    },
+    {
+      "name": "com.superlogical.terminal.desktop_notification",
+      "category": "Public",
+      "kind": "Block event",
+      "path": "runtime/block-creators.json",
+      "line": 1,
+      "end": 1,
+      "url": "https://www.superlogical.com/rex/docs/reference/events",
+      "pointer": "runtime/block-creators.json#/creators/1/api/events/desktop_notification"
+    },
+    {
+      "name": "com.superlogical.terminal.process_changed",
+      "category": "Public",
+      "kind": "Block event",
+      "path": "runtime/block-creators.json",
+      "line": 1,
+      "end": 1,
+      "url": "https://www.superlogical.com/rex/docs/reference/events",
+      "pointer": "runtime/block-creators.json#/creators/1/api/events/process_changed"
+    },
+    {
+      "name": "com.superlogical.terminal.program_status_changed",
+      "category": "Public",
+      "kind": "Block event",
+      "path": "runtime/block-creators.json",
+      "line": 1,
+      "end": 1,
+      "url": "https://www.superlogical.com/rex/docs/reference/events",
+      "pointer": "runtime/block-creators.json#/creators/1/api/events/program_status_changed"
+    },
+    {
+      "name": "com.superlogical.terminal.program_status_removed",
+      "category": "Public",
+      "kind": "Block event",
+      "path": "runtime/block-creators.json",
+      "line": 1,
+      "end": 1,
+      "url": "https://www.superlogical.com/rex/docs/reference/events",
+      "pointer": "runtime/block-creators.json#/creators/1/api/events/program_status_removed"
+    },
+    {
+      "name": "com.superlogical.terminal.progress_report",
+      "category": "Public",
+      "kind": "Block event",
+      "path": "runtime/block-creators.json",
+      "line": 1,
+      "end": 1,
+      "url": "https://www.superlogical.com/rex/docs/reference/events",
+      "pointer": "runtime/block-creators.json#/creators/1/api/events/progress_report"
+    },
+    {
+      "name": "com.superlogical.terminal.pwd_changed",
+      "category": "Public",
+      "kind": "Block event",
+      "path": "runtime/block-creators.json",
+      "line": 1,
+      "end": 1,
+      "url": "https://www.superlogical.com/rex/docs/reference/events",
+      "pointer": "runtime/block-creators.json#/creators/1/api/events/pwd_changed"
+    },
+    {
+      "name": "com.superlogical.terminal.selection_copied",
+      "category": "Public",
+      "kind": "Block event",
+      "path": "runtime/block-creators.json",
+      "line": 1,
+      "end": 1,
+      "url": "https://www.superlogical.com/rex/docs/reference/events",
+      "pointer": "runtime/block-creators.json#/creators/1/api/events/selection_copied"
+    },
+    {
+      "name": "com.superlogical.terminal.size_changed",
+      "category": "Public",
+      "kind": "Block event",
+      "path": "runtime/block-creators.json",
+      "line": 1,
+      "end": 1,
+      "url": "https://www.superlogical.com/rex/docs/reference/events",
+      "pointer": "runtime/block-creators.json#/creators/1/api/events/size_changed"
+    },
+    {
+      "name": "com.superlogical.terminal.title_changed",
+      "category": "Public",
+      "kind": "Block event",
+      "path": "runtime/block-creators.json",
+      "line": 1,
+      "end": 1,
+      "url": "https://www.superlogical.com/rex/docs/reference/events",
+      "pointer": "runtime/block-creators.json#/creators/1/api/events/title_changed"
+    },
+    {
+      "name": "com.superlogical.terminal.url_clicked",
+      "category": "Public",
+      "kind": "Block event",
+      "path": "runtime/block-creators.json",
+      "line": 1,
+      "end": 1,
+      "url": "https://www.superlogical.com/rex/docs/reference/events",
+      "pointer": "runtime/block-creators.json#/creators/1/api/events/url_clicked"
+    },
+    {
+      "name": "com.superlogical.onboarding.set_step",
+      "category": "Public",
+      "kind": "Block method",
+      "path": "runtime/llms.txt",
+      "line": 5081,
+      "end": 5097,
+      "url": "https://www.superlogical.com/rex/docs/automate/server-api#block-methods",
+      "pointer": "runtime/api-list.json#/block_types/0/methods/0"
+    },
+    {
+      "name": "com.superlogical.onboarding.state",
+      "category": "Public",
+      "kind": "Block method",
+      "path": "runtime/llms.txt",
+      "line": 5098,
+      "end": 5123,
+      "url": "https://www.superlogical.com/rex/docs/automate/server-api#block-methods",
+      "pointer": "runtime/api-list.json#/block_types/0/methods/1"
+    },
+    {
+      "name": "com.superlogical.terminal.blob_read",
+      "category": "Public",
+      "kind": "Block method",
+      "path": "runtime/llms.txt",
+      "line": 5124,
+      "end": 5144,
+      "url": "https://www.superlogical.com/rex/docs/automate/server-api#block-methods",
+      "pointer": "runtime/api-list.json#/block_types/1/methods/0"
+    },
+    {
+      "name": "com.superlogical.terminal.clear",
+      "category": "Public",
+      "kind": "Block method",
+      "path": "runtime/llms.txt",
+      "line": 5145,
+      "end": 5164,
+      "url": "https://www.superlogical.com/rex/docs/automate/server-api#block-methods",
+      "pointer": "runtime/api-list.json#/block_types/1/methods/1"
+    },
+    {
+      "name": "com.superlogical.terminal.clipboard_read",
+      "category": "Public",
+      "kind": "Block method",
+      "path": "runtime/llms.txt",
+      "line": 5165,
+      "end": 5185,
+      "url": "https://www.superlogical.com/rex/docs/automate/server-api#block-methods",
+      "pointer": "runtime/api-list.json#/block_types/1/methods/2"
+    },
+    {
+      "name": "com.superlogical.terminal.download_begin",
+      "category": "Public",
+      "kind": "Block method",
+      "path": "runtime/llms.txt",
+      "line": 5186,
+      "end": 5210,
+      "url": "https://www.superlogical.com/rex/docs/automate/server-api#block-methods",
+      "pointer": "runtime/api-list.json#/block_types/1/methods/3"
+    },
+    {
+      "name": "com.superlogical.terminal.format",
+      "category": "Public",
+      "kind": "Block method",
+      "path": "runtime/llms.txt",
+      "line": 5211,
+      "end": 5244,
+      "url": "https://www.superlogical.com/rex/docs/automate/server-api#block-methods",
+      "pointer": "runtime/api-list.json#/block_types/1/methods/4"
+    },
+    {
+      "name": "com.superlogical.terminal.input_mode",
+      "category": "Public",
+      "kind": "Block method",
+      "path": "runtime/llms.txt",
+      "line": 5245,
+      "end": 5262,
+      "url": "https://www.superlogical.com/rex/docs/automate/server-api#block-methods",
+      "pointer": "runtime/api-list.json#/block_types/1/methods/5"
+    },
+    {
+      "name": "com.superlogical.terminal.list_dir",
+      "category": "Public",
+      "kind": "Block method",
+      "path": "runtime/llms.txt",
+      "line": 5263,
+      "end": 5288,
+      "url": "https://www.superlogical.com/rex/docs/automate/server-api#block-methods",
+      "pointer": "runtime/api-list.json#/block_types/1/methods/6"
+    },
+    {
+      "name": "com.superlogical.terminal.modes",
+      "category": "Public",
+      "kind": "Block method",
+      "path": "runtime/llms.txt",
+      "line": 5289,
+      "end": 5310,
+      "url": "https://www.superlogical.com/rex/docs/automate/server-api#block-methods",
+      "pointer": "runtime/api-list.json#/block_types/1/methods/7"
+    },
+    {
+      "name": "com.superlogical.terminal.process",
+      "category": "Public",
+      "kind": "Block method",
+      "path": "runtime/llms.txt",
+      "line": 5311,
+      "end": 5350,
+      "url": "https://www.superlogical.com/rex/docs/automate/server-api#block-methods",
+      "pointer": "runtime/api-list.json#/block_types/1/methods/8"
+    },
+    {
+      "name": "com.superlogical.terminal.program_status",
+      "category": "Public",
+      "kind": "Block method",
+      "path": "runtime/llms.txt",
+      "line": 5351,
+      "end": 5378,
+      "url": "https://www.superlogical.com/rex/docs/automate/server-api#block-methods",
+      "pointer": "runtime/api-list.json#/block_types/1/methods/9"
+    },
+    {
+      "name": "com.superlogical.terminal.pwd",
+      "category": "Public",
+      "kind": "Block method",
+      "path": "runtime/llms.txt",
+      "line": 5379,
+      "end": 5397,
+      "url": "https://www.superlogical.com/rex/docs/automate/server-api#block-methods",
+      "pointer": "runtime/api-list.json#/block_types/1/methods/10"
+    },
+    {
+      "name": "com.superlogical.terminal.reset",
+      "category": "Public",
+      "kind": "Block method",
+      "path": "runtime/llms.txt",
+      "line": 5398,
+      "end": 5417,
+      "url": "https://www.superlogical.com/rex/docs/automate/server-api#block-methods",
+      "pointer": "runtime/api-list.json#/block_types/1/methods/11"
+    },
+    {
+      "name": "com.superlogical.terminal.resize",
+      "category": "Public",
+      "kind": "Block method",
+      "path": "runtime/llms.txt",
+      "line": 5418,
+      "end": 5436,
+      "url": "https://www.superlogical.com/rex/docs/automate/server-api#block-methods",
+      "pointer": "runtime/api-list.json#/block_types/1/methods/12"
+    },
+    {
+      "name": "com.superlogical.terminal.set_theme",
+      "category": "Public",
+      "kind": "Block method",
+      "path": "runtime/llms.txt",
+      "line": 5437,
+      "end": 5456,
+      "url": "https://www.superlogical.com/rex/docs/automate/server-api#block-methods",
+      "pointer": "runtime/api-list.json#/block_types/1/methods/13"
+    },
+    {
+      "name": "com.superlogical.terminal.size",
+      "category": "Public",
+      "kind": "Block method",
+      "path": "runtime/llms.txt",
+      "line": 5457,
+      "end": 5481,
+      "url": "https://www.superlogical.com/rex/docs/automate/server-api#block-methods",
+      "pointer": "runtime/api-list.json#/block_types/1/methods/14"
+    },
+    {
+      "name": "com.superlogical.terminal.title",
+      "category": "Public",
+      "kind": "Block method",
+      "path": "runtime/llms.txt",
+      "line": 5482,
+      "end": 5500,
+      "url": "https://www.superlogical.com/rex/docs/automate/server-api#block-methods",
+      "pointer": "runtime/api-list.json#/block_types/1/methods/15"
+    },
+    {
+      "name": "com.superlogical.terminal.upload_begin",
+      "category": "Public",
+      "kind": "Block method",
+      "path": "runtime/llms.txt",
+      "line": 5501,
+      "end": 5522,
+      "url": "https://www.superlogical.com/rex/docs/automate/server-api#block-methods",
+      "pointer": "runtime/api-list.json#/block_types/1/methods/16"
+    },
+    {
+      "name": "com.superlogical.terminal.write",
+      "category": "Public",
+      "kind": "Block method",
+      "path": "runtime/llms.txt",
+      "line": 5523,
+      "end": 5537,
+      "url": "https://www.superlogical.com/rex/docs/automate/server-api#block-methods",
+      "pointer": "runtime/api-list.json#/block_types/1/methods/17"
+    },
+    {
+      "name": "rex actions",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 875,
+      "end": 896,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-actions",
+      "pointer": ""
+    },
+    {
+      "name": "rex api",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 812,
+      "end": 826,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-api",
+      "pointer": ""
+    },
+    {
+      "name": "rex api call METHOD [ARGS]",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 827,
+      "end": 849,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-api-call-method-args",
+      "pointer": ""
+    },
+    {
+      "name": "rex api describe METHOD",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 863,
+      "end": 874,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-api-describe-method",
+      "pointer": ""
+    },
+    {
+      "name": "rex api list",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 850,
+      "end": 862,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-api-list",
+      "pointer": ""
+    },
+    {
+      "name": "rex block",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 484,
+      "end": 487,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-block",
+      "pointer": ""
+    },
+    {
+      "name": "rex block call METHOD [ARGS]",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 669,
+      "end": 693,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-block-call-method-args",
+      "pointer": ""
+    },
+    {
+      "name": "rex block capture",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 575,
+      "end": 600,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-block-capture",
+      "pointer": ""
+    },
+    {
+      "name": "rex block close BLOCK...",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 703,
+      "end": 711,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-block-close-block",
+      "pointer": ""
+    },
+    {
+      "name": "rex block focus [BLOCK]",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 515,
+      "end": 525,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-block-focus-block",
+      "pointer": ""
+    },
+    {
+      "name": "rex block inspect [BLOCK]",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 505,
+      "end": 514,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-block-inspect-block",
+      "pointer": ""
+    },
+    {
+      "name": "rex block ls",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 492,
+      "end": 504,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-block-ls",
+      "pointer": ""
+    },
+    {
+      "name": "rex block move [BLOCK] DIRECTION ANCHOR",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 623,
+      "end": 646,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-block-move-block-direction-anchor",
+      "pointer": ""
+    },
+    {
+      "name": "rex block new FLAVOR",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 488,
+      "end": 491,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-block-new-flavor",
+      "pointer": ""
+    },
+    {
+      "name": "rex block rename [BLOCK] LABEL",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 694,
+      "end": 702,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-block-rename-block-label",
+      "pointer": ""
+    },
+    {
+      "name": "rex block send [TEXT]",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 534,
+      "end": 550,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-block-send-text",
+      "pointer": ""
+    },
+    {
+      "name": "rex block send-key KEY...",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 551,
+      "end": 574,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-block-send-key-key",
+      "pointer": ""
+    },
+    {
+      "name": "rex block stream BLOCK [DATA_REF]",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 665,
+      "end": 668,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-block-stream-block-data_ref",
+      "pointer": ""
+    },
+    {
+      "name": "rex block swap BLOCK OTHER",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 647,
+      "end": 664,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-block-swap-block-other",
+      "pointer": ""
+    },
+    {
+      "name": "rex block types",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 526,
+      "end": 533,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-block-types",
+      "pointer": ""
+    },
+    {
+      "name": "rex block zoom [BLOCK]",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 601,
+      "end": 622,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-block-zoom-block",
+      "pointer": ""
+    },
+    {
+      "name": "rex capture",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 198,
+      "end": 223,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-capture",
+      "pointer": ""
+    },
+    {
+      "name": "rex client",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 712,
+      "end": 719,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-client",
+      "pointer": ""
+    },
+    {
+      "name": "rex client inspect [CLIENT]",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 743,
+      "end": 762,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-client-inspect-client",
+      "pointer": ""
+    },
+    {
+      "name": "rex client ls",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 720,
+      "end": 742,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-client-ls",
+      "pointer": ""
+    },
+    {
+      "name": "rex completion",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 1360,
+      "end": 1363,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-completion",
+      "pointer": ""
+    },
+    {
+      "name": "rex completion bash",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 1364,
+      "end": 1369,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-completion-bash",
+      "pointer": ""
+    },
+    {
+      "name": "rex completion fish",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 1376,
+      "end": 1381,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-completion-fish",
+      "pointer": ""
+    },
+    {
+      "name": "rex completion nu",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 1388,
+      "end": 1393,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-completion-nu",
+      "pointer": ""
+    },
+    {
+      "name": "rex completion powershell",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 1382,
+      "end": 1387,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-completion-powershell",
+      "pointer": ""
+    },
+    {
+      "name": "rex completion zsh",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 1370,
+      "end": 1375,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-completion-zsh",
+      "pointer": ""
+    },
+    {
+      "name": "rex config",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 1145,
+      "end": 1152,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-config",
+      "pointer": ""
+    },
+    {
+      "name": "rex config check [PATH]",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 1153,
+      "end": 1168,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-config-check-path",
+      "pointer": ""
+    },
+    {
+      "name": "rex config reload",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 1169,
+      "end": 1184,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-config-reload",
+      "pointer": ""
+    },
+    {
+      "name": "rex do (ACTION | SCRIPT | -e CODE) [KEY=VALUE...]",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 107,
+      "end": 156,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-do-action--script---e-code-keyvalue",
+      "pointer": ""
+    },
+    {
+      "name": "rex events",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 763,
+      "end": 785,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-events",
+      "pointer": ""
+    },
+    {
+      "name": "rex focus TARGET|DIRECTION",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 230,
+      "end": 252,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-focus-targetdirection",
+      "pointer": ""
+    },
+    {
+      "name": "rex home",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 1222,
+      "end": 1235,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-home",
+      "pointer": ""
+    },
+    {
+      "name": "rex home set ENDPOINT",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 1236,
+      "end": 1249,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-home-set-endpoint",
+      "pointer": ""
+    },
+    {
+      "name": "rex home unset",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 1250,
+      "end": 1257,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-home-unset",
+      "pointer": ""
+    },
+    {
+      "name": "rex hosts",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 1258,
+      "end": 1275,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-hosts",
+      "pointer": ""
+    },
+    {
+      "name": "rex hosts add LABEL ENDPOINT...",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 1290,
+      "end": 1305,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-hosts-add-label-endpoint",
+      "pointer": ""
+    },
+    {
+      "name": "rex hosts check [LABEL...]",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 1332,
+      "end": 1349,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-hosts-check-label",
+      "pointer": ""
+    },
+    {
+      "name": "rex hosts edit LABEL",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 1306,
+      "end": 1321,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-hosts-edit-label",
+      "pointer": ""
+    },
+    {
+      "name": "rex hosts list",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 1276,
+      "end": 1289,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-hosts-list",
+      "pointer": ""
+    },
+    {
+      "name": "rex hosts remove LABEL",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 1322,
+      "end": 1331,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-hosts-remove-label",
+      "pointer": ""
+    },
+    {
+      "name": "rex keymap",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 1185,
+      "end": 1203,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-keymap",
+      "pointer": ""
+    },
+    {
+      "name": "rex kill SESSION...",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 224,
+      "end": 229,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-kill-session",
+      "pointer": ""
+    },
+    {
+      "name": "rex login-server",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 1204,
+      "end": 1221,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-login-server",
+      "pointer": ""
+    },
+    {
+      "name": "rex ls",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 27,
+      "end": 36,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-ls",
+      "pointer": ""
+    },
+    {
+      "name": "rex move [BLOCK] DIRECTION ANCHOR",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 275,
+      "end": 298,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-move-block-direction-anchor",
+      "pointer": ""
+    },
+    {
+      "name": "rex new [LABEL] [-- COMMAND...]",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 14,
+      "end": 26,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-new-label----command",
+      "pointer": ""
+    },
+    {
+      "name": "rex resize [BLOCK]",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 317,
+      "end": 322,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-resize-block",
+      "pointer": ""
+    },
+    {
+      "name": "rex run [flags] -- COMMAND...",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 37,
+      "end": 72,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-run-flags----command",
+      "pointer": ""
+    },
+    {
+      "name": "rex send [TEXT]",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 157,
+      "end": 173,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-send-text",
+      "pointer": ""
+    },
+    {
+      "name": "rex send-key KEY...",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 174,
+      "end": 197,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-send-key-key",
+      "pointer": ""
+    },
+    {
+      "name": "rex server",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 897,
+      "end": 900,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-server",
+      "pointer": ""
+    },
+    {
+      "name": "rex server install [ssh://[USER@]HOST[:PORT]]",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 1084,
+      "end": 1120,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-server-install-sshuserhostport",
+      "pointer": ""
+    },
+    {
+      "name": "rex server logs",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 976,
+      "end": 992,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-server-logs",
+      "pointer": ""
+    },
+    {
+      "name": "rex server run",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 901,
+      "end": 931,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-server-run",
+      "pointer": ""
+    },
+    {
+      "name": "rex server start",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 932,
+      "end": 967,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-server-start",
+      "pointer": ""
+    },
+    {
+      "name": "rex server status",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 968,
+      "end": 975,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-server-status",
+      "pointer": ""
+    },
+    {
+      "name": "rex server stop",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 1066,
+      "end": 1083,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-server-stop",
+      "pointer": ""
+    },
+    {
+      "name": "rex server tailscale",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 993,
+      "end": 996,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-server-tailscale",
+      "pointer": ""
+    },
+    {
+      "name": "rex server tailscale login",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 1036,
+      "end": 1045,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-server-tailscale-login",
+      "pointer": ""
+    },
+    {
+      "name": "rex server tailscale logout",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 1026,
+      "end": 1035,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-server-tailscale-logout",
+      "pointer": ""
+    },
+    {
+      "name": "rex server tailscale off",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 1016,
+      "end": 1025,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-server-tailscale-off",
+      "pointer": ""
+    },
+    {
+      "name": "rex server tailscale on",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 997,
+      "end": 1015,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-server-tailscale-on",
+      "pointer": ""
+    },
+    {
+      "name": "rex server tailscale pair",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 1054,
+      "end": 1065,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-server-tailscale-pair",
+      "pointer": ""
+    },
+    {
+      "name": "rex server tailscale rename NAME",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 1046,
+      "end": 1053,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-server-tailscale-rename-name",
+      "pointer": ""
+    },
+    {
+      "name": "rex server uninstall [ssh://[USER@]HOST[:PORT]]",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 1121,
+      "end": 1144,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-server-uninstall-sshuserhostport",
+      "pointer": ""
+    },
+    {
+      "name": "rex session",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 323,
+      "end": 326,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-session",
+      "pointer": ""
+    },
+    {
+      "name": "rex session inspect [SESSION]",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 350,
+      "end": 357,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-session-inspect-session",
+      "pointer": ""
+    },
+    {
+      "name": "rex session kill SESSION...",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 385,
+      "end": 388,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-session-kill-session",
+      "pointer": ""
+    },
+    {
+      "name": "rex session ls",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 340,
+      "end": 349,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-session-ls",
+      "pointer": ""
+    },
+    {
+      "name": "rex session move [SESSION] (--before S | --after S | --index N)",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 362,
+      "end": 384,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-session-move-session---before-s----after-s----index-n",
+      "pointer": ""
+    },
+    {
+      "name": "rex session new [LABEL] [-- COMMAND...]",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 327,
+      "end": 339,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-session-new-label----command",
+      "pointer": ""
+    },
+    {
+      "name": "rex session rename [SESSION] LABEL",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 358,
+      "end": 361,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-session-rename-session-label",
+      "pointer": ""
+    },
+    {
+      "name": "rex skill",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 1509,
+      "end": 1518,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-skill",
+      "pointer": ""
+    },
+    {
+      "name": "rex skill remove",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 1557,
+      "end": 1571,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-skill-remove",
+      "pointer": ""
+    },
+    {
+      "name": "rex skill setup",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 1534,
+      "end": 1556,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-skill-setup",
+      "pointer": ""
+    },
+    {
+      "name": "rex skill show",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 1572,
+      "end": 1577,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-skill-show",
+      "pointer": ""
+    },
+    {
+      "name": "rex skill status",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 1519,
+      "end": 1533,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-skill-status",
+      "pointer": ""
+    },
+    {
+      "name": "rex split [flags] [-- COMMAND...]",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 73,
+      "end": 106,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-split-flags----command",
+      "pointer": ""
+    },
+    {
+      "name": "rex swap BLOCK OTHER",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 299,
+      "end": 316,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-swap-block-other",
+      "pointer": ""
+    },
+    {
+      "name": "rex terminfo",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 1394,
+      "end": 1401,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-terminfo",
+      "pointer": ""
+    },
+    {
+      "name": "rex terminfo host",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 1469,
+      "end": 1476,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-terminfo-host",
+      "pointer": ""
+    },
+    {
+      "name": "rex terminfo host forget HOST",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 1489,
+      "end": 1498,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-terminfo-host-forget-host",
+      "pointer": ""
+    },
+    {
+      "name": "rex terminfo host install DESTINATION [-- SSH_OPTIONS...]",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 1477,
+      "end": 1488,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-terminfo-host-install-destination----ssh_options",
+      "pointer": ""
+    },
+    {
+      "name": "rex terminfo host ls",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 1499,
+      "end": 1508,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-terminfo-host-ls",
+      "pointer": ""
+    },
+    {
+      "name": "rex terminfo remove",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 1445,
+      "end": 1462,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-terminfo-remove",
+      "pointer": ""
+    },
+    {
+      "name": "rex terminfo setup",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 1418,
+      "end": 1444,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-terminfo-setup",
+      "pointer": ""
+    },
+    {
+      "name": "rex terminfo show",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 1463,
+      "end": 1468,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-terminfo-show",
+      "pointer": ""
+    },
+    {
+      "name": "rex terminfo status",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 1402,
+      "end": 1417,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-terminfo-status",
+      "pointer": ""
+    },
+    {
+      "name": "rex version",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 1578,
+      "end": 1598,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-version",
+      "pointer": ""
+    },
+    {
+      "name": "rex wait TARGET",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 786,
+      "end": 811,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-wait-target",
+      "pointer": ""
+    },
+    {
+      "name": "rex whoami",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 1350,
+      "end": 1359,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-whoami",
+      "pointer": ""
+    },
+    {
+      "name": "rex window",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 389,
+      "end": 392,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-window",
+      "pointer": ""
+    },
+    {
+      "name": "rex window close WINDOW...",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 476,
+      "end": 483,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-window-close-window",
+      "pointer": ""
+    },
+    {
+      "name": "rex window focus [WINDOW|next|prev]",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 435,
+      "end": 445,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-window-focus-windownextprev",
+      "pointer": ""
+    },
+    {
+      "name": "rex window inspect [WINDOW]",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 426,
+      "end": 434,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-window-inspect-window",
+      "pointer": ""
+    },
+    {
+      "name": "rex window ls",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 414,
+      "end": 425,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-window-ls",
+      "pointer": ""
+    },
+    {
+      "name": "rex window move [WINDOW] (--before W | --after W | --index N) [-s SESSION]",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 446,
+      "end": 467,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-window-move-window---before-w----after-w----index-n--s-session",
+      "pointer": ""
+    },
+    {
+      "name": "rex window new [-s SESSION] [LABEL] [-- COMMAND...]",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 393,
+      "end": 413,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-window-new--s-session-label----command",
+      "pointer": ""
+    },
+    {
+      "name": "rex window rename [WINDOW] LABEL",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 468,
+      "end": 475,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-window-rename-window-label",
+      "pointer": ""
+    },
+    {
+      "name": "rex zoom [BLOCK]",
+      "category": "Public",
+      "kind": "CLI command",
+      "path": "docs/reference/cli.md",
+      "line": 253,
+      "end": 274,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli#rex-zoom-block",
+      "pointer": ""
+    },
+    {
+      "name": "block.close",
+      "category": "Public",
+      "kind": "Control method",
+      "path": "runtime/llms.txt",
+      "line": 1141,
+      "end": 1186,
+      "url": "https://www.superlogical.com/rex/docs/reference/api#blockclose",
+      "pointer": "runtime/api-list.json#/methods/0"
+    },
+    {
+      "name": "block.event",
+      "category": "Public",
+      "kind": "Control method",
+      "path": "runtime/llms.txt",
+      "line": 1187,
+      "end": 1235,
+      "url": "https://www.superlogical.com/rex/docs/reference/api#blockevent",
+      "pointer": "runtime/api-list.json#/methods/1"
+    },
+    {
+      "name": "block.method",
+      "category": "Public",
+      "kind": "Control method",
+      "path": "docs/reference/api.md",
+      "line": 59,
+      "end": 81,
+      "url": "https://www.superlogical.com/rex/docs/reference/api#blockmethod",
+      "pointer": "runtime/api-list.json#/methods/2"
+    },
+    {
+      "name": "block_creator.list",
+      "category": "Public",
+      "kind": "Control method",
+      "path": "runtime/llms.txt",
+      "line": 1236,
+      "end": 1336,
+      "url": "https://www.superlogical.com/rex/docs/reference/api#block_creatorlist",
+      "pointer": "runtime/api-list.json#/methods/3"
+    },
+    {
+      "name": "client.action",
+      "category": "Public",
+      "kind": "Control method",
+      "path": "runtime/llms.txt",
+      "line": 1337,
+      "end": 1402,
+      "url": "https://www.superlogical.com/rex/docs/reference/api#clientaction",
+      "pointer": "runtime/api-list.json#/methods/4"
+    },
+    {
+      "name": "client.inspect",
+      "category": "Public",
+      "kind": "Control method",
+      "path": "runtime/llms.txt",
+      "line": 1403,
+      "end": 1490,
+      "url": "https://www.superlogical.com/rex/docs/reference/api#clientinspect",
+      "pointer": "runtime/api-list.json#/methods/5"
+    },
+    {
+      "name": "client.key",
+      "category": "Public",
+      "kind": "Control method",
+      "path": "runtime/llms.txt",
+      "line": 1491,
+      "end": 1553,
+      "url": "https://www.superlogical.com/rex/docs/reference/api#clientkey",
+      "pointer": "runtime/api-list.json#/methods/6"
+    },
+    {
+      "name": "client.keymap",
+      "category": "Public",
+      "kind": "Control method",
+      "path": "runtime/llms.txt",
+      "line": 1554,
+      "end": 1684,
+      "url": "https://www.superlogical.com/rex/docs/reference/api#clientkeymap",
+      "pointer": "runtime/api-list.json#/methods/7"
+    },
+    {
+      "name": "client.list",
+      "category": "Public",
+      "kind": "Control method",
+      "path": "runtime/llms.txt",
+      "line": 1685,
+      "end": 1765,
+      "url": "https://www.superlogical.com/rex/docs/reference/api#clientlist",
+      "pointer": "runtime/api-list.json#/methods/8"
+    },
+    {
+      "name": "client.perform",
+      "category": "Public",
+      "kind": "Control method",
+      "path": "runtime/llms.txt",
+      "line": 1766,
+      "end": 1814,
+      "url": "https://www.superlogical.com/rex/docs/reference/api#clientperform",
+      "pointer": "runtime/api-list.json#/methods/9"
+    },
+    {
+      "name": "client.reply",
+      "category": "Public",
+      "kind": "Control method",
+      "path": "runtime/llms.txt",
+      "line": 1815,
+      "end": 1855,
+      "url": "https://www.superlogical.com/rex/docs/reference/api#clientreply",
+      "pointer": "runtime/api-list.json#/methods/10"
+    },
+    {
+      "name": "client.set_label",
+      "category": "Public",
+      "kind": "Control method",
+      "path": "runtime/llms.txt",
+      "line": 1856,
+      "end": 1889,
+      "url": "https://www.superlogical.com/rex/docs/reference/api#clientset_label",
+      "pointer": "runtime/api-list.json#/methods/11"
+    },
+    {
+      "name": "client.set_script",
+      "category": "Public",
+      "kind": "Control method",
+      "path": "runtime/llms.txt",
+      "line": 1890,
+      "end": 1944,
+      "url": "https://www.superlogical.com/rex/docs/reference/api#clientset_script",
+      "pointer": "runtime/api-list.json#/methods/12"
+    },
+    {
+      "name": "data.connect",
+      "category": "Public",
+      "kind": "Control method",
+      "path": "runtime/llms.txt",
+      "line": 1945,
+      "end": 1990,
+      "url": "https://www.superlogical.com/rex/docs/reference/api#dataconnect",
+      "pointer": "runtime/api-list.json#/methods/13"
+    },
+    {
+      "name": "help.all",
+      "category": "Public",
+      "kind": "Control method",
+      "path": "runtime/llms.txt",
+      "line": 1991,
+      "end": 2000,
+      "url": "https://www.superlogical.com/rex/docs/reference/api#helpall",
+      "pointer": "runtime/api-list.json#/methods/14"
+    },
+    {
+      "name": "hosts.list",
+      "category": "Public",
+      "kind": "Control method",
+      "path": "runtime/llms.txt",
+      "line": 2001,
+      "end": 2068,
+      "url": "https://www.superlogical.com/rex/docs/reference/api#hostslist",
+      "pointer": "runtime/api-list.json#/methods/15"
+    },
+    {
+      "name": "hosts.put",
+      "category": "Public",
+      "kind": "Control method",
+      "path": "runtime/llms.txt",
+      "line": 2069,
+      "end": 2129,
+      "url": "https://www.superlogical.com/rex/docs/reference/api#hostsput",
+      "pointer": "runtime/api-list.json#/methods/16"
+    },
+    {
+      "name": "hosts.remove",
+      "category": "Public",
+      "kind": "Control method",
+      "path": "runtime/llms.txt",
+      "line": 2130,
+      "end": 2164,
+      "url": "https://www.superlogical.com/rex/docs/reference/api#hostsremove",
+      "pointer": "runtime/api-list.json#/methods/17"
+    },
+    {
+      "name": "server.apple.grant_file_access",
+      "category": "Public",
+      "kind": "Control method",
+      "path": "runtime/llms.txt",
+      "line": 2165,
+      "end": 2212,
+      "url": "https://www.superlogical.com/rex/docs/reference/api#serverapplegrant_file_access",
+      "pointer": "runtime/api-list.json#/methods/18"
+    },
+    {
+      "name": "server.apple.privacy_status",
+      "category": "Public",
+      "kind": "Control method",
+      "path": "runtime/llms.txt",
+      "line": 2213,
+      "end": 2250,
+      "url": "https://www.superlogical.com/rex/docs/reference/api#serverappleprivacy_status",
+      "pointer": "runtime/api-list.json#/methods/19"
+    },
+    {
+      "name": "server.config_reload",
+      "category": "Public",
+      "kind": "Control method",
+      "path": "runtime/llms.txt",
+      "line": 2251,
+      "end": 2291,
+      "url": "https://www.superlogical.com/rex/docs/reference/api#serverconfig_reload",
+      "pointer": "runtime/api-list.json#/methods/20"
+    },
+    {
+      "name": "server.status",
+      "category": "Public",
+      "kind": "Control method",
+      "path": "runtime/llms.txt",
+      "line": 2292,
+      "end": 2370,
+      "url": "https://www.superlogical.com/rex/docs/reference/api#serverstatus",
+      "pointer": "runtime/api-list.json#/methods/21"
+    },
+    {
+      "name": "server.stop",
+      "category": "Public",
+      "kind": "Control method",
+      "path": "runtime/llms.txt",
+      "line": 2371,
+      "end": 2404,
+      "url": "https://www.superlogical.com/rex/docs/reference/api#serverstop",
+      "pointer": "runtime/api-list.json#/methods/22"
+    },
+    {
+      "name": "server.tailscale.disable",
+      "category": "Public",
+      "kind": "Control method",
+      "path": "runtime/llms.txt",
+      "line": 2405,
+      "end": 2448,
+      "url": "https://www.superlogical.com/rex/docs/reference/api#servertailscaledisable",
+      "pointer": "runtime/api-list.json#/methods/23"
+    },
+    {
+      "name": "server.tailscale.enable",
+      "category": "Public",
+      "kind": "Control method",
+      "path": "runtime/llms.txt",
+      "line": 2449,
+      "end": 2514,
+      "url": "https://www.superlogical.com/rex/docs/reference/api#servertailscaleenable",
+      "pointer": "runtime/api-list.json#/methods/24"
+    },
+    {
+      "name": "server.tailscale.login",
+      "category": "Public",
+      "kind": "Control method",
+      "path": "runtime/llms.txt",
+      "line": 2515,
+      "end": 2563,
+      "url": "https://www.superlogical.com/rex/docs/reference/api#servertailscalelogin",
+      "pointer": "runtime/api-list.json#/methods/25"
+    },
+    {
+      "name": "server.tailscale.logout",
+      "category": "Public",
+      "kind": "Control method",
+      "path": "runtime/llms.txt",
+      "line": 2564,
+      "end": 2607,
+      "url": "https://www.superlogical.com/rex/docs/reference/api#servertailscalelogout",
+      "pointer": "runtime/api-list.json#/methods/26"
+    },
+    {
+      "name": "server.tailscale.rename",
+      "category": "Public",
+      "kind": "Control method",
+      "path": "runtime/llms.txt",
+      "line": 2608,
+      "end": 2663,
+      "url": "https://www.superlogical.com/rex/docs/reference/api#servertailscalerename",
+      "pointer": "runtime/api-list.json#/methods/27"
+    },
+    {
+      "name": "server.version",
+      "category": "Public",
+      "kind": "Control method",
+      "path": "runtime/llms.txt",
+      "line": 2664,
+      "end": 2697,
+      "url": "https://www.superlogical.com/rex/docs/reference/api#serverversion",
+      "pointer": "runtime/api-list.json#/methods/28"
+    },
+    {
+      "name": "server.whoami",
+      "category": "Public",
+      "kind": "Control method",
+      "path": "runtime/llms.txt",
+      "line": 2698,
+      "end": 2745,
+      "url": "https://www.superlogical.com/rex/docs/reference/api#serverwhoami",
+      "pointer": "runtime/api-list.json#/methods/29"
+    },
+    {
+      "name": "session.attach",
+      "category": "Public",
+      "kind": "Control method",
+      "path": "runtime/llms.txt",
+      "line": 2746,
+      "end": 2846,
+      "url": "https://www.superlogical.com/rex/docs/reference/api#sessionattach",
+      "pointer": "runtime/api-list.json#/methods/30"
+    },
+    {
+      "name": "session.attach_all",
+      "category": "Public",
+      "kind": "Control method",
+      "path": "runtime/llms.txt",
+      "line": 2847,
+      "end": 2890,
+      "url": "https://www.superlogical.com/rex/docs/reference/api#sessionattach_all",
+      "pointer": "runtime/api-list.json#/methods/31"
+    },
+    {
+      "name": "session.bootstrap",
+      "category": "Public",
+      "kind": "Control method",
+      "path": "runtime/llms.txt",
+      "line": 2891,
+      "end": 3077,
+      "url": "https://www.superlogical.com/rex/docs/reference/api#sessionbootstrap",
+      "pointer": "runtime/api-list.json#/methods/32"
+    },
+    {
+      "name": "session.close_layer",
+      "category": "Public",
+      "kind": "Control method",
+      "path": "runtime/llms.txt",
+      "line": 3078,
+      "end": 3116,
+      "url": "https://www.superlogical.com/rex/docs/reference/api#sessionclose_layer",
+      "pointer": "runtime/api-list.json#/methods/33"
+    },
+    {
+      "name": "session.close_window",
+      "category": "Public",
+      "kind": "Control method",
+      "path": "runtime/llms.txt",
+      "line": 3117,
+      "end": 3154,
+      "url": "https://www.superlogical.com/rex/docs/reference/api#sessionclose_window",
+      "pointer": "runtime/api-list.json#/methods/34"
+    },
+    {
+      "name": "session.create",
+      "category": "Public",
+      "kind": "Control method",
+      "path": "runtime/llms.txt",
+      "line": 3155,
+      "end": 3216,
+      "url": "https://www.superlogical.com/rex/docs/reference/api#sessioncreate",
+      "pointer": "runtime/api-list.json#/methods/35"
+    },
+    {
+      "name": "session.describe_block",
+      "category": "Public",
+      "kind": "Control method",
+      "path": "runtime/llms.txt",
+      "line": 3217,
+      "end": 3299,
+      "url": "https://www.superlogical.com/rex/docs/reference/api#sessiondescribe_block",
+      "pointer": "runtime/api-list.json#/methods/36"
+    },
+    {
+      "name": "session.destroy",
+      "category": "Public",
+      "kind": "Control method",
+      "path": "runtime/llms.txt",
+      "line": 3300,
+      "end": 3332,
+      "url": "https://www.superlogical.com/rex/docs/reference/api#sessiondestroy",
+      "pointer": "runtime/api-list.json#/methods/37"
+    },
+    {
+      "name": "session.detach",
+      "category": "Public",
+      "kind": "Control method",
+      "path": "runtime/llms.txt",
+      "line": 3333,
+      "end": 3366,
+      "url": "https://www.superlogical.com/rex/docs/reference/api#sessiondetach",
+      "pointer": "runtime/api-list.json#/methods/38"
+    },
+    {
+      "name": "session.detach_block",
+      "category": "Public",
+      "kind": "Control method",
+      "path": "runtime/llms.txt",
+      "line": 3367,
+      "end": 3406,
+      "url": "https://www.superlogical.com/rex/docs/reference/api#sessiondetach_block",
+      "pointer": "runtime/api-list.json#/methods/39"
+    },
+    {
+      "name": "session.disown_block",
+      "category": "Public",
+      "kind": "Control method",
+      "path": "runtime/llms.txt",
+      "line": 3407,
+      "end": 3454,
+      "url": "https://www.superlogical.com/rex/docs/reference/api#sessiondisown_block",
+      "pointer": "runtime/api-list.json#/methods/40"
+    },
+    {
+      "name": "session.float_block",
+      "category": "Public",
+      "kind": "Control method",
+      "path": "runtime/llms.txt",
+      "line": 3455,
+      "end": 3504,
+      "url": "https://www.superlogical.com/rex/docs/reference/api#sessionfloat_block",
+      "pointer": "runtime/api-list.json#/methods/41"
+    },
+    {
+      "name": "session.focus_block",
+      "category": "Public",
+      "kind": "Control method",
+      "path": "runtime/llms.txt",
+      "line": 3505,
+      "end": 3541,
+      "url": "https://www.superlogical.com/rex/docs/reference/api#sessionfocus_block",
+      "pointer": "runtime/api-list.json#/methods/42"
+    },
+    {
+      "name": "session.focus_direction",
+      "category": "Public",
+      "kind": "Control method",
+      "path": "runtime/llms.txt",
+      "line": 3542,
+      "end": 3580,
+      "url": "https://www.superlogical.com/rex/docs/reference/api#sessionfocus_direction",
+      "pointer": "runtime/api-list.json#/methods/43"
+    },
+    {
+      "name": "session.focus_next_pane",
+      "category": "Public",
+      "kind": "Control method",
+      "path": "runtime/llms.txt",
+      "line": 3581,
+      "end": 3617,
+      "url": "https://www.superlogical.com/rex/docs/reference/api#sessionfocus_next_pane",
+      "pointer": "runtime/api-list.json#/methods/44"
+    },
+    {
+      "name": "session.focus_next_window",
+      "category": "Public",
+      "kind": "Control method",
+      "path": "runtime/llms.txt",
+      "line": 3618,
+      "end": 3655,
+      "url": "https://www.superlogical.com/rex/docs/reference/api#sessionfocus_next_window",
+      "pointer": "runtime/api-list.json#/methods/45"
+    },
+    {
+      "name": "session.focus_previous_pane",
+      "category": "Public",
+      "kind": "Control method",
+      "path": "runtime/llms.txt",
+      "line": 3656,
+      "end": 3692,
+      "url": "https://www.superlogical.com/rex/docs/reference/api#sessionfocus_previous_pane",
+      "pointer": "runtime/api-list.json#/methods/46"
+    },
+    {
+      "name": "session.focus_previous_window",
+      "category": "Public",
+      "kind": "Control method",
+      "path": "runtime/llms.txt",
+      "line": 3693,
+      "end": 3730,
+      "url": "https://www.superlogical.com/rex/docs/reference/api#sessionfocus_previous_window",
+      "pointer": "runtime/api-list.json#/methods/47"
+    },
+    {
+      "name": "session.focus_window",
+      "category": "Public",
+      "kind": "Control method",
+      "path": "runtime/llms.txt",
+      "line": 3731,
+      "end": 3766,
+      "url": "https://www.superlogical.com/rex/docs/reference/api#sessionfocus_window",
+      "pointer": "runtime/api-list.json#/methods/48"
+    },
+    {
+      "name": "session.help",
+      "category": "Public",
+      "kind": "Control method",
+      "path": "runtime/llms.txt",
+      "line": 3767,
+      "end": 3787,
+      "url": "https://www.superlogical.com/rex/docs/reference/api#sessionhelp",
+      "pointer": "runtime/api-list.json#/methods/49"
+    },
+    {
+      "name": "session.list",
+      "category": "Public",
+      "kind": "Control method",
+      "path": "runtime/llms.txt",
+      "line": 3788,
+      "end": 3818,
+      "url": "https://www.superlogical.com/rex/docs/reference/api#sessionlist",
+      "pointer": "runtime/api-list.json#/methods/50"
+    },
+    {
+      "name": "session.list_blocks",
+      "category": "Public",
+      "kind": "Control method",
+      "path": "runtime/llms.txt",
+      "line": 3819,
+      "end": 3879,
+      "url": "https://www.superlogical.com/rex/docs/reference/api#sessionlist_blocks",
+      "pointer": "runtime/api-list.json#/methods/51"
+    },
+    {
+      "name": "session.list_clients",
+      "category": "Public",
+      "kind": "Control method",
+      "path": "runtime/llms.txt",
+      "line": 3880,
+      "end": 3955,
+      "url": "https://www.superlogical.com/rex/docs/reference/api#sessionlist_clients",
+      "pointer": "runtime/api-list.json#/methods/52"
+    },
+    {
+      "name": "session.lower_layer",
+      "category": "Public",
+      "kind": "Control method",
+      "path": "runtime/llms.txt",
+      "line": 3956,
+      "end": 3992,
+      "url": "https://www.superlogical.com/rex/docs/reference/api#sessionlower_layer",
+      "pointer": "runtime/api-list.json#/methods/53"
+    },
+    {
+      "name": "session.move",
+      "category": "Public",
+      "kind": "Control method",
+      "path": "runtime/llms.txt",
+      "line": 3993,
+      "end": 4028,
+      "url": "https://www.superlogical.com/rex/docs/reference/api#sessionmove",
+      "pointer": "runtime/api-list.json#/methods/54"
+    },
+    {
+      "name": "session.move_block",
+      "category": "Public",
+      "kind": "Control method",
+      "path": "runtime/llms.txt",
+      "line": 4029,
+      "end": 4081,
+      "url": "https://www.superlogical.com/rex/docs/reference/api#sessionmove_block",
+      "pointer": "runtime/api-list.json#/methods/55"
+    },
+    {
+      "name": "session.move_window",
+      "category": "Public",
+      "kind": "Control method",
+      "path": "runtime/llms.txt",
+      "line": 4082,
+      "end": 4120,
+      "url": "https://www.superlogical.com/rex/docs/reference/api#sessionmove_window",
+      "pointer": "runtime/api-list.json#/methods/56"
+    },
+    {
+      "name": "session.new_block",
+      "category": "Public",
+      "kind": "Control method",
+      "path": "runtime/llms.txt",
+      "line": 4121,
+      "end": 4163,
+      "url": "https://www.superlogical.com/rex/docs/reference/api#sessionnew_block",
+      "pointer": "runtime/api-list.json#/methods/57"
+    },
+    {
+      "name": "session.new_layer",
+      "category": "Public",
+      "kind": "Control method",
+      "path": "runtime/llms.txt",
+      "line": 4164,
+      "end": 4226,
+      "url": "https://www.superlogical.com/rex/docs/reference/api#sessionnew_layer",
+      "pointer": "runtime/api-list.json#/methods/58"
+    },
+    {
+      "name": "session.new_split",
+      "category": "Public",
+      "kind": "Control method",
+      "path": "runtime/llms.txt",
+      "line": 4227,
+      "end": 4293,
+      "url": "https://www.superlogical.com/rex/docs/reference/api#sessionnew_split",
+      "pointer": "runtime/api-list.json#/methods/59"
+    },
+    {
+      "name": "session.new_window",
+      "category": "Public",
+      "kind": "Control method",
+      "path": "runtime/llms.txt",
+      "line": 4294,
+      "end": 4362,
+      "url": "https://www.superlogical.com/rex/docs/reference/api#sessionnew_window",
+      "pointer": "runtime/api-list.json#/methods/60"
+    },
+    {
+      "name": "session.own_block",
+      "category": "Public",
+      "kind": "Control method",
+      "path": "runtime/llms.txt",
+      "line": 4363,
+      "end": 4415,
+      "url": "https://www.superlogical.com/rex/docs/reference/api#sessionown_block",
+      "pointer": "runtime/api-list.json#/methods/61"
+    },
+    {
+      "name": "session.raise_layer",
+      "category": "Public",
+      "kind": "Control method",
+      "path": "runtime/llms.txt",
+      "line": 4416,
+      "end": 4451,
+      "url": "https://www.superlogical.com/rex/docs/reference/api#sessionraise_layer",
+      "pointer": "runtime/api-list.json#/methods/62"
+    },
+    {
+      "name": "session.resize_layer",
+      "category": "Public",
+      "kind": "Control method",
+      "path": "runtime/llms.txt",
+      "line": 4452,
+      "end": 4492,
+      "url": "https://www.superlogical.com/rex/docs/reference/api#sessionresize_layer",
+      "pointer": "runtime/api-list.json#/methods/63"
+    },
+    {
+      "name": "session.resize_pane",
+      "category": "Public",
+      "kind": "Control method",
+      "path": "runtime/llms.txt",
+      "line": 4493,
+      "end": 4535,
+      "url": "https://www.superlogical.com/rex/docs/reference/api#sessionresize_pane",
+      "pointer": "runtime/api-list.json#/methods/64"
+    },
+    {
+      "name": "session.set_block_label",
+      "category": "Public",
+      "kind": "Control method",
+      "path": "runtime/llms.txt",
+      "line": 4536,
+      "end": 4573,
+      "url": "https://www.superlogical.com/rex/docs/reference/api#sessionset_block_label",
+      "pointer": "runtime/api-list.json#/methods/65"
+    },
+    {
+      "name": "session.set_label",
+      "category": "Public",
+      "kind": "Control method",
+      "path": "runtime/llms.txt",
+      "line": 4574,
+      "end": 4607,
+      "url": "https://www.superlogical.com/rex/docs/reference/api#sessionset_label",
+      "pointer": "runtime/api-list.json#/methods/66"
+    },
+    {
+      "name": "session.set_layer_state",
+      "category": "Public",
+      "kind": "Control method",
+      "path": "runtime/llms.txt",
+      "line": 4608,
+      "end": 4651,
+      "url": "https://www.superlogical.com/rex/docs/reference/api#sessionset_layer_state",
+      "pointer": "runtime/api-list.json#/methods/67"
+    },
+    {
+      "name": "session.set_window_label",
+      "category": "Public",
+      "kind": "Control method",
+      "path": "runtime/llms.txt",
+      "line": 4652,
+      "end": 4688,
+      "url": "https://www.superlogical.com/rex/docs/reference/api#sessionset_window_label",
+      "pointer": "runtime/api-list.json#/methods/68"
+    },
+    {
+      "name": "session.swap_blocks",
+      "category": "Public",
+      "kind": "Control method",
+      "path": "runtime/llms.txt",
+      "line": 4689,
+      "end": 4728,
+      "url": "https://www.superlogical.com/rex/docs/reference/api#sessionswap_blocks",
+      "pointer": "runtime/api-list.json#/methods/69"
+    },
+    {
+      "name": "session.view",
+      "category": "Public",
+      "kind": "Control method",
+      "path": "runtime/llms.txt",
+      "line": 4729,
+      "end": 4844,
+      "url": "https://www.superlogical.com/rex/docs/reference/api#sessionview",
+      "pointer": "runtime/api-list.json#/methods/70"
+    },
+    {
+      "name": "session.zoom_block",
+      "category": "Public",
+      "kind": "Control method",
+      "path": "runtime/llms.txt",
+      "line": 4845,
+      "end": 4891,
+      "url": "https://www.superlogical.com/rex/docs/reference/api#sessionzoom_block",
+      "pointer": "runtime/api-list.json#/methods/71"
+    },
+    {
+      "name": "target.complete",
+      "category": "Public",
+      "kind": "Control method",
+      "path": "runtime/llms.txt",
+      "line": 4892,
+      "end": 4976,
+      "url": "https://www.superlogical.com/rex/docs/reference/api#targetcomplete",
+      "pointer": "runtime/api-list.json#/methods/72"
+    },
+    {
+      "name": "target.resolve",
+      "category": "Public",
+      "kind": "Control method",
+      "path": "runtime/llms.txt",
+      "line": 4977,
+      "end": 5080,
+      "url": "https://www.superlogical.com/rex/docs/reference/api#targetresolve",
+      "pointer": "runtime/api-list.json#/methods/73"
+    },
+    {
+      "name": "Agents",
+      "category": "Public",
+      "kind": "Documentation",
+      "path": "docs/automate/agent-skill.md",
+      "line": 1,
+      "end": 181,
+      "url": "https://www.superlogical.com/rex/docs/automate/agent-skill",
+      "pointer": ""
+    },
+    {
+      "name": "CLI Commands",
+      "category": "Public",
+      "kind": "Documentation",
+      "path": "docs/reference/cli.md",
+      "line": 1,
+      "end": 1598,
+      "url": "https://www.superlogical.com/rex/docs/reference/cli",
+      "pointer": ""
+    },
+    {
+      "name": "Community MCP",
+      "category": "Public",
+      "kind": "Documentation",
+      "path": "docs/beta/community-mcp.md",
+      "line": 1,
+      "end": 23,
+      "url": "https://www.superlogical.com/rex/docs/beta/community-mcp",
+      "pointer": ""
+    },
+    {
+      "name": "Events",
+      "category": "Public",
+      "kind": "Documentation",
+      "path": "docs/reference/events.md",
+      "line": 1,
+      "end": 166,
+      "url": "https://www.superlogical.com/rex/docs/reference/events",
+      "pointer": ""
+    },
+    {
+      "name": "Mac Settings",
+      "category": "Public",
+      "kind": "Documentation",
+      "path": "docs/reference/mac-settings.md",
+      "line": 1,
+      "end": 443,
+      "url": "https://www.superlogical.com/rex/docs/reference/mac-settings",
+      "pointer": ""
+    },
+    {
+      "name": "Privacy & Telemetry",
+      "category": "Public",
+      "kind": "Documentation",
+      "path": "docs/reference/privacy.md",
+      "line": 1,
+      "end": 145,
+      "url": "https://www.superlogical.com/rex/docs/reference/privacy",
+      "pointer": ""
+    },
+    {
+      "name": "Program Status Protocol",
+      "category": "Public",
+      "kind": "Documentation",
+      "path": "docs/build/program-status.md",
+      "line": 1,
+      "end": 321,
+      "url": "https://www.superlogical.com/rex/docs/build/program-status",
+      "pointer": ""
+    },
+    {
+      "name": "Server API",
+      "category": "Public",
+      "kind": "Documentation",
+      "path": "docs/automate/server-api.md",
+      "line": 1,
+      "end": 253,
+      "url": "https://www.superlogical.com/rex/docs/automate/server-api",
+      "pointer": ""
+    },
+    {
+      "name": "Server API Methods",
+      "category": "Public",
+      "kind": "Documentation",
+      "path": "docs/reference/api.md",
+      "line": 1,
+      "end": 1552,
+      "url": "https://www.superlogical.com/rex/docs/reference/api",
+      "pointer": ""
+    },
+    {
+      "name": "Shell Scripting",
+      "category": "Public",
+      "kind": "Documentation",
+      "path": "docs/automate/shell-scripting.md",
+      "line": 1,
+      "end": 238,
+      "url": "https://www.superlogical.com/rex/docs/automate/shell-scripting",
+      "pointer": ""
+    },
+    {
+      "name": "The CLI",
+      "category": "Public",
+      "kind": "Documentation",
+      "path": "docs/automate/cli.md",
+      "line": 1,
+      "end": 193,
+      "url": "https://www.superlogical.com/rex/docs/automate/cli",
+      "pointer": ""
+    },
+    {
+      "name": "iOS Settings",
+      "category": "Public",
+      "kind": "Documentation",
+      "path": "docs/reference/ios-settings.md",
+      "line": 1,
+      "end": 76,
+      "url": "https://www.superlogical.com/rex/docs/reference/ios-settings",
+      "pointer": ""
+    },
+    {
+      "name": "GET /api/control",
+      "category": "Public",
+      "kind": "HTTP endpoint",
+      "path": "runtime/llms.txt",
+      "line": 184,
+      "end": 184,
+      "url": "https://www.superlogical.com/rex/docs/automate/server-api",
+      "pointer": ""
+    },
+    {
+      "name": "GET /api/data",
+      "category": "Public",
+      "kind": "HTTP endpoint",
+      "path": "runtime/llms.txt",
+      "line": 539,
+      "end": 539,
+      "url": "https://www.superlogical.com/rex/docs/automate/server-api",
+      "pointer": ""
+    },
+    {
+      "name": "GET /api/help",
+      "category": "Public",
+      "kind": "HTTP endpoint",
+      "path": "runtime/llms.txt",
+      "line": 41,
+      "end": 41,
+      "url": "https://www.superlogical.com/rex/docs/automate/server-api",
+      "pointer": ""
+    },
+    {
+      "name": "GET /llms.html",
+      "category": "Public",
+      "kind": "HTTP endpoint",
+      "path": "runtime/llms.txt",
+      "line": 41,
+      "end": 41,
+      "url": "https://www.superlogical.com/rex/docs/automate/server-api",
+      "pointer": ""
+    },
+    {
+      "name": "GET /llms.txt",
+      "category": "Public",
+      "kind": "HTTP endpoint",
+      "path": "runtime/llms.txt",
+      "line": 41,
+      "end": 41,
+      "url": "https://www.superlogical.com/rex/docs/automate/server-api",
+      "pointer": ""
+    },
+    {
+      "name": "active_window_changed",
+      "category": "Public",
+      "kind": "Server/session event",
+      "path": "runtime/llms.txt",
+      "line": 971,
+      "end": 978,
+      "url": "https://www.superlogical.com/rex/docs/reference/events",
+      "pointer": ""
+    },
+    {
+      "name": "block_closed",
+      "category": "Public",
+      "kind": "Server/session event",
+      "path": "runtime/llms.txt",
+      "line": 979,
+      "end": 986,
+      "url": "https://www.superlogical.com/rex/docs/reference/events",
+      "pointer": ""
+    },
+    {
+      "name": "block_created",
+      "category": "Public",
+      "kind": "Server/session event",
+      "path": "runtime/llms.txt",
+      "line": 987,
+      "end": 994,
+      "url": "https://www.superlogical.com/rex/docs/reference/events",
+      "pointer": ""
+    },
+    {
+      "name": "block_event",
+      "category": "Public",
+      "kind": "Server/session event",
+      "path": "runtime/llms.txt",
+      "line": 995,
+      "end": 1005,
+      "url": "https://www.superlogical.com/rex/docs/reference/events",
+      "pointer": ""
+    },
+    {
+      "name": "block_owner_changed",
+      "category": "Public",
+      "kind": "Server/session event",
+      "path": "runtime/llms.txt",
+      "line": 1006,
+      "end": 1016,
+      "url": "https://www.superlogical.com/rex/docs/reference/events",
+      "pointer": ""
+    },
+    {
+      "name": "client_call_requested",
+      "category": "Public",
+      "kind": "Server/session event",
+      "path": "runtime/llms.txt",
+      "line": 742,
+      "end": 752,
+      "url": "https://www.superlogical.com/rex/docs/reference/events",
+      "pointer": ""
+    },
+    {
+      "name": "client_changed",
+      "category": "Public",
+      "kind": "Server/session event",
+      "path": "runtime/llms.txt",
+      "line": 753,
+      "end": 785,
+      "url": "https://www.superlogical.com/rex/docs/reference/events",
+      "pointer": ""
+    },
+    {
+      "name": "client_connected",
+      "category": "Public",
+      "kind": "Server/session event",
+      "path": "runtime/llms.txt",
+      "line": 1017,
+      "end": 1039,
+      "url": "https://www.superlogical.com/rex/docs/reference/events",
+      "pointer": ""
+    },
+    {
+      "name": "client_connection_changed",
+      "category": "Public",
+      "kind": "Server/session event",
+      "path": "runtime/llms.txt",
+      "line": 1040,
+      "end": 1063,
+      "url": "https://www.superlogical.com/rex/docs/reference/events",
+      "pointer": ""
+    },
+    {
+      "name": "client_disconnected",
+      "category": "Public",
+      "kind": "Server/session event",
+      "path": "runtime/llms.txt",
+      "line": 1064,
+      "end": 1085,
+      "url": "https://www.superlogical.com/rex/docs/reference/events",
+      "pointer": ""
+    },
+    {
+      "name": "client_joined",
+      "category": "Public",
+      "kind": "Server/session event",
+      "path": "runtime/llms.txt",
+      "line": 786,
+      "end": 818,
+      "url": "https://www.superlogical.com/rex/docs/reference/events",
+      "pointer": ""
+    },
+    {
+      "name": "client_left",
+      "category": "Public",
+      "kind": "Server/session event",
+      "path": "runtime/llms.txt",
+      "line": 819,
+      "end": 826,
+      "url": "https://www.superlogical.com/rex/docs/reference/events",
+      "pointer": ""
+    },
+    {
+      "name": "client_perform_requested",
+      "category": "Public",
+      "kind": "Server/session event",
+      "path": "runtime/llms.txt",
+      "line": 827,
+      "end": 861,
+      "url": "https://www.superlogical.com/rex/docs/reference/events",
+      "pointer": ""
+    },
+    {
+      "name": "client_performed",
+      "category": "Public",
+      "kind": "Server/session event",
+      "path": "runtime/llms.txt",
+      "line": 862,
+      "end": 896,
+      "url": "https://www.superlogical.com/rex/docs/reference/events",
+      "pointer": ""
+    },
+    {
+      "name": "client_script_events_dropped",
+      "category": "Public",
+      "kind": "Server/session event",
+      "path": "runtime/llms.txt",
+      "line": 897,
+      "end": 906,
+      "url": "https://www.superlogical.com/rex/docs/reference/events",
+      "pointer": ""
+    },
+    {
+      "name": "creator_changed",
+      "category": "Public",
+      "kind": "Server/session event",
+      "path": "runtime/llms.txt",
+      "line": 1086,
+      "end": 1093,
+      "url": "https://www.superlogical.com/rex/docs/reference/events",
+      "pointer": ""
+    },
+    {
+      "name": "hosts_changed",
+      "category": "Public",
+      "kind": "Server/session event",
+      "path": "runtime/llms.txt",
+      "line": 907,
+      "end": 914,
+      "url": "https://www.superlogical.com/rex/docs/reference/events",
+      "pointer": ""
+    },
+    {
+      "name": "keymap_changed",
+      "category": "Public",
+      "kind": "Server/session event",
+      "path": "runtime/llms.txt",
+      "line": 915,
+      "end": 923,
+      "url": "https://www.superlogical.com/rex/docs/reference/events",
+      "pointer": ""
+    },
+    {
+      "name": "session_created",
+      "category": "Public",
+      "kind": "Server/session event",
+      "path": "runtime/llms.txt",
+      "line": 924,
+      "end": 933,
+      "url": "https://www.superlogical.com/rex/docs/reference/events",
+      "pointer": ""
+    },
+    {
+      "name": "session_destroyed",
+      "category": "Public",
+      "kind": "Server/session event",
+      "path": "runtime/llms.txt",
+      "line": 934,
+      "end": 941,
+      "url": "https://www.superlogical.com/rex/docs/reference/events",
+      "pointer": ""
+    },
+    {
+      "name": "session_label_changed",
+      "category": "Public",
+      "kind": "Server/session event",
+      "path": "runtime/llms.txt",
+      "line": 1094,
+      "end": 1101,
+      "url": "https://www.superlogical.com/rex/docs/reference/events",
+      "pointer": ""
+    },
+    {
+      "name": "session_moved",
+      "category": "Public",
+      "kind": "Server/session event",
+      "path": "runtime/llms.txt",
+      "line": 942,
+      "end": 950,
+      "url": "https://www.superlogical.com/rex/docs/reference/events",
+      "pointer": ""
+    },
+    {
+      "name": "session_view_changed",
+      "category": "Public",
+      "kind": "Server/session event",
+      "path": "runtime/llms.txt",
+      "line": 1102,
+      "end": 1109,
+      "url": "https://www.superlogical.com/rex/docs/reference/events",
+      "pointer": ""
+    },
+    {
+      "name": "tailscale_status_changed",
+      "category": "Public",
+      "kind": "Server/session event",
+      "path": "runtime/llms.txt",
+      "line": 951,
+      "end": 970,
+      "url": "https://www.superlogical.com/rex/docs/reference/events",
+      "pointer": ""
+    },
+    {
+      "name": "window_closed",
+      "category": "Public",
+      "kind": "Server/session event",
+      "path": "runtime/llms.txt",
+      "line": 1110,
+      "end": 1117,
+      "url": "https://www.superlogical.com/rex/docs/reference/events",
+      "pointer": ""
+    },
+    {
+      "name": "window_created",
+      "category": "Public",
+      "kind": "Server/session event",
+      "path": "runtime/llms.txt",
+      "line": 1118,
+      "end": 1126,
+      "url": "https://www.superlogical.com/rex/docs/reference/events",
+      "pointer": ""
+    },
+    {
+      "name": "window_label_changed",
+      "category": "Public",
+      "kind": "Server/session event",
+      "path": "runtime/llms.txt",
+      "line": 1127,
+      "end": 1140,
+      "url": "https://www.superlogical.com/rex/docs/reference/events",
+      "pointer": ""
+    }
+  ]
+}
