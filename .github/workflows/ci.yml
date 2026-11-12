@@ -21,14 +21,42 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: Linux offline and Apple-silicon cross-build
+          - name: Linux API13 and Apple-silicon cross-build
             runner: ubuntu-24.04
+            target: x86_64-linux-musl
             zig-platform: x86_64-linux
             zig-sha256: 02aa270f183da276e5b5920b1dac44a63f1a49e55050ebde3aecc9eb82f93239
-          - name: Mac integration (Rex preview.16)
+            rex-api: 13
+            rex-commit: aa2db1b21261b479a550559fb70e2c3a66c07ba2
+            rex-archive: rex-linux-amd64.tar.gz
+            rex-sha256: 90b2429036d26f317aaac2490d014e07c9351b0b994b1329afce94b8ad4d333c
+          - name: Mac API10 (Rex preview.13)
             runner: macos-26
+            target: aarch64-macos
             zig-platform: aarch64-macos
             zig-sha256: 3cc2bab367e185cdfb27501c4b30b1b0653c28d9f73df8dc91488e66ece5fa6b
+            rex-api: 10
+            rex-commit: 1b6654811346488b696ded8f3c7e6701c57242f1
+            rex-archive: rex-darwin-arm64.zip
+            rex-sha256: dfc3c5d57c9637ac21f41a7fa425a453fed64d68152b90772afb2d815b028977
+          - name: Mac API12 (Rex preview.14)
+            runner: macos-26
+            target: aarch64-macos
+            zig-platform: aarch64-macos
+            zig-sha256: 3cc2bab367e185cdfb27501c4b30b1b0653c28d9f73df8dc91488e66ece5fa6b
+            rex-api: 12
+            rex-commit: 7e460d02f51573990bfcdc6c44a5606d11c7d47a
+            rex-archive: rex-darwin-arm64.zip
+            rex-sha256: 728df49b2cefcd62b7dde14cfcbd238cac69ec1524d71c19e6a389728ebe5374
+          - name: Mac API13 (Rex preview.16)
+            runner: macos-26
+            target: aarch64-macos
+            zig-platform: aarch64-macos
+            zig-sha256: 3cc2bab367e185cdfb27501c4b30b1b0653c28d9f73df8dc91488e66ece5fa6b
+            rex-api: 13
+            rex-commit: aa2db1b21261b479a550559fb70e2c3a66c07ba2
+            rex-archive: rex-darwin-arm64.zip
+            rex-sha256: 3055299e4fe881d97e8ca452e33906b8a9c7aedf36b836845ebb587829b29a29
     defaults:
       run:
         shell: bash
@@ -58,14 +86,29 @@ jobs:
           test "$(zig version)" = 0.15.2
           zig version
           python3 --version
-          uname -sm
+          uname -srm
           printf 'Runner image: %s %s\n' "${ImageOS:-unknown}" "${ImageVersion:-unknown}"
 
       - name: Check Zig formatting
         run: zig fmt --check build.zig src items
 
-      - name: Build native CLI
-        run: zig build -Doptimize=ReleaseSmall
+      - name: Build target CLI
+        run: zig build -Doptimize=ReleaseSmall -Dtarget=${{ matrix.target }}
+
+      - name: Run native child supervisor regressions
+        run: zig test src/child_test.zig
+
+      - name: Verify static Linux executable
+        if: runner.os == 'Linux'
+        run: |
+          file zig-out/bin/teerex
+          readelf -lW zig-out/bin/teerex > "$RUNNER_TEMP/program-headers.txt"
+          readelf -dW zig-out/bin/teerex > "$RUNNER_TEMP/dynamic-section.txt"
+          if grep -q INTERP "$RUNNER_TEMP/program-headers.txt" || \
+             grep -q NEEDED "$RUNNER_TEMP/dynamic-section.txt"; then
+            echo 'Linux CLI must not depend on a dynamic loader or shared libraries' >&2
+            exit 1
+          fi
 
       - name: Run offline comparison regressions without Rex
         if: runner.os == 'Linux'
@@ -73,36 +116,94 @@ jobs:
           TEEREX_BIN: ${{ github.workspace }}/zig-out/bin/teerex
         run: python3 items/observe/test_observe.py CompareTest -v
 
+      - name: Run offline maneuver regressions
+        env:
+          TEEREX_BIN: ${{ github.workspace }}/zig-out/bin/teerex
+        run: python3 items/maneuvers/test_maneuvers.py -v
+
+      - name: Run offline filter regressions
+        env:
+          TEEREX_BIN: ${{ github.workspace }}/zig-out/bin/teerex
+        run: python3 items/filter/test_filter.py -v
+
+      - name: Run Linux offline doctor guards
+        if: runner.os == 'Linux'
+        env:
+          TEEREX_BIN: ${{ github.workspace }}/zig-out/bin/teerex
+          TEEREX_OFFLINE_ONLY: '1'
+        run: python3 items/doctor/test_doctor.py -v
+
+      - name: Run installer lifecycle and public release controls
+        if: runner.os == 'Linux' || matrix.rex-api == 13
+        run: python3 tools/install/test_install.py --public -v
+
       - name: Cross-build Apple-silicon CLI
         if: runner.os == 'Linux'
         run: zig build -Doptimize=ReleaseSmall -Dtarget=aarch64-macos --prefix zig-out/mac
 
-      - name: Verify Mac runtime and install checksum-pinned Rex
-        if: runner.os == 'macOS'
+      - name: Verify runtime and install checksum-pinned Rex
+        env:
+          REX_API: ${{ matrix.rex-api }}
+          REX_COMMIT: ${{ matrix.rex-commit }}
+          REX_ARCHIVE: ${{ matrix.rex-archive }}
+          REX_SHA256: ${{ matrix.rex-sha256 }}
         run: |
-          sw_vers
-          test "$(uname -m)" = arm64
-          test "$(sw_vers -productVersion | cut -d. -f1)" = 26
-          archive="$RUNNER_TEMP/rex-darwin-arm64.zip"
+          if [[ "$RUNNER_OS" == macOS ]]; then
+            sw_vers
+            test "$(uname -m)" = arm64
+            test "$(sw_vers -productVersion | cut -d. -f1)" = 26
+          else
+            cat /etc/os-release
+            test "$(uname -s)" = Linux
+            test "$(uname -m)" = x86_64
+          fi
+          archive="$RUNNER_TEMP/$REX_ARCHIVE"
           curl --fail --silent --show-error --location --retry 3 \
-            'https://blob.superlogical.com/download/rex/preview/aa2db1b21261b479a550559fb70e2c3a66c07ba2/rex-darwin-arm64.zip' \
+            "https://blob.superlogical.com/download/rex/preview/$REX_COMMIT/$REX_ARCHIVE" \
             -o "$archive"
-          printf '%s  %s\n' \
-            3055299e4fe881d97e8ca452e33906b8a9c7aedf36b836845ebb587829b29a29 "$archive" \
-            | shasum -a 256 --check
+          printf '%s  %s\n' "$REX_SHA256" "$archive" | shasum -a 256 --check
           mkdir -p "$RUNNER_TEMP/rex-bin"
-          unzip -q "$archive" -d "$RUNNER_TEMP/rex-bin"
-          "$RUNNER_TEMP/rex-bin/rex" version
+          if [[ "$REX_ARCHIVE" == *.zip ]]; then
+            unzip -q "$archive" -d "$RUNNER_TEMP/rex-bin"
+          else
+            tar -xzf "$archive" -C "$RUNNER_TEMP/rex-bin"
+          fi
+          "$RUNNER_TEMP/rex-bin/rex" version | tee "$RUNNER_TEMP/rex-version.txt"
+          grep -Fx "commit: $REX_COMMIT" "$RUNNER_TEMP/rex-version.txt"
+          grep -E "^api: revision $REX_API \\(" "$RUNNER_TEMP/rex-version.txt"
           echo "$RUNNER_TEMP/rex-bin" >> "$GITHUB_PATH"
 
-      - name: Run disposable-Mac observation, comparison and watch regressions
-        if: runner.os == 'macOS'
+      - name: Run disposable-Rex observation, comparison and watch regressions
         env:
           TEEREX_BIN: ${{ github.workspace }}/zig-out/bin/teerex
         run: python3 items/observe/test_observe.py -v
+
+      - name: Run disposable-Rex mailbox send regressions
+        env:
+          TEEREX_BIN: ${{ github.workspace }}/zig-out/bin/teerex
+          REX_BIN: ${{ runner.temp }}/rex-bin/rex
+        run: python3 items/send/test_send.py -v
+
+      - name: Run disposable-Rex visible spawn regressions
+        env:
+          TEEREX_BIN: ${{ github.workspace }}/zig-out/bin/teerex
+          REX_BIN: ${{ runner.temp }}/rex-bin/rex
+        run: python3 items/spawn/test_spawn.py -v
 
       - name: Run disposable-Mac execution and cleanup regressions
         if: runner.os == 'macOS'
         env:
           TEEREX_BIN: ${{ github.workspace }}/zig-out/bin/teerex
         run: python3 items/run/test_run.py -v
+
+      - name: Run disposable-Mac doctor regressions
+        if: runner.os == 'macOS'
+        env:
+          TEEREX_BIN: ${{ github.workspace }}/zig-out/bin/teerex
+        run: python3 items/doctor/test_doctor.py -v
+
+      - name: Run disposable-Mac API13 offstage regressions
+        if: runner.os == 'macOS' && matrix.rex-api == 13
+        env:
+          TEEREX_BIN: ${{ github.workspace }}/zig-out/bin/teerex
+        run: python3 items/offstage/test_offstage.py -v

@@ -122,6 +122,7 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8, comptime obse
     // unused metadata and duplicate status IDs. Do not accept a selected-field
     // projection of an otherwise invalid observation.
     const observation = try observations.validateObservation(parsed_observation.value);
+    if (observation.source.api_revision != definition.compatibility.api_revision) return error.ManeuverApiRevisionMismatch;
     if (!bounded(observation.observation_id, 1024) or observation.atomic_snapshot or
         !bounded(observation.source.rex_version, 256) or !bounded(observation.source.platform, 256)) return error.InvalidObservationProvenance;
     const endpoint = try std.fmt.allocPrint(allocator, "unix://{s}", .{path});

@@ -173,7 +173,8 @@ class ManeuverTest(unittest.TestCase):
 
     def test_full_observation_provenance_and_unused_metadata_are_validated(self):
         mutations = [
-            (("schema_version",), 2), (("source", "api_revision"), 14), (("atomic_snapshot",), True),
+            (("schema_version",), 2), (("source", "api_revision"), 14),
+            (("source", "api_revision"), 10), (("atomic_snapshot",), True),
             (("capture", "scope"), "viewport"), (("capture", "portion"), "tail"),
             (("capture", "max_bytes"), 255), (("capture", "complete"), "true"),
             (("process", "basis"), "inferred"), (("process", "data", "foreground", "pid"), 0),

@@ -24,6 +24,44 @@ pub fn build(b: *std.Build) void {
     rex_run.addImport("supervised_child", child);
     exe.root_module.addImport("supervised_child", child);
     exe.root_module.addImport("rex_run", rex_run);
+    const send = b.createModule(.{
+        .root_source_file = b.path("items/send/main.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    send.addImport("supervised_child", child);
+    exe.root_module.addImport("rex_send", send);
+    const spawn = b.createModule(.{
+        .root_source_file = b.path("items/spawn/main.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    spawn.addImport("supervised_child", child);
+    exe.root_module.addImport("rex_spawn", spawn);
+    const offstage = b.createModule(.{
+        .root_source_file = b.path("items/offstage/main.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    offstage.addImport("supervised_child", child);
+    exe.root_module.addImport("rex_offstage", offstage);
+    const doctor = b.createModule(.{
+        .root_source_file = b.path("items/doctor/main.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    doctor.addImport("supervised_child", child);
+    exe.root_module.addImport("rex_doctor", doctor);
+    exe.root_module.addImport("rex_maneuvers", b.createModule(.{
+        .root_source_file = b.path("items/maneuvers/main.zig"),
+        .target = target,
+        .optimize = optimize,
+    }));
+    exe.root_module.addImport("rex_filter", b.createModule(.{
+        .root_source_file = b.path("items/filter/main.zig"),
+        .target = target,
+        .optimize = optimize,
+    }));
     b.installArtifact(exe);
 
     const run = b.addRunArtifact(exe);

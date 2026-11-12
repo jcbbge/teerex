@@ -8,6 +8,13 @@ const usage =
     \\       teerex watch --socket /absolute/path --session session:UUID --block block:UUID --baseline FILE --timeout-ms N [--interval-ms N]
     \\                    [--status-state idle|working|done|blocked|error [--status-id RECORD_ID]]
     \\       teerex run --socket /absolute/path --cwd /absolute/path [--timeout-ms N] [--max-bytes N] -- ARGV...
+    \\       teerex offstage --socket /absolute/path --session session:UUID --cwd /absolute/path --purpose TEXT --timeout-ms N -- ARGV...
+    \\       teerex doctor --socket /absolute/path [--timeout-ms N] [--baseline FILE]
+    \\       teerex maneuver-check --definition FILE --observation FILE --socket /absolute/path --session session:UUID --block block:UUID
+    \\       teerex filter --sample FILE --sample FILE [--sample FILE ...]
+    \\       teerex send --socket /absolute/path --session session:UUID --block block:UUID --from LABEL --message-file /absolute/path [--timeout-ms N]
+    \\       teerex spawn --socket /absolute/path --session session:UUID --name LABEL --cwd /absolute/path
+    \\                    --report-to-session session:UUID --report-to-block block:UUID [--timeout-ms N] -- ARGV...
     \\
     \\Read bounded terminal text and process/directory/status evidence from an explicit Rex target.
     \\N defaults to 4096; allowed range: 256..65536 JSON-encoded content bytes.
@@ -15,8 +22,8 @@ const usage =
     \\Compare reads two explicit observation files (at most 1 MiB each), without contacting Rex.
     \\Changes describe returned evidence, never activity, completion, freshness, or permission.
     \\Observe/compare do not send input, edit configuration, or save files. No autostart or implicit target.
-    \\Observe is macOS-only; its collection budget defaults to 5000 ms (100..60000), plus bounded cleanup.
-    \\Watch is a foreground, read-only macOS wait using the baseline's byte limit and exact target/source.
+    \\Observe supports macOS/Linux; its collection budget defaults to 5000 ms (100..60000), plus bounded cleanup.
+    \\Watch is a foreground, read-only macOS/Linux wait using the baseline's byte limit and exact target/source.
     \\Watch requires a 100..60000 ms deadline; interval defaults to 250 ms (50..5000) AFTER each collection.
     \\Watch returns evidence/availability changes, or deadline/unknown/error/cancellation, never completion.
     \\With --status-state, wait only for differing matching report evidence relative to the baseline.
@@ -64,7 +71,7 @@ fn Evidence(comptime T: type) type {
     return struct { method: []const u8, basis: []const u8, freshness: []const u8, data: T };
 }
 
-const Observation = struct {
+pub const Observation = struct {
     schema_version: u32,
     observation_id: []const u8,
     observation_started_at_unix_ms: i64 = 0,
@@ -276,7 +283,13 @@ fn run() !void {
     if (args.len >= 2 and std.mem.eql(u8, args[1], "compare")) return compare(allocator, args[2..]);
     if (args.len >= 2 and std.mem.eql(u8, args[1], "watch")) std.process.exit(try watch(allocator, args[2..]));
     if (args.len >= 2 and std.mem.eql(u8, args[1], "run")) std.process.exit(try @import("rex_run").run(allocator, args[2..]));
-    if (args.len < 2 or !std.mem.eql(u8, args[1], "observe")) usageError("expected observe, compare, watch, or run");
+    if (args.len >= 2 and std.mem.eql(u8, args[1], "offstage")) std.process.exit(try @import("rex_offstage").run(allocator, args[2..]));
+    if (args.len >= 2 and std.mem.eql(u8, args[1], "doctor")) std.process.exit(try @import("rex_doctor").run(allocator, args[2..]));
+    if (args.len >= 2 and std.mem.eql(u8, args[1], "maneuver-check")) std.process.exit(try @import("rex_maneuvers").run(allocator, args[2..], @This()));
+    if (args.len >= 2 and std.mem.eql(u8, args[1], "filter")) std.process.exit(try @import("rex_filter").run(allocator, args[2..], @This()));
+    if (args.len >= 2 and std.mem.eql(u8, args[1], "send")) std.process.exit(try @import("rex_send").run(allocator, args[2..]));
+    if (args.len >= 2 and std.mem.eql(u8, args[1], "spawn")) std.process.exit(try @import("rex_spawn").run(allocator, args[2..]));
+    if (args.len < 2 or !std.mem.eql(u8, args[1], "observe")) usageError("expected observe, compare, watch, run, offstage, doctor, maneuver-check, filter, send, or spawn");
 
     var socket: ?[]const u8 = null;
     var session: ?[]const u8 = null;
@@ -310,7 +323,7 @@ fn run() !void {
     if (!fullId(block_id, "block:")) usageError("--block must be a full block:UUID, not a label or suffix");
     if (max_bytes < 256 or max_bytes > 65536) usageError("--max-bytes must be between 256 and 65536");
     if (timeout_ms < 100 or timeout_ms > 60000) usageError("--timeout-ms must be between 100 and 60000");
-    if (builtin.os.tag != .macos) return error.ObserveRequiresMacOS;
+    if (builtin.os.tag != .macos and builtin.os.tag != .linux) return error.UnsupportedObservationPlatform;
 
     const endpoint = try std.fmt.allocPrint(allocator, "unix://{s}", .{socket_path});
     const argv = try observationArgv(allocator, endpoint, session_id, block_id, max_bytes, null);
@@ -419,7 +432,7 @@ fn parseObservation(allocator: std.mem.Allocator, bytes: []const u8) !Observatio
     return validateObservation(parsed.value);
 }
 
-fn validateObservation(packet: Observation) !Observation {
+pub fn validateObservation(packet: Observation) !Observation {
     if (packet.schema_version != 1) return error.UnsupportedObservationVersion;
     if (packet.source.api_revision < 10 or packet.source.api_revision > 13) {
         std.debug.print("teerex: unsupported Rex API revision {d} (accepted: 10..13)\n", .{packet.source.api_revision});
@@ -509,7 +522,7 @@ fn compare(allocator: std.mem.Allocator, args: []const []const u8) !void {
     try std.fs.File.stdout().writeAll("\n");
 }
 
-fn compareObservations(before: Observation, after: Observation) !Comparison {
+pub fn compareObservations(before: Observation, after: Observation) !Comparison {
     if (!equal(before.target, after.target)) return error.DifferentObservationTargets;
     if (!equal(before.source, after.source)) return error.DifferentObservationSources;
 
@@ -593,7 +606,7 @@ fn watch(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
     }
     if (!std.fs.path.isAbsolute(socket_path) or !fullId(session_id, "session:") or !fullId(block_id, "block:")) usageError("watch needs an absolute socket and full session/block IDs");
     if (timeout_ms < 100 or timeout_ms > 60000 or interval_ms < 50 or interval_ms > 5000) usageError("watch deadline or interval out of range");
-    if (builtin.os.tag != .macos) return error.WatchRequiresMacOS;
+    if (builtin.os.tag != .macos and builtin.os.tag != .linux) return error.UnsupportedObservationPlatform;
 
     const baseline = try readObservation(allocator, baseline_file);
     const endpoint = try std.fmt.allocPrint(allocator, "unix://{s}", .{socket_path});

@@ -1,4 +1,43 @@
 const std = @import("std");
+const EventSource = if (@import("builtin").os.tag == .linux) @import("child_linux.zig") else DarwinEvents;
+
+const Event = struct { stream: u8, available: usize, eof: bool };
+
+const DarwinEvents = struct {
+    fd: std.posix.fd_t,
+
+    fn init(pid: std.posix.pid_t, child: *std.process.Child, exited: *bool) !DarwinEvents {
+        const fd = try std.posix.kqueue();
+        errdefer std.posix.close(fd);
+        const pipes = [_]std.posix.Kevent{
+            .{ .ident = @intCast(child.stdout.?.handle), .filter = std.c.EVFILT.READ, .flags = std.c.EV.ADD, .fflags = 0, .data = 0, .udata = 1 },
+            .{ .ident = @intCast(child.stderr.?.handle), .filter = std.c.EVFILT.READ, .flags = std.c.EV.ADD, .fflags = 0, .data = 0, .udata = 2 },
+        };
+        _ = try std.posix.kevent(fd, &pipes, &.{}, null);
+        const process = [_]std.posix.Kevent{.{ .ident = @intCast(pid), .filter = std.c.EVFILT.PROC, .flags = std.c.EV.ADD | std.c.EV.ONESHOT, .fflags = std.c.NOTE.EXIT, .data = 0, .udata = 0 }};
+        _ = std.posix.kevent(fd, &process, &.{}, null) catch |err| blk: {
+            if (err != error.ProcessNotFound) return err;
+            exited.* = true;
+            break :blk 0;
+        };
+        return .{ .fd = fd };
+    }
+
+    fn deinit(self: DarwinEvents) void {
+        std.posix.close(self.fd);
+    }
+
+    fn wait(self: DarwinEvents, _: *std.process.Child, events: *[3]Event) !usize {
+        var raw: [3]std.posix.Kevent = undefined;
+        const tick: std.posix.timespec = .{ .sec = 0, .nsec = 50 * std.time.ns_per_ms };
+        const count = try std.posix.kevent(self.fd, &.{}, &raw, &tick);
+        for (raw[0..count], events[0..count]) |event, *out| {
+            if (event.flags & std.c.EV.ERROR != 0) return error.RunEventFailed;
+            out.* = .{ .stream = @intCast(event.udata), .available = @intCast(@max(0, event.data)), .eof = event.flags & std.c.EV.EOF != 0 };
+        }
+        return count;
+    }
+};
 
 var cancellation: std.atomic.Value(u8) = .init(0);
 
@@ -28,6 +67,12 @@ pub const Signals = struct {
 
 pub fn requestedSignal() u8 {
     return cancellation.load(.seq_cst);
+}
+
+// A caller can retain the stop request while giving its cleanup phase a bounded
+// attempt. Atomic consumption cannot erase a newer signal between read/reset.
+pub fn takeRequestedSignal() u8 {
+    return cancellation.swap(0, .seq_cst);
 }
 
 pub const GroupSignal = enum { sent, not_found, no_signalable_member_or_permission_denied };
@@ -69,7 +114,7 @@ pub const Result = struct {
     group_kill: ?GroupSignal,
 };
 
-// macOS only. Caller owns Signals and the receiver's stdout retention policy.
+// macOS and Linux. Caller owns Signals and the receiver's stdout retention policy.
 // An optional isComplete() requests owned-group cleanup, not command success.
 // All invocations use EOF stdin, bounded diagnostics, and an owned process group.
 pub fn collect(allocator: std.mem.Allocator, argv: []const []const u8, env: *const std.process.EnvMap, deadline_ms: u64, receiver: anytype) !Result {
@@ -93,20 +138,9 @@ pub fn collect(allocator: std.mem.Allocator, argv: []const []const u8, env: *con
             if (child.stderr) |file| file.close();
         };
     };
-    const kq = try std.posix.kqueue();
-    defer std.posix.close(kq);
-    const pipe_events = [_]std.posix.Kevent{
-        .{ .ident = @intCast(child.stdout.?.handle), .filter = std.c.EVFILT.READ, .flags = std.c.EV.ADD, .fflags = 0, .data = 0, .udata = 1 },
-        .{ .ident = @intCast(child.stderr.?.handle), .filter = std.c.EVFILT.READ, .flags = std.c.EV.ADD, .fflags = 0, .data = 0, .udata = 2 },
-    };
-    _ = try std.posix.kevent(kq, &pipe_events, &.{}, null);
-    const proc_event = [_]std.posix.Kevent{.{ .ident = @intCast(pid), .filter = std.c.EVFILT.PROC, .flags = std.c.EV.ADD | std.c.EV.ONESHOT, .fflags = std.c.NOTE.EXIT, .data = 0, .udata = 0 }};
     var exited = false;
-    _ = std.posix.kevent(kq, &proc_event, &.{}, null) catch |err| blk: {
-        if (err != error.ProcessNotFound) return err;
-        exited = true;
-        break :blk 0;
-    };
+    var source = try EventSource.init(pid, &child, &exited);
+    defer source.deinit();
     var stderr: std.ArrayList(u8) = .empty;
     var stderr_seen: u64 = 0;
     var stopped_at: ?u64 = null;
@@ -130,26 +164,27 @@ pub fn collect(allocator: std.mem.Allocator, argv: []const []const u8, env: *con
         if (exited and child.stdout == null and child.stderr == null) break;
         // An escaped descendant could retain our pipes. Do not wait forever for EOF.
         if (stopped_at != null and elapsed_ms - stopped_at.? >= 500) break;
-        var events: [3]std.posix.Kevent = undefined;
-        const tick: std.posix.timespec = .{ .sec = 0, .nsec = 50 * std.time.ns_per_ms };
-        const count = try std.posix.kevent(kq, &.{}, &events, &tick);
+        var events: [3]Event = undefined;
+        const count = try source.wait(&child, &events);
         for (events[0..count]) |event| {
-            if (event.flags & std.c.EV.ERROR != 0) return error.RunEventFailed;
-            if (event.udata == 0) {
+            if (event.stream == 0) {
                 exited = true;
                 continue;
             }
-            const file = if (event.udata == 1) &child.stdout else &child.stderr;
-            if (event.data > 0) {
+            const file = if (event.stream == 1) &child.stdout else &child.stderr;
+            if (event.available > 0) {
                 var buffer: [8192]u8 = undefined;
-                const n = try std.posix.read(file.*.?.handle, buffer[0..@min(@as(usize, @intCast(event.data)), buffer.len)]);
-                if (event.udata == 1) {
+                const n = try std.posix.read(file.*.?.handle, buffer[0..@min(event.available, buffer.len)]);
+                if (n == 0) {
+                    file.*.?.close();
+                    file.* = null;
+                } else if (event.stream == 1) {
                     try receiver.receive(buffer[0..n]);
                 } else {
                     stderr_seen += n;
                     try stderr.appendSlice(allocator, buffer[0..@min(n, 4096 - stderr.items.len)]);
                 }
-            } else if (event.flags & std.c.EV.EOF != 0) {
+            } else if (event.eof) {
                 file.*.?.close();
                 file.* = null;
             }

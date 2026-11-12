@@ -1,0 +1,252 @@
+#!/bin/bash
+# Compatible with macOS Bash 3.2 and Linux Bash; no services or server startup.
+set -euo pipefail
+umask 077
+export PATH=/usr/bin:/bin:/usr/sbin:/sbin
+
+die() { printf 'teerex-install: %s\n' "$*" >&2; exit 1; }
+usage() {
+    cat <<'EOF'
+Usage: bash tools/install/teerex-install COMMAND [OPTIONS]
+
+Commands:
+  install   --version TAG    Install and activate an explicit release
+  upgrade   --version TAG    Install and activate, retaining the active release
+  rollback  --version TAG    Activate an already installed, verified release
+  remove    --version TAG    Remove one verified release (not active by default)
+  list                      Show installed tags and the active tag
+
+Options:
+  --prefix DIR    User-owned root inside HOME (default: ~/.local/opt/teerex)
+  --from DIR      Read the archive and SHA256SUMS from DIR instead of GitHub
+                  (install/upgrade only; checksums are still required)
+  --deactivate    Allow removal of the active release, leaving no active version
+  --help          Show this help
+
+Tags: vMAJOR.MINOR.PATCH with an optional prerelease, e.g. v0.1.0-alpha.3.
+Hosts: Darwin arm64 or Linux x86_64. Assets must match the host.
+Check the selected release guide for per-command OS/API compatibility.
+No sudo, PATH/profile edits, Rex configuration, services, server startup,
+quarantine removal, or independently packaged cartridges are included.
+EOF
+}
+
+command=${1:---help}
+[[ $# -eq 0 ]] || shift
+case "$command" in
+    --help|-h|help) usage; exit 0 ;;
+    install|upgrade|rollback|remove|list) ;;
+    *) die "unknown command: $command (see --help)" ;;
+esac
+prefix=${HOME:?HOME must be set}/.local/opt/teerex
+version='' source_dir='' deactivate=false
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --prefix|--version|--from)
+            [[ $# -ge 2 && -n $2 ]] || die "$1 requires a value"
+            case "$1" in
+                --prefix) prefix=$2 ;;
+                --version) version=$2 ;;
+                --from) source_dir=$2 ;;
+            esac
+            shift 2 ;;
+        --deactivate) deactivate=true; shift ;;
+        --help|-h) usage; exit 0 ;;
+        *) die "unknown option: $1 (cartridge selection is not supported)" ;;
+    esac
+done
+if [[ $command == list ]]; then
+    [[ -z $version ]] || die 'list does not take --version'
+else
+    [[ $version =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$ ]] || die 'an explicit release tag is required, e.g. --version v0.1.0-alpha.1'
+fi
+[[ $deactivate == false || $command == remove ]] || die '--deactivate is only for remove'
+[[ -z $source_dir || $command == install || $command == upgrade ]] || die '--from is only for install/upgrade'
+case "$(uname -s)/$(uname -m)" in
+    Darwin/arm64)
+        platform=aarch64-macos
+        checksum=(shasum -a 256)
+        binary_pattern='^Mach-O 64-bit executable arm64'
+        move_link=(-f -h)
+        ;;
+    Linux/x86_64)
+        platform=x86_64-linux
+        checksum=(sha256sum)
+        binary_pattern='^ELF 64-bit LSB (pie )?executable, x86-64,'
+        move_link=(-f -T)
+        ;;
+    *) die 'supported hosts: Apple-silicon macOS (Darwin arm64) or Linux x86_64 only' ;;
+esac
+[[ $EUID -ne 0 ]] || die 'run as your own user, not root or sudo'
+for tool in "${checksum[0]}" file tar gzip awk cmp grep mktemp; do
+    command -v "$tool" >/dev/null || die "required tool is missing: $tool; no tools or services were installed"
+done
+if [[ ( $command == install || $command == upgrade ) && -z $source_dir ]]; then
+    command -v curl >/dev/null || die 'curl is required for HTTPS downloads; alternatively use --from with reviewed assets'
+fi
+
+# Refuse ambiguous paths and symlink ancestors instead of managing another tree.
+[[ $HOME == /* && -d $HOME && -O $HOME ]] || die 'HOME must be an absolute, user-owned directory'
+home=$(cd "$HOME" && pwd -P)
+case "$prefix" in
+    "$HOME"/*) prefix="$home/${prefix#"$HOME"/}" ;;
+esac
+case "$prefix" in
+    "$home"/*) ;;
+    *) die '--prefix must be a directory strictly inside your HOME' ;;
+esac
+case "$prefix/" in
+    *'/../'*|*'/./'*|*'//'*) die '--prefix must not contain dot or empty path components' ;;
+esac
+[[ $prefix != *$'\n'* && $prefix != *$'\r'* ]] || die '--prefix must not contain newlines'
+path=$prefix
+while [[ $path != "$home" ]]; do
+    [[ ! -L $path ]] || die "symlink in installation path: $path"
+    if [[ -e $path ]]; then
+        [[ -d $path && -O $path ]] || die "not a user-owned directory: $path"
+    fi
+    path=${path%/*}
+done
+
+marker=$prefix/.teerex-install-root
+root_valid() {
+    [[ -f $marker && ! -L $marker && -O $marker ]] &&
+        [[ $(cat "$marker") == teerex-install-v1 ]] &&
+        [[ -d $prefix/versions && ! -L $prefix/versions && -O $prefix/versions ]]
+}
+if [[ -e $prefix ]]; then
+    root_valid || die "refusing unmanaged installation root: $prefix (choose a new path)"
+elif [[ $command != install ]]; then
+    die "no managed installation at $prefix; use install first"
+else
+    mkdir -p "${prefix%/*}"
+    mkdir "$prefix"
+    printf 'teerex-install-v1\n' > "$marker"
+    mkdir "$prefix/versions"
+fi
+
+lock=$prefix/.installer-lock
+mkdir "$lock" 2>/dev/null || die "installer lock exists: $lock; check for a running installer before removing a stale lock"
+stage=
+cleanup() {
+    [[ -z $stage ]] || rm -rf "$stage"
+    rmdir "$lock"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM HUP
+
+active=
+if [[ -L $prefix/current ]]; then
+    target=$(readlink "$prefix/current")
+    [[ $target =~ ^versions/(v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?)$ ]] || die 'current is not a managed relative version link'
+    active=${target#versions/}
+    [[ -d $prefix/$target && ! -L $prefix/$target ]] || die 'current points to a missing or symlinked release'
+elif [[ -e $prefix/current ]]; then
+    die 'refusing to replace current: it is not an installer version symlink'
+fi
+
+verify_binary() {
+    file -b "$1" | grep -Eq "$binary_pattern" || die "executable does not match this host ($platform)"
+}
+
+verify_release() {
+    local dir=$prefix/versions/$1 entry count=0
+    [[ -d $dir && ! -L $dir && -O $dir ]] || die "not a managed release directory: $1"
+    # Unknown files or modified files may be user data: do not remove them.
+    for entry in "$dir"/* "$dir"/.[!.]* "$dir"/..?*; do
+        [[ -e $entry || -L $entry ]] || continue
+        case "${entry##*/}" in
+            teerex|README.md|RIGHTS.md|.files.sha256) ;;
+            *) die "unknown file in release $1: ${entry##*/}; leaving it untouched" ;;
+        esac
+        [[ -f $entry && ! -L $entry && -O $entry ]] || die "not an owned regular file: $entry"
+        count=$((count + 1))
+    done
+    [[ $count == 4 && -x $dir/teerex ]] || die "incomplete managed release: $1"
+    (cd "$dir" && "${checksum[@]}" teerex README.md RIGHTS.md) |
+        cmp -s - "$dir/.files.sha256" || die "installed files changed in $1; leaving them untouched"
+    verify_binary "$dir/teerex"
+}
+
+activate() {
+    verify_release "$version"
+    # Same-filesystem rename publishes the new link without an absent-current gap.
+    [[ -n $stage ]] || stage=$(mktemp -d "$prefix/.stage.XXXXXXXX")
+    ln -s "versions/$version" "$stage/current"
+    mv "${move_link[@]}" "$stage/current" "$prefix/current"
+    printf 'Active: %s\nExecutable: %s/current/teerex\n' "$version" "$prefix"
+    if [[ $version == v0.1.0-alpha.1 ]]; then
+        printf '%s\n' 'Compatibility: the published alpha.1 live commands require Rex API 13; installation does not verify your running server. Do not update/restart Rex as an installer prerequisite.' >&2
+    else
+        printf '%s\n' 'Installation verifies binary integrity/architecture/help, not live Rex compatibility. Check this release guide; do not update/restart Rex as an installer prerequisite.' >&2
+    fi
+}
+
+case "$command" in
+    list)
+        printf 'Root: %s\nActive: %s\n' "$prefix" "${active:-none}"
+        for dir in "$prefix"/versions/*; do
+            [[ -e $dir || -L $dir ]] || continue
+            printf 'Installed: %s\n' "${dir##*/}"
+        done
+        ;;
+    rollback)
+        activate
+        ;;
+    remove)
+        verify_release "$version"
+        if [[ $active == "$version" ]]; then
+            [[ $deactivate == true ]] || die 'release is active; rollback first or explicitly use --deactivate'
+            rm "$prefix/current"
+        fi
+        dir=$prefix/versions/$version
+        rm "$dir/teerex" "$dir/README.md" "$dir/RIGHTS.md" "$dir/.files.sha256"
+        rmdir "$dir"
+        printf 'Removed: %s\n' "$version"
+        if [[ $active == "$version" ]]; then printf 'Active: none\n'; fi
+        ;;
+    install|upgrade)
+        if [[ $command == upgrade ]]; then
+            [[ -n $active ]] || die 'upgrade requires an active installation; use install first'
+            verify_release "$active"
+        fi
+        [[ ! -e $prefix/versions/$version && ! -L $prefix/versions/$version ]] || die 'release already exists; use rollback to activate it (no files overwritten)'
+        stage=$(mktemp -d "$prefix/.stage.XXXXXXXX")
+        asset=teerex-$version-$platform.tar.gz
+        printf 'Platform: %s\nArchive: %s\n' "$platform" "$asset"
+        if [[ -n $source_dir ]]; then
+            [[ -f $source_dir/$asset && -f $source_dir/SHA256SUMS ]] || die "--from must contain $asset and SHA256SUMS"
+            cp "$source_dir/$asset" "$stage/$asset"
+            cp "$source_dir/SHA256SUMS" "$stage/download.sha256"
+        else
+            base=https://github.com/jcbbge/teerex/releases/download/$version
+            printf 'Downloading: %s/%s\n' "$base" "$asset"
+            curl --fail --show-error --silent --location --proto '=https' --proto-redir '=https' --tlsv1.2 "$base/$asset" -o "$stage/$asset" || die "could not download $asset; confirm this tag publishes a $platform asset (alpha.1 is Mac-only); active release unchanged"
+            curl --fail --show-error --silent --location --proto '=https' --proto-redir '=https' --tlsv1.2 "$base/SHA256SUMS" -o "$stage/download.sha256" || die 'could not download SHA256SUMS; active release unchanged'
+        fi
+        # Select exactly one checksum for this asset; never evaluate downloaded text.
+        hash=$(awk -v name="$asset" '$2 == name || $2 == "*" name { if (NF != 2) exit 1; print $1; n++ } END { if (n != 1) exit 1 }' "$stage/download.sha256") || die 'SHA256SUMS must contain exactly one entry for the selected archive'
+        [[ $hash =~ ^[0-9a-fA-F]{64}$ ]] || die 'invalid SHA-256 entry'
+        printf '%s  %s\n' "$hash" "$asset" > "$stage/check.sha256"
+        (cd "$stage" && "${checksum[@]}" -c check.sha256) || die 'archive checksum mismatch; active release unchanged'
+        # The released asset is flat: forbid extra files, traversal, directories,
+        # duplicate entries and links before extracting even into the private stage.
+        tar -tzf "$stage/$asset" > "$stage/members"
+        printf 'README.md\nRIGHTS.md\nteerex\n' > "$stage/expected"
+        LC_ALL=C sort "$stage/members" > "$stage/sorted"
+        cmp -s "$stage/expected" "$stage/sorted" || die 'archive must contain only teerex, README.md and RIGHTS.md'
+        tar -tvzf "$stage/$asset" > "$stage/types"
+        awk 'substr($0, 1, 1) != "-" { exit 1 } END { if (NR != 3) exit 1 }' "$stage/types" || die 'archive members must be regular files, not links'
+        mkdir "$stage/payload"
+        tar -xzf "$stage/$asset" -C "$stage/payload" --no-same-owner --no-same-permissions teerex README.md RIGHTS.md
+        verify_binary "$stage/payload/teerex"
+        chmod 700 "$stage/payload/teerex"
+        chmod 600 "$stage/payload/README.md" "$stage/payload/RIGHTS.md"
+        "$stage/payload/teerex" --help > "$stage/help.txt" 2>&1 || die 'release --help failed; active release unchanged (check runtime compatibility; no security bypass attempted)'
+        (cd "$stage/payload" && "${checksum[@]}" teerex README.md RIGHTS.md) > "$stage/payload/.files.sha256"
+        mv "$stage/payload" "$prefix/versions/$version"
+        activate
+        printf 'Retained previous release: %s\nNo PATH, profile, Rex configuration or security settings changed.\n' "${active:-none}"
+        ;;
+esac

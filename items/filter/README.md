@@ -1,6 +1,6 @@
 # filter — bounded Rex observation payload filtering
 
-**Experimental.** Phase 3 #7's small Rex-specific support adapter, not a general perception engine, completion classifier, persistent cache or new capture path. It reads explicitly selected **schema-1/API-13 Rex observation files**, in caller-supplied order, using the same validation and adjacent comparison contract as [observe/compare/watch](../observe/README.md). It never contacts Rex, reads the current focus or starts a watcher.
+**Experimental.** Phase 3 #7's small Rex-specific support adapter, not a general perception engine, completion classifier, persistent cache or new capture path. It reads explicitly selected **schema-1/API10–13 Rex observation files**, in caller-supplied order, using the same validation and adjacent comparison contract as [observe/compare/watch](../observe/README.md). It never contacts Rex, reads the current focus or starts a watcher.
 
 ## Use
 
