@@ -16,6 +16,8 @@ Use the [operator and setup-agent concierge](docs/concierge/README.md) for the c
 
 ## Start here
 
+[Current product roadmap and complete checklist](docs/roadmap.md) — shipped capabilities and benefits, every original C01–C32 requirement, outstanding validation/product gaps, host blockers, and unchosen next features. Personal setup/migration and deferred non-Rex projects are not product backlog.
+
 1. [Level one: meet your installed Rex](docs/learning/level-1.md) — a small, read-only walkthrough. No config edits, runner access, VPS changes, or installs.
 2. [Research index](research/README.md) — the three completed investigations and their evidence boundaries.
 3. [Cartridge organization](items/README.md) — how each future item stays independent.
