@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "packages": [
+    {"id":"observe","command":"observe/compare/watch","platforms":["aarch64-macos","x86_64-linux"],"rex_api_revisions":[10,11,12,13],"note":"Explicit read-only observation and bounded waiting; offline exact-source comparison. Acceptance is not per-build certification.","permissions":["read-explicit-rex-target","read-explicit-evidence-files"]},
+    {"id":"run","command":"run","platforms":["aarch64-macos"],"rex_api_revisions":[10,11,12,13],"note":"Local argv only; Linux runtime disabled. Existing item evidence does not certify API11 or the user's machine.","permissions":["explicit-local-argv","explicit-rex-socket"]},
+    {"id":"spawn","command":"spawn","platforms":["aarch64-macos","x86_64-linux"],"rex_api_revisions":[10,11,12,13],"note":"Explicit visible agent spawn; API acceptance is not per-build behavior certification.","permissions":["explicit-local-argv","create-visible-rex-window"]},
+    {"id":"send","command":"send","platforms":["aarch64-macos","x86_64-linux"],"rex_api_revisions":[10,11,12,13],"note":"Whole-message paste and optional Enter have separate ACKs; no enforced input lease.","permissions":["explicit-rex-target-input"]},
+    {"id":"offstage","command":"offstage","platforms":["aarch64-macos"],"rex_api_revisions":[13],"note":"Bounded foreground-owned off-layout terminal; not isolation or durable ownership.","permissions":["create-close-owned-rex-terminal","explicit-local-argv"]},
+    {"id":"doctor","command":"doctor","platforms":["aarch64-macos"],"rex_api_revisions":[10,11,12,13],"note":"Read-only advertised-shape checks, not behavior or permission certification; Linux runtime disabled.","permissions":["read-rex-advertised-contract"]},
+    {"id":"maneuvers","command":"maneuver-check","platforms":["aarch64-macos","x86_64-linux"],"rex_api_revisions":[13],"note":"Offline saved start checking only; no replay, fresh-state guard, or authorization.","permissions":["read-explicit-evidence-files"]},
+    {"id":"filter","command":"filter","platforms":["aarch64-macos","x86_64-linux"],"rex_api_revisions":[10,11,12,13],"note":"Offline exact-evidence deduplication; no semantic classifier or implicit history.","permissions":["read-explicit-evidence-files"]}
+  ]
+}
