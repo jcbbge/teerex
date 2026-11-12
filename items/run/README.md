@@ -2,7 +2,7 @@
 
 **Experimental Phase 3 #3/#8 run-and-collect slice.** A Zig 0.15.2 CLI uses fixed Lua source and supported `rex.exec.start` callbacks to execute one explicit argv, retain bounded output and report real exit/deadline/cancellation evidence. This is not a ready/independently packaged cartridge, a terminal-input controller, an installer, or a background job service. It shares the development executable with [observe/compare/watch](../observe/README.md), but owns separate source and tests here. Process-group supervision is shared in `src/child.zig`; execution framing and program-output collection remain owned here.
 
-The shared CLI is distributed as [v0.1.0-alpha.1](../../docs/releases/v0.1.0-alpha.1.md), including checksums, explicit invocation and upgrade/removal instructions. The validation sections below preserve increment-time builds; the release guide identifies the final combined executable.
+The compatibility-only shared CLI is [v0.1.0-alpha.2](../../docs/releases/v0.1.0-alpha.2.md), accepting API10–13 with the consumed exec bindings, without server restart/update. Alpha.1 required API13. The exact new candidate passed all11 run checks on actual disposable API10/12/13 builds; API11, other builds and Joshua's exact machines remain separately unverified. The validation sections below preserve increment-time builds rather than being relabelled as old-build tests.
 
 ## What was built, and what it teaches
 

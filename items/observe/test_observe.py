@@ -148,6 +148,24 @@ class CompareTest(unittest.TestCase):
         self.assertEqual(self.compared()["program_status"], {
             "before_available": True, "after_available": True, "availability_changed": False, "changed": False})
 
+    def test_api_range_preserves_revision_and_refuses_outside_bounds(self):
+        for revision in [10, 11, 12, 13]:
+            with self.subTest(revision=revision):
+                self.before["source"]["api_revision"] = revision
+                self.after["source"]["api_revision"] = revision
+                self.assertEqual(self.compared()["source"]["api_revision"], revision)
+        for revision in [9, 14]:
+            with self.subTest(revision=revision):
+                self.before["source"]["api_revision"] = revision
+                self.after["source"]["api_revision"] = revision
+                result = compare_packets(self.root, self.before, self.after)
+                self.assertEqual(result.returncode, 1)
+                self.assertEqual(result.stdout, "")
+                self.assertIn(f"revision {revision}", result.stderr)
+        self.before["source"]["api_revision"] = 10
+        self.after["source"]["api_revision"] = 12
+        self.assertEqual(compare_packets(self.root, self.before, self.after).returncode, 1)
+
     def test_incompatible_targets_versions_and_provenance_fail_closed(self):
         for path, value in [
             (("target", "server"), "unix:///tmp/other.sock"),
@@ -334,7 +352,7 @@ class ObserveTest(unittest.TestCase):
         self.assertNotIn("TEEREX_BETA", packet["capture"]["content"])
         self.assertTrue(packet["capture"]["complete"])
         self.assertFalse(packet["atomic_snapshot"])
-        self.assertEqual(packet["source"]["api_revision"], 13)
+        self.assertEqual(packet["source"]["api_revision"], self.rex_json("api", "call", "server.version")["api_revision"])
         self.assertEqual(packet["source"]["rex_version"], self.rex_json("api", "call", "server.version")["rex_version"])
         self.assertEqual(packet["capture"]["scope"], "screen_and_scrollback")
         self.assertEqual(len(bytes.fromhex(packet["observation_id"])), 16)
