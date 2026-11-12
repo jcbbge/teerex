@@ -2,19 +2,11 @@ const std = @import("std");
 const builtin = @import("builtin");
 const supervised = @import("supervised_child");
 
-const usage =
+const observation_usage =
     \\Usage: teerex observe --socket /absolute/path --session session:UUID --block block:UUID [--max-bytes N] [--timeout-ms N]
     \\       teerex compare --before /path/to/before.json --after /path/to/after.json
     \\       teerex watch --socket /absolute/path --session session:UUID --block block:UUID --baseline FILE --timeout-ms N [--interval-ms N]
     \\                    [--status-state idle|working|done|blocked|error [--status-id RECORD_ID]]
-    \\       teerex run --socket /absolute/path --cwd /absolute/path [--timeout-ms N] [--max-bytes N] -- ARGV...
-    \\       teerex offstage --socket /absolute/path --session session:UUID --cwd /absolute/path --purpose TEXT --timeout-ms N -- ARGV...
-    \\       teerex doctor --socket /absolute/path [--timeout-ms N] [--baseline FILE]
-    \\       teerex maneuver-check --definition FILE --observation FILE --socket /absolute/path --session session:UUID --block block:UUID
-    \\       teerex filter --sample FILE --sample FILE [--sample FILE ...]
-    \\       teerex send --socket /absolute/path --session session:UUID --block block:UUID --from LABEL --message-file /absolute/path [--timeout-ms N]
-    \\       teerex spawn --socket /absolute/path --session session:UUID --name LABEL --cwd /absolute/path
-    \\                    --report-to-session session:UUID --report-to-block block:UUID [--timeout-ms N] -- ARGV...
     \\
     \\Read bounded terminal text and process/directory/status evidence from an explicit Rex target.
     \\N defaults to 4096; allowed range: 256..65536 JSON-encoded content bytes.
@@ -30,6 +22,19 @@ const usage =
     \\No --status-id selects the root report; named IDs match exactly. Retained identical reports do not wake it.
     \\Its monotonic collection deadline includes polling; cleanup may add 500 ms plus scheduling/output time.
     \\Watch exit: 0 change observed, 1 collection/compatibility error, 2 usage, 124 deadline, 130/143 cancellation.
+    \\
+;
+
+const usage = observation_usage ++
+    \\       teerex run --socket /absolute/path --cwd /absolute/path [--timeout-ms N] [--max-bytes N] -- ARGV...
+    \\       teerex offstage --socket /absolute/path --session session:UUID --cwd /absolute/path --purpose TEXT --timeout-ms N -- ARGV...
+    \\       teerex doctor --socket /absolute/path [--timeout-ms N] [--baseline FILE]
+    \\       teerex maneuver-check --definition FILE --observation FILE --socket /absolute/path --session session:UUID --block block:UUID
+    \\       teerex filter --sample FILE --sample FILE [--sample FILE ...]
+    \\       teerex send --socket /absolute/path --session session:UUID --block block:UUID --from LABEL --message-file /absolute/path [--timeout-ms N]
+    \\       teerex spawn --socket /absolute/path --session session:UUID --name LABEL --cwd /absolute/path
+    \\                    --report-to-session session:UUID --report-to-block block:UUID [--timeout-ms N] -- ARGV...
+    \\
     \\Run executes supplied argv LOCALLY on macOS, not in a terminal or on the selected server.
     \\Run is not a sandbox: the program can modify files/use your account's authority. See run --help.
     \\
@@ -255,7 +260,7 @@ pub fn main() void {
 }
 
 fn usageError(message: []const u8) noreturn {
-    std.debug.print("teerex: {s}\n{s}", .{ message, usage });
+    std.debug.print("teerex: {s}\n{s}", .{ message, observation_usage });
     std.process.exit(2);
 }
 
@@ -274,14 +279,10 @@ fn run() !void {
     defer arena.deinit();
     const allocator = arena.allocator();
     const args = try std.process.argsAlloc(allocator);
-    if ((args.len == 2 and std.mem.eql(u8, args[1], "--help")) or
-        (args.len == 3 and (std.mem.eql(u8, args[1], "observe") or std.mem.eql(u8, args[1], "compare") or std.mem.eql(u8, args[1], "watch")) and std.mem.eql(u8, args[2], "--help")))
-    {
+    if (args.len == 2 and std.mem.eql(u8, args[1], "--help")) {
         try std.fs.File.stdout().writeAll(usage);
         return;
     }
-    if (args.len >= 2 and std.mem.eql(u8, args[1], "compare")) return compare(allocator, args[2..]);
-    if (args.len >= 2 and std.mem.eql(u8, args[1], "watch")) std.process.exit(try watch(allocator, args[2..]));
     if (args.len >= 2 and std.mem.eql(u8, args[1], "run")) std.process.exit(try @import("rex_run").run(allocator, args[2..]));
     if (args.len >= 2 and std.mem.eql(u8, args[1], "offstage")) std.process.exit(try @import("rex_offstage").run(allocator, args[2..]));
     if (args.len >= 2 and std.mem.eql(u8, args[1], "doctor")) std.process.exit(try @import("rex_doctor").run(allocator, args[2..]));
@@ -289,14 +290,31 @@ fn run() !void {
     if (args.len >= 2 and std.mem.eql(u8, args[1], "filter")) std.process.exit(try @import("rex_filter").run(allocator, args[2..], @This()));
     if (args.len >= 2 and std.mem.eql(u8, args[1], "send")) std.process.exit(try @import("rex_send").run(allocator, args[2..]));
     if (args.len >= 2 and std.mem.eql(u8, args[1], "spawn")) std.process.exit(try @import("rex_spawn").run(allocator, args[2..]));
-    if (args.len < 2 or !std.mem.eql(u8, args[1], "observe")) usageError("expected observe, compare, watch, run, offstage, doctor, maneuver-check, filter, send, or spawn");
+    std.process.exit(try runObservations(allocator, args[1..]));
+}
+
+/// Observation-only CLI entry point. Args start with observe, compare, or watch,
+/// not the executable name; no other feature module is required by this path.
+pub fn runObservations(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
+    if ((args.len == 1 and std.mem.eql(u8, args[0], "--help")) or
+        (args.len == 2 and (std.mem.eql(u8, args[0], "observe") or std.mem.eql(u8, args[0], "compare") or std.mem.eql(u8, args[0], "watch")) and std.mem.eql(u8, args[1], "--help")))
+    {
+        try std.fs.File.stdout().writeAll(observation_usage);
+        return 0;
+    }
+    if (args.len >= 1 and std.mem.eql(u8, args[0], "compare")) {
+        try compare(allocator, args[1..]);
+        return 0;
+    }
+    if (args.len >= 1 and std.mem.eql(u8, args[0], "watch")) return watch(allocator, args[1..]);
+    if (args.len == 0 or !std.mem.eql(u8, args[0], "observe")) usageError("expected observe, compare, or watch");
 
     var socket: ?[]const u8 = null;
     var session: ?[]const u8 = null;
     var block: ?[]const u8 = null;
     var byte_limit: ?usize = null;
     var timeout: ?u64 = null;
-    var i: usize = 2;
+    var i: usize = 1;
     while (i < args.len) : (i += 2) {
         if (i + 1 == args.len) usageError("every option needs a value");
         const name = args[i];
@@ -335,7 +353,7 @@ fn run() !void {
     const result = try supervised.collect(allocator, argv, &env, timeout_ms, &capture);
     if (result.stopped) {
         std.debug.print("teerex: observation {s}; no complete observation emitted\n", .{if (result.stop_signal != 0) "cancelled" else "deadline exceeded"});
-        std.process.exit(if (result.stop_signal != 0) 128 + result.stop_signal else 124);
+        return if (result.stop_signal != 0) 128 + result.stop_signal else 124;
     }
     if (result.term != .Exited or result.term.Exited != 0) {
         std.debug.print("teerex: Rex observation failed: {s}\n", .{std.mem.trim(u8, result.stderr, "\r\n")});
@@ -346,6 +364,7 @@ fn run() !void {
     const output = try std.json.Stringify.valueAlloc(allocator, packet, .{ .whitespace = .indent_2 });
     try std.fs.File.stdout().writeAll(output);
     try std.fs.File.stdout().writeAll("\n");
+    return 0;
 }
 
 fn observation(allocator: std.mem.Allocator, endpoint: []const u8, session_id: []const u8, block_id: []const u8, max_bytes: usize, responses: std.json.Value, started_at: i64) !Observation {
