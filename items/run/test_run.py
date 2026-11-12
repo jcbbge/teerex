@@ -128,7 +128,8 @@ class RunTest(unittest.TestCase):
         self.assertFalse((self.root / "SHOULD_NOT_EXIST").exists())
         self.assertEqual(packet["execution_location"], "cli_local")
         self.assertEqual(packet["server"], "unix://" + str(self.socket))
-        self.assertEqual(packet["source"]["api_revision"], 13)
+        version = json.loads(subprocess.check_output(self.base + ["api", "call", "server.version"], text=True))
+        self.assertEqual(packet["source"]["api_revision"], version["api_revision"])
         self.assertEqual(len(bytes.fromhex(packet["execution_id"])), 16)
         self.assertNotIn("argv", packet)
         after = subprocess.run(self.base + ["session", "ls", "--json"], capture_output=True, text=True, check=True).stdout

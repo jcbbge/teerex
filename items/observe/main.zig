@@ -340,7 +340,11 @@ fn observation(allocator: std.mem.Allocator, endpoint: []const u8, session_id: [
     const version = responses.object.get("version") orelse return error.InvalidVersionResponse;
     if (version != .object) return error.InvalidVersionResponse;
     const revision = version.object.get("api_revision") orelse return error.UnsupportedApiRevision;
-    if (revision != .integer or revision.integer != 13) return error.UnsupportedApiRevision;
+    if (revision != .integer) return error.UnsupportedApiRevision;
+    if (revision.integer < 10 or revision.integer > 13) {
+        std.debug.print("teerex: unsupported Rex API revision {d} (accepted: 10..13)\n", .{revision.integer});
+        return error.UnsupportedApiRevision;
+    }
     const rex_version = version.object.get("rex_version") orelse return error.InvalidVersionResponse;
     const platform = version.object.get("platform") orelse return error.InvalidVersionResponse;
     if (rex_version != .string or platform != .string) return error.InvalidVersionResponse;
@@ -375,7 +379,7 @@ fn observation(allocator: std.mem.Allocator, endpoint: []const u8, session_id: [
         .observed_at_unix_ms = std.time.milliTimestamp(),
         .atomic_snapshot = false,
         .target = .{ .server = endpoint, .session_id = session_id, .block_id = block_id },
-        .source = .{ .rex_version = rex_version.string, .platform = platform.string, .api_revision = 13 },
+        .source = .{ .rex_version = rex_version.string, .platform = platform.string, .api_revision = @intCast(revision.integer) },
         .capture = .{
             .scope = "screen_and_scrollback",
             .portion = "prefix",
@@ -416,7 +420,11 @@ fn parseObservation(allocator: std.mem.Allocator, bytes: []const u8) !Observatio
 }
 
 fn validateObservation(packet: Observation) !Observation {
-    if (packet.schema_version != 1 or packet.source.api_revision != 13) return error.UnsupportedObservationVersion;
+    if (packet.schema_version != 1) return error.UnsupportedObservationVersion;
+    if (packet.source.api_revision < 10 or packet.source.api_revision > 13) {
+        std.debug.print("teerex: unsupported Rex API revision {d} (accepted: 10..13)\n", .{packet.source.api_revision});
+        return error.UnsupportedObservationVersion;
+    }
     if (packet.observation_id.len == 0 or !fullId(packet.target.session_id, "session:") or !fullId(packet.target.block_id, "block:")) return error.InvalidObservationIdentity;
     if (!std.mem.eql(u8, packet.capture.scope, "screen_and_scrollback") or !std.mem.eql(u8, packet.capture.portion, "prefix")) return error.UnsupportedCaptureScope;
     if (packet.capture.max_bytes < 256 or packet.capture.max_bytes > 65536) return error.InvalidCaptureLimit;

@@ -148,11 +148,21 @@ Joshua explicitly required the feature to be shipped rather than stopping at ano
 
 The definitive historical planning/scoring files, research and unassigned non-Rex H01–H08 remain unchanged. Earlier sections retain their increment-time authorization and delivery state; this release entry supersedes their local-only state, not their evidence or safety limits.
 
+### Existing-server compatibility and revised priorities — 12 November 2026
+
+Joshua's setup brief supersedes the earlier Mac-only target order: (1) API10–13 acceptance without a server restart/update, (2) Linux x86-64 observation on the existing hive/API13 server, (3) visible Rex-tab `spawn` implementing the established agent-core pane/report-to environment contract, (4) whole-message `send` with honest transport/atomicity limits, then offstage only as it serves spawn/send. Every agent/worker/sidecar/message on Joshua's M5/hive must go through Rex and teerex, including Rivet workers. The setup agent owns the Rivet tab migration and machine guards; teerex does not duplicate those changes or modify agent-core-public without authorization.
+
+The supplied setup agent reports checksummed installation, launch/tool guards, address forwarding, one Rex skill, Threadbear disablement and restart/tab accounting. It supplied an actual successful five-read collector run on the existing M5/API10 server with only the old pin removed. These are supplied machine evidence, not personal-machine executions performed here. Current Beta app build1925 reportedly contains preview.14/API12; preview.16/API13 CLI availability does not imply an app-channel update. Updating would close panes and is neither a prerequisite nor authorized.
+
+Joshua explicitly requested an immediate compatibility release rather than holding it behind the parallel features. [Alpha.2](releases/v0.1.0-alpha.2.md) changes the Lua/Zig acceptance range to integer10–13, propagates the actual source revision instead of hardcoding13, preserves exact-source comparison and all existing size/provenance/unknown checks, names unsupported revisions, and diagnoses a missing consumed exec binding. It does not certify every old build or add Linux/spawn/send/doctor/offstage/installer/maneuver/filter features.
+
+The exact 300888-byte candidate passed39 public CLI checks on each of real disposable API10, API12 and API13 builds, including11 actual exec/lifetime tests per build, plus8 native offline comparisons. The new range/refusal regression fails against the previous binary. API10 observation has separate supplied existing-M5 evidence; API11, other builds and the exact candidate on Joshua's M5 remain unverified here. The release guide records immutable build/archive pins and setup-agent commands against the existing socket/target, without starting/restarting a server or publishing raw captures. Historical planning/research and deferred non-Rex material remain unchanged. No personal machine, VPS, Rex configuration or server update is accessed or performed by this release.
+
 ## Decisions still open
 
 | Decision | What is not established |
 | --- | --- |
-| Initial design details | Minimal Zig CLI on the M5 MacBook is the initial preference, not a finalized design. Exact macOS/toolchain compatibility and CLI behavior will be discussed as needed; targeted VPS/Linux support is outside initial scope. |
+| Initial design details | Minimal Zig CLI remains the starting point, not a finalized console design. The revised brief adds existing hive/Linux support and visible spawn/send; exact supported build/platform behavior must be validated rather than inferred from the accepted API range. |
 | Shared dependencies | Isolation does not choose whether dependencies are bundled, shared, versioned centrally, or reference-counted. |
 | Removal and data | Removing code does not decide whether configuration, user data, background work, or shared dependencies are retained, migrated, or deleted. In-use removal behavior is unspecified. |
 | Agent permissions | First-class use does not grant unrestricted install/remove/control authority. Authentication, authorization, confirmations, auditability, and human override are not selected. |

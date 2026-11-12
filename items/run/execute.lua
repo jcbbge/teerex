@@ -4,8 +4,15 @@ local function emit(value)
     io.write(rex.json.encode(value), "\n")
     io.flush()
 end
-local v = rex.call("server.version")
-if v.api_revision ~= 13 then error("unsupported Rex API revision") end
+local v, version_error = rex.call("server.version")
+if not v then error(version_error) end
+local revision = v.api_revision
+if type(revision) ~= "number" or revision % 1 ~= 0 or revision < 10 or revision > 13 then
+    error("unsupported Rex API revision " .. tostring(revision) .. " (accepted: 10..13)")
+end
+if type(rex.exec) ~= "table" or type(rex.exec.start) ~= "function" then
+    error("Rex API revision " .. tostring(revision) .. " does not provide rex.exec.start")
+end
 emit({event="source", source={rex_version=v.rex_version, platform=v.platform, api_revision=v.api_revision}})
 
 local remaining = a.max_bytes
