@@ -74,9 +74,9 @@ python3 tools/install/test_install.py --public -v
 
 Selected executions per cell:
 
-- **Linux: 91** = child4 + observe28 + separately repeated offline Compare8 + send9 + spawn6 + maneuver10 + filter9 + doctor3 + installer14. Doctor's seven unsupported runtime cases skip explicitly.
-- **Mac API10 and API12: 86 each** = child4 + observe28 + send9 + spawn6 + run11 + doctor9 + maneuver10 + filter9. Doctor's one non-Mac guard skips.
-- **Mac API13: 107** = those86 + offstage7 + installer14.
+- **Linux: 103** = child4 + observe28 + separately repeated offline Compare8 + send9 + spawn6 + maneuver10 + filter9 + cache12 + doctor3 + installer14. Doctor's seven unsupported runtime cases skip explicitly.
+- **Mac API10 and API12: 98 each** = child4 + observe28 + send9 + spawn6 + run11 + doctor9 + maneuver10 + filter9 + cache12. Doctor's one non-Mac guard skips.
+- **Mac API13: 119** = those98 + offstage7 + installer14.
 
 The extra Linux eight comparisons intentionally repeat cases contained in observe28 before Rex download; do not count them as new behaviors. CI discovers no unlisted suites. Installer public-download controls deliberately select the historical alpha.1 Mac release and Linux absent-asset case; other versions are native help-only fixtures. Those tests are not public alpha.3-download or live Rex proof. Final release archives receive a separate exact-byte install/upgrade/rollback/remove check.
 

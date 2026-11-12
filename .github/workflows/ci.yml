@@ -135,6 +135,11 @@ jobs:
           TEEREX_BIN: ${{ github.workspace }}/zig-out/bin/teerex
         run: python3 items/filter/test_filter.py -v
 
+      - name: Run opt-in historical observation cache regressions
+        env:
+          TEEREX_BIN: ${{ github.workspace }}/zig-out/bin/teerex
+        run: python3 items/filter/test_cache.py -v
+
       - name: Run Linux offline doctor guards
         if: runner.os == 'Linux'
         env:

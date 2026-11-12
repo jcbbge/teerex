@@ -2,6 +2,7 @@ const std = @import("std");
 
 const usage =
     \\Usage: teerex filter --sample FILE --sample FILE [--sample FILE ...]
+    \\       teerex filter cache put|get|purge --help
     \\Filter 2..128 explicit Rex observation files in supplied order, without contacting Rex.
     \\Only identical returned evidence is omitted; packet IDs/client times are not evidence changes.
     \\Every text, process, directory, status and provenance change remains visible. No cosmetic classifier.
@@ -10,7 +11,8 @@ const usage =
     \\Files must be regular files, at most 1 MiB each and 16 MiB combined. No files are written.
     \\Output may contain secrets; it is escaped, NOT redacted. Save/export only deliberately.
     \\Require exit 0 AND the final processed summary; earlier lines alone are not a complete result.
-    \\Exit: 0 processed, 1 file/evidence/output error, 2 usage. No background work or persistent cache.
+    \\Exit: 0 processed, 1 file/evidence/output error, 2 usage. Plain --sample saves nothing.
+    \\The separate cache commands require explicit private storage/consent; see filter cache --help.
     \\
 ;
 
@@ -32,6 +34,7 @@ fn writeJson(allocator: std.mem.Allocator, value: anytype) !void {
 // The integration owner supplies the shipped observation contract. There is no
 // second Rex adapter, alternate schema or private completion/state classifier.
 pub fn run(allocator: std.mem.Allocator, args: []const []const u8, comptime observation: type) !u8 {
+    if (args.len > 0 and std.mem.eql(u8, args[0], "cache")) return @import("cache.zig").run(allocator, args[1..], observation);
     if (args.len == 1 and std.mem.eql(u8, args[0], "--help")) {
         try std.fs.File.stdout().writeAll(usage);
         return 0;
