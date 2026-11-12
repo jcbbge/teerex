@@ -3,12 +3,13 @@ const builtin = @import("builtin");
 const supervised = @import("supervised_child");
 
 const usage =
-    \\Usage: teerex send --socket ABS --session session:UUID --block block:UUID --from LABEL --message-file ABS [--timeout-ms N]
+    \\Usage: teerex send --socket ABS --session session:UUID --block block:UUID --from LABEL --message-file ABS|- [--timeout-ms N]
     \\Send FROM <label>: <file bytes> as one paste, then Enter, to an explicit existing terminal.
     \\Requires Linux/macOS, Rex on PATH, existing API10..13 server, and canonical lowercase full IDs.
     \\Select a dedicated agent terminal: this can submit/execute input and does not establish prompt safety.
     \\No clearing, draft detection/restoration, chunking, retry, inbox forwarding, or autostart.
-    \\File: regular, 1..65536 UTF-8 bytes; LF/tab allowed, other C0/DEL rejected. Encoded RPC capped at 60000 bytes.
+    \\File: regular, or - reads stdin until EOF within the same deadline/cancellation budget, before any dispatch.
+    \\Input: 1..65536 UTF-8 bytes; LF/tab allowed, other C0/DEL rejected. Encoded RPC capped at 60000 bytes.
     \\Local inbox markers refuse input. Same-host/TMPDIR agent-send mkdir lock serializes cooperating senders only.
     \\Timeout defaults to 10000 ms (100..60000), including lock wait and Rex; stale locks are never stolen.
     \\JSON reports attempts/acknowledgements, NOT application consumption, atomic delivery, or an input lease.
@@ -106,6 +107,31 @@ fn inboxMarked(allocator: std.mem.Allocator, env: *const std.process.EnvMap, suf
     return true;
 }
 
+fn readMessage(allocator: std.mem.Allocator, path: []const u8, timer: *std.time.Timer, timeout_ms: u64) ![]const u8 {
+    if (!std.mem.eql(u8, path, "-")) {
+        // O_NONBLOCK prevents hanging on a FIFO before checking its kind.
+        const fd = try std.posix.open(path, .{ .ACCMODE = .RDONLY, .NONBLOCK = true, .CLOEXEC = true }, 0);
+        const file: std.fs.File = .{ .handle = fd };
+        defer file.close();
+        if ((try file.stat()).kind != .file) usageError("message file must be regular");
+        return file.readToEndAlloc(allocator, 65536);
+    }
+    var bytes: std.ArrayList(u8) = .empty;
+    while (true) {
+        if (supervised.requestedSignal() != 0) return error.StdinCancelled;
+        const elapsed = timer.read() / std.time.ns_per_ms;
+        if (elapsed >= timeout_ms) return error.StdinDeadlineExceeded;
+        var descriptors = [_]std.posix.pollfd{.{ .fd = std.posix.STDIN_FILENO, .events = std.posix.POLL.IN, .revents = 0 }};
+        _ = try std.posix.poll(&descriptors, @intCast(@min(20, timeout_ms - elapsed)));
+        if (descriptors[0].revents == 0) continue;
+        var buffer: [4096]u8 = undefined;
+        const count = try std.posix.read(std.posix.STDIN_FILENO, &buffer);
+        if (count == 0) return bytes.items;
+        if (count > 65536 - bytes.items.len) return error.FileTooBig;
+        try bytes.appendSlice(allocator, buffer[0..count]);
+    }
+}
+
 pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
     if (args.len == 1 and std.mem.eql(u8, args[0], "--help")) {
         try std.fs.File.stdout().writeAll(usage);
@@ -142,7 +168,7 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
     const sender = from orelse usageError("--from is required");
     const file_path = message_file orelse usageError("--message-file is required");
     const timeout_ms = timeout orelse 10000;
-    if (!std.fs.path.isAbsolute(path) or !std.fs.path.isAbsolute(file_path)) usageError("socket and message file must be absolute paths");
+    if (!std.fs.path.isAbsolute(path) or (!std.mem.eql(u8, file_path, "-") and !std.fs.path.isAbsolute(file_path))) usageError("socket must be absolute; message file must be absolute or - for stdin");
     if (!fullId(sid, "session:") or !fullId(bid, "block:")) usageError("canonical lowercase full session:UUID and block:UUID are required");
     if (sender.len < 1 or sender.len > 128 or !textValid(sender, false)) usageError("from must be 1..128 UTF-8 bytes without controls");
     if (timeout_ms < 100 or timeout_ms > 60000) usageError("timeout must be 100..60000 ms");
@@ -154,16 +180,14 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
     const started_at = std.time.milliTimestamp();
     var env = try std.process.getEnvMap(allocator);
     for ([_][]const u8{ "REX_SERVER", "REX_SESSION", "REX_BLOCK", "REX_CLIENT" }) |key| env.remove(key);
-    // O_NONBLOCK avoids hanging on a FIFO before its kind can be checked.
-    const fd = try std.posix.open(file_path, .{ .ACCMODE = .RDONLY, .NONBLOCK = true, .CLOEXEC = true }, 0);
-    const file: std.fs.File = .{ .handle = fd };
-    defer file.close();
-    if ((try file.stat()).kind != .file) usageError("message file must be regular");
-    const message = file.readToEndAlloc(allocator, 65536) catch |err| {
+    var input_failure: ?[]const u8 = null;
+    const message = readMessage(allocator, file_path, &timer, timeout_ms) catch |err| blk: {
         if (err == error.FileTooBig) usageError("message exceeds 65536 bytes");
-        return err;
+        if (err != error.StdinCancelled and err != error.StdinDeadlineExceeded) return err;
+        input_failure = @errorName(err);
+        break :blk "";
     };
-    if (message.len == 0 or !textValid(message, true)) usageError("message must be nonempty UTF-8, with no controls except LF/tab");
+    if (input_failure == null and (message.len == 0 or !textValid(message, true))) usageError("message must be nonempty UTF-8, with no controls except LF/tab");
     const suffix = bid["block:".len..];
     const configured_tmp = env.get("TMPDIR") orelse "";
     const lock_path = try std.fmt.allocPrint(allocator, "{s}/agent-send.{s}.lock", .{ if (configured_tmp.len != 0) configured_tmp else "/tmp", suffix });
@@ -179,6 +203,11 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
     var backend: ?supervised.Result = null;
     var encoded_argument_bytes: ?usize = null;
     work: {
+        if (input_failure) |reason| {
+            failure = reason;
+            outcome = if (std.mem.eql(u8, reason, "StdinDeadlineExceeded")) "deadline_exceeded" else "cancel_requested";
+            break :work;
+        }
         while (true) {
             if (supervised.requestedSignal() != 0) break :work;
             const elapsed = timer.read() / std.time.ns_per_ms;

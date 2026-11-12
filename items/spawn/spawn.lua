@@ -11,7 +11,13 @@ end
 local view = rex.call("session.view", {session_id=a.session_id})
 if type(view) ~= "table" or view.session_id ~= a.session_id then refuse("target_unavailable"); return end
 local parent = view
-if a.report_session ~= a.session_id then parent = rex.call("session.view", {session_id=a.report_session}) end
+if a.report_session ~= a.session_id then
+    -- The Lua control stream joins only its creation session by default.
+    -- Join the explicitly supplied report session before reading its attached view.
+    local attached = rex.call("session.attach", {session_id=a.report_session})
+    if type(attached) ~= "table" then refuse("report_session_attach_failed"); return end
+    parent = attached.view
+end
 local report_found = false
 if type(parent) == "table" and parent.session_id == a.report_session then
     for _, w in ipairs(parent.windows or {}) do

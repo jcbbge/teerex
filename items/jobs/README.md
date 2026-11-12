@@ -48,6 +48,10 @@ teerex jobs adopt --registry /absolute/private/jobs \
 
 There is no deadline enforcement after the CLI exits. `cleanup=manual` means the recorded owner must review the exact resource at that deadline, deliberately stop/close only work they are authorized to manage with an appropriate tool, independently verify process effects when required, then forget or explicitly hand off the record with a new deadline. **Neither an expired review date, a forgotten record nor a closed block proves descendants stopped.** This item cannot fulfill unattended hard-deadline, guaranteed whole-tree cleanup or sandbox requirements. Do not choose it for work needing those guarantees.
 
+## Alpha.5 explicit existing-pane relocation
+
+`jobs present` now additionally accepts `--relocate yes|no`, default **no**. The existing in-place contract below is unchanged unless yes is supplied. Yes moves the same already placed terminal beside the explicit same-session anchor in a horizontal half-width split, under the existing owner/generation/identity/intent lock. It preserves the block ID and real child PID; it never launches, recreates or closes an agent. Rex carries a focused source's focus, so `--focus no` refuses that source before mutation; explicitly choose `--focus yes` when presentation should transfer it. Detached-agent refusal and all responsibility/uncertainty limits remain. `agents present` composes this locked operation, never an unlocked surfaces bypass. Public jobs14 and combined managed-agent tests exercise cross-tab placement, focus refusal and exact identity preservation on Linux/Mac API13.
+
 ## Deliberate presentation, not a workspace takeover
 
 ```sh

@@ -2,6 +2,10 @@
 
 Start here to install deliberately, check the result, and know what each feature does **without restarting Rex or disturbing live agents**. This is an operations package, not permission to access a machine or endpoint.
 
+## Alpha.5 operating-layer route
+
+For the new milestone, start with the [alpha.5 release guide](../releases/v0.1.0-alpha.5.md), [shared named-host contract and remaining gates](../alpha5.md), [surfaces](../../items/surfaces/README.md), [boards/seat/decisions](../../items/boards/README.md), [managed agents](../../items/agents/README.md), [recovery/manual update](../../items/recovery/README.md) and [fleet install](../fleet-install.md). Each supplies Who/What/When/Where/Why/How and exact help/verification boundaries. Python3.9+ is explicit. Confirm actual release assets; neither a branch version string nor an older green workflow proves publication. Existing metaprompts/procedures below stay pinned to their named historical release, not silently repurposed as alpha.5 cutover permission.
+
 ## Choose your route
 
 1. **First installation / upgrade:** choose the version first. [Setup and recovery](setup.md) is the pinned **v0.1.0-alpha.3** route, tag `8b2827860029e30a3ad5724d357655de155520d5`. For alpha.4, use the separate [publication-gated upgrade/onboarding route](follow-ons.md#alpha4-delivery-layout-and-upgrade) and its [release identities/support](../releases/v0.1.0-alpha.4.md). Main/source-only work is not an update to alpha.3 assets.

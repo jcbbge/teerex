@@ -68,14 +68,16 @@ local anchor_window = visible(before, a.anchor)
 if not anchor_window then refuse("anchor_not_visible_in_view"); return end
 if anchor_window.zoomed_block_id then refuse("anchor_window_zoomed"); return end
 if target.placement == "placed" then
-    -- Never rearrange an already placed pane. Explicit focus/label can present it in place.
-    if not window or window.window_id ~= anchor_window.window_id then
+    if not a.relocate and (not window or window.window_id ~= anchor_window.window_id) then
         refuse("placed_target_not_visible_in_destination"); return
+    end
+    if a.relocate and (not window or (window.focused_block_id == a.block_id and not a.focus)) then
+        refuse("relocating_focused_source_requires_explicit_focus"); return
     end
 elseif target.placement ~= "detached" then refuse("unknown_placement"); return end
 -- All refusals precede the mutation marker. Missing markers are still not dispatch proof.
 emit({event="attempt"})
-if target.placement == "detached" then
+if target.placement == "detached" or a.relocate then
     call("session.move_block", {session_id=a.session_id, block_id=a.block_id, anchor_block_id=a.anchor,
         direction="horizontal", side="after", ratio=0.5})
 end

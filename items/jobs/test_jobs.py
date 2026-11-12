@@ -205,6 +205,23 @@ class JobsTest(unittest.TestCase):
         self.assertEqual(p["failure_reason"], "placed_target_not_visible_in_destination")
         self.assertFalse(p["mutation_attempt_frame_seen"])
         self.assertEqual(self.view(), before)
+        process = self.rpc("com.superlogical.terminal.process", session_id=self.session, block_id=self.block, args={})
+        r, p = self.invoke("present", owner="operator α", generation=2, reason="explicitly move finished work beside seat", anchor=other_anchor, focus="yes", relocate="yes")
+        self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
+        self.assertTrue(p["mutation_attempt_frame_seen"])
+        moved = self.rpc("session.describe_block", session_id=self.session, block_id=self.block)["block"]
+        self.assertEqual(moved["window_id"], other["window_id"])
+        self.assertEqual(self.rpc("com.superlogical.terminal.process", session_id=self.session, block_id=self.block, args={}), process)
+        after = self.view()
+        destination = next(w for w in after["windows"] if w["window_id"] == other["window_id"])
+        self.assertEqual(destination["focused_block_id"], self.block)
+        self.assertEqual(destination["layers"][0]["layout"]["split"]["before"]["block_id"], other_anchor)
+        self.assertEqual(destination["layers"][0]["layout"]["split"]["after"]["block_id"], self.block)
+        r, p = self.invoke("present", owner="operator α", generation=3, reason="do not silently transfer focused source", anchor=self.anchor, focus="no", relocate="yes")
+        self.assertEqual(r.returncode, 1)
+        self.assertEqual(p["failure_reason"], "relocating_focused_source_requires_explicit_focus")
+        self.assertFalse(p["mutation_attempt_frame_seen"])
+        self.assertEqual(self.view(), after)
 
     def test_native_ownership_and_hidden_agent_never_allow_takeover(self):
         # `rex new` retains a real native terminal owner, unlike our detached fixture.

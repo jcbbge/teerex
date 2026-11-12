@@ -72,9 +72,9 @@ class SpawnTest(unittest.TestCase):
     def view(self):
         return self.rpc("session.view", {"session_id": self.session})
 
-    def command(self, *argv, name="worker α", cwd=None, parent=None, timeout=5000):
+    def command(self, *argv, name="worker α", cwd=None, parent=None, report_session=None, timeout=5000):
         return [BIN, "spawn", "--socket", str(self.socket), "--session", self.session, "--name", name,
-                "--cwd", str(cwd or self.work), "--report-to-session", self.session,
+                "--cwd", str(cwd or self.work), "--report-to-session", report_session or self.session,
                 "--report-to-block", parent or self.parent, "--timeout-ms", str(timeout), "--", *argv]
 
     def invoke(self, *argv, **kwargs):
@@ -93,7 +93,12 @@ class SpawnTest(unittest.TestCase):
                 f"env={{k:os.getenv(k) for k in {keys!r}}})))")
         args = ["", "quote ' \"", "α\nnext", "$(touch NEVER); >&2", "--"]
         label = "worker ' α $(never)"
-        result, packet = self.invoke(sys.executable, "-c", code, *args, name=label, cwd=cwd)
+        report = json.loads(subprocess.check_output(self.base + ["new", "--json", "--keep-open", "--shell=none", "--", "/bin/sh", "-c", "sleep 60"], timeout=10))
+        report_session = report["session_id"]
+        report_block = report["initial_windows"][0]["block_ids"][0]
+        report_before = self.rpc("session.view", {"session_id": report_session})
+        result, packet = self.invoke(sys.executable, "-c", code, *args, name=label, cwd=cwd, parent=report_block, report_session=report_session)
+        self.assertEqual(self.rpc("session.view", {"session_id": report_session}), report_before)
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
         self.assertEqual(packet["outcome"], "created_and_attached")
         self.assertIsNone(packet["failure_reason"])
@@ -121,7 +126,7 @@ class SpawnTest(unittest.TestCase):
         expected = dict.fromkeys(["REX_SESSION", "AGENT_SESSION", "LC_REX_SESSION"], self.session)
         expected.update(dict.fromkeys(["REX_BLOCK", "AGENT_PANE", "LC_REX_BLOCK"], created["block_id"]))
         expected.update(dict.fromkeys(["AGENT_NAME", "LC_AGENT_NAME"], label))
-        expected.update(dict.fromkeys(["AGENT_REPORT_TO", "LC_AGENT_REPORT_TO"], self.session + " " + self.parent))
+        expected.update(dict.fromkeys(["AGENT_REPORT_TO", "LC_AGENT_REPORT_TO"], report_session + " " + report_block))
         self.assertEqual(actual["env"], expected)
         for _ in range(100):
             process = self.rpc("com.superlogical.terminal.process", {"session_id": self.session,

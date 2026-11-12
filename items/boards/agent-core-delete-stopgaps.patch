@@ -1,0 +1,275 @@
+diff --git a/primitives/tools/agent-messaging/agent-ask b/primitives/tools/agent-messaging/agent-ask
+deleted file mode 100755
+index d8a5cff..0000000
+--- a/primitives/tools/agent-messaging/agent-ask
++++ /dev/null
+@@ -1,53 +0,0 @@
+-#!/usr/bin/env python3
+-"""agent-ask: put a decision in front of the human, complete, or not at all.
+-
+-  agent-ask <session> <pane> <from> \
+-    --title "Punch list · post()" \
+-    --ask "Approve the books step for Nathaniel's punch list?" \
+-    --context "What happened and what it means, in plain words." \
+-    --option "Go :: what you gain :: what you lose" \
+-    --option "Redo with a note :: gain :: lose" \
+-    --recommend "Go: because …" \
+-    [--answer "go | redo <note>"] [--id ID]
+-
+-  agent-ask <session> <pane> <from> --resolve ID --answer "what the human said"
+-
+-The seat's inbox viewer (agent-inbox) pins every open decision at the top as a card and clears it when resolved.
+-It refuses a decision missing the ask, the context, two options each with a gain and a loss, or a recommendation:
+-the human must be able to decide from the card alone, without hunting through a thread.
+-Transport is agent-send, so fenced workers (through the relay) and other machines work the same way.
+-"""
+-import argparse, json, os, secrets, subprocess, sys
+-
+-MARK, RESOLVED = "DECISION-JSON:", "DECISION-RESOLVED-JSON:"
+-
+-def die(msg):
+-    sys.stderr.write("agent-ask: " + msg + "\n"); sys.exit(2)
+-
+-p = argparse.ArgumentParser(add_help=True, description="Put a complete decision in front of the human.")
+-p.add_argument("session"); p.add_argument("pane"); p.add_argument("sender")
+-p.add_argument("--title"); p.add_argument("--ask"); p.add_argument("--context")
+-p.add_argument("--option", action="append", default=[], help='"Label :: what you gain :: what you lose"')
+-p.add_argument("--recommend"); p.add_argument("--answer"); p.add_argument("--id")
+-p.add_argument("--resolve", metavar="ID")
+-a = p.parse_args()
+-
+-if a.resolve:
+-    if not a.answer: die("--resolve needs --answer: what the human decided, in their words")
+-    body = RESOLVED + json.dumps({"id": a.resolve, "answer": a.answer})
+-else:
+-    missing = [f for f in ("title", "ask", "context", "recommend") if not (getattr(a, f) or "").strip()]
+-    if missing: die("missing " + ", ".join("--" + m for m in missing) + ". The human decides from the card alone.")
+-    opts = []
+-    for o in a.option:
+-        parts = [x.strip() for x in o.split("::")]
+-        if len(parts) != 3 or not all(parts):
+-            die(f'--option "{o}" must be "Label :: what you gain :: what you lose", all three filled')
+-        opts.append({"label": parts[0], "gain": parts[1], "lose": parts[2]})
+-    if len(opts) < 2: die("give at least two --option entries: a choice with one option is not a decision")
+-    did = a.id or secrets.token_hex(3)
+-    body = MARK + json.dumps({"id": did, "title": a.title, "ask": a.ask, "context": a.context, "options": opts,
+-                              "recommend": a.recommend, "answer": a.answer or ""})
+-    print(did)
+-r = subprocess.run(["agent-send", a.session, a.pane, a.sender, body])
+-sys.exit(r.returncode)
+diff --git a/primitives/tools/agent-messaging/agent-inbox b/primitives/tools/agent-messaging/agent-inbox
+deleted file mode 100755
+index 9f91a75..0000000
+--- a/primitives/tools/agent-messaging/agent-inbox
++++ /dev/null
+@@ -1,142 +0,0 @@
+-#!/usr/bin/env python3
+-"""agent-inbox [pane id] — the seat's inbox as a decision board, live.
+-
+-Only what needs the human gets space. Open decisions (sent with agent-ask) are pinned at the top as full cards: the
+-ask, the context, each option with what you gain and what you lose, the recommendation, how to answer. Everything
+-else (status, reports, alerts) is one dim line in a short activity strip; handshakes (ACK) are not shown at all.
+-The screen redraws whenever the log changes. Ctrl+C to quit.
+-
+-agent-send writes one JSON line per message ({at, from, msg}) to ~/.local/state/agent-inbox/<pane id>.log.
+-A decision is a message whose text starts DECISION-JSON:; DECISION-RESOLVED-JSON: clears it (agent-ask --resolve).
+-"""
+-import calendar, hashlib, json, os, re, shutil, sys, textwrap, time
+-
+-DIR = os.environ.get("AGENT_INBOX_DIR", os.path.expanduser("~/.local/state/agent-inbox"))
+-ACTIVITY = int(os.environ.get("AGENT_INBOX_ACTIVITY", "6"))
+-MARK, RESOLVED = "DECISION-JSON:", "DECISION-RESOLVED-JSON:"
+-
+-def pane_id():
+-    if len(sys.argv) > 1: return sys.argv[1].split(":")[-1]
+-    if os.environ.get("AGENT_INBOX_PANE"): return os.environ["AGENT_INBOX_PANE"].split(":")[-1]
+-    marks = [f[:-6] for f in os.listdir(DIR) if f.endswith(".inbox")]
+-    if len(marks) == 1: return marks[0]
+-    sys.exit("agent-inbox: name the pane (marked inboxes: %s)" % (", ".join(marks) or "none"))
+-
+-TTY = sys.stdout.isatty()
+-def c(code, s): return f"\033[{code}m{s}\033[0m" if TTY else s
+-DIM, BOLD = "2", "1"
+-AMBER, GREEN, RED, CYAN = "38;5;221", "38;5;114", "38;5;203", "38;5;81"
+-
+-def width():
+-    try: return max(40, os.get_terminal_size(sys.stdout.fileno()).columns)
+-    except OSError: return max(40, shutil.get_terminal_size((80, 24)).columns)
+-
+-def local(at):
+-    if at.endswith("Z"):
+-        try: return time.strftime("%H:%M", time.localtime(calendar.timegm(time.strptime(at, "%Y-%m-%dT%H:%M:%SZ"))))
+-        except ValueError: pass
+-    m = re.search(r"(\d\d:\d\d)", at or ""); return m.group(1) if m else ""
+-
+-def wrap(text, w, indent, first=None):
+-    out = []
+-    for i, para in enumerate(str(text).split("\n")):
+-        lines = textwrap.wrap(para, max(20, w - len(indent)), break_on_hyphens=False) or [""]
+-        for j, l in enumerate(lines):
+-            lead = first if (first is not None and i == 0 and j == 0) else indent
+-            out.append(lead + l)
+-    return out
+-
+-def read(path):
+-    recs = []
+-    with open(path) as f:
+-        for line in f:
+-            line = line.strip()
+-            if not line: continue
+-            try: r = json.loads(line)
+-            except ValueError:
+-                m = re.match(r"(\d\d:\d\d:\d\d) FROM ([^:]+?): (.*)", line)
+-                r = {"at": m.group(1), "from": m.group(2), "msg": m.group(3)} if m else {"at": "", "from": "?", "msg": line}
+-            recs.append(r)
+-    return recs
+-
+-def fold(recs):
+-    open_, done, activity = {}, [], []
+-    for r in recs:
+-        msg = re.sub(r"^FROM [^:]*:\s*", "", str(r.get("msg", "")).strip())
+-        if msg.startswith(MARK):
+-            try: d = json.loads(msg[len(MARK):]); d["at"], d["from"] = r.get("at", ""), r.get("from", "?"); open_[d["id"]] = d
+-            except ValueError: activity.append((r, "an unreadable decision (bad JSON)"))
+-        elif msg.startswith(RESOLVED):
+-            try:
+-                x = json.loads(msg[len(RESOLVED):]); d = open_.pop(x["id"], None)
+-                if d: done.append((d, x.get("answer", ""), r.get("at", "")))
+-            except ValueError: pass
+-        elif re.match(r"^ACK\b", msg) or re.match(r"^\S+: hi$", msg) or "proof" in str(r.get("from", "")).lower():
+-            continue  # handshakes and test/proof agents: never shown
+-        else:
+-            activity.append((r, msg))
+-    return list(open_.values()), done, activity
+-
+-def card(d, w):
+-    o = []
+-    head = f" DECISION · {d.get('title','')} "
+-    o.append(c("1;30;48;5;221", head) + c(DIM, f"  {local(d['at'])} · from {d['from']} · id {d['id']}"))
+-    o += [c(BOLD, l) for l in wrap(d.get("ask", ""), w, "  ", "  ")]
+-    o.append("")
+-    o += [c(DIM, "  CONTEXT")] + wrap(d.get("context", ""), w, "    ")
+-    o.append("")
+-    o.append(c(DIM, "  OPTIONS"))
+-    for i, op in enumerate(d.get("options", [])):
+-        key = chr(65 + i)
+-        o.append("    " + c(BOLD + ";" + CYAN, f"{key}  {op['label']}"))
+-        o += [c(GREEN, l) for l in wrap(op["gain"], w, "         ", "       + ")]
+-        o += [c(RED, l) for l in wrap(op["lose"], w, "         ", "       − ")]
+-    o.append("")
+-    o += [c(AMBER, l) for l in wrap(d.get("recommend", ""), w, "               ", "  RECOMMEND    ")]
+-    ans = d.get("answer") or "type your choice in the left pane"
+-    o += [c(DIM, l) for l in wrap(ans, w, "               ", "  ANSWER       ")]
+-    return o
+-
+-def first_line(msg, n):
+-    s = msg.split("\n", 1)[0].strip()
+-    return s if len(s) <= n else s[: n - 1] + "…"
+-
+-def render(path):
+-    w = width()
+-    open_, done, activity = fold(read(path))
+-    if TTY: sys.stdout.write(f"\033]2;Inbox · {len(open_)} waiting\007")
+-    out = ["\033[2J\033[H" if TTY else ""]
+-    if open_:
+-        out.append(c(BOLD + ";" + AMBER, f"  {len(open_)} WAITING ON YOU"))
+-        out.append("")
+-        for d in open_:
+-            out += card(d, w); out.append(c(DIM, "  " + "─" * (w - 4))); out.append("")
+-    else:
+-        out.append(c(BOLD + ";" + GREEN, "  Nothing waiting on you."))
+-        out.append("")
+-    if done:
+-        for d, ans, at in done[-2:]:
+-            out.append(c(DIM, f"  ✓ {local(at)}  {d.get('title','')}: {ans}"))
+-        out.append("")
+-    if activity:
+-        out.append(c(DIM, "  RECENT ACTIVITY"))
+-        for r, msg in activity[-ACTIVITY:]:
+-            who = re.sub(r"\s*\(fenced.*\)$", "", r.get("from", "?"))
+-            out.append(c(DIM, f"  {local(r.get('at','')):>5}  ") + c(DIM + ";" + CYAN, who) + c(DIM, "  " + first_line(msg, w - len(who) - 12)))
+-    sys.stdout.write("\n".join(out) + "\n"); sys.stdout.flush()
+-
+-def main():
+-    path = os.path.join(DIR, pane_id() + ".log")
+-    open(path, "a").close()
+-    last = None
+-    while True:
+-        try: st = os.stat(path); key = (st.st_size, st.st_mtime, width())
+-        except OSError: key = None
+-        if key != last:
+-            render(path); last = key
+-        if not TTY: return
+-        time.sleep(0.5)
+-
+-if __name__ == "__main__":
+-    try: main()
+-    except KeyboardInterrupt: pass
+diff --git a/primitives/tools/agent-messaging/agent-seat b/primitives/tools/agent-messaging/agent-seat
+deleted file mode 100755
+index 99d7bed..0000000
+--- a/primitives/tools/agent-messaging/agent-seat
++++ /dev/null
+@@ -1,62 +0,0 @@
+-#!/usr/bin/env bash
+-# agent-seat: make the pane the human just logged in from a seat. It marks the pane as an inbox (agents never type
+-# into it) and opens the inbox viewer beside it at one third of the width. It is silent, runs at most once per pane,
+-# and is safe to run again.
+-# It runs automatically from an interactive login shell on hive (~/.zshrc), when the operator's terminal passed its
+-# pane over ssh (LC_REX_BLOCK, LC_REX_SESSION; sshd accepts LC_*). Agents started by agent-spawn carry AGENT_PANE
+-# and are skipped: those panes belong to agents, and agents are typed into.
+-set -euo pipefail
+-[ -n "${AGENT_PANE:-}" ] && exit 0
+-B=${REX_BLOCK:-${LC_REX_BLOCK:-}}; S=${REX_SESSION:-${LC_REX_SESSION:-}}
+-[ -n "$B" ] && [ -n "$S" ] || exit 0
+-command -v rex >/dev/null || exit 0
+-id=${B##*:}; D="${AGENT_INBOX_DIR:-$HOME/.local/state/agent-inbox}"; mkdir -p "$D"
+-touch "$D/$id.inbox" "$D/$id.log"
+-# One viewer per seat: skip if the one recorded for this pane still exists.
+-if [ -s "$D/$id.viewer" ] && rex block ls --json 2>/dev/null | grep -q "$(cat "$D/$id.viewer")"; then exit 0; fi
+-tz=${AGENT_INBOX_TZ:-America/Chicago}
+-CMD="TZ=$tz ~/.local/bin/agent-inbox $id"
+-VIEW=$(rex api call -s "$S" session.view 2>/dev/null || echo '{}') # CHECK: rex api describe session.view --json (C4)
+-SID=$(printf '%s' "$VIEW" | python3 -c 'import json,sys;print(json.load(sys.stdin).get("session_id",""))')
+-W=$(printf '%s' "$VIEW" | python3 -c '
+-import json,sys
+-bid=sys.argv[1]
+-def holds(n):
+-    return n.get("block",{}).get("block_id")==bid or any(holds(n.get("split",{}).get(k,{})) for k in ("before","after") if k in n.get("split",{}))
+-for w in json.load(sys.stdin).get("windows",[]):
+-    if any(holds(l.get("layout",{})) for l in w.get("layers",[])): print(w["window_id"]); break
+-' "$B")
+-if [ -n "${REX_SESSION:-}" ]; then ARGV=$(jq -nc --arg c "$CMD" '["sh","-lc",$c]'); else ARGV=$(jq -nc --arg c "$CMD" '["ssh","-t","hive",$c]'); fi
+-J=$(jq -nc --arg s "$SID" --arg w "$W" --argjson argv "$ARGV" '{session_id:$s,window_id:$w,bounds:[0.667,0,0.333,1],focus:false,layout:{block:{flavor:"com.superlogical.terminal.shell",label:"inbox",options:{command:$argv}}}}') # CHECK: rex block types --json; rex api describe session.new_layer --json (C1, C3)
+-if out=$(rex api call -s "$S" session.new_layer "$J" 2>>"$D/seat.log"); then
+-  if v=$(printf '%s' "$out" | python3 -c 'import json,sys;print(json.load(sys.stdin)["block_ids"][0])'); then
+-    printf '%s\n' "$v" > "$D/$id.viewer"; exit 0
+-  fi
+-fi
+-# Keep the previous split and resize as the fallback.
+-if [ -n "${REX_SESSION:-}" ]; then
+-  v=$(rex run -s "$S" -b "$B" --split=right --focus=false -- sh -lc "$CMD" 2>/dev/null) || exit 0
+-else
+-  v=$(rex run -s "$S" -b "$B" --split=right --focus=false -- ssh -t hive "$CMD" 2>/dev/null) || exit 0
+-fi
+-printf '%s\n' "$v" > "$D/$id.viewer"
+-# Size it to a third and read it back (research idea 8): retry, and log any mismatch instead of failing silently.
+-ratio() { rex api call session.view -s "$S" 2>/dev/null | python3 -c '
+-import json,sys
+-v,b=sys.argv[1],sys.argv[2]
+-def walk(n):
+-    s=n.get("split")
+-    if not s: return None
+-    kids=(s.get("before",{}).get("block_id"),s.get("after",{}).get("block_id"))
+-    if kids==(b,v): return s.get("ratio")
+-    return walk(s.get("before",{})) or walk(s.get("after",{}))
+-for w in json.load(sys.stdin).get("windows",[]):
+-    for l in w.get("layers",[]):
+-        r=walk(l.get("layout",{}))
+-        if r: print(r); sys.exit()' "$v" "$B"; }
+-for try in 1 2 3; do
+-  sleep 1
+-  rex api call session.resize_pane "{\"session_id\":\"$S\",\"direction\":\"horizontal\",\"before_block_id\":\"$B\",\"after_block_id\":\"$v\",\"ratio\":0.667}" >>"$D/seat.log" 2>&1
+-  r=$(ratio); case "$r" in 0.66*) exit 0 ;; esac
+-  echo "$(date -u +%FT%TZ) $id: ratio read back '$r' after try $try" >> "$D/seat.log"
+-done

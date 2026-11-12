@@ -6,6 +6,7 @@ Pass --public to additionally download and install the real alpha.1 release.
 """
 import hashlib
 import io
+import json
 import os
 from pathlib import Path
 import platform
@@ -49,7 +50,10 @@ class Lifecycle(unittest.TestCase):
         cls.binaries = {}
         for label, status in (("old", 0), ("new", 0), ("broken", 17)):
             source = build / (label + ".c")
-            source.write_text('#include <stdio.h>\nint main(void) { puts("installer fixture ' + label + '"); return ' + str(status) + '; }\n')
+            source.write_text('#include <stdio.h>\n#include <stdlib.h>\nint main(void) { '
+                              'const char *probe = getenv("TEEREX_INSTALL_EXEC_PROBE"); '
+                              'if (probe) { FILE *f = fopen(probe, "a"); if (f) { fputs("executed\\n", f); fclose(f); } } '
+                              'puts("installer fixture ' + label + '"); return ' + str(status) + '; }\n')
             binary = build / label
             compiler = "/usr/bin/clang" if MAC else "/usr/bin/cc"
             subprocess.run([compiler, str(source), "-o", str(binary)], check=True, capture_output=True)
@@ -62,7 +66,7 @@ class Lifecycle(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="teerex-installer-test-")
         self.addCleanup(self.temp.cleanup)
-        self.home = Path(self.temp.name)
+        self.home = Path(self.temp.name).resolve()
         self.prefix = self.home / "space in path" / "teerex"
         self.env = dict(os.environ, HOME=str(self.home))
         self.sentinels = {}
@@ -131,6 +135,35 @@ class Lifecycle(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
         return result
 
+    def snapshot(self):
+        # Reads may update atime; no bytes, links, modes, ownership or mtimes may change.
+        paths = [self.home] + sorted(self.home.rglob("*"))
+        result = {}
+        for path in paths:
+            stat = path.lstat()
+            try:
+                data = os.readlink(path) if path.is_symlink() else path.read_bytes() if path.is_file() else None
+            except PermissionError:
+                data = "unreadable"  # Metadata still must remain identical.
+            result[str(path)] = (stat.st_mode, stat.st_uid, stat.st_gid, stat.st_ino, stat.st_mtime_ns, data)
+        return result
+
+    def machine(self, command, tag=None, *, error=None, **kwargs):
+        before = self.snapshot()
+        result = self.call(command, tag, ok=error is None, **kwargs)
+        self.assertEqual(self.snapshot(), before, "read-only command changed the filesystem")
+        self.assertEqual(result.stderr, "")
+        self.assertEqual(result.stdout.count("\n"), 1, result.stdout)
+        data = json.loads(result.stdout)
+        self.assertEqual(data["schema_version"], 1)
+        self.assertEqual(data["operation"], command)
+        self.assertIs(data["ok"], error is None)
+        if error is not None:
+            self.assertEqual(set(data), {"schema_version", "operation", "ok", "error"})
+            self.assertEqual(data["error"]["code"], error)
+            self.assertTrue(data["error"]["message"])
+        return data
+
     def active(self, tag, label):
         self.assertEqual(os.readlink(self.prefix / "current"), "versions/" + tag)
         output = subprocess.check_output([str(self.prefix / "current" / "teerex"), "--help"], text=True)
@@ -153,6 +186,11 @@ class Lifecycle(unittest.TestCase):
         self.assertFalse((self.prefix / "current").is_symlink())
         self.assertEqual(list((self.prefix / "versions").iterdir()), [])
         self.assertIn("Active: none", self.call("list").stdout)
+        empty = self.machine("inspect")
+        self.assertEqual(empty["state"], "managed")
+        self.assertEqual(empty["installed_versions"], [])
+        self.assertIsNone(empty["active_version"])
+        self.machine("verify", OLD, error="invalid_release")
         self.call("upgrade", NEW, self.new_source, ok=False)
         (self.prefix / "versions").rmdir()
         (self.prefix / ".teerex-install-root").unlink()
@@ -278,6 +316,178 @@ class Lifecycle(unittest.TestCase):
         finally:
             lock.rmdir()
 
+    def test_inspect_absent_and_unmanaged_without_adoption(self):
+        self.prefix = self.home / 'quote"-slash\\-tab\t-control\x01\x1f-雪' / "teerex"
+        expected = {"schema_version": 1, "operation": "inspect", "ok": True,
+                    "state": "absent", "root": str(self.prefix), "platform": ASSET_PLATFORM,
+                    "active_version": None, "installed_versions": [], "busy": False, "reason": None}
+        self.assertEqual(self.machine("inspect"), expected)
+        self.machine("verify", OLD, error="missing_root")
+        alias = self.home / "home-alias"
+        alias.symlink_to(self.home, target_is_directory=True)
+        self.env["HOME"] = str(alias)
+        self.assertEqual(self.machine("inspect", prefix=alias / self.prefix.relative_to(self.home)), expected)
+        self.env["HOME"] = str(self.home)
+        self.prefix.mkdir(parents=True)
+        (self.prefix / "manual-notes").write_text("leave alone")
+        expected.update(state="unmanaged", reason="missing_marker")
+        self.assertEqual(self.machine("inspect"), expected)
+        self.machine("verify", OLD, error="unmanaged_root")
+        (self.prefix / ".teerex-install-root").write_text("another-manager-v2\n")
+        expected["reason"] = "unrecognized_marker"
+        self.assertEqual(self.machine("inspect"), expected)
+        self.machine("verify", OLD, error="unmanaged_root")
+        self.call("install", OLD, self.old_source, ok=False)
+
+    def test_machine_inventory_and_fixed_verified_selection_never_execute(self):
+        self.prefix = self.home / 'quote"-slash\\-tab\t-雪' / "teerex"
+        self.call("install", OLD, self.old_source)
+        self.call("upgrade", NEW, self.new_source)
+        probe = self.home / "must-not-execute"
+        self.env["TEEREX_INSTALL_EXEC_PROBE"] = str(probe)
+        data = self.machine("inspect")
+        self.assertEqual(data, {"schema_version": 1, "operation": "inspect", "ok": True,
+                              "state": "managed", "root": str(self.prefix), "platform": ASSET_PLATFORM,
+                              "active_version": NEW, "installed_versions": [OLD, NEW], "busy": False, "reason": None})
+        verified = self.machine("verify", OLD)
+        executable = self.prefix / "versions" / OLD / "teerex"
+        self.assertEqual(verified, {"schema_version": 1, "operation": "verify", "ok": True,
+                                  "root": str(self.prefix), "platform": ASSET_PLATFORM,
+                                  "active_version": NEW, "selected_version": OLD,
+                                  "executable": str(executable),
+                                  "sha256": hashlib.sha256(self.binaries["old"]).hexdigest()})
+        self.assertFalse(probe.exists())
+        (self.prefix / "current").unlink()  # A deliberately deactivated root is valid.
+        self.assertIsNone(self.machine("inspect")["active_version"])
+        self.assertIsNone(self.machine("verify", OLD)["active_version"])
+        self.assertFalse(probe.exists())
+        # Positive control: this native fixture records execution when actually launched.
+        subprocess.run([str(executable), "--help"], env=self.env, capture_output=True, check=True)
+        self.assertEqual(probe.read_text(), "executed\n")
+
+    def test_machine_busy_including_stale_lock_is_not_inventory(self):
+        self.call("install", OLD, self.old_source)
+        lock = self.prefix / ".installer-lock"
+        current = self.prefix / "current"
+        current.unlink()
+        current.symlink_to("versions/mid-mutation")
+        for kind in ("directory", "file", "dangling-symlink"):
+            with self.subTest(kind=kind):
+                if kind == "directory":
+                    lock.mkdir()
+                elif kind == "file":
+                    lock.write_text("stale")
+                else:
+                    lock.symlink_to(self.home / "absent-lock-target")
+                try:
+                    data = self.machine("inspect")
+                    self.assertEqual(data["state"], "managed")
+                    self.assertTrue(data["busy"])
+                    self.assertIsNone(data["active_version"])
+                    self.assertEqual(data["installed_versions"], [])
+                    self.machine("verify", OLD, error="busy")
+                finally:
+                    lock.rmdir() if kind == "directory" else lock.unlink()
+
+    def test_machine_refuses_unsafe_paths_current_and_inventory(self):
+        for prefix in (self.home, str(self.home) + "/../outside", str(self.home) + "/x//y",
+                       str(self.home) + "/x/./y", str(self.home) + "/line\nbreak"):
+            self.machine("inspect", prefix=prefix, error="unsafe_path")
+            self.machine("verify", OLD, prefix=prefix, error="unsafe_path")
+        link = self.home / "linked"
+        link.symlink_to(self.home)
+        self.machine("inspect", prefix=link / "install", error="unsafe_path")
+        self.machine("verify", OLD, prefix=link / "install", error="unsafe_path")
+        self.call("install", OLD, self.old_source)
+        marker = self.prefix / ".teerex-install-root"
+        marker.chmod(0)
+        try:
+            self.machine("inspect", error="invalid_root")
+            self.machine("verify", OLD, error="invalid_root")
+        finally:
+            marker.chmod(0o600)
+        versions = self.prefix / "versions"
+        versions.chmod(0o300)
+        try:
+            self.machine("inspect", error="invalid_root")
+            self.machine("verify", OLD, error="invalid_root")
+        finally:
+            versions.chmod(0o700)
+        current = self.prefix / "current"
+        for target in (str(self.home), "versions/" + NEW, "versions/../elsewhere"):
+            current.unlink()
+            current.symlink_to(target)
+            self.machine("inspect", error="invalid_current")
+            self.machine("verify", OLD, error="invalid_current")
+        current.unlink()
+        current.write_text("manual executable")
+        self.machine("inspect", error="invalid_current")
+        self.machine("verify", OLD, error="invalid_current")
+        current.unlink()
+        current.symlink_to("versions/" + OLD)
+        entry = self.prefix / "versions" / NEW
+        entry.symlink_to(self.prefix / "versions" / OLD)
+        self.machine("inspect", error="invalid_release")
+        self.machine("verify", OLD, error="invalid_release")
+        entry.unlink()
+        entry = self.prefix / "versions" / ".unexpected"
+        entry.mkdir()
+        self.machine("inspect", error="invalid_release")
+        entry.rmdir()
+        versions = self.prefix / "versions"
+        versions.rename(self.prefix / "saved-versions")
+        versions.symlink_to(self.prefix / "saved-versions")
+        self.machine("inspect", error="invalid_root")
+        self.machine("verify", OLD, error="invalid_root")
+        marker = self.prefix / ".teerex-install-root"
+        marker.unlink()
+        marker.symlink_to(self.home / "missing-marker")
+        self.machine("inspect", error="invalid_root")
+        self.machine("verify", OLD, error="invalid_root")
+
+    def test_machine_verify_integrity_structure_and_host_without_execution(self):
+        self.call("install", OLD, self.old_source)
+        release = self.prefix / "versions" / OLD
+        readme = release / "README.md"
+        original = readme.read_bytes()
+        probe = self.home / "must-not-execute"
+        self.env["TEEREX_INSTALL_EXEC_PROBE"] = str(probe)
+        readme.write_text("modified")
+        self.machine("verify", OLD, error="integrity_mismatch")
+        self.assertEqual(self.machine("inspect")["installed_versions"], [OLD])  # Inventory is not integrity.
+        readme.unlink()
+        self.machine("verify", OLD, error="invalid_release")
+        readme.symlink_to(release / "RIGHTS.md")
+        self.machine("verify", OLD, error="invalid_release")
+        readme.unlink()
+        readme.write_bytes(original)
+        extra = release / ".user-notes"
+        extra.write_text("keep")
+        self.machine("verify", OLD, error="invalid_release")
+        extra.unlink()
+        binary = release / "teerex"
+        binary.chmod(0o600)
+        self.machine("verify", OLD, error="invalid_release")
+        binary.chmod(0o700)
+        foreign = bytearray(self.binaries["old"])
+        struct.pack_into("<I" if MAC else "<H", foreign, 4 if MAC else 18, 0x01000007 if MAC else 183)
+        binary.write_bytes(foreign)
+        # A fresh, internally consistent record must still fail host architecture.
+        record = "".join(hashlib.sha256((release / name).read_bytes()).hexdigest() + "  " + name + "\n"
+                         for name in ("teerex", "README.md", "RIGHTS.md"))
+        (release / ".files.sha256").write_text(record)
+        self.machine("verify", OLD, error="architecture_mismatch")
+        self.machine("verify", NEW, error="invalid_release")
+        self.assertFalse(probe.exists())
+
+    def test_machine_argument_errors_are_json(self):
+        self.machine("verify", error="invalid_arguments")
+        self.machine("verify", "latest", error="invalid_arguments")
+        self.machine("inspect", OLD, error="invalid_arguments")
+        self.machine("inspect", extra=("--from", str(self.old_source)), error="invalid_arguments")
+        self.machine("verify", OLD, extra=("--deactivate",), error="invalid_arguments")
+        self.machine("inspect", extra=("--unknown",), error="invalid_arguments")
+
     def test_default_prefix(self):
         subprocess.run(["/bin/bash", str(INSTALLER), "install", "--version", OLD, "--from", str(self.old_source)], env=self.env, capture_output=True, check=True)
         self.assertEqual(os.readlink(self.home / ".local/opt/teerex/current"), "versions/" + OLD)
@@ -298,6 +508,9 @@ class Lifecycle(unittest.TestCase):
         binary = self.prefix / "current" / "teerex"
         self.assertEqual(hashlib.sha256(binary.read_bytes()).hexdigest(), "c39108dc3bfedf240c62c4f7b0c683f6f06b5ef59fa78cd377aa8b38b007abe9")
         self.assertEqual(binary.stat().st_size, 300712)
+        receipt = self.machine("verify", "v0.1.0-alpha.1")
+        self.assertEqual(receipt["sha256"], "c39108dc3bfedf240c62c4f7b0c683f6f06b5ef59fa78cd377aa8b38b007abe9")
+        self.assertEqual(receipt["selected_version"], "v0.1.0-alpha.1")
         output = subprocess.check_output([str(binary), "--help"], text=True, stderr=subprocess.STDOUT)
         for command in ("observe", "compare", "watch", "run"):
             self.assertIn(command, output)

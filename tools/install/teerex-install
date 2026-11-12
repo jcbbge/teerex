@@ -4,7 +4,38 @@ set -euo pipefail
 umask 077
 export PATH=/usr/bin:/bin:/usr/sbin:/sbin
 
-die() { printf 'teerex-install: %s\n' "$*" >&2; exit 1; }
+command=${1:---help}
+error_code=invalid_arguments
+json_string() {
+    local value=$1 char i LC_ALL=C
+    printf '"'
+    for ((i=0; i<${#value}; i++)); do
+        char=${value:i:1}
+        case "$char" in
+            \"|\\) printf '\\%s' "$char" ;;
+            *)
+                if [[ $char < ' ' ]]; then printf '\\u%04x' "'$char"
+                else printf '%s' "$char"; fi
+                ;;
+        esac
+    done
+    printf '"'
+}
+json_nullable() {
+    if [[ -n $1 ]]; then json_string "$1"; else printf null; fi
+}
+die() {
+    if [[ $command == inspect || $command == verify ]]; then
+        printf '{"schema_version":1,"operation":"%s","ok":false,"error":{"code":' "$command"
+        json_string "$error_code"
+        printf ',"message":'
+        json_string "$*"
+        printf '}}\n'
+    else
+        printf 'teerex-install: %s\n' "$*" >&2
+    fi
+    exit 1
+}
 usage() {
     cat <<'EOF'
 Usage: bash tools/install/teerex-install COMMAND [OPTIONS]
@@ -15,6 +46,8 @@ Commands:
   rollback  --version TAG    Activate an already installed, verified release
   remove    --version TAG    Remove one verified release (not active by default)
   list                      Show installed tags and the active tag
+  inspect                   Classify root/inventory as JSON (read-only)
+  verify    --version TAG    Verify one retained release as JSON (no execution)
 
 Options:
   --prefix DIR    User-owned root inside HOME (default: ~/.local/opt/teerex)
@@ -31,14 +64,14 @@ quarantine removal, or independently packaged cartridges are included.
 EOF
 }
 
-command=${1:---help}
 [[ $# -eq 0 ]] || shift
 case "$command" in
     --help|-h|help) usage; exit 0 ;;
-    install|upgrade|rollback|remove|list) ;;
+    install|upgrade|rollback|remove|list|inspect|verify) ;;
     *) die "unknown command: $command (see --help)" ;;
 esac
-prefix=${HOME:?HOME must be set}/.local/opt/teerex
+[[ -n ${HOME:-} ]] || die 'HOME must be set'
+prefix=$HOME/.local/opt/teerex
 version='' source_dir='' deactivate=false
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -55,13 +88,14 @@ while [[ $# -gt 0 ]]; do
         *) die "unknown option: $1 (cartridge selection is not supported)" ;;
     esac
 done
-if [[ $command == list ]]; then
-    [[ -z $version ]] || die 'list does not take --version'
+if [[ $command == list || $command == inspect ]]; then
+    [[ -z $version ]] || die "$command does not take --version"
 else
     [[ $version =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$ ]] || die 'an explicit release tag is required, e.g. --version v0.1.0-alpha.1'
 fi
 [[ $deactivate == false || $command == remove ]] || die '--deactivate is only for remove'
 [[ -z $source_dir || $command == install || $command == upgrade ]] || die '--from is only for install/upgrade'
+error_code=unsupported_platform
 case "$(uname -s)/$(uname -m)" in
     Darwin/arm64)
         platform=aarch64-macos
@@ -77,7 +111,9 @@ case "$(uname -s)/$(uname -m)" in
         ;;
     *) die 'supported hosts: Apple-silicon macOS (Darwin arm64) or Linux x86_64 only' ;;
 esac
+error_code=unsafe_path
 [[ $EUID -ne 0 ]] || die 'run as your own user, not root or sudo'
+error_code=missing_tool
 for tool in "${checksum[0]}" file tar gzip awk cmp grep mktemp; do
     command -v "$tool" >/dev/null || die "required tool is missing: $tool; no tools or services were installed"
 done
@@ -86,6 +122,7 @@ if [[ ( $command == install || $command == upgrade ) && -z $source_dir ]]; then
 fi
 
 # Refuse ambiguous paths and symlink ancestors instead of managing another tree.
+error_code=unsafe_path
 [[ $HOME == /* && -d $HOME && -O $HOME ]] || die 'HOME must be an absolute, user-owned directory'
 home=$(cd "$HOME" && pwd -P)
 case "$prefix" in
@@ -104,6 +141,9 @@ while [[ $path != "$home" ]]; do
     [[ ! -L $path ]] || die "symlink in installation path: $path"
     if [[ -e $path ]]; then
         [[ -d $path && -O $path ]] || die "not a user-owned directory: $path"
+        if [[ $command == inspect || $command == verify ]]; then
+            [[ -r $path && -x $path ]] || die "inaccessible installation path: $path"
+        fi
     fi
     path=${path%/*}
 done
@@ -114,7 +154,48 @@ root_valid() {
         [[ $(cat "$marker") == teerex-install-v1 ]] &&
         [[ -d $prefix/versions && ! -L $prefix/versions && -O $prefix/versions ]]
 }
-if [[ -e $prefix ]]; then
+active='' state=managed reason='' busy=false
+installed_versions=()
+print_inspect() {
+    local tag separator=''
+    printf '{"schema_version":1,"operation":"inspect","ok":true,"state":"%s","root":' "$state"
+    json_string "$prefix"
+    printf ',"platform":"%s","active_version":' "$platform"
+    json_nullable "$active"
+    printf ',"installed_versions":['
+    # Bash 3.2 treats an empty array expansion as unset under nounset.
+    if [[ ${#installed_versions[@]} -gt 0 ]]; then
+        for tag in "${installed_versions[@]}"; do
+            printf '%s' "$separator"
+            json_string "$tag"
+            separator=,
+        done
+    fi
+    printf '],"busy":%s,"reason":' "$busy"
+    json_nullable "$reason"
+    printf '}\n'
+}
+if [[ $command == inspect || $command == verify ]]; then
+    # These paths never create a root, lock, stage, or execute a release.
+    if [[ ! -e $prefix ]]; then
+        if [[ $command == inspect ]]; then state=absent; print_inspect; exit 0; fi
+        error_code=missing_root; die "no managed installation at $prefix"
+    fi
+    if [[ ! -e $marker && ! -L $marker ]]; then
+        reason=missing_marker
+    else
+        error_code=invalid_root
+        [[ -f $marker && ! -L $marker && -O $marker && -r $marker ]] || die 'installation marker is not a readable owned regular file'
+        [[ $(cat "$marker") == teerex-install-v1 ]] || reason=unrecognized_marker
+    fi
+    if [[ -n $reason ]]; then
+        if [[ $command == inspect ]]; then state=unmanaged; print_inspect; exit 0; fi
+        error_code=unmanaged_root; die "refusing unmanaged installation root: $prefix (choose a new path)"
+    fi
+    error_code=invalid_root
+    root_valid || die 'managed installation has an unsafe or missing versions directory'
+    [[ -r $prefix/versions && -x $prefix/versions ]] || die 'managed versions directory is inaccessible'
+elif [[ -e $prefix ]]; then
     root_valid || die "refusing unmanaged installation root: $prefix (choose a new path)"
 elif [[ $command != install ]]; then
     die "no managed installation at $prefix; use install first"
@@ -126,32 +207,41 @@ else
 fi
 
 lock=$prefix/.installer-lock
-mkdir "$lock" 2>/dev/null || die "installer lock exists: $lock; check for a running installer before removing a stale lock"
 stage=
-cleanup() {
-    [[ -z $stage ]] || rm -rf "$stage"
-    rmdir "$lock"
-}
-trap cleanup EXIT
-trap 'exit 130' INT
-trap 'exit 143' TERM HUP
+if [[ $command == inspect || $command == verify ]]; then
+    if [[ -e $lock || -L $lock ]]; then
+        if [[ $command == inspect ]]; then busy=true; print_inspect; exit 0; fi
+        error_code=busy; die 'installer lock exists; check for a running installer before removing a stale lock'
+    fi
+else
+    mkdir "$lock" 2>/dev/null || die "installer lock exists: $lock; check for a running installer before removing a stale lock"
+    cleanup() {
+        [[ -z $stage ]] || rm -rf "$stage"
+        rmdir "$lock"
+    }
+    trap cleanup EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM HUP
+fi
 
-active=
+error_code=invalid_current
 if [[ -L $prefix/current ]]; then
     target=$(readlink "$prefix/current")
     [[ $target =~ ^versions/(v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?)$ ]] || die 'current is not a managed relative version link'
     active=${target#versions/}
-    [[ -d $prefix/$target && ! -L $prefix/$target ]] || die 'current points to a missing or symlinked release'
+    [[ -d $prefix/$target && ! -L $prefix/$target && -O $prefix/$target ]] || die 'current points to a missing, symlinked or unowned release'
 elif [[ -e $prefix/current ]]; then
     die 'refusing to replace current: it is not an installer version symlink'
 fi
 
 verify_binary() {
+    error_code=architecture_mismatch
     file -b "$1" | grep -Eq "$binary_pattern" || die "executable does not match this host ($platform)"
 }
 
 verify_release() {
     local dir=$prefix/versions/$1 entry count=0
+    error_code=invalid_release
     [[ -d $dir && ! -L $dir && -O $dir ]] || die "not a managed release directory: $1"
     # Unknown files or modified files may be user data: do not remove them.
     for entry in "$dir"/* "$dir"/.[!.]* "$dir"/..?*; do
@@ -164,6 +254,7 @@ verify_release() {
         count=$((count + 1))
     done
     [[ $count == 4 && -x $dir/teerex ]] || die "incomplete managed release: $1"
+    error_code=integrity_mismatch
     (cd "$dir" && "${checksum[@]}" teerex README.md RIGHTS.md) |
         cmp -s - "$dir/.files.sha256" || die "installed files changed in $1; leaving them untouched"
     verify_binary "$dir/teerex"
@@ -183,7 +274,35 @@ activate() {
     fi
 }
 
+if [[ $command == inspect || $command == verify ]]; then
+    # Inventory is lexical, not a semantic-version resolver or integrity claim.
+    export LC_ALL=C
+    error_code=invalid_release
+    for dir in "$prefix"/versions/* "$prefix"/versions/.[!.]* "$prefix"/versions/..?*; do
+        [[ -e $dir || -L $dir ]] || continue
+        tag=${dir##*/}
+        [[ $tag =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$ && -d $dir && ! -L $dir && -O $dir ]] || die "unsafe release inventory entry: $tag"
+        installed_versions+=("$tag")
+    done
+fi
+
 case "$command" in
+    inspect)
+        print_inspect
+        ;;
+    verify)
+        verify_release "$version"
+        error_code=integrity_mismatch
+        hash=$(cd "$prefix/versions/$version" && "${checksum[@]}" teerex) || die 'could not hash the selected executable'
+        hash=${hash%% *}
+        printf '{"schema_version":1,"operation":"verify","ok":true,"root":'
+        json_string "$prefix"
+        printf ',"platform":"%s","active_version":' "$platform"
+        json_nullable "$active"
+        printf ',"selected_version":"%s","executable":' "$version"
+        json_string "$prefix/versions/$version/teerex"
+        printf ',"sha256":"%s"}\n' "$hash"
+        ;;
     list)
         printf 'Root: %s\nActive: %s\n' "$prefix" "${active:-none}"
         for dir in "$prefix"/versions/*; do

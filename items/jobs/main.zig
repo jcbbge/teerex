@@ -8,7 +8,9 @@ const usage =
     \\Every operation except list selects --socket ABS --session session:UUID --block block:UUID.
     \\track: --owner LABEL --kind agent|command --purpose TEXT --deadline-unix-ms N --cleanup manual
     \\adopt: --from-owner LABEL --owner LABEL --generation N --reason TEXT --deadline-unix-ms N
-    \\present: --owner LABEL --generation N --reason TEXT --anchor block:UUID --focus yes|no [--label TEXT]
+    \\present: --owner LABEL --generation N --reason TEXT --anchor block:UUID --focus yes|no [--label TEXT] [--relocate yes|no]
+    \\Relocation defaults no (placed panes stay in place); yes explicitly moves beside anchor at half width.
+    \\A focused source requires --focus yes for relocation; no silent focus transfer, retry or recreation.
     \\forget: --owner LABEL --generation N --reason TEXT (local record only; never closes a block)
     \\Live operations optionally take --timeout-ms N (100..60000, default 5000).
     \\Registry must already be an absolute, private 0700 owned directory. Max 32 records/256 KiB.
@@ -61,6 +63,7 @@ const Options = struct {
     anchor: ?[]const u8 = null,
     label: ?[]const u8 = null,
     focus: ?[]const u8 = null,
+    relocate: ?[]const u8 = null,
     deadline_unix_ms: ?i64 = null,
     generation: ?u64 = null,
     timeout_ms: ?u64 = null,
@@ -224,6 +227,7 @@ fn query(allocator: std.mem.Allocator, o: Options, entry: ?Entry) !Live {
         .anchor = o.anchor,
         .label = o.label,
         .focus = if (o.focus) |f| eq(f, "yes") else false,
+        .relocate = if (o.relocate) |r| eq(r, "yes") else false,
     }, .{});
     var env = try std.process.getEnvMap(allocator);
     for ([_][]const u8{ "REX_SERVER", "REX_SESSION", "REX_BLOCK", "REX_CLIENT" }) |key| env.remove(key);
@@ -267,7 +271,7 @@ fn parse(args: []const []const u8) !Options {
         &.{ "owner", "kind", "purpose", "deadline-unix-ms", "cleanup", "timeout-ms" }
     else if (eq(o.operation, "inspect")) &.{"timeout-ms"} else if (eq(o.operation, "adopt"))
         &.{ "from-owner", "owner", "generation", "reason", "deadline-unix-ms", "timeout-ms" }
-    else if (eq(o.operation, "present")) &.{ "owner", "generation", "reason", "anchor", "focus", "label", "timeout-ms" } else if (eq(o.operation, "forget"))
+    else if (eq(o.operation, "present")) &.{ "owner", "generation", "reason", "anchor", "focus", "label", "relocate", "timeout-ms" } else if (eq(o.operation, "forget"))
         &.{ "owner", "generation", "reason" }
     else
         return error.Usage;
@@ -309,7 +313,7 @@ fn parse(args: []const []const u8) !Options {
         } else if (eq(key, "timeout-ms")) {
             o.timeout_ms = std.fmt.parseUnsigned(u64, value, 10) catch return error.Usage;
         } else {
-            inline for (.{ "owner", "kind", "purpose", "cleanup", "reason", "anchor", "focus", "label" }) |field| {
+            inline for (.{ "owner", "kind", "purpose", "cleanup", "reason", "anchor", "focus", "label", "relocate" }) |field| {
                 if (eq(key, field)) @field(o, field) = value;
             }
             if (eq(key, "from-owner")) o.from_owner = value;
@@ -335,6 +339,7 @@ fn parse(args: []const []const u8) !Options {
     if (eq(o.operation, "adopt") and (o.from_owner == null or eq(o.from_owner.?, o.owner.?) or o.deadline_unix_ms == null)) return error.Usage;
     if (eq(o.operation, "present") and (o.anchor == null or !fullId(o.anchor.?, "block:") or eq(o.anchor.?, o.block.?) or
         o.focus == null or (!eq(o.focus.?, "yes") and !eq(o.focus.?, "no")))) return error.Usage;
+    if (o.relocate) |value| if (!eq(value, "yes") and !eq(value, "no")) return error.Usage;
     return o;
 }
 

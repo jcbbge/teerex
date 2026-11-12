@@ -143,6 +143,35 @@ class SendTest(unittest.TestCase):
         self.assertEqual(untouched.read_bytes(), b"")
         self.assertFalse(self.lock(target).exists())
 
+    def test_stdin_exact_bytes_validation_deadline_and_cancellation_before_dispatch(self):
+        target, raw = self.fixture()
+        command = self.command(target, timeout=500)
+        command[command.index("--message-file") + 1] = "-"
+        message = 'α "literal"\nlast\tline\n\n'.encode()
+        result = subprocess.run(command, input=message, env=self.env, capture_output=True, timeout=5)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.received(raw, self.pasted(message))
+        for invalid in (b"", b"\xff", b"a\rb", b"a" * 65537):
+            result = subprocess.run(command, input=invalid, env=self.env, capture_output=True, timeout=5)
+            self.assertEqual(result.returncode, 2, result.stderr)
+        for sig in (None, signal.SIGINT, signal.SIGTERM):
+            proc = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=self.env)
+            proc.stdin.write(b"partial, not EOF")
+            proc.stdin.flush()
+            if sig is not None:
+                time.sleep(.05)
+                proc.send_signal(sig)
+            proc.wait(timeout=3)  # Keep writer open: EOF would hide a broken wait budget.
+            packet = json.loads(proc.stdout.read())
+            proc.stdin.close()
+            proc.stdout.close()
+            proc.stderr.close()
+            self.assertEqual(proc.returncode, 124 if sig is None else 128 + sig)
+            self.assertFalse(packet["paste"]["attempted"])
+            self.assertFalse(packet["backend_invoked"])
+            self.assertFalse(packet["cooperative_lock"]["acquired"])
+        self.assertEqual(raw.read_bytes(), self.pasted(message))
+
     def test_encoded_boundary_printable_unicode_lf_and_escaping(self):
         target, raw = self.fixture()
         def rpc_bytes(message):

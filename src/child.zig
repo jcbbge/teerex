@@ -120,7 +120,15 @@ pub const Result = struct {
 pub fn collect(allocator: std.mem.Allocator, argv: []const []const u8, env: *const std.process.EnvMap, deadline_ms: u64, receiver: anytype) !Result {
     var timer = try std.time.Timer.start();
     const started_at = std.time.milliTimestamp();
-    var child = std.process.Child.init(argv, allocator);
+    const selected_argv = if (argv.len != 0 and std.mem.eql(u8, argv[0], "rex") and env.get("TEEREX_INTERNAL_REX") != null) blk: {
+        const executable = env.get("TEEREX_INTERNAL_REX").?;
+        if (!std.fs.path.isAbsolute(executable)) return error.RexExecutableMustBeAbsolute;
+        const selected = try allocator.dupe([]const u8, argv);
+        selected[0] = executable;
+        break :blk selected;
+    } else argv;
+    defer if (selected_argv.ptr != argv.ptr) allocator.free(selected_argv);
+    var child = std.process.Child.init(selected_argv, allocator);
     child.stdin_behavior = .Ignore;
     child.stdout_behavior = .Pipe;
     child.stderr_behavior = .Pipe;

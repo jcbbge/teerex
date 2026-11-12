@@ -154,7 +154,7 @@ jobs:
           platform=x86_64-linux
           if [[ "$RUNNER_OS" == macOS ]]; then platform=aarch64-macos; fi
           python3 tools/cartridges/package.py --platform "$platform" \
-            --version 0.1.0-alpha.4 --output "$RUNNER_TEMP/cartridge-catalog"
+            --version 0.1.0-alpha.5 --output "$RUNNER_TEMP/cartridge-catalog"
           python3 tools/cartridges/test_payloads.py --catalog "$RUNNER_TEMP/cartridge-catalog"
 
       - name: Run installer lifecycle and public release controls
@@ -226,6 +226,40 @@ jobs:
           TEEREX_BIN: ${{ github.workspace }}/zig-out/bin/teerex
           REX_BIN: ${{ runner.temp }}/rex-bin/rex
         run: python3 items/jobs/test_jobs.py -v
+
+      - name: Run explicit named-host and embedded fleet bridge contracts
+        env:
+          TEEREX_BIN: ${{ github.workspace }}/zig-out/bin/teerex
+        run: python3 src/test_targets.py -v
+
+      - name: Run visible surfaces and native palette plan/apply contracts
+        env:
+          TEEREX_BIN: ${{ github.workspace }}/zig-out/bin/teerex
+          REX_BIN: ${{ runner.temp }}/rex-bin/rex
+        run: python3 items/surfaces/test_surfaces.py -v
+
+      - name: Run API13 boards, managed agent and recovery integration
+        if: matrix.rex-api == 13
+        env:
+          TEEREX_BIN: ${{ github.workspace }}/zig-out/bin/teerex
+          REX_BIN: ${{ runner.temp }}/rex-bin/rex
+          TEEREX_AGENTS_INTEGRATION: '1'
+          TEEREX_AGENTS_CROSS_SESSION: '1'
+        run: |
+          zig build-exe --dep rex_boards -Mroot=items/boards/test_cli.zig \
+            -Mrex_boards=items/boards/main.zig -O ReleaseSmall \
+            -femit-bin="$RUNNER_TEMP/boards-route-helper"
+          BOARDS_ROUTE_HELPER_BIN="$RUNNER_TEMP/boards-route-helper" python3 items/boards/test_boards.py -v
+          python3 items/agents/test_agents.py -v
+          python3 items/recovery/test_recovery.py -v
+          python3 tools/fleet-install/test_fleet_install.py -v
+
+      - name: Run older API recovery update inventory/refusal
+        if: matrix.rex-api != 13
+        env:
+          TEEREX_BIN: ${{ github.workspace }}/zig-out/bin/teerex
+          REX_BIN: ${{ runner.temp }}/rex-bin/rex
+        run: python3 items/recovery/test_recovery.py -v
 
       - name: Run native installed-cartridge runtime contracts
         if: runner.os == 'Linux' || matrix.rex-api == 13

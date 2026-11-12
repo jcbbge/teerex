@@ -51,6 +51,53 @@ For a custom location, pass `--prefix "$HOME/somewhere/teerex"` on **every** lif
 
 A short-lived lock and staging directory live under the root. Concurrent installer operations refuse rather than race. After a crash/SIGKILL, verify that no installer is running before deliberately removing its stale `.installer-lock` or interrupted `.stage.*` directories. No daemon, service, watcher or automatic command history is created.
 
+## Read-only machine contract (schema 1)
+
+Automation uses these commands rather than parsing human `list` output or private directory/lock details:
+
+```sh
+bash tools/install/teerex-install inspect --prefix "$HOME/.local/opt/teerex"
+bash tools/install/teerex-install verify --prefix "$HOME/.local/opt/teerex" --version v0.1.0-alpha.5
+```
+
+Each returns one newline-terminated JSON object on stdout. `inspect` takes no version; `verify` requires an explicit installed tag. Neither accepts `--from` or `--deactivate`. Both retain the user/HOME/path/platform checks, create no root, lock or stage, download nothing, and **never execute the selected binary or contact Rex**. Reading may update filesystem access times. Error details may also appear on stderr from system tools; stdout is the machine interface. `--help` remains human-readable.
+
+An absent root is a successful classification, not an instruction to adopt anything. Example (illustrative path, not a release/download claim):
+
+```json
+{"schema_version":1,"operation":"inspect","ok":true,"state":"absent","root":"/home/operator/.local/opt/teerex","platform":"x86_64-linux","active_version":null,"installed_versions":[],"busy":false,"reason":null}
+```
+
+An existing owned directory without the marker has `state:"unmanaged"`, `reason:"missing_marker"`; an owned regular marker with unknown contents has `reason:"unrecognized_marker"`. Both are exit 0, with null active version, empty installed versions and busy false. They cause no adoption, execution or writes. Select a new root rather than modifying a manual tree. Unsafe paths, symlinked/non-owned markers, and recognized-but-broken managed layouts fail instead of becoming unmanaged classifications.
+
+An idle managed example:
+
+```json
+{"schema_version":1,"operation":"inspect","ok":true,"state":"managed","root":"/Users/operator/.local/opt/teerex","platform":"aarch64-macos","active_version":"v0.1.0-alpha.5","installed_versions":["v0.1.0-alpha.3","v0.1.0-alpha.5"],"busy":false,"reason":null}
+```
+
+`root` is the canonical absolute requested root (including physical HOME normalization, such as `/private/var` on Mac). `platform` is the host asset platform, not an inventory integrity assertion. `installed_versions` is a C-locale lexical list of safe owned tag directories, **not semantic-version ordering, verification, or a latest-version recommendation**. An absent `current` is a valid deactivated state with `active_version:null`; a malformed link, missing target, symlinked target or non-link collision is an error. Inspect does not hash release contents; call verify before trusting/executing a selected version.
+
+If any installer lock entry exists, including a stale file/directory/dangling symlink, inspect reports managed with `busy:true`, `active_version:null`, `installed_versions:[]`, `reason:null`. That null/empty inventory is intentionally non-authoritative; callers must refuse/retry, not infer deactivation or absence. Verify refuses with `busy`. Neither command removes stale locks.
+
+Verification success returns exactly these fields (the zero hash below is an illustration, not an asset hash):
+
+```json
+{"schema_version":1,"operation":"verify","ok":true,"root":"/Users/operator/.local/opt/teerex","platform":"aarch64-macos","active_version":"v0.1.0-alpha.5","selected_version":"v0.1.0-alpha.3","executable":"/Users/operator/.local/opt/teerex/versions/v0.1.0-alpha.3/teerex","sha256":"0000000000000000000000000000000000000000000000000000000000000000"}
+```
+
+`selected_version` can differ from `active_version`; `executable` is a **fixed absolute version path**, never the moving `current` link. `sha256` is the lowercase SHA-256 of that executable. Verification requires the marker/layout, safe inventory/current link, exactly four owned regular version files, executable permission, matching `.files.sha256`, and host binary architecture. The hash/record detects modification, not malicious writes by another process with the same account. It does not attest self-reported CLI version, signing/notarization, independent cartridge version or live Rex compatibility. Fleet must independently execute the verified path's `--version` when needed; root CLI version support belongs to the selected release, not this installer.
+
+Failures exit 1 and use this shape:
+
+```json
+{"schema_version":1,"operation":"verify","ok":false,"error":{"code":"integrity_mismatch","message":"installed files changed in v0.1.0-alpha.5; leaving them untouched"}}
+```
+
+Stable schema-1 error codes are `invalid_arguments`, `unsupported_platform`, `missing_tool`, `unsafe_path`, `missing_root`, `unmanaged_root`, `invalid_root`, `busy`, `invalid_current`, `invalid_release`, `integrity_mismatch`, and `architecture_mismatch`. Match `code`, not human `message`. Inspect uses the same failure envelope with `operation:"inspect"`. Refusals never fix, overwrite or delete the offending entries.
+
+These are point-in-time observations, **not leases or protection against a later switch/removal**; do not run lifecycle mutations concurrently with a fleet decision or invocation. The core installer still refuses immutable-tag duplicate installs: after idle inspection, select a retained tag with rollback, or install/upgrade a new tag, then verify. Any launcher consent/backup belongs to the fleet workflow; inspect/verify never creates or replaces one.
+
 ## PATH, compatibility and operator machines
 
 Use the full executable path above. Deliberately add `$HOME/.local/opt/teerex/current` through your own shell workflow only if desired. No `.zshrc`, `.zprofile`, profile, Rex `init.lua`, key binding, existing binary or setting is edited. Remove any PATH change you made yourself when uninstalling.
@@ -97,6 +144,6 @@ rmdir "$HOME/.local/opt/teerex"
 
 ## Validation boundaries
 
-`python3 tools/install/test_install.py --public -v` runs 14 tests on disposable Darwin arm64 and Linux x86_64, using temporary HOME/roots and native help-only fixtures. It exercises install/upgrade/rollback/remove, wrong architecture, malformed/checksum/archive failures, refusal to replace user files and unchanged shell/Rex/launcher sentinels. Python/native C compiler are test dependencies, not installer dependencies. Historical public controls intentionally retain immutable alpha.1: Mac genuinely downloads/executes its 300712-byte binary, SHA256 `c39108dc3bfedf240c62c4f7b0c683f6f06b5ef59fa78cd377aa8b38b007abe9`, then upgrades to a local fixture and rolls back to identical bytes; Linux verifies the real absent-alpha.1-Linux-asset failure preserves the active fixture. These are not relabelled alpha.3 checks.
+`python3 tools/install/test_install.py --public -v` runs 20 tests on disposable Darwin arm64 and Linux x86_64, using temporary HOME/roots and native help-only fixtures. It exercises install/upgrade/rollback/remove, wrong architecture, malformed/checksum/archive failures, refusal to replace user files and unchanged shell/Rex/launcher sentinels. The six added machine-contract cases cover absent/unmanaged/managed/deactivated roots, fixed retained-version selection, stale/busy locks, path/current/inventory/refusal errors, independently computed hashes, escaped Unicode/control-character paths, and JSON failure codes. Each machine invocation compares filesystem bytes/links/metadata before and after (excluding access times; unreadable entries retain metadata checks). An execution-probe fixture, including a positive launch control, confirms inspect/verify never execute the candidate. Python/native C compiler are test dependencies, not installer dependencies. Historical public controls intentionally retain immutable alpha.1: Mac genuinely downloads/executes its 300712-byte binary, SHA256 `c39108dc3bfedf240c62c4f7b0c683f6f06b5ef59fa78cd377aa8b38b007abe9`, then upgrades to a local fixture and rolls back to identical bytes; Linux verifies the real absent-alpha.1-Linux-asset failure preserves the active fixture. These are not relabelled alpha.3 checks.
 
-Both platforms passed all 14 controls; Mac used system Bash 3.2 on macOS27.2 and Linux used Debian13. ShellCheck0.10.0 and Bash syntax passed. A separately labelled pre-integration local-source Linux receipt installed the exact 214656-byte worker candidate SHA256 `092ef219dee32418ff09d8d61f77048697d672027262a649045881472a004d74`, ran seven offline comparisons, upgraded to a help-only fixture, rolled back to identical source bytes and removed both versions without changing sentinels. Its temporary archives were deleted, not published. That receipt predates the final integrated binary; final-asset validation is recorded separately in the release evidence. Neither fixture nor source-only installation establishes personal-M5/hive behavior, a minimum kernel, live API compatibility or independent cartridge readiness.
+Both platforms passed all 20 controls, including the retained 14 lifecycle/public controls; Mac used system Bash 3.2 on macOS27.2 and Linux used Debian13. The public Mac binary also passed the new read-only verify API with its independently known hash. No alpha.5 binary or fleet integration is claimed by these installer checks. ShellCheck0.10.0 and Bash syntax passed. A separately labelled pre-integration local-source Linux receipt installed the exact 214656-byte worker candidate SHA256 `092ef219dee32418ff09d8d61f77048697d672027262a649045881472a004d74`, ran seven offline comparisons, upgraded to a help-only fixture, rolled back to identical source bytes and removed both versions without changing sentinels. Its temporary archives were deleted, not published. That receipt predates the final integrated binary; final-asset validation is recorded separately in the release evidence. Neither fixture nor source-only installation establishes personal-M5/hive behavior, a minimum kernel, live API compatibility or independent cartridge readiness.

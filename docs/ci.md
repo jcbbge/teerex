@@ -2,6 +2,12 @@
 
 [The workflow](../.github/workflows/ci.yml) runs on pull requests and pushes to `main`. It does not release, deploy, create tags, install a service or change Rex configuration. Its token has only `contents: read`; checkout credentials are not persisted. No repository secrets or paid/larger/self-hosted runners are required. Standard hosted runners are free for this public repository; changing repository visibility requires reviewing that assumption.
 
+## Alpha.5 additions
+
+The existing four lanes retain their pinned toolchains/Rex builds and legacy suites. Alpha.5 adds root targets/version/embedded-native-fleet acceptance (`src/test_targets.py`) and surfaces15 on all four lanes. API13 lanes additionally run boards12 with the compiled native `tryRoute` helper, agents12 with **both** `TEEREX_AGENTS_INTEGRATION=1` and `TEEREX_AGENTS_CROSS_SESSION=1`, recovery11 and fleet11. API10/12 lanes run recovery update inventory and explicit snapshot refusal; snapshot/restore and managed launch are not certified on those APIs. Core installer suite is now20. The existing catalog uses version0.1.0-alpha.5 but retains ten Mac/seven Linux native payloads; the new composed operating-layer commands are combined-CLI only.
+
+Local real loopback SSH tests are separate opt-in checks (`python3 tools/fleet-install/test_ssh.py`), requiring disposable sshd/sudo and generated keys. They are not silently counted as hosted CI. No personal endpoints/credentials are required. A green diagnostic85c3f29 workflow predates the new alpha.5 source and is not its exact-head CI result.
+
 ## Required lanes and coverage
 
 | Check | Explicit runner | Selected coverage |
@@ -76,7 +82,7 @@ python3 items/offstage/test_offstage.py -v
 python3 tools/install/test_install.py --public -v
 ```
 
-Selected executions per cell:
+Historical alpha.4 baseline executions per cell (retained for provenance; alpha.5 additions/counts above supersede this inventory):
 
 - **Linux combined CLI: 138** = child4 + observe28 + separately repeated offline Compare8 + send9 + spawn6 + maneuver21 + filter9 + cache12 + adapters11 + jobs13 + doctor3 + installer14. Doctor's seven unsupported runtime cases skip explicitly.
 - **Mac API10 and API12 combined CLI: 120 each** = child4 + observe28 + send9 + spawn6 + run11 + doctor9 + maneuver21 + filter9 + cache12 + adapters11. Doctor's one non-Mac guard skips; jobs/offstage runtime are not selected.
