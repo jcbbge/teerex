@@ -107,6 +107,8 @@ class JobsTest(unittest.TestCase):
         before = self.view()
         p = self.track(kind="agent", purpose="visible agent accounting only")
         self.assertEqual(p["entry"]["generation"], 1)
+        self.assertIsNone(p["failure_reason"])
+        self.assertEqual(p["backend_term"], {"Exited": 0})
         self.assertFalse(p["recorded_owner_is_process_owner"])
         self.assertFalse(p["exclusive_control"])
         self.assertEqual(p["owner_liveness"], "not_checked")
@@ -279,23 +281,75 @@ class JobsTest(unittest.TestCase):
         path.chmod(0o755)
         self.env["PATH"] = str(folder) + os.pathsep + self.env["PATH"]
 
+    def test_backend_failures_preserve_bounded_diagnostics_and_termination(self):
+        before = self.view()
+        options = dict(owner="operator α", kind="command", purpose="transport fault", deadline_unix_ms=int(time.time()*1000)+60000, cleanup="manual")
+        for body, term, diagnostic in [
+            ("import sys\nsys.exit(7)\n", {"Exited": 7}, ""),
+            ("import sys\nsys.stderr.write('synthetic failure:'+'x'*5000);sys.exit(7)\n", {"Exited": 7}, "synthetic failure:" + "x" * (4096 - 18)),
+            ("pass\n", {"Exited": 0}, ""),
+            ("print('{',end='')\n", {"Exited": 0}, ""),
+            ("import os,signal\nos.kill(os.getpid(),signal.SIGTERM)\n", {"Signal": 15}, ""),
+        ]:
+            with self.subTest(body=body):
+                self.shim(body)
+                r, p = self.invoke("track", **options)
+                self.assertEqual(r.returncode, 1, r.stderr + r.stdout)
+                self.assertEqual(p["outcome"], "uncertain")
+                self.assertEqual(p["failure_reason"], "rex_transport_incomplete")
+                self.assertEqual(p["backend_term"], term)
+                self.assertEqual(r.stderr, "teerex jobs: Rex backend: " + diagnostic + "\n" if diagnostic else "")
+                self.assertIsNone(p["entry"])
+                self.assertFalse(p["mutation_attempt_frame_seen"])
+                self.assertFalse(p["automatic_cleanup"])
+        self.env["PATH"] = str(self.work / "no-rex")
+        r, p = self.invoke("track", **options)
+        self.assertEqual(p["failure_reason"], "FileNotFound")
+        self.assertIsNone(p["backend_term"])
+        self.shim("pass\n")
+        (self.work / "shim" / "rex").chmod(0o644)
+        self.env["PATH"] = str(self.work / "shim")
+        r, p = self.invoke("track", **options)
+        self.assertEqual(p["failure_reason"], "AccessDenied")
+        self.assertIsNone(p["backend_term"])
+        self.assertEqual(self.invoke("list")[1]["entries"], [])
+        self.assertEqual(self.view(), before)
+
     def test_lost_presentation_receipt_is_durably_uncertain_without_rollback(self):
-        self.detached()
-        self.track()
-        self.shim("import subprocess,sys\n"
-                  f"r=subprocess.run([{self.rex!r},*sys.argv[1:]],capture_output=True)\n"
-                  "sys.exit(77)\n")
-        r, p = self.invoke("present", owner="operator α", generation=1, reason="test dropped receipt", anchor=self.anchor, focus="no")
-        self.assertEqual(r.returncode, 1, r.stderr + r.stdout)
-        self.assertEqual(p["outcome"], "uncertain")
-        self.assertFalse(p["mutation_attempt_frame_seen"])
-        listing = self.invoke("list")[1]
-        e = listing["entries"][0]
-        self.assertEqual(e["last_action"]["outcome"], "uncertain")
-        self.assertEqual(e["generation"], 2)
-        self.assertEqual(self.rpc("session.describe_block", session_id=self.session, block_id=self.block)["block"]["placement"], "placed")
-        r, p = self.invoke("present", owner="operator α", generation=1, reason="old generation cannot retry", anchor=self.anchor, focus="no")
-        self.assertEqual(p["failure_reason"], "GenerationConflict")
+        original_path = self.env["PATH"]
+        for retain_frames, malformed in [(False, False), (True, False), (True, True)]:
+            with self.subTest(retain_frames=retain_frames, malformed=malformed):
+                self.env["PATH"] = original_path
+                self.detached()
+                generation = self.track()["entry"]["generation"]
+                self.shim("import json,subprocess,sys\n"
+                          f"r=subprocess.run([{self.rex!r},*sys.argv[1:]],capture_output=True,check=True)\n"
+                          + ("for line in r.stdout.splitlines():\n"
+                             " if json.loads(line)['event'] != 'verified':sys.stdout.buffer.write(line+b'\\n')\n" if retain_frames else "")
+                          + ("sys.stdout.buffer.write(b'not-json\\n')\n" if malformed else "")
+                          + "sys.stdout.flush();sys.exit(77)\n")
+                r, p = self.invoke("present", owner="operator α", generation=generation, reason="test dropped receipt", anchor=self.anchor, focus="no")
+                self.assertEqual(r.returncode, 1, r.stderr + r.stdout)
+                self.assertEqual(p["outcome"], "uncertain")
+                self.assertEqual(p["mutation_attempt_frame_seen"], retain_frames)
+                if retain_frames:
+                    self.assertEqual(p["source_observed"]["api_revision"], 13)
+                    self.assertEqual(p["observation"]["placement"], "detached")
+                self.assertIsNotNone(p["failure_reason"])
+                if malformed:
+                    self.assertNotEqual(p["failure_reason"], "rex_transport_incomplete")
+                    self.assertIsNone(p["backend_term"])
+                else:
+                    self.assertEqual(p["failure_reason"], "rex_transport_incomplete")
+                    self.assertEqual(p["backend_term"], {"Exited": 77})
+                self.assertFalse(p["retry_safe"])
+                listing = self.invoke("list")[1]
+                e = next(e for e in listing["entries"] if e["block_id"] == self.block)
+                self.assertEqual(e["last_action"]["outcome"], "uncertain")
+                self.assertEqual(e["generation"], generation + 1)
+                self.assertEqual(self.rpc("session.describe_block", session_id=self.session, block_id=self.block)["block"]["placement"], "placed")
+                r, p = self.invoke("present", owner="operator α", generation=generation, reason="old generation cannot retry", anchor=self.anchor, focus="no")
+                self.assertEqual(p["failure_reason"], "GenerationConflict")
 
     def test_socket_aliases_do_not_duplicate_responsibility_and_inactive_destination_preserves_focus(self):
         self.detached()
@@ -398,6 +452,8 @@ class JobsTest(unittest.TestCase):
                 if sig != signal.SIGKILL:
                     packet = json.loads(out)
                     self.assertEqual(packet["outcome"], "deadline_exceeded" if sig is None else "cancel_requested")
+                    self.assertEqual(packet["failure_reason"], "rex_transport_incomplete")
+                    self.assertEqual(packet["backend_term"], {"Signal": signal.SIGKILL})
                 listing = self.invoke("list")[1]
                 gen += 1
                 self.assertEqual(listing["entries"][0]["generation"], gen)
@@ -430,6 +486,15 @@ class JobsTest(unittest.TestCase):
         r = subprocess.run(command, env=self.env, capture_output=True, text=True, timeout=5)
         self.assertEqual(r.returncode, 1, r.stderr + r.stdout)
         self.assertFalse(missing.exists())
+        command[command.index("--socket") + 1] = str(self.socket)
+        command[command.index("--session") + 1] = "session:" + ZERO
+        r = subprocess.run(command, env=self.env, capture_output=True, text=True, timeout=5)
+        p = json.loads(r.stdout)
+        self.assertEqual(r.returncode, 1, r.stderr + r.stdout)
+        self.assertEqual(p["outcome"], "uncertain")
+        self.assertEqual(p["failure_reason"], "rex_transport_incomplete")
+        self.assertIn("session:" + ZERO, r.stderr)
+        self.assertNotEqual(p["backend_term"], {"Exited": 0})
         self.assertEqual(self.invoke("list")[1]["entries"], [])
 
 

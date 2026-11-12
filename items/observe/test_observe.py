@@ -529,6 +529,41 @@ class ObserveTest(unittest.TestCase):
         self.assertEqual(result.stdout, "")
         self.assertIn("failed", result.stderr)
 
+    def test_missing_target_diagnostics_keep_requested_route_and_watch_unknown(self):
+        baseline, before = self.baseline(self.a)
+        absent_session = "session:00000000-0000-0000-0000-000000000001"
+        absent_block = "block:00000000-0000-0000-0000-000000000002"
+        env = dict(os.environ, REX_SERVER="unix:///tmp/not-the-selected-server.sock",
+                   REX_SESSION=self.b[0], REX_BLOCK=self.b[1], REX_CLIENT="other-client")
+        sessions_before = self.rex_json("session", "ls", "--json")
+        for target in [(absent_session, self.a[1]), (self.a[0], absent_block), (self.a[0], self.b[1])]:
+            with self.subTest(target=target):
+                changed = copy.deepcopy(before)
+                changed["target"].update(session_id=target[0], block_id=target[1])
+                baseline.write_text(json.dumps(changed), encoding="utf-8")
+                for command in [
+                    [str(BIN), "observe", "--socket", str(self.socket),
+                     "--session", target[0], "--block", target[1]],
+                    self.watch_command(target, baseline),
+                ]:
+                    result = subprocess.run(command, env=env, capture_output=True, text=True, timeout=5)
+                    self.assertEqual(result.returncode, 1, result.stderr)
+                    for expected in [self.endpoint, *target, "--server", "PATH", "No alternate host"]:
+                        self.assertIn(expected, result.stderr)
+                    if command[1] == "observe":
+                        self.assertEqual(result.stdout, "")
+                    else:
+                        packet = json.loads(result.stdout)
+                        self.assertEqual(packet["outcome"], "observation_failed")
+                        self.assertEqual(packet["failure_reason"], "ObservationCommandFailed")
+                        self.assertEqual(packet["target"], changed["target"])
+                        self.assertEqual(packet["observations_compared"], 0)
+                        self.assertIsNone(packet["last_comparison"])
+                        self.assertIsNone(packet["changed_fields"])
+        self.assertEqual(self.rex_json("session", "ls", "--json"), sessions_before)
+        self.assertIn("TEEREX_ALPHA", self.observe(self.a).stdout)
+        self.assertIn("TEEREX_BETA", self.observe(self.b).stdout)
+
     def test_missing_server_is_not_autostarted(self):
         missing = self.root / "missing.sock"
         result = self.observe(self.a, socket=missing)

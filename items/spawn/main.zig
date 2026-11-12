@@ -148,6 +148,9 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
     const transport_ok = result != null and !result.?.stopped and result.?.term == .Exited and result.?.term.Exited == 0 and c.pending.items.len == 0;
     const success = transport_ok and c.verified and signal == 0;
     const outcome: []const u8 = if (signal != 0) "cancel_requested" else if (deadline) "deadline_exceeded" else if (success) "created_and_attached" else if (transport_ok and c.finished and !c.attempt_seen) "refused" else "uncertain";
+    if (!success) {
+        if (result) |r| if (r.stderr.len != 0) std.debug.print("teerex spawn: Rex backend: {s}\n", .{r.stderr});
+    }
     const output = try std.json.Stringify.valueAlloc(allocator, .{
         .schema_version = 1,
         .kind = "spawn_result",
@@ -158,7 +161,8 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
         .creation_attempt_frame_seen = c.attempt_seen,
         .attempt_evidence = "received_local_frame_not_server_dispatch_proof",
         .outcome = outcome,
-        .failure_reason = failure orelse c.reason,
+        .failure_reason = failure orelse c.reason orelse if (!success) @as(?[]const u8, "rex_transport_incomplete") else null,
+        .backend_term = if (result) |r| @as(?std.process.Child.Term, r.term) else null,
         .environment_contract = "agent_core_spawn_address_v1",
         .program_start = "not_assessed",
         .agent_readiness = "not_assessed",

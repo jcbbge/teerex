@@ -96,6 +96,8 @@ class SpawnTest(unittest.TestCase):
         result, packet = self.invoke(sys.executable, "-c", code, *args, name=label, cwd=cwd)
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
         self.assertEqual(packet["outcome"], "created_and_attached")
+        self.assertIsNone(packet["failure_reason"])
+        self.assertEqual(packet["backend_term"], {"Exited": 0})
         self.assertTrue(packet["attached_location_verified"])
         self.assertFalse(packet["automatic_close"])
         self.assertFalse(packet["retry_safe"])
@@ -164,22 +166,73 @@ class SpawnTest(unittest.TestCase):
         path.chmod(0o755)
         self.env["PATH"] = str(directory) + os.pathsep + self.env["PATH"]
 
-    def test_lost_creation_receipt_is_uncertain_and_does_not_retry_or_close(self):
+    def test_backend_failures_preserve_bounded_diagnostics_and_termination(self):
         before = self.view()
-        self.shim("import json,subprocess,sys\n"
-                  f"r=subprocess.run([{self.rex!r},*sys.argv[1:]],capture_output=True,check=True)\n"
-                  "for line in r.stdout.splitlines():\n"
-                  " if json.loads(line)['event'] in ['source','attempt']:sys.stdout.buffer.write(line+b'\\n')\n"
-                  "sys.stdout.flush();sys.exit(77)\n")
-        result, packet = self.invoke("/bin/sh", "-c", "sleep 60")
-        self.assertEqual(result.returncode, 1, result.stderr + result.stdout)
-        self.assertEqual(packet["outcome"], "uncertain")
-        self.assertIsNone(packet["created"])
-        self.assertFalse(packet["retry_safe"])
-        self.assertFalse(packet["automatic_close"])
-        after = self.view()
-        self.assertEqual(len(after["windows"]), len(before["windows"]) + 1)
-        self.assertEqual(after["active_window_id"], before["active_window_id"])
+        for body, term, diagnostic in [
+            ("import sys\nsys.exit(7)\n", {"Exited": 7}, ""),
+            ("import sys\nsys.stderr.write('synthetic failure:'+'x'*5000);sys.exit(7)\n", {"Exited": 7}, "synthetic failure:" + "x" * (4096 - 18)),
+            ("pass\n", {"Exited": 0}, ""),
+            ("print('{',end='')\n", {"Exited": 0}, ""),
+            ("import os,signal\nos.kill(os.getpid(),signal.SIGTERM)\n", {"Signal": 15}, ""),
+        ]:
+            with self.subTest(body=body):
+                self.shim(body)
+                result, packet = self.invoke("/bin/true")
+                self.assertEqual(result.returncode, 1, result.stderr + result.stdout)
+                self.assertEqual(packet["outcome"], "uncertain")
+                self.assertEqual(packet["failure_reason"], "rex_transport_incomplete")
+                self.assertEqual(packet["backend_term"], term)
+                self.assertEqual(result.stderr, "teerex spawn: Rex backend: " + diagnostic + "\n" if diagnostic else "")
+                self.assertIsNone(packet["created"])
+                self.assertFalse(packet["creation_attempt_frame_seen"])
+                self.assertFalse(packet["retry_safe"])
+                self.assertFalse(packet["automatic_close"])
+        self.env["PATH"] = str(self.work / "no-rex")
+        result, packet = self.invoke("/bin/true")
+        self.assertEqual(packet["failure_reason"], "FileNotFound")
+        self.assertIsNone(packet["backend_term"])
+        self.shim("pass\n")
+        (self.work / "shim" / "rex").chmod(0o644)
+        self.env["PATH"] = str(self.work / "shim")
+        result, packet = self.invoke("/bin/true")
+        self.assertEqual(packet["failure_reason"], "AccessDenied")
+        self.assertIsNone(packet["backend_term"])
+        self.assertEqual(self.view(), before)
+
+    def test_lost_creation_receipt_is_uncertain_and_does_not_retry_or_close(self):
+        for retain_created, malformed in [(False, False), (True, False), (True, True)]:
+            with self.subTest(retain_created=retain_created, malformed=malformed):
+                before = self.view()
+                events = ['source', 'attempt', 'created'] if retain_created else ['source', 'attempt']
+                self.shim("import json,subprocess,sys\n"
+                          f"r=subprocess.run([{self.rex!r},*sys.argv[1:]],capture_output=True,check=True)\n"
+                          "for line in r.stdout.splitlines():\n"
+                          f" if json.loads(line)['event'] in {events!r}:sys.stdout.buffer.write(line+b'\\n')\n"
+                          + ("sys.stdout.buffer.write(b'not-json\\n')\n" if malformed else "")
+                          + "sys.stdout.flush();sys.exit(77)\n")
+                result, packet = self.invoke("/bin/sh", "-c", "sleep 60")
+                self.assertEqual(result.returncode, 1, result.stderr + result.stdout)
+                self.assertEqual(packet["outcome"], "uncertain")
+                self.assertEqual(packet["source"], {k: self.source[k] for k in ("rex_version", "platform", "api_revision")})
+                self.assertTrue(packet["creation_attempt_frame_seen"])
+                self.assertFalse(packet["attached_location_verified"])
+                self.assertIsNotNone(packet["failure_reason"])
+                if malformed:
+                    self.assertNotEqual(packet["failure_reason"], "rex_transport_incomplete")
+                    self.assertIsNone(packet["backend_term"])
+                else:
+                    self.assertEqual(packet["failure_reason"], "rex_transport_incomplete")
+                    self.assertEqual(packet["backend_term"], {"Exited": 77})
+                self.assertFalse(packet["retry_safe"])
+                self.assertFalse(packet["automatic_close"])
+                after = self.view()
+                self.assertEqual(len(after["windows"]), len(before["windows"]) + 1)
+                self.assertEqual(after["active_window_id"], before["active_window_id"])
+                if retain_created:
+                    window = next(w for w in after["windows"] if w["window_id"] == packet["created"]["window_id"])
+                    self.assertIn(packet["created"]["block_id"], [b["block_id"] for layer in window["layers"] for b in layer["blocks"]])
+                else:
+                    self.assertIsNone(packet["created"])
 
     def test_transport_deadline_and_cancellation_are_not_creation_success(self):
         ready = self.work / "ready"
@@ -206,6 +259,8 @@ class SpawnTest(unittest.TestCase):
                 self.assertIsNone(packet["created"])
                 self.assertFalse(packet["attached_location_verified"])
                 self.assertFalse(packet["retry_safe"])
+                self.assertEqual(packet["failure_reason"], "rex_transport_incomplete")
+                self.assertEqual(packet["backend_term"], {"Signal": signal.SIGKILL})
         self.assertEqual(self.view(), before)
 
     def test_usage_rejects_before_contact_and_missing_endpoint_never_autostarts(self):
@@ -224,6 +279,16 @@ class SpawnTest(unittest.TestCase):
         self.assertFalse(missing.exists())
         packet = json.loads(result.stdout)
         self.assertNotEqual(packet["outcome"], "created_and_attached")
+        command[command.index("--socket") + 1] = str(self.socket)
+        absent = "session:00000000-0000-0000-0000-000000000000"
+        command[command.index("--session") + 1] = absent
+        result = subprocess.run(command, capture_output=True, text=True, env=self.env, timeout=5)
+        packet = json.loads(result.stdout)
+        self.assertEqual(result.returncode, 1, result.stderr + result.stdout)
+        self.assertEqual(packet["outcome"], "uncertain")
+        self.assertEqual(packet["failure_reason"], "rex_transport_incomplete")
+        self.assertIn(absent, result.stderr)
+        self.assertNotEqual(packet["backend_term"], {"Exited": 0})
 
 
 if __name__ == "__main__":

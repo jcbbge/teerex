@@ -18,6 +18,47 @@ The compatibility-only shared CLI is [v0.1.0-alpha.2](../../docs/releases/v0.1.0
 - Unix transport is explicit, not proof of physical locality: a socket can be an SSH forward. For this initial Mac-first use, choose a socket you know belongs to your existing local server. No HTTP/SSH endpoint, hosts-file changes, or VPS setup is implemented.
 - Terminal content is untrusted data and can contain secrets. JSON is escaped but **not redacted**. Keep observations out of Git, logs and external services unless reviewed. Target/Rex/compatibility failures produce no success JSON; usage errors exit 2, operational failures exit 1. Consumers must check the exit status as well as parsing JSON, since a stdout write failure can leave partial output.
 
+## Target-routing diagnostics
+
+When Rex exits unsuccessfully, observation retains its bounded error and prints the **requested** server/session/block plus a same-executable, explicit-`--server` comparison hint. This is not an authenticated report of where a wrapper actually connected. Observation still runs the trusted `rex` selected by `PATH`, removes `REX_SERVER`, `REX_SESSION`, `REX_BLOCK`, `REX_CLIENT`, and supplies `--server unix://…` explicitly. No alternate host, SSH route, focus target or retry is requested. No extra discovery RPCs or successful observation fields are added. Watch keeps its existing failed/unknown result and any last accepted comparison, not invented current evidence.
+
+For [issue #10](https://github.com/jcbbge/teerex/issues/10), a successful `REX_SERVER=… rex block capture` is not yet proof of the same route: a wrapper can treat environment-only selection differently from `--server`. The public [agent-core wrapper change](https://github.com/jcbbge/agent-core-public/commit/7632b9c4c2ed86e14eafe62cee2076ef5286fc15) contains exactly that distinction. Its presence in the reporter's failing invocation has **not** been verified. Nor does unspecified adapter success prove capture of the exact failing target.
+
+With separately authorized read access, compare on the CLI host using one reviewed absolute `REX` executable and the exact private `SOCKET`, `SESSION`, `BLOCK`. The executable must also be the one selected by teerex's `PATH`; inspect any wrapper rather than assuming it honors either selector. Keep diagnostics, host/instance IDs and any captures private. Do not install, restart, reconfigure or mutate a live pane for this check:
+
+```sh copy Copy Routing Checks
+# Supply REX, SOCKET, SESSION and BLOCK from the authorized target record.
+# Record the PATH selection and inspect any alias/function/wrapper first.
+command -V rex
+"$REX" version
+shasum -a 256 "$REX"
+# Match teerex's cleared target hints; aliases/functions are not its PATH executable.
+rex_at() { env -u REX_SERVER -u REX_SESSION -u REX_BLOCK -u REX_CLIENT "$REX" --autostart=false --server "unix://$SOCKET" --timeout 3s "$@"; }
+rex_at api call server.version
+rex_at api call server.status
+rex_at session ls --json
+rex_at block ls --session "$SESSION" --json
+# Fixed full IDs only; this JSON must not contain labels or user-supplied source.
+TARGET=$(printf '{"session_id":"%s","block_id":"%s","max_bytes":256}' "$SESSION" "$BLOCK")
+READS='local a=rex.args; for _,m in ipairs({"format","process","pwd","program_status"}) do local v,e=rex.call("com.superlogical.terminal."..m,{session_id=a.session_id,block_id=a.block_id,args=m=="format" and {format="text",max_bytes=254} or {}}); if not v then error(m..": "..tostring(e)) end; print(m,rex.json.encode(v)) end'
+# Both collect the exact target; output may include private terminal content.
+rex_at do --session "$SESSION" --block "$BLOCK" -e "$READS" --args "$TARGET"
+# Bypass CLI target resolution, but still explicitly attach the same session.
+rex_at do -e 'local v,e=rex.call("session.attach",{session_id=rex.args.session_id}); if not v then error(e) end;'"$READS" --args "$TARGET"
+# Also compare individual explicit-ID RPCs; api call performs its own attachment.
+for method in format process pwd program_status; do
+    if [ "$method" = format ]; then ARGS='{"format":"text","max_bytes":254}'; else ARGS='{}'; fi
+    RPC=$(printf '{"session_id":"%s","block_id":"%s","args":%s}' "$SESSION" "$BLOCK" "$ARGS")
+    rex_at api call "com.superlogical.terminal.$method" "$RPC" || break
+done
+```
+
+Check every exit and retain the exact failing method, executable path/hash/version, server version/host/instance identity, and selected block's `host_id` privately. If both attached Lua routes and direct RPC fail against that endpoint, removing CLI scopes does not make the target readable. If explicit-ID RPC **and explicit-attach Lua** succeed while scoped Lua fails for the same executable/endpoint/IDs, preserve that distinction as Rex target-resolution evidence. A `host_id` difference alone neither proves unsupported observation nor identifies the server/API of the terminal host. Numeric API acceptance is not mixed-host certification.
+
+Disposable Linux/API13 investigation on 12 November 2026 used checksum-pinned Rex preview.16 (`aa2db1b21261b479a550559fb70e2c3a66c07ba2`). Both same-server targets passed scoped Lua, explicit-attach Lua and all four direct RPCs. Removing scope **without attachment** failed even for a valid target with `conflict: stream is not attached to session`. Cross-server absent targets failed through all attached/direct routes. Two distinct server/state directories and a synthetic local wrapper with the public wrapper's environment-versus-flag selection boundary reproduced successful environment-only capture plus teerex's session-scope error; poisoned environment still observed the explicit selected target. This is a controlled routing counterexample, **not reproduction of an attached Mac/API10 block on Linux/API13**. No supported-domain routing defect has been established. The diagnostic change does **not** resolve #10: the reporter's exact PATH executable and same-explicit-endpoint comparison, or an equivalent attached-host fixture, remain necessary.
+
+The new regression fails on the unchanged alpha.4 source executable because failures omit the requested endpoint/routing hint. After the diagnostic change, `python3 items/observe/test_observe.py -v` passed **29 tests** on Linux/API13 and on disposable arm64 macOS **26.3.1** with official preview.13/API10 and preview.16/API13. Those Mac controls are not the reporter's `d018d2` build or the reported mixed-host topology. Existing bounded capture, baseline/source checks, serial collection, later-failure evidence and cancellation behavior are unchanged.
+
 ## What C02 adds and teaches
 
 The new nodes are additive to output `schema_version=1`. Each names its exact method, its evidence `basis`, `freshness="unknown"`, and `data`. Explicit nulls mean an observation/report is unavailable, not an empty path or a successful operation. These are server-provided facts/claims; teerex does not independently inspect processes or authenticate reporters.

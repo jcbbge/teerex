@@ -211,7 +211,7 @@ const Collector = struct {
         }
     }
 };
-const Live = struct { collector: Collector, outcome: []const u8, code: u8, failure: ?[]const u8 };
+const Live = struct { collector: Collector, outcome: []const u8, code: u8, failure: ?[]const u8, backend_term: ?std.process.Child.Term };
 fn query(allocator: std.mem.Allocator, o: Options, entry: ?Entry) !Live {
     const request = try std.json.Stringify.valueAlloc(allocator, .{
         .operation = o.operation,
@@ -240,7 +240,16 @@ fn query(allocator: std.mem.Allocator, o: Options, entry: ?Entry) !Live {
     const ok = r != null and !r.?.stopped and r.?.term == .Exited and r.?.term.Exited == 0 and c.pending.items.len == 0;
     const success = ok and c.verified and sig == 0;
     const outcome: []const u8 = if (sig != 0) "cancel_requested" else if (deadline) "deadline_exceeded" else if (success) "verified" else if (ok and c.finished and c.reason != null) "refused" else "uncertain";
-    return .{ .collector = c, .outcome = outcome, .code = if (sig != 0) 128 + sig else if (deadline) 124 else if (success) 0 else 1, .failure = failure orelse c.reason };
+    if (!success) {
+        if (r) |result| if (result.stderr.len != 0) std.debug.print("teerex jobs: Rex backend: {s}\n", .{result.stderr});
+    }
+    return .{
+        .collector = c,
+        .outcome = outcome,
+        .code = if (sig != 0) 128 + sig else if (deadline) 124 else if (success) 0 else 1,
+        .failure = failure orelse c.reason orelse if (!success) @as(?[]const u8, "rex_transport_incomplete") else null,
+        .backend_term = if (r) |result| result.term else null,
+    };
 }
 fn output(allocator: std.mem.Allocator, value: anytype) !void {
     const raw = try std.json.Stringify.valueAlloc(allocator, value, .{ .whitespace = .indent_2 });
@@ -405,6 +414,6 @@ fn execute(allocator: std.mem.Allocator, o: Options) !u8 {
         registry.state.entries[index.?] = entry.?;
         try registry.save(allocator);
     }
-    try output(allocator, .{ .schema_version = 1, .kind = "jobs_result", .operation = o.operation, .outcome = live.outcome, .failure_reason = live.failure, .entry = entry, .source_observed = live.collector.source, .observation = live.collector.observation, .observed_at_unix_ms = std.time.milliTimestamp(), .observation_is_atomic = false, .mutation_attempt_frame_seen = live.collector.attempt, .retry_safe = !eq(o.operation, "present"), .deadline_passed = if (entry) |e| std.time.milliTimestamp() >= e.deadline_unix_ms else false, .deadline_enforced = false, .automatic_cleanup = false, .recorded_owner_is_process_owner = false, .owner_liveness = "not_checked", .task_completion = "not_assessed", .all_processes_verified_gone = false, .exclusive_control = false });
+    try output(allocator, .{ .schema_version = 1, .kind = "jobs_result", .operation = o.operation, .outcome = live.outcome, .failure_reason = live.failure, .backend_term = live.backend_term, .entry = entry, .source_observed = live.collector.source, .observation = live.collector.observation, .observed_at_unix_ms = std.time.milliTimestamp(), .observation_is_atomic = false, .mutation_attempt_frame_seen = live.collector.attempt, .retry_safe = !eq(o.operation, "present"), .deadline_passed = if (entry) |e| std.time.milliTimestamp() >= e.deadline_unix_ms else false, .deadline_enforced = false, .automatic_cleanup = false, .recorded_owner_is_process_owner = false, .owner_liveness = "not_checked", .task_completion = "not_assessed", .all_processes_verified_gone = false, .exclusive_control = false });
     return live.code;
 }

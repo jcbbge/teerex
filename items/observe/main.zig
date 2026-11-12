@@ -364,6 +364,7 @@ pub fn runObservations(allocator: std.mem.Allocator, args: []const []const u8) !
     }
     if (result.term != .Exited or result.term.Exited != 0) {
         std.debug.print("teerex: Rex observation failed: {s}\n", .{std.mem.trim(u8, result.stderr, "\r\n")});
+        observationTargetHint(endpoint, session_id, block_id);
         return error.ObservationCommandFailed;
     }
     const parsed = try std.json.parseFromSlice(std.json.Value, allocator, capture.bytes.items, .{});
@@ -655,6 +656,7 @@ fn watch(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
     if (result) |r| {
         if (!r.stopped and !collector.isComplete()) {
             std.debug.print("teerex watch: observation failed: {s}\n", .{std.mem.trim(u8, r.stderr, "\r\n")});
+            observationTargetHint(endpoint, session_id, block_id);
             collector.failure = if (collector.pending.items.len != 0 and r.term == .Exited and r.term.Exited == 0) "InvalidObservationFrame" else "ObservationCommandFailed";
         }
     }
@@ -704,7 +706,13 @@ fn watch(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
     return if (stop_signal != 0) 128 + stop_signal else if (collector.failure != null) 1 else if (satisfied) 0 else 124;
 }
 
+fn observationTargetHint(endpoint: []const u8, session: []const u8, block: []const u8) void {
+    std.debug.print("teerex: requested observation target: server={s} session={s} block={s}\n", .{ endpoint, session, block });
+    std.debug.print("teerex: compare using the same trusted PATH rex with explicit --server, not only REX_SERVER; observation ignores REX_SERVER/REX_SESSION/REX_BLOCK/REX_CLIENT. No alternate host or focus target was requested by teerex.\n", .{});
+}
+
 fn observationArgv(allocator: std.mem.Allocator, endpoint: []const u8, session: []const u8, block: []const u8, max_bytes: usize, interval_ms: ?u64) ![]const []const u8 {
+    // Scope also attaches the Lua connection; explicit IDs alone do not attach it.
     const request = try std.json.Stringify.valueAlloc(allocator, .{ .session_id = session, .block_id = block, .max_bytes = max_bytes, .interval_ms = interval_ms }, .{});
     return allocator.dupe([]const u8, &.{ "rex", "--autostart=false", "--server", endpoint, "--timeout", "3s", "--color", "never", "do", "--session", session, "--block", block, "-e", @embedFile("collect.lua"), "--args", request });
 }
