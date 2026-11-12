@@ -69,6 +69,15 @@ jobs:
         with:
           python-version: '3.13'
 
+      - name: Select Xcode 26.1.1 for Zig 0.15.2
+        if: runner.os == 'macOS'
+        run: |
+          developer=/Applications/Xcode_26.1.1.app/Contents/Developer
+          test -d "$developer"
+          echo "DEVELOPER_DIR=$developer" >> "$GITHUB_ENV"
+          DEVELOPER_DIR="$developer" xcodebuild -version
+          DEVELOPER_DIR="$developer" xcrun --sdk macosx --show-sdk-path
+
       - name: Install checksum-pinned Zig 0.15.2
         env:
           ZIG_PLATFORM: ${{ matrix.zig-platform }}

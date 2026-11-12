@@ -17,6 +17,8 @@ The four cells continue independently when another fails. Tests are not retried,
 
 The [official runner reference](https://docs.github.com/en/actions/reference/runners/github-hosted-runners) lists `macos-26` as standard Apple-silicon/arm64. CI checks arm64 and macOS major version 26 at runtime. These labels avoid `*-latest`, but GitHub updates patch versions and image contents: they are not immutable VM-image pins. Jobs log image metadata, architecture, tools and actual Rex identity. Updated images must pass the tests again.
 
+Mac jobs explicitly select installed **Xcode26.1.1** through per-job `DEVELOPER_DIR=/Applications/Xcode_26.1.1.app/Contents/Developer` and log its SDK. This does not change the machine-wide Xcode selection. The first hosted alpha.3 API10 job on image20261102.0473.1 failed before tests: its default Xcode26.6/SDK26.5 uses arm64e-only system-library stubs that Zig0.15.2 cannot match when linking its native build runner. The previously successful disposable macOS26 environment used Xcode26.1.1/SDK26.1; OS-family parity alone did not establish SDK parity. An absent selected Xcode fails explicitly rather than falling back or skipping native tests. See Zig upstream issues [31658](https://github.com/ziglang/zig/issues/31658), [31669](https://github.com/ziglang/zig/issues/31669) and [31673](https://github.com/ziglang/zig/issues/31673).
+
 ## Rex pins and isolation
 
 Rex is proprietary and downloaded separately in every runtime lane. It is not bundled or uploaded as an artifact. Public availability is not redistribution permission. Each URL uses `https://blob.superlogical.com/download/rex/preview/COMMIT/ARCHIVE` with these immutable selections:
@@ -80,7 +82,7 @@ The extra Linux eight comparisons intentionally repeat cases contained in observ
 
 ## Evidence and limits
 
-Local combined alpha.3 runtime validation passed **83** checks on native Debian13/kernel6.1.189+/API13 and **107** on disposable arm64 macOS27.2/API13 using the packaged executable bytes. The Linux total omits CI's repeated eight offline comparisons. Fresh macOS26.3.1 alpha.2 tests passed observe28/run11 on actual API10/12/13; that earlier binary is not evidence for every alpha.3 feature. Final-candidate macOS26 matrix evidence and hosted results must be reported separately, not inferred from compilation or an older run.
+Local combined alpha.3 runtime validation passed **83** checks on native Debian13/kernel6.1.189+/API13 and **107** on disposable arm64 macOS27.2/API13 using the packaged executable bytes. The Linux total omits CI's repeated eight offline comparisons. A separate final-byte matrix on disposable arm64 macOS26.3.1 passed **86/86/107** executions on actual API10/API12/API13; Linux passed91 including the eight repeats. All27 runtime/test/installer source files matched published alpha.3 commit8b282786. The Mac matrix deliberately executed the packaged `99679a4f…61cd0` candidate, not its different-hash native rebuild; native compilation and child tests were exercised separately. These results do not establish hosted-image success, API11, M5 or hive compatibility.
 
 The shipping owner must verify checks on the exact pushed commit before reporting hosted CI green. A local result or another commit's green status does not establish that. Combined-runtime and release evidence is recorded in the [direction record](direction.md) and item contracts. Source snapshots, compiler versions and executable hashes distinguish preliminary runs from final-byte tests.
 
