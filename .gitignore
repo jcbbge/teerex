@@ -3,6 +3,12 @@ local/
 .env
 .env.*
 
+# Local probes, captures, and Zig/Python build output are not source.
+.amp/
+.zig-cache/
+zig-out/
+__pycache__/
+
 # Keep third-party captures and binaries out of the research repository.
 rex-index/
 runtime/
