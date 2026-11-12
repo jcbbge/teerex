@@ -62,6 +62,20 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     }));
+    const jobs = b.createModule(.{
+        .root_source_file = b.path("items/jobs/main.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    jobs.addImport("supervised_child", child);
+    exe.root_module.addImport("rex_jobs", jobs);
+    const adapters = b.createModule(.{
+        .root_source_file = b.path("items/adapters/main.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    adapters.addImport("supervised_child", child);
+    exe.root_module.addImport("rex_adapters", adapters);
     b.installArtifact(exe);
 
     const run = b.addRunArtifact(exe);

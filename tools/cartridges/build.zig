@@ -4,7 +4,7 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
     const selected = b.option([]const u8, "cartridge", "Build just this cartridge ID");
-    const names = [_][]const u8{ "observe", "run", "spawn", "send", "offstage", "doctor", "maneuvers", "filter" };
+    const names = [_][]const u8{ "observe", "run", "spawn", "send", "offstage", "doctor", "maneuvers", "filter", "jobs", "adapters" };
     if (selected) |id| {
         var found = false;
         for (names) |name| {

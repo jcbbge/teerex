@@ -16,7 +16,7 @@ jobs:
   regression:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 15
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
@@ -99,7 +99,7 @@ jobs:
           printf 'Runner image: %s %s\n' "${ImageOS:-unknown}" "${ImageVersion:-unknown}"
 
       - name: Check Zig formatting
-        run: zig fmt --check build.zig src items
+        run: zig fmt --check build.zig src items tools/cartridges
 
       - name: Build target CLI
         run: zig build -Doptimize=ReleaseSmall -Dtarget=${{ matrix.target }}
@@ -146,6 +146,16 @@ jobs:
           TEEREX_BIN: ${{ github.workspace }}/zig-out/bin/teerex
           TEEREX_OFFLINE_ONLY: '1'
         run: python3 items/doctor/test_doctor.py -v
+
+      - name: Run cartridge lifecycle and native installed-payload contracts
+        if: runner.os == 'Linux' || matrix.rex-api == 13
+        run: |
+          python3 -m unittest discover -s tools/cartridges -p test_cartridges.py -v
+          platform=x86_64-linux
+          if [[ "$RUNNER_OS" == macOS ]]; then platform=aarch64-macos; fi
+          python3 tools/cartridges/package.py --platform "$platform" \
+            --version 0.1.0-alpha.4 --output "$RUNNER_TEMP/cartridge-catalog"
+          python3 tools/cartridges/test_payloads.py --catalog "$RUNNER_TEMP/cartridge-catalog"
 
       - name: Run installer lifecycle and public release controls
         if: runner.os == 'Linux' || matrix.rex-api == 13
@@ -203,6 +213,25 @@ jobs:
           TEEREX_BIN: ${{ github.workspace }}/zig-out/bin/teerex
           REX_BIN: ${{ runner.temp }}/rex-bin/rex
         run: python3 items/spawn/test_spawn.py -v
+
+      - name: Run descriptor-bound read adapter regressions
+        env:
+          TEEREX_BIN: ${{ github.workspace }}/zig-out/bin/teerex
+          REX_BIN: ${{ runner.temp }}/rex-bin/rex
+        run: python3 items/adapters/test_adapters.py -v
+
+      - name: Run API13 responsibility registry and presentation regressions
+        if: matrix.rex-api == 13
+        env:
+          TEEREX_BIN: ${{ github.workspace }}/zig-out/bin/teerex
+          REX_BIN: ${{ runner.temp }}/rex-bin/rex
+        run: python3 items/jobs/test_jobs.py -v
+
+      - name: Run native installed-cartridge runtime contracts
+        if: runner.os == 'Linux' || matrix.rex-api == 13
+        env:
+          REX_BIN: ${{ runner.temp }}/rex-bin/rex
+        run: python3 tools/cartridges/test_payloads.py --catalog "$RUNNER_TEMP/cartridge-catalog" --with-rex
 
       - name: Run disposable-Mac execution and cleanup regressions
         if: runner.os == 'macOS'

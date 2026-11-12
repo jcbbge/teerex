@@ -30,7 +30,12 @@ const usage = observation_usage ++
     \\       teerex offstage --socket /absolute/path --session session:UUID --cwd /absolute/path --purpose TEXT --timeout-ms N -- ARGV...
     \\       teerex doctor --socket /absolute/path [--timeout-ms N] [--baseline FILE]
     \\       teerex maneuver-check --definition FILE --observation FILE --socket /absolute/path --session session:UUID --block block:UUID
+    \\       teerex maneuver-check --library FILE --list
+    \\       teerex maneuver-check --library FILE [--before FILE] --observation FILE --socket /absolute/path --session session:UUID --block block:UUID
     \\       teerex filter --sample FILE --sample FILE [--sample FILE ...]
+    \\       teerex filter cache put|get|purge --help
+    \\       teerex jobs track|list|inspect|adopt|present|forget --help
+    \\       teerex adapters generate|call --help
     \\       teerex send --socket /absolute/path --session session:UUID --block block:UUID --from LABEL --message-file /absolute/path [--timeout-ms N]
     \\       teerex spawn --socket /absolute/path --session session:UUID --name LABEL --cwd /absolute/path
     \\                    --report-to-session session:UUID --report-to-block block:UUID [--timeout-ms N] -- ARGV...
@@ -286,6 +291,8 @@ fn run() !void {
     if (args.len >= 2 and std.mem.eql(u8, args[1], "run")) std.process.exit(try @import("rex_run").run(allocator, args[2..]));
     if (args.len >= 2 and std.mem.eql(u8, args[1], "offstage")) std.process.exit(try @import("rex_offstage").run(allocator, args[2..]));
     if (args.len >= 2 and std.mem.eql(u8, args[1], "doctor")) std.process.exit(try @import("rex_doctor").run(allocator, args[2..]));
+    if (args.len >= 2 and std.mem.eql(u8, args[1], "jobs")) std.process.exit(try @import("rex_jobs").run(allocator, args[2..]));
+    if (args.len >= 2 and std.mem.eql(u8, args[1], "adapters")) std.process.exit(try @import("rex_adapters").run(allocator, args[2..]));
     if (args.len >= 2 and std.mem.eql(u8, args[1], "maneuver-check")) std.process.exit(try @import("rex_maneuvers").run(allocator, args[2..], @This()));
     if (args.len >= 2 and std.mem.eql(u8, args[1], "filter")) std.process.exit(try @import("rex_filter").run(allocator, args[2..], @This()));
     if (args.len >= 2 and std.mem.eql(u8, args[1], "send")) std.process.exit(try @import("rex_send").run(allocator, args[2..]));

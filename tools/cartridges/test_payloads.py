@@ -2,7 +2,8 @@
 """Install a real native catalog and reuse the existing offline public contracts.
 
 Usage: python3 tools/cartridges/test_payloads.py --catalog /canonical/catalog
-Only disposable HOME is modified. No Rex server is needed or started.
+Only disposable HOME is modified. Default acceptance needs no Rex. --with-rex
+also runs runtime suites against fresh fixtures with explicitly selected API13 Rex.
 The temporary test adapter translates the existing combined-CLI test argv into
 separate installed executables; it is not a shipped cartridge or runtime shim.
 """
@@ -25,6 +26,7 @@ REPO = HERE.parent.parent
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--catalog", type=Path, required=True)
+    parser.add_argument("--with-rex", action="store_true", help="also run public runtime suites against explicitly selected disposable API13 Rex")
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix="teerex-real-cartridges-") as temporary:
         home = Path(temporary).resolve()
@@ -55,11 +57,18 @@ def main():
             cases.append("native help and independent dispatch: " + key)
         adapter = home / "combined-test-interface"
         script = "#!/bin/sh\ncase \"$1\" in\n"
-        mapping = {"filter": "filter", "maneuver-check": "maneuvers", "compare": "observe", "observe": "observe", "watch": "observe"}
+        mapping = {"filter": "filter", "maneuver-check": "maneuvers", "compare": "observe", "observe": "observe", "watch": "observe",
+                   "jobs": "jobs", "adapters": "adapters", "spawn": "spawn", "send": "send", "run": "run", "offstage": "offstage", "doctor": "doctor"}
         for verb, key in mapping.items():
             if key not in packages:
                 continue
-            prefix = " ".join(shlex.quote(s) for s in command + ["run", key, "--"])
+            # Runtime suites deliberately change HOME and launch concurrent senders.
+            # Exercise their installed payloads directly, without imposing the
+            # manager's HOME-bound root and short nonblocking lifecycle mutex.
+            # Manager help/dispatch above, offline mode, and lifecycle tests still
+            # exercise the managed launcher and its separate lease contract.
+            invocation = [str(Path(packages[key]["code"]) / ("teerex-" + key))] if args.with_rex else command + ["run", key, "--"]
+            prefix = " ".join(shlex.quote(s) for s in invocation)
             if key != "observe":
                 script += f"{verb}) shift; exec {prefix} \"$@\" ;;\n"
             else:
@@ -73,16 +82,26 @@ def main():
         os.environ["HOME"] = str(home)
         try:
             suite = unittest.TestSuite()
-            for key, class_name in (("filter", "FilterTest"), ("maneuvers", "ManeuverTest"), ("observe", "CompareTest")):
+            contracts = [("filter", "test_filter.py", "FilterTest"), ("filter", "test_cache.py", "CacheTest"),
+                         ("maneuvers", "test_maneuvers.py", None), ("observe", "test_observe.py", None if args.with_rex else "CompareTest"),
+                         ("adapters", "test_adapters.py", None if args.with_rex else "OfflineTest")]
+            if args.with_rex:
+                contracts.extend((key, "test_" + key + ".py", None) for key in ("jobs", "send", "spawn", "run", "doctor", "offstage"))
+            for key, filename, class_name in contracts:
                 if key not in packages:
                     continue
-                spec = importlib.util.spec_from_file_location("cartridge_contract_" + key, REPO / "items" / key / ("test_" + key + ".py"))
-                module = importlib.util.module_from_spec(spec)
-                spec.loader.exec_module(module)
+                # Cache tests reuse the public filter fixture from their sibling module.
+                sys.path.insert(0, str(REPO / "items" / key))
+                try:
+                    spec = importlib.util.spec_from_file_location("cartridge_contract_" + key + filename, REPO / "items" / key / filename)
+                    module = importlib.util.module_from_spec(spec)
+                    spec.loader.exec_module(module)
+                finally:
+                    sys.path.pop(0)
                 module.BIN = adapter
-                suite.addTests(unittest.defaultTestLoader.loadTestsFromTestCase(getattr(module, class_name)))
+                suite.addTests(unittest.defaultTestLoader.loadTestsFromTestCase(getattr(module, class_name)) if class_name else unittest.defaultTestLoader.loadTestsFromModule(module))
             result = unittest.TextTestRunner(verbosity=2).run(suite)
-            assert result.wasSuccessful(), "installed standalone offline contract failed"
+            assert result.wasSuccessful(), "installed standalone contract failed"
         finally:
             if old_home is None:
                 del os.environ["HOME"]
@@ -95,7 +114,8 @@ def main():
             call("restore", key, "--version", item["version"], "--apply")
             assert key not in call("list")["active"], "restore must not auto-activate"
             cases.append("remove, retain data, restore inactive: " + key)
-        print(json.dumps(dict(ok=True, native_cartridges=sorted(packages), offline_contract_tests=result.testsRun, checks=cases), indent=2))
+        print(json.dumps(dict(ok=True, native_cartridges=sorted(packages), contract_tests=result.testsRun, runtime_selected=args.with_rex,
+                              suite_invocation="direct_installed_payload" if args.with_rex else "manager", checks=cases), indent=2))
 
 
 if __name__ == "__main__":
