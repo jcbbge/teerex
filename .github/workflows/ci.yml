@@ -1,0 +1,108 @@
+name: Build and regression
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  regression:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux offline and Apple-silicon cross-build
+            runner: ubuntu-24.04
+            zig-platform: x86_64-linux
+            zig-sha256: 02aa270f183da276e5b5920b1dac44a63f1a49e55050ebde3aecc9eb82f93239
+          - name: Mac integration (Rex preview.16)
+            runner: macos-26
+            zig-platform: aarch64-macos
+            zig-sha256: 3cc2bab367e185cdfb27501c4b30b1b0653c28d9f73df8dc91488e66ece5fa6b
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.13'
+
+      - name: Install checksum-pinned Zig 0.15.2
+        env:
+          ZIG_PLATFORM: ${{ matrix.zig-platform }}
+          ZIG_SHA256: ${{ matrix.zig-sha256 }}
+        run: |
+          archive="$RUNNER_TEMP/zig.tar.xz"
+          curl --fail --silent --show-error --location --retry 3 \
+            "https://ziglang.org/download/0.15.2/zig-${ZIG_PLATFORM}-0.15.2.tar.xz" -o "$archive"
+          printf '%s  %s\n' "$ZIG_SHA256" "$archive" | shasum -a 256 --check
+          tar -xJf "$archive" -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/zig-${ZIG_PLATFORM}-0.15.2" >> "$GITHUB_PATH"
+
+      - name: Record toolchain and runner
+        run: |
+          test "$(zig version)" = 0.15.2
+          zig version
+          python3 --version
+          uname -sm
+          printf 'Runner image: %s %s\n' "${ImageOS:-unknown}" "${ImageVersion:-unknown}"
+
+      - name: Check Zig formatting
+        run: zig fmt --check build.zig src items
+
+      - name: Build native CLI
+        run: zig build -Doptimize=ReleaseSmall
+
+      - name: Run offline comparison regressions without Rex
+        if: runner.os == 'Linux'
+        env:
+          TEEREX_BIN: ${{ github.workspace }}/zig-out/bin/teerex
+        run: python3 items/observe/test_observe.py CompareTest -v
+
+      - name: Cross-build Apple-silicon CLI
+        if: runner.os == 'Linux'
+        run: zig build -Doptimize=ReleaseSmall -Dtarget=aarch64-macos --prefix zig-out/mac
+
+      - name: Verify Mac runtime and install checksum-pinned Rex
+        if: runner.os == 'macOS'
+        run: |
+          sw_vers
+          test "$(uname -m)" = arm64
+          test "$(sw_vers -productVersion | cut -d. -f1)" = 26
+          archive="$RUNNER_TEMP/rex-darwin-arm64.zip"
+          curl --fail --silent --show-error --location --retry 3 \
+            'https://blob.superlogical.com/download/rex/preview/aa2db1b21261b479a550559fb70e2c3a66c07ba2/rex-darwin-arm64.zip' \
+            -o "$archive"
+          printf '%s  %s\n' \
+            3055299e4fe881d97e8ca452e33906b8a9c7aedf36b836845ebb587829b29a29 "$archive" \
+            | shasum -a 256 --check
+          mkdir -p "$RUNNER_TEMP/rex-bin"
+          unzip -q "$archive" -d "$RUNNER_TEMP/rex-bin"
+          "$RUNNER_TEMP/rex-bin/rex" version
+          echo "$RUNNER_TEMP/rex-bin" >> "$GITHUB_PATH"
+
+      - name: Run disposable-Mac observation, comparison and watch regressions
+        if: runner.os == 'macOS'
+        env:
+          TEEREX_BIN: ${{ github.workspace }}/zig-out/bin/teerex
+        run: python3 items/observe/test_observe.py -v
+
+      - name: Run disposable-Mac execution and cleanup regressions
+        if: runner.os == 'macOS'
+        env:
+          TEEREX_BIN: ${{ github.workspace }}/zig-out/bin/teerex
+        run: python3 items/run/test_run.py -v
