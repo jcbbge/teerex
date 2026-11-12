@@ -1,5 +1,7 @@
 # doctor
 
+[Operator/agent addendum: Who, What, When, Where, Why, How](../../docs/concierge/features.md#6-doctor-narrow-advertised-compatibility-and-drift) covers current alpha.3 use, platform/API support, verification, privacy, update/rollback/remove and troubleshooting. Discovery remains distinct from permission and behavior certification.
+
 **Experimental, read-only compatibility diagnosis for observe/watch/run with numeric API acceptance 10–13 and concrete selected-shape checks.** Numeric acceptance is not certification of every build in that range. This is the narrow Phase 3 #8, C25–C28 slice, not a generated client, a generic schema validator, a ready independently packaged cartridge or permission to use discovered methods. Historical review and non-Rex material are unchanged.
 
 ## Invoke and interpret

@@ -1,5 +1,7 @@
 # observe
 
+[Operator/agent addendum: Who, What, When, Where, Why, How](../../docs/concierge/features.md) covers current alpha.3 use, platform/API support, verification, privacy, update/rollback/remove and troubleshooting. Increment-time evidence below is historical; the selected release guide fixes shipped support.
+
 **Experimental incremental implementation of Phase 3 #1.** A small Zig CLI returns bounded terminal text plus C02 process, last-reported-directory and program-status evidence as JSON. C03 adds an explicit offline comparison of two observation files, not activity/completion interpretation. C09's `watch` adds a bounded foreground wait for changes or selected status-report evidence against an explicit baseline, reusing those same evidence rules. This is still not the complete proprioception packet, a ready cartridge, an installer, or a general Rex client. Phase 3 #8 contributes only the five concrete bindings observation needs: `server.version` and terminal `format`, `process`, `pwd`, `program_status`.
 
 The compatibility-only shared CLI is [v0.1.0-alpha.2](../../docs/releases/v0.1.0-alpha.2.md), accepting API10–13 without server restart/update. Alpha.1 required API13. The validation sections below preserve increment-time builds; the new release guide records all39 checks passing per actual API10/12/13 disposable build, API11 remaining unexercised, and supplied M5/API10 observation evidence separately from disposable validation.

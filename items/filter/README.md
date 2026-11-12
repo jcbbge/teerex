@@ -1,5 +1,7 @@
 # filter — bounded Rex observation payload filtering
 
+[Operator/agent addendum: Who, What, When, Where, Why, How](../../docs/concierge/features.md#11-filter-explicit-offline-payload-reduction) covers alpha.3 storage-free filtering and lifecycle; the [follow-on cache addendum](../../docs/concierge/follow-ons.md#4-explicit-bounded-historical-cache) separately covers source-candidate consent, retention, historical hits, purge and rollback. No hit is fresh evidence or permission.
+
 **Experimental.** Phase 3 #7's Rex-specific observation support: exact-payload filtering plus a separately opt-in, bounded [historical cache](#opt-in-persistent-historical-cache). Neither is a general perception engine, completion classifier or new capture path. Both use explicitly selected **schema-1/API10–13 Rex observation files** and the shared validation/comparison contract from [observe/compare/watch](../observe/README.md). Neither contacts Rex, reads the current focus or starts a watcher.
 
 ## Use

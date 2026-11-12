@@ -1,10 +1,10 @@
 # All items
 
-**Planned; unavailable. There are currently zero members and no installer.**
+**Ready-only membership remains zero.** Alpha.4 implements the [independent cartridge manager](../docs/cartridges.md): `install --all` resolves the same individual paths, but every current package is experimental. Explicit `--allow-experimental` admits ten Mac or seven Linux payloads; without it, all selects zero. This does not promote experiments to ready. Verify the [published release and selected catalog](../docs/releases/v0.1.0-alpha.4.md) first.
 
 The eventual `all` option will select every cartridge marked `ready` in this release. It will compose the same per-cartridge installation paths used for individual installation; it must not be a separate monolithic copy of their code. Selecting all must preserve the ability to add or remove each cartridge independently through the human and agent-facing work surface.
 
-Before implementing it:
+The implemented lifecycle preserves these requirements:
 
 - Keep every item individually selectable and independently uninstallable.
 - Exclude proposals and experiments by default. Research documents are not installable members.
@@ -16,4 +16,4 @@ Before implementing it:
 
 The starting preference is a minimal local Zig CLI on Joshua's M5 MacBook, not targeted VPS/Linux support. Work through shared-dependency handling, removal/data behavior, and agent permissions collaboratively as those choices arise; this policy neither settles them nor requires an upfront questionnaire. See the [product direction](../docs/direction.md).
 
-Do not offer a command such as `install --all` until that command, the individual items, and these behaviors are implemented and tested. This file preserves the intended delivery model without claiming it works today.
+Alpha.4's manager implements `install --all` with plan-before-apply, native catalog validation and the retention/conflict limits documented above. This is not authorization for personal-machine installation, invocation, a Rex restart or remote deployment.

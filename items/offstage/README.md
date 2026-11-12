@@ -1,5 +1,7 @@
 # offstage
 
+[Operator/agent addendum: Who, What, When, Where, Why, How](../../docs/concierge/features.md#9-offstage-invocation-owned-command-terminal-not-an-agent) covers current alpha.3 use, platform/API support, verification, privacy, update/rollback/remove and troubleshooting. Later jobs do not transfer this invocation's cleanup ownership.
+
 **Experimental Phase 3 #4 lifecycle slice: run one explicitly owned terminal outside the selected session's layouts, collect its exit evidence, then close only that created block.** This implements C12 and a bounded foreground-owner subset of C13. It does not implement a durable registry, daemon, automatic presentation/C14, sandbox/C15 or independent cartridge packaging. Historical scores and deferred non-Rex work remain unchanged.
 
 ## Use

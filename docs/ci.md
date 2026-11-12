@@ -6,10 +6,10 @@
 
 | Check | Explicit runner | Selected coverage |
 | --- | --- | --- |
-| Linux API13 and Apple-silicon cross-build | `ubuntu-24.04`, x86-64 | Static musl CLI, direct child supervision, observe/compare/watch, send, spawn, offline maneuver/filter/doctor, installer and Mac cross-build. |
-| Mac API10 (Rex preview.13) | `macos-26`, arm64 | Direct child supervision, observe/compare/watch, run, send, spawn, doctor and offline maneuver/filter. |
+| Linux API13 and Apple-silicon cross-build | `ubuntu-24.04`, x86-64 | Static musl CLI, child supervision, observe/compare/watch, send/spawn, adapters/jobs, offline maneuver/library/filter/cache/doctor, installer, cartridge lifecycle/native payload contracts and Mac cross-build. |
+| Mac API10 (Rex preview.13) | `macos-26`, arm64 | Child supervision, observe/compare/watch, run/send/spawn, doctor, adapters and offline maneuver/library/filter/cache. |
 | Mac API12 (Rex preview.14) | `macos-26`, arm64 | Same public suites as Mac API10. |
-| Mac API13 (Rex preview.16) | `macos-26`, arm64 | Same public suites plus API13-only offstage and installer lifecycle/public-download controls. |
+| Mac API13 (Rex preview.16) | `macos-26`, arm64 | Same public suites plus API13 jobs/offstage, installer controls, cartridge lifecycle and native installed-payload offline/runtime suites. |
 
 Every lane checks Zig formatting and builds `ReleaseSmall`. Zig **0.15.2** is downloaded from its versioned official archive and checked against the platform-specific SHA-256 from [Zig's download index](https://ziglang.org/download/index.json). Python **3.13** is selected explicitly. GitHub actions use immutable commit pins. There is no `zig build test` interface: CI invokes the listed Python public-CLI suites and `zig test src/child_test.zig` directly.
 
@@ -40,7 +40,7 @@ From the repository root with Zig 0.15.2, Python 3 and a deliberately selected c
 
 ```sh
 zig version
-zig fmt --check build.zig src items
+zig fmt --check build.zig src items tools/cartridges
 # Linux; use aarch64-macos on an arm64 Mac instead.
 zig build -Doptimize=ReleaseSmall -Dtarget=x86_64-linux-musl
 zig test src/child_test.zig
@@ -52,6 +52,10 @@ python3 items/send/test_send.py -v
 python3 items/spawn/test_spawn.py -v
 python3 items/maneuvers/test_maneuvers.py -v
 python3 items/filter/test_filter.py -v
+python3 items/filter/test_cache.py -v
+python3 items/adapters/test_adapters.py -v
+# API13 only:
+python3 items/jobs/test_jobs.py -v
 ```
 
 On Linux, also run:
@@ -74,11 +78,14 @@ python3 tools/install/test_install.py --public -v
 
 Selected executions per cell:
 
-- **Linux: 103** = child4 + observe28 + separately repeated offline Compare8 + send9 + spawn6 + maneuver10 + filter9 + cache12 + doctor3 + installer14. Doctor's seven unsupported runtime cases skip explicitly.
-- **Mac API10 and API12: 98 each** = child4 + observe28 + send9 + spawn6 + run11 + doctor9 + maneuver10 + filter9 + cache12. Doctor's one non-Mac guard skips.
-- **Mac API13: 119** = those98 + offstage7 + installer14.
+- **Linux combined CLI: 138** = child4 + observe28 + separately repeated offline Compare8 + send9 + spawn6 + maneuver21 + filter9 + cache12 + adapters11 + jobs13 + doctor3 + installer14. Doctor's seven unsupported runtime cases skip explicitly.
+- **Mac API10 and API12 combined CLI: 120 each** = child4 + observe28 + send9 + spawn6 + run11 + doctor9 + maneuver21 + filter9 + cache12 + adapters11. Doctor's one non-Mac guard skips; jobs/offstage runtime are not selected.
+- **Mac API13 combined CLI: 154** = those120 + jobs13 + offstage7 + installer14.
+- **Additional Linux/API13 and Mac/API13 packaging checks:** cartridge lifecycle14 each; installed managed-payload offline51 each (filter9 + cache12 + maneuver21 + compare8 + adapter offline1), plus each payload's help/cross-dispatch/retirement/retained-data/inactive-restore checks. Native installed payload runtime suites execute109 Linux /136 Mac checks; the Mac doctor guard additionally skips. These repeat public behavior through separately built payloads, not additional unique product behaviors.
 
-The extra Linux eight comparisons intentionally repeat cases contained in observe28 before Rex download; do not count them as new behaviors. CI discovers no unlisted suites. Installer public-download controls deliberately select the historical alpha.1 Mac release and Linux absent-asset case; other versions are native help-only fixtures. Those tests are not public alpha.3-download or live Rex proof. Final release archives receive a separate exact-byte install/upgrade/rollback/remove check.
+The runtime payload suite uses direct installed executable paths to preserve deliberate HOME changes and concurrent senders; direct invocation bypasses manager leases. Managed help/offline acceptance and lifecycle14 test the manager separately. Its short registry mutex is nonblocking, and a selected root remains HOME-bound; concurrent manager starts can refuse before payload dispatch. Do not describe direct payload success as managed concurrent-start coverage.
+
+The extra Linux eight comparisons intentionally repeat cases contained in observe28 before Rex download; do not count them as new behaviors. CI discovers no unlisted suites. Installer public-download controls deliberately select the historical alpha.1 Mac release and Linux absent-asset case; other versions are native help-only fixtures. Those tests are not public alpha.4-download or live Rex proof. Final release archives receive a separate exact-byte install/upgrade/rollback/remove check.
 
 ## Evidence and limits
 

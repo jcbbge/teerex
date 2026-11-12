@@ -1,5 +1,7 @@
 # send
 
+[Operator/agent addendum: Who, What, When, Where, Why, How](../../docs/concierge/features.md#8-send-one-whole-message-paste-then-enter) covers current alpha.3 use, platform/API support, verification, privacy and recovery. Separate paste/Enter ACKs are not atomic delivery or consumption; no blind resend is safe.
+
 **Experimental terminal-input leaf, not a global messaging authority or independently packaged cartridge.** `rex_send.run(allocator, args) !u8` uses the shared `supervised_child` ABI. It owns only `items/send/**`; shared CLI/build integration and release delivery belong to the integrator. No Rex configuration, agent-core files, personal machines, or running personal servers are changed. This leaf is not part of the immediate compatibility-only Mac release.
 
 ## Invoke and select deliberately

@@ -1,5 +1,7 @@
 # jobs — explicit durable responsibility and presentation
 
+[Operator/agent addendum: Who, What, When, Where, Why, How](../../docs/concierge/follow-ons.md#2-durable-jobs-and-deliberate-presentation) covers source-candidate prerequisites, exact targets, generations, verification, adoption/presentation recovery, privacy and code/data lifetimes. This is not an alpha.3 command or a process authority.
+
 **Follow-on to alpha.3, not part of that frozen release.** This leaf implements the bounded persistent registry and intentional presentation portions of Phase 3 #4/C13–C14. It does not replace [spawn](../spawn/README.md) or change [offstage](../offstage/README.md). Only an explicit foreground invocation acts; no daemon, agent, watcher, auto-adoption, automatic cleanup, configuration or server is installed.
 
 The public leaf interface is `pub fn run(allocator, args) !u8`, importing `supervised_child`. The integrator owns shared build/dispatch/CI wiring. `test_cli.zig` is a standalone test bridge, not a second product or a released executable. Live operations currently require **actual API13 on darwin_arm64 or linux_amd64**. This intentionally does not extend alpha.3's API10–13 promise to new methods on old servers.

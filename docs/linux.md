@@ -1,4 +1,6 @@
-# Linux x86_64 observation support
+# Linux x86_64 support
+
+Alpha.4's Linux distribution includes observe/compare/watch, spawn/send, offline filter/cache and maneuver libraries, jobs/API13, read-only adapters/API10–13, seven independent native cartridges and the onboarding package. Runtime run/doctor/offstage remain Mac-only. See the [alpha.4 release contract](releases/v0.1.0-alpha.4.md) and [concierge](concierge/README.md); confirm exact published assets before installation. The older supervisor-only evidence below remains historical, not final-release or hive certification.
 
 The Linux transport implements the same supervised-child contract used by macOS: EOF stdin, explicit environment/argv, separately drained stdout/stderr, at most 4096 retained diagnostic bytes, monotonic deadlines, SIGINT/SIGTERM cancellation and invocation-owned process-group cleanup. Linux uses `poll` and `waitid(WEXITED | WNOHANG | WNOWAIT)` rather than Darwin's kqueue. The leader remains unreaped until the final group signal, reserving its PID/process-group ID against reuse. Readable bytes are drained even when a pipe also reports hangup; only a zero-length read establishes EOF.
 

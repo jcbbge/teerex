@@ -1,6 +1,6 @@
 # Product direction and transcript planning
 
-teerex is intended to become a shared console for independently addable and removable **cartridges**, with agents as first-class users alongside humans. Today it preserves research/planning and experimental observation/execution commands: there are no ready cartridges, lifecycle API, console implementation, or installer.
+teerex is a shared CLI collection of experimental Rex utilities, with agents as first-class users alongside humans. Alpha.4 adds independently addable/removable native **cartridges**, explicit jobs/presentation, read-only adapters/local receipts, opt-in historical caching and manual saved-evidence libraries. The [release guide](releases/v0.1.0-alpha.4.md) and [concierge](concierge/README.md) define exact delivery/support; verify the published tag/assets rather than assuming main is released. No cartridge is marked ready, no graphical console/plugin API is claimed, and strong guarded input/revocation remains host-blocked. The record below preserves earlier states chronologically.
 
 This record preserves Joshua's direction as relayed by the [Space conversation](https://ampcode.com/threads/T-01a1cc2c-d343-7288-8315-f3d06e3dae32) on 11 November 2026. It is not an authorization to start every candidate project or a substitute for the pending design decisions.
 

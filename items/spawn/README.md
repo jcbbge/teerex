@@ -1,5 +1,7 @@
 # spawn
 
+[Operator/agent addendum: Who, What, When, Where, Why, How](../../docs/concierge/features.md#7-spawn-one-visible-agent-terminal) covers alpha.3 use, platform/API support, verification, lost-ACK recovery, privacy and code/resource lifetimes. Creation is not readiness; no automatic retry/close follows uncertainty.
+
 **Experimental visible agent launcher.** `teerex spawn` creates one terminal in a new window of an explicitly selected existing Rex session. It requests `focus=false`, verifies the acknowledged block's window attachment, and returns its full address. It never creates a detached intermediate block or falls back to a hidden worker. Rex can make a new window active if the session has no active window; `focus=false` is not a global focus lock against other clients.
 
 ```sh

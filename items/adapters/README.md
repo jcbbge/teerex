@@ -1,5 +1,7 @@
 # adapters
 
+[Operator/agent addendum: Who, What, When, Where, Why, How](../../docs/concierge/follow-ons.md#3-selected-read-only-adapters-local-policy-and-receipts) covers source-candidate prerequisites, identity/policy, use/verification, privacy, drift recovery and lifecycle. This is not an alpha.3 command, host permission system or authenticated audit history.
+
 **Experimental Rex-specific read-only descriptor generation, local allowlisting and action receipts.** This is a follow-on to frozen/public alpha.3, not part of that release. It extends original Phase 3 #8/C25–C28 for five selected methods; it is not an unrestricted generated client, MCP server, generic agent runtime, credential broker, host permission system or ready independently packaged cartridge. The historical inventory, non-Rex handoff and doctor are unchanged.
 
 ## Supported surface
