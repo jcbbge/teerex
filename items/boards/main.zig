@@ -68,7 +68,9 @@ pub const call_log = @import("calls.zig");
 pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
     var argv: std.ArrayList([]const u8) = .empty;
     defer argv.deinit(allocator);
-    try argv.appendSlice(allocator, &.{ "python3", "-I", "-c", try call_log.python(allocator, @embedFile("boards.py")) });
+    const dashboard_source = try std.json.Stringify.valueAlloc(allocator, @embedFile("dashboard.py"), .{});
+    const script = try std.fmt.allocPrint(allocator, "import types,sys\n_dashboard=types.ModuleType('teerex_dashboard')\nexec({s}, _dashboard.__dict__)\nsys.modules['teerex_dashboard']=_dashboard\n{s}", .{ dashboard_source, @embedFile("boards.py") });
+    try argv.appendSlice(allocator, &.{ "python3", "-I", "-c", try call_log.python(allocator, script) });
     const render = args.len > 0 and (std.mem.eql(u8, args[0], "inbox") or std.mem.eql(u8, args[0], "fleet") or std.mem.eql(u8, args[0], "calls")) and
         (args.len == 1 or std.mem.startsWith(u8, args[1], "--"));
     if (render) try argv.append(allocator, "boards");

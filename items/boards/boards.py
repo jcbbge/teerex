@@ -537,7 +537,7 @@ def _deliver_ask(a):
     return 0
 
 
-def bounded_command(argv, timeout=5):
+def bounded_command(argv, timeout=5, receipt=False):
     env = {k: v for k, v in os.environ.items() if k not in ("REX_SERVER", "REX_SESSION", "REX_BLOCK", "REX_CLIENT")}
     p = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env, start_new_session=True)
     out, err = bytearray(), bytearray()
@@ -556,6 +556,8 @@ def bounded_command(argv, timeout=5):
                     key.data.extend(data)
                     check(len(out) <= MAX_BYTES and len(err) <= 8192, "rex_response_exceeds_bound")
         code = p.wait(timeout=max(.001, deadline - time.monotonic()))
+        if receipt:
+            return dict(exit=code, receipt=json_load(out.decode()), stderr=err.decode("utf-8", errors="replace"))
         check(code == 0, "rex_read_failed_exit_" + str(code) + ": " + err.decode("utf-8", errors="replace")[:256])
         return json_load(out.decode())
     finally:
@@ -610,7 +612,7 @@ io.write('{"version":',rex.json.encode(version),',"identity":',
 '''
 
 
-def probe(socket, jobs_registry=None, teerex=None):
+def probe(socket, jobs_registry=None, teerex=None, dashboard=False, agents_registry=None):
     check(os.path.isabs(socket), "absolute_socket_required")
     registrations = None
     if jobs_registry is not None:
@@ -618,9 +620,12 @@ def probe(socket, jobs_registry=None, teerex=None):
         registrations = bounded_command([teerex, "jobs", "list", "--registry", jobs_registry])
         check(registrations.get("kind") == "jobs_list", "invalid_jobs_list")
     live = bounded_command([os.environ.get("TEEREX_INTERNAL_REX") or "rex", "--autostart=false", "--server", "unix://" + socket,
-                            "--timeout", "3s", "--color", "never", "do", "-e", READ_LUA, "--args", json.dumps(dict(include_status=jobs_registry is not None))])
+                            "--timeout", "3s", "--color", "never", "do", "-e", READ_LUA, "--args", json.dumps(dict(include_status=jobs_registry is not None or dashboard))])
     if registrations is not None:
         live["registrations"] = registrations["entries"]
+    if dashboard:
+        import teerex_dashboard
+        live["dashboard"] = teerex_dashboard.metadata(agents_registry, globals())
     check(len(json.dumps(live).encode()) <= MAX_BYTES, "probe_response_exceeds_bound")
     return live
 
@@ -695,15 +700,22 @@ def fleet_snapshot(a, state):
     for item in configured:
         cfg = item.copy()
         registry = registries.get(item.get("name", item.get("host")), registries.get("*"))
+        dashboard = getattr(a, "dashboard", False)
+        agents_registry = None
+        if dashboard:
+            import teerex_dashboard
+            agents_registry = teerex_dashboard.registry_for(a.agents_registry, item.get("name", item.get("host")), selected_names, globals())
         try:
             if "name" in item:
                 check(a.teerex is not None and os.path.isabs(a.teerex), "explicit_teerex_executable_required")
                 resolved = bounded_command([a.teerex, "targets", "resolve", "--config", a.config, "--host", item["name"]])["host"]
                 cfg = dict(host=resolved["host_id"], server="unix://" + resolved["socket"])
                 live = bounded_command([a.teerex, "--config", a.config, "--host", item["name"], "boards", "probe"]
-                                       + (["--jobs-registry", registry] if registry else []), timeout=8)
+                                       + (["--jobs-registry", registry] if registry else [])
+                                       + (["--dashboard"] if dashboard else [])
+                                       + (["--agents-registry", agents_registry] if agents_registry else []), timeout=8)
             else:
-                live = probe(cfg["server"][7:], registry, a.teerex)
+                live = probe(cfg["server"][7:], registry, a.teerex, dashboard, agents_registry)
             check(live["version"]["api_revision"] == 13 and isinstance(live["rows"], list)
                   and len(live["rows"]) <= MAX_FLEET, "invalid_live_response")
             text(live["identity"]["instance_id"], 128, False)
@@ -754,10 +766,34 @@ def fleet_snapshot(a, state):
                                        program_status=None, report=report, state=report["state"] if report else "unknown",
                                        state_provenance="report" if report else "unknown", agent_classification="registered_" + e["kind"]))
                 local_found.add(key)
+            if dashboard:
+                metadata = live.get("dashboard", {})
+                check(isinstance(metadata, dict), "invalid_dashboard_metadata")
+                for lifecycle in metadata.get("lifecycles", []):
+                    t = lifecycle["target"]
+                    key = json.dumps(t, sort_keys=True)
+                    if key in local_found:
+                        continue
+                    report = reports.get(key)
+                    observed_server = t["host"] == cfg["host"] and t["server"] == cfg["server"]
+                    local_rows.append(dict(target=t, observation=dict(present=False if observed_server else None,
+                        reason="lifecycle_pane_not_observed_not_death_evidence"), report=report,
+                        state=report["state"] if report else "unknown", state_provenance="report" if report else "unknown",
+                        agent_classification="lifecycle_record"))
+                    local_found.add(key)
+                for row in local_rows:
+                    raw_status = next((b.get("program_status") for b in live["rows"] if b["session"] == row["target"]["session_id"] and b["block"] == row["target"]["block_id"]), None)
+                    row["program_status"] = status_evidence(raw_status) if raw_status is not None else None
+                    row["dashboard"] = dict(configured_name=item.get("name"), jobs_registry=registry,
+                        lifecycle=next((r for r in metadata.get("lifecycles", []) if r["target"] == row["target"]), None),
+                        last_call=next((c["at"] for c in metadata.get("calls", []) if row["target"]["block_id"] in c.get("ids", [])), None),
+                        errors=metadata.get("errors", []))
             rows.extend(local_rows)
             found.update(local_found)
             sources.append(dict(**cfg, configured_name=item.get("name"), outcome="observed", provenance="observation",
                                 source=live["identity"], version=live["version"], observed_at=stamp()))
+            if dashboard:
+                sources[-1]["dashboard_errors"] = metadata.get("errors", [])
         except (Refused, OSError, ValueError, KeyError, TypeError, subprocess.TimeoutExpired) as e:
             sources.append(dict(**cfg, configured_name=item.get("name"), outcome="unknown", provenance="observation",
                                 reason=str(e)[:256], observed_at=stamp()))
@@ -852,6 +888,9 @@ def render_fleet(snapshot, width):
 def board(a):
     tty = sys.stdout.isatty()
     check(a.once or tty, "live_board_requires_visible_tty_use_once_for_capture")
+    if a.view == "fleet" and not a.once and not a.json:
+        import teerex_dashboard
+        return teerex_dashboard.Dashboard(a, globals()).run()
     if a.view == "inbox":
         t = selected(a)
     try:
@@ -976,6 +1015,8 @@ def parser():
     q = commands.add_parser("probe", help="one bounded read-only API13 fleet sample; root named-host routing supplies socket")
     q.add_argument("--socket", required=True)
     q.add_argument("--jobs-registry", help="absolute read-only jobs registry on this command host; max 32 entries/256 KiB")
+    q.add_argument("--dashboard", action="store_true", help="read live OSC, bounded call history and optional lifecycle metadata")
+    q.add_argument("--agents-registry", help="dashboard-only private lifecycle registry; 32 records, 256 KiB each; no token/body projection")
     q.add_argument("--teerex", help="absolute current CLI; native bridge supplies self path")
     c = commands.add_parser("state", help="private authoritative inspect and explicit recovery remapping")
     ops = c.add_subparsers(dest="operation", required=True)
@@ -1048,13 +1089,17 @@ def parser():
     q.add_argument("--hosts", help="comma-separated command hosts, max 16; unavailable hosts visible")
     q.add_argument("--teerex", help="absolute native CLI; supplied by compiled bridge")
     for v in ("inbox", "fleet"):
-        q = views.add_parser(v)
+        q = views.add_parser(v, description="Live fleet keys: arrows/j/k select; Enter focuses; p jobs-present+focus beside this dashboard (same server/session); o leaf-opens a recorded report/brief beside its agent; r refresh; / filter; q quit. Actions show native receipts; no auto-focus or close. --once output is unchanged." if v == "fleet" else None)
         common(q, v == "inbox")
         q.add_argument("--once", action="store_true", help="one bounded snapshot, including non-TTY capture")
         q.add_argument("--json", action="store_true")
         q.add_argument("--width", type=bounded_int(32, 160), default=80, metavar="32..160")
         q.add_argument("--interval-ms", type=bounded_int(500, 60000), default=2000, metavar="500..60000")
         if v == "fleet":
+            q.add_argument("--agents-registry", action="append", default=[], help="live TUI only: ABS for selected command hosts or repeat HOST=ABS; private lifecycle name/phase/document, never tokens/bodies")
+            q.add_argument("--dashboard-session", help="exact dashboard session:UUID; default Rex pane environment, verified before presentation")
+            q.add_argument("--dashboard-block", help="exact dashboard block:UUID; default Rex pane environment, verified before presentation")
+            q.add_argument("--dashboard-host", help="dashboard configured name or host_id; disambiguates its verified live anchor")
             group = q.add_mutually_exclusive_group(required=True)
             group.add_argument("--targets-file", help='fixture/forwarded endpoints: absolute JSON list of {host,server:unix:///ABS}')
             group.add_argument("--config", help="actual shared config; --hosts selects exact names such as m5,hive,m1")
@@ -1068,7 +1113,7 @@ def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     # Unlike argparse's default, reject duplicate options rather than accepting the last.
     options = [x.split("=", 1)[0] for x in argv if x.startswith("--")]
-    check(len([x for x in options if x not in ("--jobs-registry", "--option")]) == len(set(x for x in options if x not in ("--jobs-registry", "--option"))), "duplicate_option")
+    check(len([x for x in options if x not in ("--jobs-registry", "--agents-registry", "--option")]) == len(set(x for x in options if x not in ("--jobs-registry", "--agents-registry", "--option"))), "duplicate_option")
     a = parser().parse_args(argv)
     if a.command == "boards" and a.view == "calls":
         return calls_board(a)
@@ -1076,8 +1121,8 @@ def main(argv=None):
         a.timeout_ms = a.timeout_ms if a.timeout_ms is not None else (a.draft_wait_ms + 10000 if a.draft == "guard" else 10000)
         a.input_deadline = time.monotonic() + a.timeout_ms / 1000
     if a.command == "probe":
-        check(options.count("--jobs-registry") <= 1, "duplicate_option")
-        print(json.dumps(socket_receipt(probe(a.socket, a.jobs_registry, a.teerex))), flush=True)
+        check(options.count("--jobs-registry") <= 1 and options.count("--agents-registry") <= 1, "duplicate_option")
+        print(json.dumps(socket_receipt(probe(a.socket, a.jobs_registry, a.teerex, a.dashboard, a.agents_registry))), flush=True)
         return 0
     if a.command == "ask":
         return deliver_ask(a)

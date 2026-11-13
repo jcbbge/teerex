@@ -2,6 +2,10 @@
 import fcntl
 import json
 import os
+import pty
+import select
+import struct
+import termios
 from pathlib import Path
 import shutil
 import signal
@@ -623,11 +627,17 @@ class RexBoardsTest(unittest.TestCase):
         cls.addClassCleanup(cls.tmp.cleanup)
         cls.root = Path(cls.tmp.name)
         cls.socket = cls.root / "rex.sock"
+        cls.bin = cls.root / "bin"
+        cls.bin.mkdir()
+        leaf = cls.bin / "leaf"
+        leaf.write_text("#!" + sys.executable + "\nimport sys,time\nfrom pathlib import Path\nPath(sys.argv[-1]).parent.joinpath('leaf-argv').write_text(repr(sys.argv[1:]))\ntime.sleep(120)\n")
+        leaf.chmod(0o700)
         cls.log = (cls.root / "server.log").open("w")
         cls.addClassCleanup(cls.log.close)
         cls.server = subprocess.Popen([cls.rex, "server", "run", "--listen", "unix://" + str(cls.socket),
                                        "--restore=false", "--config", "/dev/null", "--state-dir", str(cls.root / "rex-state")],
-                                      stdout=cls.log, stderr=cls.log)
+                                      stdout=cls.log, stderr=cls.log,
+                                      env=dict(os.environ, PATH=str(cls.bin) + os.pathsep + os.environ["PATH"]))
         def stop():
             cls.server.terminate()
             try:
@@ -694,6 +704,200 @@ class RexBoardsTest(unittest.TestCase):
         self.assertEqual(after["capture"]["content"], before["capture"]["content"])
         closed = cli("surfaces", "close", "--socket", str(self.socket), "--session", sid, "--pane", bid)
         self.assertEqual(closed["outcome"], "closed_and_absent")
+
+    def dashboard_fixture(self, named=False):
+        root = self.root / ("dashboard-" + str(time.monotonic_ns()))
+        root.mkdir()
+        for directory in ("store", "jobs", "agents", "bin"):
+            (root / directory).mkdir(mode=0o700)
+        env = dict(os.environ, PATH=str(root / "bin") + os.pathsep + str(Path(self.rex).parent) + os.pathsep + os.environ["PATH"],
+                   TEEREX_CALL_LOG_DIR=str(root / "calls"), REX_SERVER="unix:///poison.sock", REX_SESSION="session:poison", REX_BLOCK="block:poison")
+        def invoke(*args):
+            result = subprocess.run([BIN, *args], env=env, capture_output=True, text=True, timeout=20)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            return json.loads(result.stdout)
+        session = json.loads(subprocess.check_output(self.base + ["api", "call", "session.create", '{"label":"dashboard fixture"}']))["session_id"]
+        self.addCleanup(lambda: subprocess.run(self.base + ["api", "call", "session.destroy", json.dumps(dict(session_id=session))], capture_output=True))
+        def pane(label, osc=False):
+            script = ("print('\\x1b]7501;state=working:app=fixture\\x1b\\\\',flush=True); " if osc else "") + "import time; time.sleep(120)"
+            return invoke("surfaces", "open", "--socket", str(self.socket), "--session", session,
+                          "--layout", "tab", "--label", label, "--", sys.executable, "-c", script)["actual"]["block_id"]
+        anchor, alpha, beta = pane("dashboard-anchor"), pane("dash-agent-alpha"), pane("dash-agent-beta", True)
+        document = root / "brief.txt"
+        document.write_text("private brief for the selected agent")
+        for number, block in enumerate((alpha, beta), 1):
+            invoke("jobs", "track", "--registry", str(root / "jobs"), "--socket", str(self.socket),
+                   "--session", session, "--block", block, "--owner", "operator", "--kind", "agent", "--purpose", "dashboard acceptance",
+                   "--deadline-unix-ms", str(int(time.time()*1000)+120000), "--cleanup", "manual")
+            record = dict(schema_version=1, launch_id=str(number)*32, token="NEVER_SHOW_THIS_TOKEN", name="dash-agent-" + ("alpha" if number == 1 else "beta"),
+                          owner="operator", purpose="dashboard acceptance", phase="brief_submitted", created_at=int(time.time()*1000),
+                          target=dict(host="hive", server="unix://"+str(self.socket), session_id=session, block_id=block), brief_file=str(document))
+            path = root / "agents" / ("agents-" + record["launch_id"] + ".json")
+            path.write_text(json.dumps(record))
+            path.chmod(0o600)
+        targets = root / "targets.json"
+        targets.write_text(json.dumps([dict(host="hive", server="unix://" + str(self.socket))]))
+        args = [BIN, "boards", "fleet", "--store", str(root / "store"), "--jobs-registry", str(root / "jobs"),
+                "--agents-registry", str(root / "agents"), "--dashboard-session", session, "--dashboard-block", anchor,
+                "--dashboard-host", "hive", "--interval-ms", "500"]
+        if named:
+            config = root / "hosts.json"
+            config.write_text(json.dumps(dict(schema_version=1, hosts=dict(hive=dict(host_id="hive", transport="local", home=str(root),
+                platform="linux-x86_64", socket=str(self.socket), rex=self.rex, teerex=BIN, store=str(root / "store"))))))
+            args += ["--config", str(config), "--hosts", "hive"]
+        else:
+            args += ["--targets-file", str(targets)]
+        def view():
+            return json.loads(subprocess.check_output(self.base + ["api", "call", "session.view", json.dumps(dict(session_id=session))]))
+        return root, env, args, session, anchor, alpha, beta, view
+
+    def keyboard_dashboard(self, args, env):
+        master, slave = pty.openpty()
+        fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 30, 160, 0, 0))
+        before = termios.tcgetattr(slave)
+        process = subprocess.Popen(args, env=env, stdin=slave, stdout=slave, stderr=slave)
+        output = bytearray()
+        def stop():
+            if process.poll() is None:
+                process.terminate()
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait()
+            os.close(master)
+            os.close(slave)
+        self.addCleanup(stop)
+        def wait_for(needle, timeout=12):
+            end = time.monotonic()+timeout
+            while time.monotonic() < end:
+                screen = bytes(output).rsplit(b"\x1b[2J\x1b[H", 1)[-1]
+                if needle.encode() in screen and b"Receipt:" in screen:
+                    return screen.decode(errors="replace")
+                if select.select([master], [], [], .1)[0]:
+                    try:
+                        output.extend(os.read(master, 65536))
+                    except OSError:
+                        break
+                if process.poll() is not None:
+                    break
+            self.fail("dashboard did not show " + needle + ": " + bytes(output)[-6000:].decode(errors="replace"))
+        return process, master, slave, before, output, wait_for
+
+    def test_keyboard_dashboard_focus_present_document_and_json_compatibility(self):
+        root, env, args, session, anchor, alpha, beta, view = self.dashboard_fixture(named=True)
+        initial = view()
+        registry_before = {p.name: p.read_bytes() for p in (root / "agents").iterdir()}
+        once = subprocess.run(args + ["--once", "--json"], env=env, capture_output=True, text=True, timeout=20)
+        self.assertEqual(once.returncode, 0, once.stderr)
+        payload = json.loads(once.stdout)
+        self.assertEqual(set(payload), {"schema_version", "kind", "evaluated_at", "sources", "rows", "inference", "completion", "atomic_snapshot", "scope"})
+        self.assertTrue(all("dashboard" not in r for r in payload["rows"]))
+        process, master, slave, saved, output, wait_for = self.keyboard_dashboard(args, env)
+        wait_for("LAST CALL")
+        os.write(master, b"/dash-agent\r")
+        wait_for("> dash-agent-alpha")
+        os.write(master, b"j")
+        wait_for("> dash-agent-beta")
+        for byte in (b"\x1b", b"[", b"A"):
+            os.write(master, byte)
+            time.sleep(.01)
+        wait_for("> dash-agent-alpha")
+        os.write(master, b"k\x1b[B")
+        selected_screen = wait_for("> dash-agent-beta")
+        self.assertRegex(selected_screen, r"dash-agent-beta[^\r\n]+working \[OSC\]\s+\d+s\s+\d{2}:\d{2}:\d{2}")
+        self.assertEqual(initial, view(), "selection/filtering must not focus or move any pane")
+        os.write(master, b"\r")
+        wait_for("focus exit=0")
+        focused = view()
+        self.assertTrue(any(w["window_id"] == focused["active_window_id"] and w.get("focused_block_id") == beta for w in focused["windows"]))
+        os.write(master, b"p")
+        wait_for("present exit=0")
+        presented = view()
+        def window_of(snapshot, block):
+            return next(w["window_id"] for w in snapshot["windows"] for layer in w["layers"] for b in layer["blocks"] if b["block_id"] == block)
+        self.assertEqual(window_of(presented, anchor), window_of(presented, beta))
+        os.write(master, b"o")
+        wait_for("surfaces open exit=0")
+        end = time.monotonic()+5
+        while not (root / "leaf-argv").exists() and time.monotonic() < end:
+            time.sleep(.02)
+        self.assertEqual((root / "leaf-argv").read_text(), repr(["open", str(root / "brief.txt")]))
+        opened = view()
+        self.assertEqual(sum(len(layer["blocks"]) for w in opened["windows"] for layer in w["layers"]), 4)
+        self.assertTrue(any(b.get("label") == "fleet document" for w in opened["windows"] for layer in w["layers"] for b in layer["blocks"]))
+        os.write(master, b"rq")
+        self.assertEqual(process.wait(timeout=10), 0)
+        self.assertEqual(termios.tcgetattr(slave), saved)
+        self.assertEqual(view(), opened, "quitting the dashboard must leave all panes alone")
+        self.assertNotIn(b"NEVER_SHOW_THIS_TOKEN", output)
+        self.assertIn(b"working [OSC]", output)
+        self.assertEqual(registry_before, {p.name: p.read_bytes() for p in (root / "agents").iterdir()})
+
+    def test_keyboard_dashboard_refuses_cross_session_and_handles_empty_filter(self):
+        root, env, args, session, anchor, alpha, beta, view = self.dashboard_fixture()
+        other = json.loads(subprocess.check_output(self.base + ["new", "--json", "--keep-open", "--shell=none", "--", sys.executable, "-c", "import time; time.sleep(120)"]))
+        other_session, other_block = other["session_id"], other["initial_windows"][0]["block_ids"][0]
+        self.addCleanup(lambda: subprocess.run(self.base + ["api", "call", "session.destroy", json.dumps(dict(session_id=other_session))], capture_output=True))
+        args[args.index("--dashboard-session")+1] = other_session
+        args[args.index("--dashboard-block")+1] = other_block
+        before = view()
+        process, master, slave, saved, output, wait_for = self.keyboard_dashboard(args, env)
+        wait_for("LAST CALL")
+        os.write(master, b"/dash-agent-beta\rp")
+        wait_for("present_requires_dashboard_on_same_server_and_session")
+        self.assertEqual(view(), before)
+        os.write(master, b"/no-such-agent\r\r")
+        wait_for("no selected row")
+        os.write(master, b"/\rq")
+        self.assertEqual(process.wait(timeout=10), 0)
+        self.assertEqual(termios.tcgetattr(slave), saved)
+
+    def test_keyboard_dashboard_missing_metadata_refuses_actions_and_restores_on_signal(self):
+        root, env, args, session, anchor, alpha, beta, view = self.dashboard_fixture()
+        for flag in ("--jobs-registry", "--agents-registry"):
+            at = args.index(flag)
+            del args[at:at+2]
+        before = view()
+        process, master, slave, saved, output, wait_for = self.keyboard_dashboard(args, env)
+        wait_for("LAST CALL")
+        os.write(master, b"/dash-agent-beta\rp")
+        wait_for("present_requires_matching_jobs_registration")
+        os.write(master, b"o")
+        wait_for("selected_record_has_no_report_or_brief_document")
+        self.assertEqual(view(), before)
+        process.send_signal(signal.SIGINT)
+        self.assertEqual(process.wait(timeout=10), 130)
+        self.assertEqual(termios.tcgetattr(slave), saved)
+        self.assertEqual(view(), before)
+
+    def test_dashboard_metadata_redaction_absent_lifecycle_and_corrupt_source(self):
+        root, env, args, session, anchor, alpha, beta, view = self.dashboard_fixture()
+        record = json.loads((root / "agents" / ("agents-" + "1"*32 + ".json")).read_text())
+        record.update(launch_id="3"*32, name="dash-agent-absent", target=dict(record["target"], block_id="block:"+ZERO))
+        path = root / "agents" / ("agents-" + "3"*32 + ".json")
+        path.write_text(json.dumps(record))
+        path.chmod(0o600)
+        before = view()
+        process, master, slave, saved, output, wait_for = self.keyboard_dashboard(args, env)
+        wait_for("LAST CALL")
+        os.write(master, b"/dash-agent-absent\r\r")
+        wait_for("selected_pane_presence_unknown")
+        self.assertIn(b"dash-agent-absent", output)
+        self.assertNotIn(b"NEVER_SHOW_THIS_TOKEN", output)
+        os.write(master, b"q")
+        self.assertEqual(process.wait(timeout=10), 0)
+        self.assertEqual(before, view())
+        # Corrupt lifecycle metadata must not turn a successful live presence read into success for that metadata.
+        path.write_text("[]")
+        result = subprocess.run([BIN, "boards", "probe", "--dashboard", "--agents-registry", str(root / "agents"),
+                                 "--socket", str(self.socket)], env=env, capture_output=True, text=True, timeout=20)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertTrue(payload["rows"])
+        self.assertEqual(payload["dashboard"]["lifecycles"], [])
+        self.assertTrue(any(e.startswith("lifecycles:") for e in payload["dashboard"]["errors"]))
+        self.assertNotIn("NEVER_SHOW_THIS_TOKEN", result.stdout)
 
     def test_jobs_registration_live_status_and_vanished_pane(self):
         root = self.root / ("jobs-" + str(time.monotonic_ns()))

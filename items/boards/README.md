@@ -6,7 +6,7 @@
 
 **Who:** Joshua operates the fleet; agents submit reports and complete questions. Responsibility labels are supplied claims, not authenticated people or permission. Only a deliberate operator answer should be recorded as a resolution. The tool checks schema, not who authorized that answer.
 
-**What:** `teerex boards inbox` renders pinned full decision cards and six recent activity reports; `teerex boards fleet` renders live read-only terminal inventory and saved agent reports. `teerex boards seat register` explicitly marks an exact pane as an operator seat. Legacy inbox append/send routing retains private history. `teerex boards ask` types a complete decision card or resolution directly into the target pane through native guarded `send`; history is optional. `seat inspect`, `inbox inspect`, and `state inspect` expose the authoritative stored state.
+**What:** `teerex boards inbox` renders pinned full decision cards and six recent activity reports; `teerex boards fleet` renders live terminal inventory with explicit keyboard actions; one-shot views remain read-only. `teerex boards seat register` explicitly marks an exact pane as an operator seat. Legacy inbox append/send routing retains private history. `teerex boards ask` types a complete decision card or resolution directly into the target pane through native guarded `send`; history is optional. `seat inspect`, `inbox inspect`, and `state inspect` expose the authoritative stored state.
 
 **When:** register a seat before agents send to it; run a board only as a visible foreground program in Rex. Resolve decisions explicitly, inspect/export before clearing, and preview remapping after a server restore. An unavailable read or quiet terminal never certifies idle, death, or completion.
 
@@ -153,9 +153,39 @@ The current executable is pinned by the Zig bridge's `selfExePath`; Python-scrip
 - **Report:** recorded owner/purpose/state/detail and report age. Allowed states are `working`, `waiting_on_operator`, `idle`, `dead`, `completed`, `unknown`; even dead/completed remain **reports**, never process certification. Repeated reports reset report age; that is not measured duration of an internal task state. `hook_idle` is not death; `hook_error` is a report; immediate-child exit is not whole-tree death. Launch ACK tokens stay in the agents registry, not in this store.
 - **Inference:** `none`. No inference from quiet panes, expired deadlines, absent terminal rows, stale reports, or failed transport. Missing/unselected saved agents remain visible with observation unknown and their report separately retained. Every failed named host emits a visible source row; one-shot partial failure exits 1, never an all-host success. Configured names/host_id are expectations, not observed authentication.
 
+### Keyboard fleet dashboard (live text view)
+
+`teerex boards fleet` is keyboard-driven when stdin/stdout are terminals. `--once` text/JSON and live `--json` keep their existing read-only paths and JSON shape; they do not acquire dashboard-only metadata. No selection or refresh focuses, moves, launches or closes anything.
+
+| Key | Explicit action |
+| --- | --- |
+| Arrows / `j` / `k` | Select a visible row; preserve the exact target across refreshes |
+| Enter | `teerex surfaces focus` for the selected server/session/pane |
+| `p` | `teerex jobs present --relocate yes --focus yes` beside this dashboard, with the displayed registration's owner/generation |
+| `o` | `teerex surfaces open ... -- leaf open PATH`, tiled beside the selected agent; no focus request |
+| `r` | Refresh reads now |
+| `/` | Edit a case-insensitive substring filter over row fields; Enter commits, Escape cancels, Backspace edits |
+| `q` | Quit; leave all agent and document panes untouched |
+
+The `p` key explicitly permits the native focus transfer needed to relocate a focused source; use Enter when only focus is wanted. The status line shows the explicit action's exit code and native receipt outcome/reason. A timeout/missing receipt stays unknown; actions never retry or reverse automatically. Reads and actions are bounded foreground calls, so keys are processed between them. Ctrl+C/TERM restores terminal settings/cursor before exiting. Long cells/status lines are clipped to the terminal width; the selected row also has a detail line.
+
+Rows show agent name, host, owner, purpose, OSC/lifecycle/report status with provenance, age and last-call time (UTC). Live OSC status is collected even without a jobs registry. The compact status cell uses OSC data first, then lifecycle, then a fleet report; it does not rewrite those records. No recorded status proves completion or process death. Age is the OSC timestamp difference, otherwise time since lifecycle creation/report/registration, not measured work duration. Last-call time is the command host's reported clock, not proof of freshness. It matches canonical block IDs within that command host's latest 128 call records (the existing 8 MiB history window); clocks may differ and missing history is unknown.
+
+Use `--jobs-registry ABS` (or repeated `HOST=ABS`) for owner/generation-checked presentation. Add `--agents-registry ABS` (or repeated `HOST=ABS`) for lifecycle names/phases and recorded document paths. Lifecycle reads are command-host-local, owned 0700 directories / single-link 0600 regular files, no final symlinks, read-only existing shared lock, max 32 records / 256 KiB each. Only target/name/owner/purpose/phase/creation time and the first available `last_report_file`, `report_file`, or `brief_file` are projected; tokens, argv and document bodies are never projected. Missing/busy/corrupt lifecycle or call metadata is shown as unknown without replacing live presence. Unobserved lifecycle targets remain visible as absent/unknown claims, never process-death inference. No personal registry is inferred or crawled.
+
+Presentation requires the dashboard and selected pane on the **same server and session**, as required by native jobs. Different-server/session presentation refuses in the status line; use Enter to focus those agents. The dashboard anchor comes from Rex's `REX_SESSION`/`REX_BLOCK` (or SSH `LC_REX_*`) environment, then is verified against live presence. Outside Rex, or when the environment is ambiguous/stale, give `--dashboard-session session:UUID --dashboard-block block:UUID --dashboard-host NAME`. `o` requires a recorded absolute document path and matching observed server/block host; it verifies surface creation, not that Leaf loaded the document. A missing document/registration never creates a fallback pane.
+
+```sh
+teerex boards fleet --store "$STORE" --config /absolute/private/hosts.json --hosts hive,m5 \
+  --jobs-registry hive=/absolute/hive/jobs --jobs-registry m5=/absolute/mac/jobs \
+  --agents-registry hive=/absolute/hive/agents --agents-registry m5=/absolute/mac/agents
+```
+
+All remote actions use the existing named-target transport; fixtures can use explicit `--targets-file` endpoints. The additive `boards probe --dashboard [--agents-registry ABS]` supplies only live-view metadata. Existing probe invocations and one-shot fleet JSON stay unchanged. The API13 boards CI suite drives scripted PTY keys against disposable Rex and reads back focus, presentation geometry, pane identity and document creation; it also checks no-action filtering, refusals, token redaction, and terminal restoration on quit/signal.
+
 ### Join a jobs registry and terminal reports (source follow-on #22)
 
-Opt in with `--jobs-registry /absolute/private/jobs`. The path is read on each selected **command host**, not on the board renderer's machine. For different paths, repeat `--jobs-registry hive=/home/worker/jobs --jobs-registry m5=/Users/worker/jobs`; names must be selected by `--hosts` (or match the explicit targets-file host). A shared absolute path cannot mix with named paths; repeated host selections refuse. For direct `--targets-file` probes, the command host is the renderer's machine even when a socket is forwarded; registry files are read there. Unspecified hosts keep the original presence/report-only contract. Without this option, the existing JSON shape and rendering are unchanged and no terminal status read or jobs read occurs.
+Opt in with `--jobs-registry /absolute/private/jobs`. The path is read on each selected **command host**, not on the board renderer's machine. For different paths, repeat `--jobs-registry hive=/home/worker/jobs --jobs-registry m5=/Users/worker/jobs`; names must be selected by `--hosts` (or match the explicit targets-file host). A shared absolute path cannot mix with named paths; repeated host selections refuse. For direct `--targets-file` probes, the command host is the renderer's machine even when a socket is forwarded; registry files are read there. Unspecified hosts keep the original presence/report-only contract. Without this option, one-shot JSON/rendering remain unchanged and do not read terminal status or jobs. The live keyboard dashboard reads OSC status independently.
 
 The routed `boards probe --jobs-registry ABS` invokes the same executable's `jobs list`, reusing jobs' private-directory/file checks, strict schema, duplicate-target validation and **32 entries / 256 KiB** cap. Listing opens existing files read-only, takes a nonblocking shared lock when the lock exists, and creates no lock, state or mirror registry. The directory must already exist. Missing/corrupt/insecure/busy registries produce a visible unknown source and one-shot failure, never an empty-success substitute. Probe requires the current source CLI on the command host; frozen alpha.5 binaries do not implement this option.
 
