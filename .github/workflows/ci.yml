@@ -30,24 +30,6 @@ jobs:
             rex-commit: aa2db1b21261b479a550559fb70e2c3a66c07ba2
             rex-archive: rex-linux-amd64.tar.gz
             rex-sha256: 90b2429036d26f317aaac2490d014e07c9351b0b994b1329afce94b8ad4d333c
-          - name: Mac API10 (Rex preview.13)
-            runner: macos-26
-            target: aarch64-macos
-            zig-platform: aarch64-macos
-            zig-sha256: 3cc2bab367e185cdfb27501c4b30b1b0653c28d9f73df8dc91488e66ece5fa6b
-            rex-api: 10
-            rex-commit: 1b6654811346488b696ded8f3c7e6701c57242f1
-            rex-archive: rex-darwin-arm64.zip
-            rex-sha256: dfc3c5d57c9637ac21f41a7fa425a453fed64d68152b90772afb2d815b028977
-          - name: Mac API12 (Rex preview.14)
-            runner: macos-26
-            target: aarch64-macos
-            zig-platform: aarch64-macos
-            zig-sha256: 3cc2bab367e185cdfb27501c4b30b1b0653c28d9f73df8dc91488e66ece5fa6b
-            rex-api: 12
-            rex-commit: 7e460d02f51573990bfcdc6c44a5606d11c7d47a
-            rex-archive: rex-darwin-arm64.zip
-            rex-sha256: 728df49b2cefcd62b7dde14cfcbd238cac69ec1524d71c19e6a389728ebe5374
           - name: Mac API13 (Rex preview.16)
             runner: macos-26
             target: aarch64-macos

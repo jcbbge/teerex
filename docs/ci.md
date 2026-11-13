@@ -1,3 +1,5 @@
+**Lanes (Josh, 13 November 2026):** CI runs the two environments Josh uses, Linux API13 (like hive) and Mac API13 (like the M5). The Mac API10 and API12 lanes were dropped. CI is a background check, never an install gate: changes are tested locally on hive and the M5, installed, and CI turning red means fix it or roll back.
+
 # Build and regression CI
 
 [The workflow](../.github/workflows/ci.yml) runs on pull requests and pushes to `main`. It does not release, deploy, create tags, install a service or change Rex configuration. Its token has only `contents: read`; checkout credentials are not persisted. No repository secrets or paid/larger/self-hosted runners are required. Standard hosted runners are free for this public repository; changing repository visibility requires reviewing that assumption.
