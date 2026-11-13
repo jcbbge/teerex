@@ -506,11 +506,8 @@ def adapter_argv(argv, harness, command, root, launch_id, broker=None, tint_enab
         callback = [RUNTIME, "agents", "hook", "--harness", "codex", "--command-json", json.dumps(command), "--payload"]
         # JSON arrays/strings are also TOML arrays/basic strings.
         result = argv + ["-c", "notify=" + json.dumps(callback, ensure_ascii=True)]
-        if tint_enabled:
-            # Stable hook definition: Codex may require /hooks review; never bypass its trust gate.
-            reset = r"printf '\033]111\033\\' > /dev/tty"
-            inline = "hooks.UserPromptSubmit=[{hooks=[{type=\"command\",command=" + json.dumps(reset) + ",timeout=2}]}]"
-            result += ["-c", inline]
+        # No per-launch Codex hooks: an inline hook makes every launch stop at Codex's "Hooks need review"
+        # trust prompt before the agent can ACK. Codex's tint resets when send delivers into its pane.
         return result
     # Pi's explicit -e loads even with --no-extensions. Use settled, not agent_end:
     # retries/queued continuations can follow agent_end (installed Pi extension contract).
