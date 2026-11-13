@@ -67,10 +67,11 @@ def execute(args, result):
         raise ValueError("init_fragment_plan_must_be_distinct")
     init = read_regular(args.init)
     fragment = read_regular(args.file)
-    match = re.match(rb"-- teerex-surface-action:([a-z0-9_]{1,64})\n", fragment)
-    if not match:
+    matches = re.findall(rb"^-- teerex-surface-action:([a-z0-9_]{1,64})$", fragment, re.M)
+    if not matches or len(matches)>128 or len(set(matches))!=len(matches):
         raise ValueError("not_a_prepared_surface_fragment")
-    name = match[1].decode("ascii")
+    names = [name.decode("ascii") for name in matches]
+    name = names[0]
     # Lua decimal escapes work for controls; JSON's \u form is not Lua syntax.
     quoted = '"' + ''.join('\\' + c if c in '\\"' else '\\%03d' % ord(c) if ord(c) < 32 or ord(c) == 127 else c for c in args.file) + '"'
     inclusion = "\n-- teerex surface palette: " + name + "\ndofile(" + quoted + ")\n"
@@ -80,10 +81,10 @@ def execute(args, result):
     config = keymap.get("config", {})
     if not same_path(config.get("path"), args.init) or not config.get("instance_id"):
         raise ValueError("init_is_not_selected_servers_observed_config")
-    if any(a.get("name") == name for a in keymap.get("actions", [])):
+    if any(a.get("name") in names for a in keymap.get("actions", [])):
         raise ValueError("action_name_already_registered")
     plan = {"schema_version": 1, "kind": "surface_palette_install_plan", "init": args.init,
-            "file": args.file, "socket": args.socket, "name": name,
+            "file": args.file, "socket": args.socket, "name": name, "names": names,
             "init_sha256": digest(init), "fragment_sha256": digest(fragment),
             "server_instance_id": config["instance_id"], "config_hash": config.get("hash"),
             "append_exactly": inclusion, "reloads": 1,
@@ -132,15 +133,18 @@ def execute(args, result):
         raise ValueError("config_reload_diagnostics")
     actual = rex_call(base, ["api", "call", "client.keymap", "{}"])
     observed = actual.get("config", {})
-    action = next((a for a in actual.get("actions", []) if a.get("name") == name), None)
+    actions = [next((a for a in actual.get("actions", []) if a.get("name") == name), None) for name in names]
+    action = actions[0]
     result["observed_action"] = action
+    result["observed_actions"] = actions
     result["observed_config"] = observed
-    source = action.get("source", "").rsplit(":", 1)[0] if action else ""
-    if source and not os.path.isabs(source):
-        source = os.path.join(os.path.dirname(args.init), source)
+    def action_verified(action):
+        source = action.get("source", "").rsplit(":", 1)[0] if action else ""
+        if source and not os.path.isabs(source):
+            source = os.path.join(os.path.dirname(args.init), source)
+        return action and action.get("kind") == "lua" and same_path(source, args.file)
     if not (same_path(observed.get("path"), args.init) and observed.get("instance_id") == config["instance_id"]
-            and observed.get("generation") == reload.get("generation") and action and action.get("kind") == "lua"
-            and same_path(source, args.file) and read_regular(args.file) == fragment):
+            and observed.get("generation") == reload.get("generation") and all(action_verified(a) for a in actions) and read_regular(args.file) == fragment):
         raise ValueError("registration_not_verified")
     result.update(outcome="registered_and_verified", registered_in_running_server=True)
     return 0

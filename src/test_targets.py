@@ -100,7 +100,8 @@ class TargetsTest(unittest.TestCase):
                 cases += [([*prefix, verb, op], target) for op in operations]
             cases += [([*prefix, "inbox"], target), ([*prefix, "fleet"], store), ([*prefix, "ask"], target)]
         cases += [(["boards", "probe"], socket), (["boards", "try-route"], target)]
-        cases += [(["surfaces", op], socket) for op in ("open", "inspect", "rename", "move", "focus", "close")]
+        cases += [(["surfaces", op], socket) for op in ("open", "ensure", "resolve", "inspect", "rename", "move", "focus", "close")]
+        cases += [(["surfaces", "session", "ensure"], socket)]
         cases += [(["surfaces", "palette"], []), (["surfaces", "palette", "install"], socket)]
         cases += [(["jobs", op], [] if op == "list" else socket)
                   for op in ("list", "track", "inspect", "adopt", "present", "forget")]

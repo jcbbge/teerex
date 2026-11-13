@@ -4,13 +4,61 @@ local function surface(a, emit)
     local result = {outcome="refused", creation_attempted=false, retry_safe=false,
         automatic_close=false, focus_requested=false, painted_visibility="not_assessed",
         geometry_units="window_fraction", program_readiness="not_assessed"}
-    local function fail(reason) result.failure_reason=reason; return result end
+    local function fail(reason) result.failure_reason=reason; result.outcome=(result.creation_attempted or result.control_attempted) and "uncertain" or "refused"; return result end
     local version = rex.call("server.version")
     if type(version) ~= "table" then return fail("version_unavailable") end
     result.source={rex_version=version.rex_version,platform=version.platform,api_revision=version.api_revision}
     if type(version.api_revision) ~= "number" or version.api_revision < 10 or version.api_revision > 13 then
         return fail("unsupported_surface_api_revision")
     end
+    local function select_target(rows, key, text, exact_label)
+        if not exact_label then
+            for _,v in ipairs(rows) do if v[key]==text then return v end end
+        end
+        local matches={}
+        for _,v in ipairs(rows) do
+            local id=v[key]
+            if v.label==text or (not exact_label and type(id)=="string" and
+                (id==text or (not text:find(":",1,true) and id:sub(-#text)==text))) then
+                matches[#matches+1]=v
+            end
+        end
+        if #matches~=1 then
+            result.candidates=#matches>0 and matches or rows
+            result.failure_reason=#matches>1 and (exact_label and "ambiguous_label" or "ambiguous_target") or "target_not_found"
+            return nil
+        end
+        return matches[1]
+    end
+    local sessions=rex.call("session.list")
+    if type(sessions)~="table" or type(sessions.sessions)~="table" then return fail("session_list_unavailable") end
+    if a.operation=="session-ensure" then
+        local selected=select_target(sessions.sessions,"session_id",a.label,true)
+        if not selected and result.failure_reason=="ambiguous_label" then return result end
+        local made
+        if not selected then
+            result.failure_reason=nil; result.candidates=nil
+            result.creation_attempted=true; progress({event="attempt",control=result.control_attempted==true})
+            made=rex.call("session.create",{label=a.label})
+            if type(made)~="table" or not made.session_id then return fail("session_creation_receipt_unavailable") end
+            result.created=made
+            progress({event="created",created=made})
+        end
+        local fresh=rex.call("session.list")
+        if type(fresh)~="table" or type(fresh.sessions)~="table" then return fail("session_readback_unavailable") end
+        local verified=select_target(fresh.sessions,"session_id",a.label,true)
+        if not verified then return result end
+        if verified.session_id~=(made and made.session_id or selected.session_id) then return fail("session_identity_mismatch") end
+        result.actual=verified; result.resolved={session_id=verified.session_id}
+        result.outcome=made and "created" or "existing"
+        return result
+    end
+    local selected=select_target(sessions.sessions,"session_id",a.session_id)
+    if not selected then return result end
+    a.session_id=selected.session_id
+    result.resolved={session_id=a.session_id}
+    local attached=rex.call("session.attach",{session_id=a.session_id})
+    if type(attached)~="table" then return fail("session_attach_unavailable") end
     local function locate(view, bid)
         if type(view) ~= "table" or view.session_id ~= a.session_id then return end
         local function walk(node, path)
@@ -46,6 +94,58 @@ local function surface(a, emit)
     end
     local before=rex.call("session.view",{session_id=a.session_id})
     if type(before) ~= "table" or before.session_id ~= a.session_id then return fail("session_unavailable") end
+    local panes={}
+    for _,w in ipairs(before.windows or {}) do
+        for _,l in ipairs(w.layers or {}) do
+            for _,b in ipairs(l.blocks or {}) do
+                if b.creator_name=="com.superlogical.terminal" then panes[#panes+1]=b end
+            end
+        end
+    end
+    for _,field in ipairs({"block_id","anchor","window_id"}) do
+        if a[field] then
+            local key=field=="window_id" and "window_id" or "block_id"
+            local target=select_target(field=="window_id" and before.windows or panes,key,a[field])
+            if not target then
+                if result.failure_reason=="target_not_found" then result.failure_reason=key=="window_id" and "window_not_found" or "pane_not_attached_terminal" end
+                return result
+            end
+            a[field]=target[key]; result.resolved[field]=a[field]
+        end
+    end
+    if a.operation=="resolve" then result.actual=result.resolved; result.outcome="resolved"; return result end
+    local ensuring=a.operation=="ensure"
+    local function ensure_matches(view)
+        -- A tab and its single terminal are one candidate, even when both labels match.
+        local matches={}; local seen={}
+        local function add(b)
+            if not seen[b.block_id] then matches[#matches+1]=b; seen[b.block_id]=true end
+        end
+        for _,w in ipairs(view.windows or {}) do
+            local in_window={}
+            for _,l in ipairs(w.layers or {}) do for _,b in ipairs(l.blocks or {}) do
+                if b.creator_name=="com.superlogical.terminal" then
+                    in_window[#in_window+1]=b
+                    if b.label==a.label then add(b) end
+                end
+            end end
+            if w.label==a.label then
+                if #in_window~=1 then result.candidates=in_window; return nil end
+                add(in_window[1])
+            end
+        end
+        return matches
+    end
+    if ensuring then
+        local matches=ensure_matches(before)
+        if not matches then return fail("labelled_tab_requires_single_terminal") end
+        if #matches>1 then result.candidates=matches; return fail("ambiguous_label") end
+        if #matches==1 then
+            a.block_id=matches[1].block_id; result.resolved.block_id=a.block_id
+            if not a.focus then result.actual=locate(before,a.block_id); result.outcome="existing"; return result end
+            a.operation="focus"
+        end
+    end
     if a.operation == "rename" then
         local method=a.window_id and "session.set_window_label" or "session.set_block_label"
         -- help.all describes the connected server, not the controller's API catalog.
@@ -68,7 +168,7 @@ local function surface(a, emit)
         if not result.previous then return fail(a.window_id and "window_not_found" or "pane_not_attached_terminal") end
         result.control_attempted=true
         result.outcome="uncertain"
-        progress({event="attempt"})
+        progress({event="attempt",control=result.control_attempted==true})
         local receipt=rex.call(method,{session_id=a.session_id,window_id=a.window_id,block_id=a.block_id,label=a.label})
         if type(receipt)~="table" or type(receipt.revision)~="number" then return fail("rename_receipt_unavailable") end
         result.control_acknowledged=true
@@ -103,7 +203,7 @@ local function surface(a, emit)
         result.previous_anchor=anchor
         result.control_attempted=true
         result.outcome="uncertain"
-        progress({event="attempt"})
+        progress({event="attempt",control=result.control_attempted==true})
         local before_side=a.direction=="left" or a.direction=="up"
         local axis=(a.direction=="left" or a.direction=="right") and "horizontal" or "vertical"
         local side=before_side and "before" or "after"
@@ -123,6 +223,7 @@ local function surface(a, emit)
         result.actual=locate(after,a.block_id)
         local current_anchor=locate(after,a.anchor)
         local actual=result.actual
+    if actual and ensuring then result.resolved.block_id=actual.block_id end
         local p=actual and actual.split_path[#actual.split_path]
         local q=current_anchor and current_anchor.split_path[#current_anchor.split_path]
         local matches=actual and p and q and p.split_id==receipt.created_split_id and q.split_id==p.split_id and
@@ -152,7 +253,7 @@ local function surface(a, emit)
         result.previous=previous
         result.control_attempted=true
         result.outcome="uncertain"
-        progress({event="attempt"})
+        progress({event="attempt",control=result.control_attempted==true})
         local receipt
         if a.operation == "focus" then
             receipt=rex.call("session.focus_block",{session_id=a.session_id,block_id=a.block_id})
@@ -168,7 +269,13 @@ local function surface(a, emit)
             if not result.actual or not result.actual.in_active_window or result.actual.focused_block_id ~= a.block_id then
                 return fail("focus_not_verified")
             end
-            result.outcome="focused_and_verified"
+            if ensuring then
+                local matches=ensure_matches(after)
+                if not matches or #matches~=1 or matches[1].block_id~=a.block_id then
+                    result.candidates=matches or result.candidates; return fail("ensure_label_readback_ambiguous")
+                end
+            end
+            result.outcome=ensuring and "existing" or "focused_and_verified"
         else
             local blocks=rex.call("session.list_blocks",{session_id=a.session_id})
             if type(blocks) ~= "table" or type(blocks.blocks) ~= "table" then return fail("closed_block_list_unavailable") end
@@ -213,7 +320,7 @@ local function surface(a, emit)
         return fail("encoded_surface_exceeds_limit")
     end
     result.creation_attempted=true
-    progress({event="attempt"})
+    progress({event="attempt",control=result.control_attempted==true})
     local made=rex.call(method,params)
     result.outcome="uncertain"
     if type(made) ~= "table" or type(made.block_ids) ~= "table" or #made.block_ids ~= 1 then
@@ -224,7 +331,14 @@ local function surface(a, emit)
     local after=rex.call("session.view",{session_id=a.session_id})
     result.actual=locate(after,made.block_ids[1])
     local actual=result.actual
+    if actual and ensuring then result.resolved.block_id=actual.block_id end
     if not actual then return fail("created_geometry_unavailable") end
+    if ensuring then
+        local matches=ensure_matches(after)
+        if not matches or #matches~=1 or matches[1].block_id~=actual.block_id then
+            result.candidates=matches or result.candidates; return fail("ensure_label_readback_ambiguous")
+        end
+    end
     local function near(x,y) return type(x)=="number" and math.abs(x-y)<0.000001 end
     local function rect_equal(x,y)
         if type(x)~="table" or type(y)~="table" then return false end
@@ -249,5 +363,15 @@ local function surface(a, emit)
     result.requested_geometry_verified=matches
     result.outcome=matches and "created_and_verified" or "geometry_mismatch"
     if not matches then result.failure_reason="requested_geometry_not_verified" end
+    if ensuring and matches then
+        if a.focus then
+            local receipt=rex.call("session.focus_block",{session_id=a.session_id,block_id=actual.block_id})
+            local focused=rex.call("session.view",{session_id=a.session_id})
+            result.actual=locate(focused,actual.block_id)
+            if type(receipt)~="table" or not result.actual or not result.actual.in_active_window or result.actual.focused_block_id~=actual.block_id then return fail("ensure_focus_not_verified") end
+            result.focus_acknowledged=true
+        end
+        result.outcome="created"
+    end
     return result
 end

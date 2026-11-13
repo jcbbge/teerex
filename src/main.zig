@@ -10,7 +10,7 @@ const usage =
     \\       teerex --version
     \\
     \\Operating-layer commands:
-    \\  surfaces open|inspect|rename|move|focus|close|palette  Visible terminals and native palette plans
+    \\  surfaces resolve|session ensure|ensure|open|inspect|rename|move|focus|close|palette  Visible terminals and native palette plans
     \\  boards inbox|fleet|probe|state                Live boards, typed store and remap plans
     \\  seat register|inspect|clear              Exact-address operator seat
     \\  inbox append|inspect|clear                    Private retained messages

@@ -109,6 +109,112 @@ class SurfacesTest(unittest.TestCase):
         return [BIN, "surfaces", "rename", "--socket", str(self.socket), "--session", self.session,
                 *target, "--label", label]
 
+    def surface(self, operation, *args):
+        return self.run_json([BIN, "surfaces", *operation.split(), "--socket", str(self.socket), *args])
+
+    def test_resolve_labels_suffixes_and_mutation_targets(self):
+        label = "unique session α " + self.work.name
+        self.rpc("session.set_label", {"session_id": self.session, "label": label})
+        pane = self.open("tab", label="unique pane α")["actual"]
+        for session in (self.session, self.session[-8:], label):
+            for target in (pane["block_id"], pane["block_id"][-8:], "unique pane α"):
+                r, value = self.surface("resolve", "--session", session, "--pane", target)
+                self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+                self.assertEqual(value["requested"]["session_id"], session)
+                self.assertEqual(value["resolved"]["session_id"], self.session)
+                self.assertEqual(value["resolved"]["block_id"], pane["block_id"])
+        r, value = self.surface("inspect", "--session", label, "--pane", "unique pane α")
+        self.assertEqual(r.returncode, 0, r.stdout)
+        self.assertEqual(value["actual"]["block_id"], pane["block_id"])
+        r, value = self.surface("resolve", "--session", label, "--window", "unique pane α")
+        self.assertEqual(r.returncode, 0, r.stdout)
+        self.assertEqual(value["resolved"]["window_id"], pane["window_id"])
+        self.open("tab", label="unique pane α")
+        before = self.view()
+        r, value = self.surface("close", "--session", label, "--pane", "unique pane α")
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertEqual(value["failure_reason"], "ambiguous_target")
+        self.assertEqual(len(value["candidates"]), 2)
+        self.assertEqual(before, self.view())
+        r, value = self.surface("resolve", "--session", "absent session")
+        self.assertEqual(r.returncode, 1)
+        self.assertEqual(value["failure_reason"], "target_not_found")
+        self.assertTrue(value["candidates"])
+
+    def test_session_ensure_empty_existing_and_ambiguous(self):
+        label = "ensured α " + self.work.name
+        before = self.view()
+        r, made = self.surface("session ensure", "--label", label)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(made["outcome"], "created")
+        sid = made["resolved"]["session_id"]
+        self.addCleanup(lambda: self.rpc("session.destroy", {"session_id": sid}))
+        self.assertEqual(self.rpc("session.view", {"session_id": sid}).get("windows", []), [])
+        r, existing = self.surface("session ensure", "--label", label)
+        self.assertEqual(r.returncode, 0, r.stdout)
+        self.assertEqual(existing["outcome"], "existing")
+        self.assertEqual(existing["resolved"], made["resolved"])
+        self.assertFalse(existing["creation_attempted"])
+        other = self.rpc("session.create", {"label": label})["session_id"]
+        self.addCleanup(lambda: self.rpc("session.destroy", {"session_id": other}))
+        r, refused = self.surface("session ensure", "--label", label)
+        self.assertEqual(r.returncode, 1)
+        self.assertEqual(refused["failure_reason"], "ambiguous_label")
+        self.assertEqual(len(refused["candidates"]), 2)
+        self.assertFalse(refused["creation_attempted"])
+        self.assertEqual(before, self.view())
+
+    def test_pane_ensure_reuses_tab_or_pane_and_focuses_only_when_requested(self):
+        cmd = ["--session", self.session, "--label", "ensured pane", "--", "/bin/sh", "-c", "sleep 60"]
+        r, made = self.surface("ensure", *cmd)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(made["outcome"], "created")
+        bid = made["actual"]["block_id"]
+        before = self.view()
+        r, existing = self.surface("ensure", *cmd)
+        self.assertEqual(r.returncode, 0, r.stdout)
+        self.assertEqual(existing["outcome"], "existing")
+        self.assertEqual(existing["actual"]["block_id"], bid)
+        self.assertEqual(before, self.view())
+        r, focused = self.surface("ensure", "--focus", "yes", *cmd)
+        self.assertEqual(r.returncode, 0, r.stdout)
+        self.assertEqual(focused["actual"]["focused_block_id"], bid)
+        self.assertTrue(focused["actual"]["in_active_window"])
+        # Window label alone is enough, even if the terminal was relabelled.
+        self.rpc("session.set_block_label", {"session_id": self.session, "block_id": bid, "label": "different"})
+        r, existing = self.surface("ensure", *cmd)
+        self.assertEqual(r.returncode, 0, r.stdout)
+        self.assertEqual(existing["actual"]["block_id"], bid)
+        self.open("tab", label="ensured pane")
+        before = self.view()
+        r, refused = self.surface("ensure", *cmd)
+        self.assertEqual(r.returncode, 1)
+        self.assertEqual(refused["failure_reason"], "ambiguous_label")
+        self.assertEqual(before, self.view())
+        r, made_focused = self.surface("ensure", "--focus", "yes", "--session", self.session,
+                                       "--label", "new focused ensure", "--", "/bin/sh", "-c", "sleep 60")
+        self.assertEqual(r.returncode, 0, r.stdout)
+        self.assertEqual(made_focused["outcome"], "created")
+        self.assertTrue(made_focused["actual"]["in_active_window"])
+        self.assertEqual(made_focused["actual"]["block_id"], made_focused["actual"]["focused_block_id"])
+
+    def test_ensure_concurrent_duplicate_readback_is_uncertain_without_retry(self):
+        # Inject a second client-equivalent creation between receipt and fresh view.
+        needle = 'local after=rex.call("session.view",{session_id=a.session_id})'
+        injected = 'rex.call(method,params)\n' + needle
+        self.shim("import subprocess,sys\nargs=sys.argv[1:]\ni=args.index('-e')+1\n"
+                  + "args[i]=args[i].replace(" + repr(needle) + "," + repr(injected) + ")\n"
+                  + f"sys.exit(subprocess.run([{self.rex!r},*args]).returncode)\n")
+        r, value = self.surface("ensure", "--session", self.session, "--label", "racing label",
+                                "--", "/bin/sh", "-c", "sleep 60")
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertEqual(value["outcome"], "uncertain")
+        self.assertEqual(value["failure_reason"], "ensure_label_readback_ambiguous")
+        self.assertTrue(value["creation_attempted"])
+        self.assertEqual(len(value["candidates"]), 2)
+        self.assertEqual(len(self.view()["windows"]), 3)
+        self.assertFalse(value["retry_safe"])
+
     def test_rename_window_and_pane_read_back_labels_without_changing_focus(self):
         pane = self.open("tab")["actual"]
         initial = self.view()
@@ -430,6 +536,122 @@ class SurfacesTest(unittest.TestCase):
     def reset_config(self):
         self.config.write_text("")
         self.rpc("server.config_reload", {})
+
+    def install_menu(self, kind, settings, binary=BIN):
+        fragment = self.work / (kind + ".lua")
+        config = self.work / (kind + ".json")
+        config.write_text(json.dumps(settings))
+        cmd = [BIN, "surfaces", "palette", kind, "--file", str(fragment), "--teerex", binary,
+               "--profiles" if kind == "agents" else "--config", str(config)]
+        if kind == "agents":
+            cmd += ["--rex", self.rex]
+        r, prepared = self.run_json(cmd)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(fragment.stat().st_mode & 0o777, 0o600)
+        original = self.config.read_bytes()
+        self.assertFalse(prepared["registered_in_running_server"])
+        r, refused = self.run_json(cmd)
+        self.assertEqual(r.returncode, 1)
+        self.assertEqual(original, self.config.read_bytes())
+        cmd = [BIN, "surfaces", "palette", "install", "--socket", str(self.socket), "--init", str(self.config),
+               "--file", str(fragment), "--plan", str(self.work / (kind + ".plan"))]
+        r, plan = self.run_json(cmd)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(set(plan["plan"]["names"]), set(prepared["names"]))
+        self.assertEqual(original, self.config.read_bytes())
+        r, installed = self.run_json(cmd + ["--apply", plan["plan_sha256"]])
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(len(installed["observed_actions"]), len(prepared["names"]))
+        self.addCleanup(self.reset_config)
+        return prepared["names"]
+
+    def test_generated_host_menu_installs_all_actions_and_opens_named_workspace(self):
+        label = "workspace α ' $(literal)"
+        marker = self.work / "workspace ran"
+        hosts = dict(schema_version=1, hosts=dict(disposable=dict(host_id="test", transport="local", home=str(self.work),
+                    platform="macos-arm64" if sys.platform == "darwin" else "linux-x86_64",
+                    socket=str(self.socket), rex=self.rex, teerex=BIN, store=str(self.work),
+                    workspaces={label: dict(cwd=str(self.work), session="menu " + self.work.name,
+                    argv=[sys.executable, "-c", "from pathlib import Path; Path(" + repr(str(marker)) + ").write_text('literal α')"]),
+                    "Other": dict(cwd=str(self.work), argv=["/bin/sh"])})))
+        names = self.install_menu("hosts", hosts)
+        self.assertEqual(len(names), 2)
+        actions = self.rpc("client.keymap", {})["actions"]
+        name = next(a["name"] for a in actions if a.get("title") == "disposable: " + label)
+        r = subprocess.run(self.base + ["do", "--session", self.session, "--block", self.anchor, name],
+                           capture_output=True, text=True, timeout=15)
+        self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
+        result = json.loads(r.stdout)
+        self.assertEqual(result["outcome"], "created_and_verified")
+        sid = result["actual"]["session_id"]
+        self.addCleanup(lambda: self.rpc("session.destroy", {"session_id": sid}))
+        self.assertEqual(result["actual"]["label"], label)
+        for _ in range(100):
+            if marker.exists():
+                break
+            time.sleep(.02)
+        self.assertEqual(marker.read_text(), "literal α")
+
+    def test_generated_agent_menu_runs_managed_ack_and_brief_in_visible_tab(self):
+        fixture = self.work / "agent.py"
+        log = self.work / "agent-input"
+        fixture.write_text("import os,shlex,subprocess,sys,termios,tty\n"
+                           "tty.setraw(0, termios.TCSANOW)\nos.write(1,b'\\x1b[?2004h')\n"
+                           "protocol=sys.argv[-1]\n"
+                           "line=protocol.split('Acknowledge this protocol now by running:\\n',1)[1].split('\\n',1)[0]\n"
+                           "r=subprocess.run(shlex.split(line),capture_output=True)\n"
+                           "assert r.returncode==0,r.stdout\n"
+                           "buf=b''\nwhile True:\n part=os.read(0,65536)\n if not part: break\n buf+=part\n"
+                           " if b'PALETTE TASK' in buf:\n  open(" + repr(str(log)) + ",'wb').write(buf)\n")
+        registry = self.work / "agents"
+        registry.mkdir(mode=0o700)
+        settings = dict(schema_version=1, defaults=dict(registry=str(registry), socket=str(self.socket),
+                        cwd=str(self.work), host="disposable", owner="operator", purpose="menu test", review_after_ms=60000),
+                        profiles=dict(probe=dict(argv=[sys.executable, str(fixture)], harness="synthetic", protocol_mode="argument"),
+                                      second=dict(argv=[sys.executable, str(fixture)], harness="synthetic", protocol_mode="argument")))
+        names = self.install_menu("agents", settings)
+        self.assertEqual(len(names), 2)
+        brief = self.work / "brief α.txt"
+        brief.write_text("PALETTE TASK α quotes ' $(literal)\n")
+        actions = self.rpc("client.keymap", {})["actions"]
+        name = next(a["name"] for a in actions if a.get("title") == "Start an agent: probe")
+        r = subprocess.run(self.base + ["do", "--session", self.session, "--block", self.anchor, name,
+                           "--args", json.dumps(dict(name="palette worker", brief_file=str(brief)))],
+                           capture_output=True, text=True, timeout=20)
+        self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
+        value = json.loads(r.stdout)
+        self.assertTrue(value["protocol_acknowledged"])
+        self.assertTrue(value["brief_attempted"])
+        self.assertEqual(value["target"]["session_id"], self.session)
+        self.assertEqual(value["starter"]["block_id"], self.anchor)
+        self.assertEqual(value["report_to"]["block_id"], self.anchor)
+        self.assertNotEqual(value["target"]["block_id"], self.anchor)
+        for _ in range(100):
+            if log.exists():
+                break
+            time.sleep(.02)
+        self.assertIn(brief.read_bytes().strip(), log.read_bytes())
+        # Palette invocation with no args opens a visible form rather than failing schema validation.
+        r = subprocess.run(self.base + ["do", "--session", self.session, "--block", self.anchor, name],
+                           capture_output=True, text=True, timeout=10)
+        self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
+        form = json.loads(r.stdout)
+        self.assertEqual(form["outcome"], "agent_form_opened")
+        self.assertEqual(form["agent_launch"], "not_yet_attempted")
+        bid = form["created"]["block_ids"][0]
+        self.assertEqual(self.view()["active_window_id"], form["created"]["window_id"])
+        # Drive only the fixture's visible form. Managed launch must retain the original invoking starter.
+        subprocess.check_call(self.base + ["send", "--session", self.session, "--block", bid,
+                                           "interactive worker\n" + str(brief) + "\n"])
+        records = []
+        for _ in range(200):
+            records = [json.loads(path.read_text()) for path in registry.glob("agents-*.json")]
+            if len(records) == 2 and all(v.get("brief_attempted") for v in records):
+                break
+            time.sleep(.025)
+        self.assertEqual(len(records), 2, records)
+        self.assertTrue(all(v["protocol_acknowledged"] and v["brief_attempted"] for v in records), records)
+        self.assertTrue(all(v["starter"]["block_id"] == self.anchor for v in records))
 
     def test_palette_managed_plan_apply_preserves_config_and_verifies_action(self):
         self.config.write_text("-- Existing operator config α, preserved exactly.\n")

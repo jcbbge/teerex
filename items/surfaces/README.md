@@ -8,6 +8,9 @@ Operators and agents placing an actual terminal program in an explicitly selecte
 
 ## What
 
+- `surfaces resolve`: read-only canonical session/pane/window resolution from an exact label, unique ID suffix or canonical ID, with original selectors and canonical IDs in separate receipt fields.
+- `surfaces session ensure`: find one exact session label or create an empty session once and verify by fresh inventory.
+- `surfaces ensure`: find a uniquely labelled pane or single-terminal tab, optionally focus it, or open once using the normal placement contract.
 - `surfaces open`: a labeled tiled pane beside an anchor, a floating layer in the anchor's window, or a new tab. The program starts already attached to its window; no detached intermediate.
 - `surfaces inspect`: fresh actual geometry, pane `label`, `window_label`, host ID and focus/zoom state without changing them.
 - `surfaces rename` (unreleased source): rename an existing window/tab or relabel an attached terminal pane by exact address, with fresh label and unchanged-focus verification.
@@ -25,7 +28,7 @@ Use open for visible terminal tools such as an inbox, fleet board, log reader, e
 
 ## Where
 
-Leaf commands require `--socket ABS`, full lowercase `session:UUID` and `block:UUID` mutation addresses, and Rex on PATH. The shared root supports named command-host routing (`teerex --config ABS --host NAME surfaces ...`) and a pinned Rex binary; it injects the explicit socket. Named-host config, socket, cwd, fragment, init, plan and program paths belong to that command host; files are not silently uploaded. The geometry result's `actual.host_id` identifies where Rex says the terminal lives, not where the controller runs or a command inside `ssh` executes.
+Leaf commands require `--socket ABS`, explicit session/pane selectors, and Rex on PATH. Surface selectors accept canonical IDs, unique ID suffixes and exact labels; resolution stays on the explicitly selected server. The shared root supports named command-host routing (`teerex --config ABS --host NAME surfaces ...`) and a pinned Rex binary; it injects the explicit socket. Named-host config, socket, cwd, fragment, init, plan and program paths belong to that command host; files are not silently uploaded. The geometry result's `actual.host_id` identifies where Rex says the terminal lives, not where the controller runs or a command inside `ssh` executes.
 
 The module ABI is `rex_surfaces.run(allocator, args) !u8`, importing `supervised_child`. macOS arm64 and Linux x86_64 are the validated platforms. Native placement uses the public Rex control API. Managed palette install additionally requires Python 3.9+ and stdlib `fcntl`; its bounded Rex subprocesses honor `TEEREX_REX`. No GUI client is required for server/API tests.
 
@@ -34,6 +37,24 @@ The module ABI is `rex_surfaces.run(allocator, args) !u8`, importing `supervised
 The old `agent-seat` floated an inbox at one third of the width and silently fell back to a split with repeated resize attempts. That hid both the requested placement and uncertainty. Surfaces requests one layout once and returns what Rex actually measured. A program-rendered terminal is the surface; teerex does not pretend to create arbitrary graphical controls.
 
 ## How
+
+### Resolve addresses and find or create a surface
+
+```sh
+teerex surfaces resolve --socket "$SOCKET" --session rivet
+teerex surfaces resolve --socket "$SOCKET" --session rivet --pane worker
+teerex surfaces resolve --socket "$SOCKET" --session "$SESSION_SUFFIX" --window seat
+teerex --config /absolute/hosts.json --host hive surfaces session ensure --label rivet
+teerex surfaces ensure --socket "$SOCKET" --session rivet --label seat --focus yes -- /absolute/seat-program
+```
+
+Resolve returns `outcome: resolved` and `resolved.session_id`, plus `resolved.block_id` or `resolved.window_id` when requested. `requested` preserves the supplied text. The same resolution runs before open/inspect/rename/move/focus/close/ensure, including anchors, in their one bounded Rex connection. Canonical IDs take precedence over labels matching that entire ID. Other label/suffix collisions refuse; no numeric tab indexing or implicit focused target. Canonical-looking malformed IDs are usage errors. Missing targets return `target_not_found` (or the established pane/window missing-target reason), ambiguity returns `ambiguous_target`, and `candidates` contains matching entries or the available inventory when none match. No match or ambiguous selection makes no mutation.
+
+Session ensure matches **only the exact label**. One match returns `existing`; none creates an empty session with `session.create` and returns `created` only after a fresh inventory verifies that label and the receipt's ID. Several matches refuse with `ambiguous_label` and candidates. Both successful outcomes expose `resolved.session_id` and `actual`; `created` records the creation receipt only when created. No terminal/tab or focus call is made. An existing session also receives fresh identity verification.
+
+Pane ensure takes the same placement, cwd, argv and timeout options as open, defaulting to `--layout tab`; `--focus no` is default. A terminal pane label or its single-terminal tab label identifies the same candidate, counted once. Multiple distinct candidates refuse with `ambiguous_label`; a labelled tab containing several terminals refuses with `labelled_tab_requires_single_terminal`. One match returns `existing`, with fresh geometry and canonical `resolved.block_id`; no program is restarted. `--focus yes` verifies the existing or newly created pane is focused in its active tab. No match runs open's one creation and geometry verification and returns `created`. Supply `-- ARGV...` even when an existing pane is expected, so the absent case has an explicit program. Geometry/open options are validated before any lookup.
+
+Ensure is a find/check/create operation, not an exclusive lease. A concurrent client can create the same label; session ensure refuses ambiguous fresh inventory, and callers must inspect uncertainty before retrying. Neither operation retries creation, destroys duplicates or restores another client's focus. Pane ensure scopes labels to the selected session; replacing the seat pointer therefore deliberately makes uniqueness per session, not across every host/session. These commands do not certify that a reused program is still running or is ready.
 
 ### Place a terminal and read it back
 
@@ -72,7 +93,7 @@ teerex --config /absolute/hosts.json --host hive surfaces rename \
   --session "$SESSION" --window "$WINDOW" --label seat
 ```
 
-Supply exactly one canonical lowercase `window:UUID` or `block:UUID`; both or neither is a usage error. Labels use the same validation as open: 1–128 UTF-8 bytes, no control characters. Rename takes only socket, session, window/pane, label and optional `--timeout-ms` (default 5000, range 100–60000). It creates no terminal, requests no focus and makes one label call without retry. Unknown windows refuse with `window_not_found`; missing or detached terminal panes refuse with `pane_not_attached_terminal` before mutation.
+Supply exactly one window or pane selector (canonical ID, unique suffix or exact label); both or neither is a usage error. Labels use the same validation as open: 1–128 UTF-8 bytes, no control characters. Rename takes only socket, session, window/pane, label and optional `--timeout-ms` (default 5000, range 100–60000). It creates no terminal, requests no focus and makes one label call without retry. Unknown windows refuse with `window_not_found`; missing or detached terminal panes refuse with `pane_not_attached_terminal` before mutation.
 
 Within the existing API10–13 surfaces guard, rename checks the connected server's `help.all.methods` for `session.set_window_label` or `session.set_block_label` before attempting that operation. Missing or unavailable capability evidence refuses with `rename_label_method_unavailable`; an API revision alone is not assumed to imply either method. Schemas and trimming behavior were checked with `rex api describe session.set_window_label --json` and `rex api describe session.set_block_label --json`; this local rename validation exercises actual Linux API13, not historical builds.
 
@@ -111,6 +132,24 @@ Geometry is in **window fractions**, not pixels or terminal rows/columns. Inacti
 Open/inspect/focus/close default to a 5000ms local budget (`--timeout-ms 100..60000`) with bounded transport cleanup. At most 32KiB of one pending receipt and 4KiB of raw diagnostics are retained (`backend_stderr_base64` keeps arbitrary bytes JSON-safe); overly deep geometry or malformed/partial evidence refuses success. There is one supervised Rex connection, no automatic retry or close. Exit 0 means the command's stated postcondition; 1 is refusal/mismatch/uncertainty; 2 is usage; 124 deadline; 130/143 cancellation. Cancellation can leave a real created or changed pane behind. Inspect before another mutation.
 
 ### Prepare and register a palette action
+
+Generate complete native menus with:
+
+```sh
+teerex surfaces palette agents --profiles /absolute/profiles.json --file /absolute/agents-menu.lua \
+  --teerex /absolute/teerex --rex /absolute/rex
+teerex surfaces palette hosts --config /absolute/hosts.json --file /absolute/hosts-menu.lua \
+  --teerex /absolute/teerex
+# Install either generated file with the same palette install plan/apply commands below.
+```
+
+`--profiles` defaults to `~/.config/teerex/profiles.json`; host `--config` defaults to `~/.config/teerex/hosts.json`. `--teerex` is the installed absolute controller path on the palette server's machine; agent menus also require an absolute `--rex` pin. Generation reads caller-owned regular files with a 256KiB cap, creates one exclusive 0600 fragment, and never edits or reloads personal config. At most 128 actions/256KiB per fragment. Stable action names derive from profile or host/workspace identities. Generation freezes the menu entries; deliberately generate a new fragment and review a replacement inclusion to refresh. There is no always-on refresher or hidden config writer.
+
+Each profile becomes **Start an agent: PROFILE**. Invoked without arguments, the action opens and focuses one visible terminal form asking for an agent name and absolute brief-file path. That form runs `agents launch`, preserving the original invoking pane as starter and report-to; its controller tab closes after completion, and the actual worker remains a managed visible tab. Invoked through `rex do ACTION name=NAME brief_file=/absolute/brief`, it runs a synchronous controller with a 20-second command budget and immediate launch-queue refusal, leaving ACK-before-brief and responsibility tracking to `agents launch`. A timed-out/lost action is uncertainty, never authorization to retry. Profiles/defaults must already provide the selected socket, private registry, host, cwd and ownership settings; compute routing remains the profile's explicit execution/callback contract. A form-created receipt means the form opened, not that an agent started. No schema argument is treated as an inline task prompt.
+
+Host records may add `workspaces`, an object mapping menu labels to `{ "cwd": "/absolute/path", "argv": ["/absolute/program", "arg"], "session": "session label" }`. `session` defaults to the host's configured name; `argv` defaults to `/bin/sh`. A host without `workspaces` gets one **HOST: Terminal** action in its configured home. Each **HOST: WORKSPACE** action explicitly routes session ensure and then `surfaces open --layout tab` through the named-host config, returning the latter's verified receipt. File/program paths belong to that command host. It opens a new workspace tab on each invocation, with open's no-focus-request semantics; selecting a remote session in a GUI is not claimed. A failure after session creation can leave that empty session; there is no rollback or automatic retry.
+
+Install plans list every generated action name; apply verifies **all** names/kinds/source paths in the running server after its single reload. A partial registration refuses. Plan/apply behavior for individual action fragments remains the same.
 
 Preparation writes a new 0600 file and refuses overwrite. It uses Rex's native `rex.action`; the program is launched by that action directly in a visible terminal, not as a detached `rex.exec` worker. The invoking Rex session and pane become the placement context. A tab action needs a session but no pane. A tiled or float action needs an attached normal terminal pane.
 
@@ -165,3 +204,5 @@ zig build-exe --dep rex_surfaces -Mroot=items/surfaces/test_cli.zig \
   -Msupervised_child=src/child.zig -lc -O ReleaseSmall -femit-bin=/absolute/teerex-surfaces
 TEEREX_BIN=/absolute/teerex-surfaces REX_BIN=/absolute/rex python3 items/surfaces/test_surfaces.py -v
 ```
+
+Source contract additions were checked against `gh issue view 2`, `23`, `18`, the agent-core `primitives/tools/agent-messaging/{teerex-target,seat}` callers, the installed API13 `rex api describe session.create`/`session.attach`, and the [Rex native actions and synchronous command contract](https://www.superlogical.com/rex/docs/customize/actions.md) acquired during this change. The disposable Linux API13 tests cover these additions through the combined CLI; Mac palette painting and paid-harness interaction remain separate acceptance. The existing CI surfaces/targets steps discover the added cases, without a separate test runner.
