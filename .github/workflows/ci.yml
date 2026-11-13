@@ -211,6 +211,7 @@ jobs:
             --version 0.1.0-alpha.6 --output "$RUNNER_TEMP/cartridge-catalog"
 
       - name: Execute installed-payload readiness on three fresh servers
+        if: matrix.rex-api == 13
         run: |
           platform=x86_64-linux
           if [[ "$RUNNER_OS" == macOS ]]; then platform=aarch64-macos; fi
