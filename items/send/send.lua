@@ -15,10 +15,11 @@ end
 local view = rex.call("session.view", {session_id=a.session_id})
 if type(view) ~= "table" or view.session_id ~= a.session_id then refuse("target_unavailable"); return end
 local terminal = false
+local seat = false
 for _, w in ipairs(view.windows or {}) do
     for _, l in ipairs(w.layers or {}) do
         for _, b in ipairs(l.blocks or {}) do
-            if b.block_id == a.block_id and b.creator_name == "com.superlogical.terminal" then terminal = true end
+            if b.block_id == a.block_id and b.creator_name == "com.superlogical.terminal" then terminal = true; seat = b.label == "seat" or w.label == "seat" end
         end
     end
 end
@@ -113,6 +114,10 @@ local function deliver()
         return
     end
     emit({event="ack", stage="enter"})
+    local ok_status, process = pcall(rex.call, "com.superlogical.terminal.process", {session_id=a.session_id, block_id=a.block_id, args={}})
+    if ok_status and type(process) == "table" and type(process.child) == "table" then
+        emit({event="status_target", status_pid=process.child.pid, seat=seat})
+    end
     if saved ~= "" then
         rex.sleep(.4)
         local acknowledged = not not paste_text(saved)

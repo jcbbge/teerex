@@ -146,6 +146,36 @@ class SendTest(unittest.TestCase):
         return self.rpc("com.superlogical.terminal.format", {"session_id": target[0], "block_id": target[1],
                         "args": {"format": "text", "max_bytes": 65536}})["content"]
 
+    def test_seat_status_message_and_decision_resolution(self):
+        target, raw = self.fixture()
+        subprocess.check_call(self.base + ["block", "rename", "-s", target[0], target[1], "seat"])
+        r, packet = self.send(target, ("first\tline " + "β" * 190 + "\nignored").encode())
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(packet["status_record"], "written")
+        def records():
+            return self.rex_json("block", "call", "-s", target[0], "-b", target[1], "program_status", "{}")["records"]
+        record = next(r for r in records() if r.get("id") == "msg/worker")
+        self.assertEqual(record["state"], "done")
+        self.assertEqual(record["title"], "FROM worker")
+        self.assertEqual(record["msg"], ("firstline " + "β" * 190)[:180])
+        card = dict(id="card-1", title="Choose", ask="Continue now?", context="Disposable test",
+                    options=[dict(label="Yes", gain="Continue", lose="Time"), dict(label="No", gain="Time", lose="Delay")],
+                    recommend="Yes")
+        path = self.work / "card.json"
+        path.write_text(json.dumps(card))
+        common = [BIN, "ask", "--socket", str(self.socket), "--session", target[0], "--block", target[1],
+                  "--host", "test", "--from", "worker", "--draft", "ignore"]
+        r = subprocess.run(common + ["--card-file", str(path)], env=self.env, capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        record = next(r for r in records() if r.get("id") == "ask/card-1")
+        self.assertEqual((record["state"], record["kind"], record["msg"]), ("blocked", "question", "Continue now?"))
+        r = subprocess.run(common + ["--resolve", "card-1", "--answer", "Yes"], env=self.env, capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertFalse(any(r.get("id") == "ask/card-1" for r in records()))
+        subprocess.check_call(self.base + ["block", "rename", "-s", target[0], target[1], "worker"])
+        r, packet = self.send(target)
+        self.assertEqual(packet["status_record"], "not_requested")
+
     def test_draft_guard_reference_parser_fixtures(self):
         fixtures = [("│ ❯ │", ""), ("│ ❯ \x1b[2msuggest\x1b[0m │", ""),
                     ("│ ❯ \x1b[90msuggest\x1b[0m │", ""), ("│ ❯ fix the tests │", "fix the tests"),

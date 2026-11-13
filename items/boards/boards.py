@@ -517,6 +517,9 @@ def _deliver_ask(a):
                 check(not any(r["kind"] == "decision" and r["body"]["id"] == value["id"] for r in seat["records"]), "decision_id_already_used")
     argv = [a.teerex, "send", "--socket", a.socket, "--session", a.session, "--block", a.block,
             "--from", a.sender, "--message-file", "-", "--draft", a.draft, "--draft-wait-ms", str(a.draft_wait_ms)]
+    argv += ["--status-id", "ask/" + (a.resolve if a.resolve is not None else value["id"]),
+             "--status-state", "clear" if a.resolve is not None else "blocked",
+             "--status-message", "" if a.resolve is not None else value["ask"]]
     # No store/host selectors: native send must type even into a registered seat.
     a.delivery_attempted = True
     proc = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE)
@@ -1075,7 +1078,7 @@ def parser():
     q.add_argument("--draft-wait-ms", type=bounded_int(0, 55000), default=30000, metavar="0..55000")
     q.add_argument("--timeout-ms", type=bounded_int(100, 115000), default=None, metavar="100..115000",
                    help="registered stdin must reach EOF; native fallback guard defaults to draft wait+10000ms, ignore10000")
-    q = commands.add_parser("ask", help="type complete decision into target pane through native guarded send; optional store history")
+    q = commands.add_parser("ask", help="type complete decision through guarded send; seat child status stays blocked until resolution; optional store history")
     q.add_argument("--store", help="optional existing private history store; seat must be registered")
     for k in ("host", "socket", "session", "block"):
         q.add_argument("--" + k, required=True)

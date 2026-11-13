@@ -343,3 +343,6 @@ one final shape before applying their operation.
 
 Acceptance: `python3 items/boards/test_friction.py -v` uses only private temporary
 logs and synthetic joined episodes. CI runs it on both Linux and macOS lanes.
+
+
+`ask` terminal delivery uses the send status options: a seat-labelled target gets `ask/<card id>` in blocked/question state with the question line; `--resolve` clears that same child record. Delivery receipts retain `status_record`. Status is best effort and does not replace the decision history or delivery acknowledgement.
