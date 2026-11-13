@@ -4,8 +4,10 @@ const supervised = @import("supervised_child");
 
 const usage =
     \\Usage: teerex jobs OP --registry ABS [OPTIONS]
-    \\OP: list | track | inspect | adopt | present | forget
-    \\Every operation except list selects --socket ABS --session session:UUID --block block:UUID.
+    \\OP: list | doctor | track | inspect | adopt | present | forget
+    \\doctor: [--socket ABS] [--timeout-ms N] read-only per-record live/identity/deadline/intent and orphan findings.
+    \\Doctor uses recorded sockets unless explicitly overridden; identity checks still apply; no mutation or retries.
+    \\Every operation except list/doctor selects --socket ABS --session session:UUID --block block:UUID.
     \\track: --owner LABEL --kind agent|command --purpose TEXT --deadline-unix-ms N --cleanup manual
     \\adopt: --from-owner LABEL --owner LABEL --generation N --reason TEXT --deadline-unix-ms N
     \\present: --owner LABEL --generation N --reason TEXT --anchor block:UUID --focus yes|no [--label TEXT] [--relocate yes|no]
@@ -13,8 +15,8 @@ const usage =
     \\A focused source requires --focus yes for relocation; no silent focus transfer, retry or recreation.
     \\forget: --owner LABEL --generation N --reason TEXT (local record only; never closes a block)
     \\Live operations optionally take --timeout-ms N (100..60000, default 5000).
-    \\Registry locks (shared for list, exclusive otherwise) wait up to10000ms; registry_busy is retry-safe.
-    \\List opens existing files read-only and creates no files, including no lock file.
+    \\Registry locks (shared for list/doctor, exclusive otherwise) wait up to10000ms; registry_busy is retry-safe.
+    \\List/doctor open existing files read-only and create no files, including no lock file.
     \\Registry must already be an absolute, private 0700 owned directory. Max 32 records/256 KiB.
     \\API13 Mac-arm64/Linux-amd64 only; no autostart, agents, daemon, automatic close or enforced deadlines.
     \\Ownership is recorded responsibility, not authority, native ownership, isolation or process control.
@@ -294,7 +296,7 @@ fn usageError() u8 {
 fn parse(args: []const []const u8) !Options {
     if (args.len == 0) return error.Usage;
     var o: Options = .{ .operation = args[0] };
-    const allowed: []const []const u8 = if (eq(o.operation, "list")) &.{} else if (eq(o.operation, "track"))
+    const allowed: []const []const u8 = if (eq(o.operation, "list")) &.{} else if (eq(o.operation, "doctor")) &.{ "socket", "timeout-ms" } else if (eq(o.operation, "track"))
         &.{ "owner", "kind", "purpose", "deadline-unix-ms", "cleanup", "timeout-ms" }
     else if (eq(o.operation, "inspect")) &.{"timeout-ms"} else if (eq(o.operation, "adopt"))
         &.{ "from-owner", "owner", "generation", "reason", "deadline-unix-ms", "timeout-ms" }
@@ -313,7 +315,7 @@ fn parse(args: []const []const u8) !Options {
             o.registry = value;
             continue;
         }
-        if (!eq(o.operation, "list")) {
+        if (!eq(o.operation, "list") and !eq(o.operation, "doctor")) {
             if (eq(key, "socket")) {
                 o.socket = value;
                 continue;
@@ -333,7 +335,9 @@ fn parse(args: []const []const u8) !Options {
             break;
         };
         if (!found) return error.Usage;
-        if (eq(key, "deadline-unix-ms")) {
+        if (eq(key, "socket")) {
+            o.socket = value;
+        } else if (eq(key, "deadline-unix-ms")) {
             o.deadline_unix_ms = std.fmt.parseInt(i64, value, 10) catch return error.Usage;
         } else if (eq(key, "generation")) {
             o.generation = std.fmt.parseUnsigned(u64, value, 10) catch return error.Usage;
@@ -347,7 +351,8 @@ fn parse(args: []const []const u8) !Options {
         }
     }
     if (o.registry == null or !std.fs.path.isAbsolute(o.registry.?)) return error.Usage;
-    if (!eq(o.operation, "list")) {
+    if (o.socket) |socket| if (!std.fs.path.isAbsolute(socket)) return error.Usage;
+    if (!eq(o.operation, "list") and !eq(o.operation, "doctor")) {
         if (o.socket == null or !std.fs.path.isAbsolute(o.socket.?) or o.session == null or !fullId(o.session.?, "session:") or
             o.block == null or !fullId(o.block.?, "block:")) return error.Usage;
     }
@@ -385,10 +390,87 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
         return if (cancelled) 128 + supervised.requestedSignal() else 1;
     };
 }
+const DoctorFinding = struct { kind: []const u8, path: []const u8, detail: []const u8, next_command: []const []const u8 };
+const DoctorRecord = struct {
+    entry: Entry,
+    live_state: []const u8,
+    failure_reason: ?[]const u8,
+    source_observed: ?Source,
+    observation: ?Observation,
+    review_due: bool,
+    uncertain_present: bool,
+    generation_drift: bool,
+    pending_generation: ?u64,
+    next_command: []const []const u8,
+};
+
+fn recoveryCommand(allocator: std.mem.Allocator, o: Options, entry: Entry, forget: bool) ![]const []const u8 {
+    var argv: std.ArrayList([]const u8) = .empty;
+    try argv.appendSlice(allocator, &.{ "teerex", "jobs", if (forget) "forget" else "inspect", "--registry", o.registry.?, "--socket", entry.socket, "--session", entry.session_id, "--block", entry.block_id });
+    if (forget) try argv.appendSlice(allocator, &.{ "--owner", entry.owner, "--generation", try std.fmt.allocPrint(allocator, "{d}", .{entry.generation}), "--reason", "explicit recovery review; forget record only" });
+    return argv.toOwnedSlice(allocator);
+}
+
+fn pendingState(allocator: std.mem.Allocator, registry: *Registry) !?State {
+    const file = Registry.file(registry.dir, "state.next", false, true) catch |err| switch (err) {
+        error.FileNotFound => return null,
+        else => return err,
+    };
+    defer file.close();
+    const raw = try file.readToEndAlloc(allocator, 262144);
+    const state = (try std.json.parseFromSlice(State, allocator, raw, .{ .allocate = .alloc_always })).value;
+    if (state.schema_version != 1 or state.entries.len > 32 or state.next_generation == 0) return error.InvalidPendingRegistry;
+    for (state.entries) |e| if (!validEntry(e) or e.generation >= state.next_generation) return error.InvalidPendingRegistry;
+    return state;
+}
+
+fn doctor(allocator: std.mem.Allocator, registry: *Registry, o: Options) !u8 {
+    var findings: std.ArrayList(DoctorFinding) = .empty;
+    var records: std.ArrayList(DoctorRecord) = .empty;
+    const again = try allocator.dupe([]const u8, &.{ "teerex", "jobs", "doctor", "--registry", o.registry.? });
+    const pending = pendingState(allocator, registry) catch |err| blk: {
+        try findings.append(allocator, .{ .kind = "invalid_pending_state", .path = "state.next", .detail = @errorName(err), .next_command = again });
+        break :blk null;
+    };
+    var iterator = registry.dir.iterate();
+    while (try iterator.next()) |item| {
+        if (eq(item.name, "lock") or eq(item.name, "state.json")) continue;
+        try findings.append(allocator, .{ .kind = if (eq(item.name, "state.next")) "pending_state" else "orphan_file", .path = try allocator.dupe(u8, item.name), .detail = "Retain privately for manual review; no automatic promotion or file deletion is supported. Reinspect before any explicit record action.", .next_command = again });
+    }
+    var unknown = false;
+    const now = std.time.milliTimestamp();
+    for (registry.state.entries) |entry| {
+        const probe: Options = .{ .operation = "inspect", .registry = o.registry, .socket = o.socket orelse entry.socket, .session = entry.session_id, .block = entry.block_id, .timeout_ms = o.timeout_ms };
+        const live = query(allocator, probe, entry) catch |err| Live{ .collector = .{ .allocator = allocator }, .outcome = "uncertain", .code = 1, .failure = @errorName(err), .backend_term = null };
+        const completed = eq(live.outcome, "verified") or eq(live.outcome, "refused");
+        const absent = completed and live.failure != null and eq(live.failure.?, "target_absent_at_observation");
+        const state: []const u8 = if (completed and live.collector.observation != null) "present" else if (absent) "absent" else "unknown";
+        if (eq(state, "unknown")) unknown = true;
+        const inspect_command = try recoveryCommand(allocator, o, entry, false);
+        const forget_command = try recoveryCommand(allocator, o, entry, true);
+        const due = entry.deadline_unix_ms <= now;
+        const uncertain = if (entry.last_action) |a| eq(a.operation, "present") and !eq(a.outcome, "verified") and !eq(a.outcome, "refused") else false;
+        var pending_generation: ?u64 = null;
+        if (pending) |saved| for (saved.entries) |e| {
+            if (eq(e.socket, entry.socket) and eq(e.session_id, entry.session_id) and eq(e.block_id, entry.block_id)) pending_generation = e.generation;
+        };
+        const drift = if (pending_generation) |g| g != entry.generation else false;
+        try records.append(allocator, .{ .entry = entry, .live_state = state, .failure_reason = live.failure, .source_observed = live.collector.source, .observation = live.collector.observation, .review_due = due, .uncertain_present = uncertain, .generation_drift = drift, .pending_generation = pending_generation, .next_command = inspect_command });
+        if (!eq(state, "present") or live.code != 0) try findings.append(allocator, .{ .kind = if (absent) "absent_pane" else "live_check_unknown_or_refused", .path = entry.block_id, .detail = live.failure orelse "Live check did not verify identity; absence is not process death.", .next_command = if (absent) forget_command else inspect_command });
+        if (due) try findings.append(allocator, .{ .kind = "review_due", .path = entry.block_id, .detail = "Review the resource before explicitly forgetting this record; no deadline cleanup runs.", .next_command = forget_command });
+        if (uncertain) try findings.append(allocator, .{ .kind = "uncertain_present", .path = entry.block_id, .detail = "Inspect exact placement before requesting any new presentation generation; never blindly retry.", .next_command = inspect_command });
+        if (drift) try findings.append(allocator, .{ .kind = "generation_drift", .path = entry.block_id, .detail = "Pending and committed generations differ; committed state remains authoritative. Never promote state.next automatically.", .next_command = inspect_command });
+    }
+    try output(allocator, .{ .schema_version = 1, .kind = "jobs_doctor", .entries = records.items, .findings = findings.items, .evaluated_at_unix_ms = now, .live_checks_complete = !unknown, .observation_is_atomic = false, .applied = false, .automatic_cleanup = false, .all_processes_verified_gone = false, .task_completion = "not_assessed" });
+    const signal = supervised.requestedSignal();
+    return if (signal != 0) 128 + signal else if (unknown) 1 else 0;
+}
+
 fn execute(allocator: std.mem.Allocator, o: Options) !u8 {
     if (builtin.os.tag != .macos and builtin.os.tag != .linux) return error.JobsRequiresUnix;
-    var registry = try Registry.open(allocator, o.registry.?, eq(o.operation, "list"));
+    var registry = try Registry.open(allocator, o.registry.?, eq(o.operation, "list") or eq(o.operation, "doctor"));
     defer registry.close();
+    if (eq(o.operation, "doctor")) return doctor(allocator, &registry, o);
     const now = std.time.milliTimestamp();
     if (eq(o.operation, "list")) {
         try output(allocator, .{ .schema_version = 1, .kind = "jobs_list", .entries = registry.state.entries, .evaluated_at_unix_ms = now, .live_state = "not_checked", .owner_liveness = "not_checked", .deadline_enforced = false, .automatic_cleanup = false });

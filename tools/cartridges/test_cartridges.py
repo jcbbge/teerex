@@ -363,6 +363,125 @@ class Lifecycle(unittest.TestCase):
             self.assertTrue(result["next_step"])
             self.assertEqual(self.snapshot(), before)
 
+    def stage(self, name=".stage-crash", age_minutes=60):
+        path = self.root / "packages/alpha" / name
+        path.mkdir(mode=0o700)
+        (path / "partial").write_text("incomplete copy, never executed")
+        (path / "partial").chmod(0o600)
+        old = time.time() - age_minutes * 60
+        os.utime(path / "partial", (old, old))
+        os.utime(path, (old, old))
+        return path
+
+    def test_doctor_absent_root_and_missing_lock_are_read_only(self):
+        before = self.snapshot()
+        result = self.invoke("doctor")
+        self.assertEqual(result["findings"], [])
+        self.assertEqual(self.snapshot(), before)
+        self.package("alpha")
+        self.install("alpha")
+        (self.root / ".lock").unlink()
+        before = self.snapshot()
+        self.assertIn("missing_lifecycle_lock", {f["kind"] for f in self.invoke("doctor")["findings"]})
+        self.assertEqual(self.snapshot(), before)
+        self.invoke("repair", "--apply", ok=False)
+        self.assertEqual(self.snapshot(), before)
+
+    def test_doctor_reports_crash_registry_hash_inactive_and_retained_data_without_mutation(self):
+        self.package("alpha")
+        self.install("alpha")
+        self.package("alpha", "2.0.0")
+        self.install("alpha")
+        self.stage()
+        (self.root / "packages/alpha/2.0.0/launch").write_text("modified user code")
+        (self.root / "packages/alpha/3.0.0").mkdir(mode=0o700)
+        data = self.root / "data/orphan"
+        data.mkdir(mode=0o700, parents=True)
+        (data / "notes").write_text("never delete retained data")
+        (self.root / ".state-crash").write_text("partial registry")
+        before = self.snapshot()
+        report = self.invoke("doctor")
+        kinds = {f["kind"] for f in report["findings"]}
+        self.assertTrue({"interrupted_stage", "payload_mismatch", "inactive_version", "unregistered_code",
+                         "retained_data_without_code", "pending_registry"} <= kinds)
+        self.assertTrue(all(f["next_command"][:2] == ["teerex", "cartridges"] for f in report["findings"]))
+        self.assertFalse(report["applied"])
+        self.assertEqual(self.snapshot(), before)
+        (self.root / "packages/alpha/1.0.0/launch").unlink()
+        report = self.invoke("doctor")
+        self.assertEqual(sum(f["kind"] == "payload_mismatch" for f in report["findings"]), 2)
+        (self.root / "state.json").write_text("partial committed state")
+        before = self.snapshot()
+        self.assertFalse(self.invoke("doctor")["registry_valid"])
+        self.invoke("repair", "--apply", ok=False)
+        self.assertEqual(self.snapshot(), before)
+
+    def test_repair_only_old_owned_stages_preserves_code_state_and_data(self):
+        self.package("alpha")
+        self.install("alpha")
+        old = self.stage()
+        recent = self.stage(".stage-recent", age_minutes=0)
+        nested_recent = self.stage(".stage-new-member")
+        (nested_recent / "partial").write_text("new work in old directory")
+        before = self.snapshot()
+        plan = self.invoke("repair", "--plan")
+        self.assertEqual(plan["selected"], [str(old)])
+        self.assertEqual(len(plan["skipped"]), 2)
+        self.assertEqual(self.snapshot(), before)
+        result = self.invoke("repair", "--apply")
+        self.assertEqual(result["removed"], [str(old)])
+        self.assertTrue(recent.exists())
+        self.assertTrue(nested_recent.exists())
+        after = self.snapshot()
+        self.assertEqual(after, {p: value for p, value in before.items()
+                                 if p != str(old.relative_to(self.home)) and not p.startswith(str(old.relative_to(self.home)) + "/")})
+        self.assertFalse(result["registry_changed"])
+        self.assertTrue(result["data_retained"])
+
+    def test_repair_refuses_locks_links_foreign_owner_and_nonprivate_stages(self):
+        self.package("alpha")
+        self.install("alpha")
+        old = self.stage()
+        before = self.snapshot()
+        with (self.root / ".lock").open("r+") as held:
+            fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            self.invoke("repair", "--apply", ok=False)
+            self.invoke("doctor", ok=False)
+        self.assertEqual(self.snapshot(), before)
+        lease = self.root / "leases/alpha/1.0.0"
+        lease.parent.mkdir(mode=0o700, parents=True)
+        lease.write_text("")
+        with lease.open("r+") as held:
+            fcntl.flock(held, fcntl.LOCK_SH | fcntl.LOCK_NB)
+            self.invoke("repair", "--apply", ok=False)
+        outside = self.home / "outside"
+        outside.write_text("must survive")
+        (old / "linked").symlink_to(outside)
+        before = self.snapshot()
+        result = self.invoke("repair", "--apply")
+        self.assertEqual(result["removed"], [])
+        self.assertEqual(self.snapshot(), before)
+        (old / "linked").unlink()
+        os.link(outside, old / "hardlinked")
+        before = self.snapshot()
+        self.assertEqual(self.invoke("repair", "--apply")["removed"], [])
+        self.assertEqual(self.snapshot(), before)
+        (old / "hardlinked").unlink()
+        old.chmod(0o777)
+        result = self.invoke("repair", "--apply")
+        self.assertEqual(result["removed"], [])
+        old.chmod(0o700)
+        # Foreign ownership is checked without requiring root in the test host.
+        spec = importlib.util.spec_from_file_location("manager", CLI)
+        manager = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(manager)
+        with patch.object(manager.os, "getuid", return_value=os.getuid() + 1):
+            with self.assertRaises(manager.ContractError):
+                manager.stage_identity(old, time.time())
+        self.assertTrue(old.exists())
+        self.assertEqual(outside.read_text(), "must survive")
+        self.invoke("repair", "--plan", "--older-than-minutes", "0", ok=False)
+
     def test_old_python_version_refuses_before_main(self):
         spec = importlib.util.spec_from_file_location("manager", CLI)
         manager = importlib.util.module_from_spec(spec)

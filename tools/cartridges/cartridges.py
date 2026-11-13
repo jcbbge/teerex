@@ -13,6 +13,7 @@ import shutil
 import stat
 import sys
 import tempfile
+import time
 
 
 class ContractError(Exception):
@@ -388,6 +389,151 @@ def change(store, args):
     return result
 
 
+@contextmanager
+def existing_lock(path, exclusive=False):
+    """Inspection never creates a lock; repair requires the stable inode."""
+    regular(path)
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    try:
+        info = os.fstat(fd)
+        require(stat.S_ISREG(info.st_mode) and info.st_nlink == 1 and info.st_uid == os.getuid(), "unsafe recovery lock")
+        require(info.st_mode & 0o022 == 0, "recovery lock is writable by other users")
+        require((info.st_dev, info.st_ino) == (path.stat().st_dev, path.stat().st_ino), "recovery lock identity changed")
+        try:
+            fcntl.flock(fd, (fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH) | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise ContractError("in use or concurrent lifecycle operation: " + path.name)
+        yield
+    finally:
+        os.close(fd)
+
+
+def recovery_command(store, *args):
+    return ["teerex", "cartridges", "--root", str(store.root), *args]
+
+
+def stages(store):
+    packages = store.root / "packages"
+    if not os.path.lexists(packages):
+        return []
+    safe_path(packages)
+    return sorted(p for owner in packages.iterdir() if owner.is_dir() and not owner.is_symlink()
+                  and identifier(owner.name) for p in owner.iterdir() if p.name.startswith(".stage-"))
+
+
+def stage_identity(path, cutoff):
+    """Only private, owned, unlinked trees; newest member determines age."""
+    safe_path(path)
+    directory(path.parent.parent)
+    directory(path.parent)
+    directory(path)
+    info = path.stat()
+    newest = info.st_mtime
+    for parent, dirs, files in os.walk(path, followlinks=False):
+        for name in dirs + files:
+            child = Path(parent) / name
+            item = child.lstat()
+            require(item.st_uid == os.getuid() and not child.is_symlink(), "stage contains foreign or linked paths")
+            if child.is_dir():
+                directory(child)
+            else:
+                regular(child)
+            newest = max(newest, item.st_mtime)
+    require(newest <= cutoff, "stage is newer than the age threshold")
+    return info.st_dev, info.st_ino
+
+
+def doctor(store):
+    findings = []
+    def finding(kind, path, detail, command=None):
+        findings.append(dict(kind=kind, path=str(path), detail=detail,
+                             next_command=command or recovery_command(store, "doctor")))
+    valid = True
+    try:
+        store.load() if store.exists else None
+    except (ContractError, OSError, ValueError) as error:
+        valid = False
+        finding("invalid_registry", store.root / "state.json", str(error) + "; retain evidence; no automatic registry repair")
+    if store.exists:
+        if not os.path.lexists(store.root / ".lock"):
+            finding("missing_lifecycle_lock", store.root / ".lock", "No stable lock to coordinate inspection; repair is refused until normal lifecycle initialization")
+        for stage in stages(store):
+            finding("interrupted_stage", stage, "Review an explicit age/ownership/lock-checked repair plan",
+                    recovery_command(store, "repair", "--plan"))
+        for pending in sorted(store.root.glob(".state-*")):
+            finding("pending_registry", pending, "Uncommitted registry bytes are never adopted or deleted; retain for manual review")
+    if valid:
+        for section in ("installed", "retired"):
+            for key, versions in sorted(store.state[section].items()):
+                for v, expected in sorted(versions.items()):
+                    path = store.path(key, v, section == "retired")
+                    try:
+                        m = verify_package(path, expected)
+                        require(m["id"] == key and m["version"] == v and m["platform"] == host(), "registered identity/platform mismatch")
+                    except (ContractError, OSError, ValueError) as error:
+                        finding("payload_mismatch", path, str(error) + "; preserve bytes and review; no safe automatic repair")
+                    if section == "installed" and store.state["active"].get(key) != v:
+                        finding("inactive_version", path, "Installed version is inactive; activation rechecks exact dependencies",
+                                recovery_command(store, "activate", key, "--version", v, "--apply"))
+        for section, folder in (("installed", "packages"), ("retired", "retired")):
+            base = store.root / folder
+            if base.exists():
+                safe_path(base)
+                for owner in sorted(base.iterdir()):
+                    if owner.is_symlink() or not owner.is_dir() or not identifier(owner.name):
+                        finding("unexpected_code_path", owner, "Unrecognized path; no automatic adoption or deletion")
+                        continue
+                    for path in sorted(owner.iterdir()):
+                        if path.name.startswith(".stage-") and folder == "packages":
+                            continue
+                        if path.name not in store.state[section].get(owner.name, {}):
+                            finding("unregistered_code", path, "Code has no committed registration; preserve for manual review")
+        data = store.root / "data"
+        if data.exists():
+            safe_path(data)
+            for path in sorted(data.iterdir()):
+                if not any(store.path(path.name, v).is_dir() for v in store.state["installed"].get(path.name, {})):
+                    finding("retained_data_without_code", path, "Data is retained and never purged; list retired versions for explicit restore",
+                            recovery_command(store, "list"))
+    return dict(ok=True, operation="doctor", applied=False, root=str(store.root), registry_valid=valid,
+                findings=findings, automatic_repair=False, data_retained=True, observation_is_atomic=False)
+
+
+def repair(store, args):
+    require(shutil.rmtree.avoids_symlink_attacks, "safe descriptor-based stage removal is unavailable on this Python/platform")
+    store.load()
+    # A live managed invocation is never interpreted as abandoned work.
+    leases = store.root / "leases"
+    if os.path.lexists(leases):
+        safe_path(leases)
+        directory(leases)
+        for owner in leases.iterdir():
+            safe_path(owner)
+            directory(owner)
+            for lease in owner.iterdir():
+                with existing_lock(lease, exclusive=True):
+                    pass
+    cutoff = time.time() - args.older_than_minutes * 60
+    selected, skipped = [], []
+    for path in stages(store):
+        try:
+            identity = stage_identity(path, cutoff)
+        except (ContractError, OSError, ValueError) as error:
+            skipped.append(dict(path=str(path), reason=str(error)))
+            continue
+        selected.append((path, identity))
+    removed = []
+    for path, identity in selected:
+        if args.apply:
+            require(stage_identity(path, cutoff) == identity, "stage identity changed since plan")
+            shutil.rmtree(path)
+            removed.append(str(path))
+    return dict(ok=True, operation="repair", applied=args.apply, older_than_minutes=args.older_than_minutes,
+                selected=[str(path) for path, _ in selected], removed=removed, skipped=skipped,
+                data_retained=True, registry_changed=False, automatic_adoption=False, atomic=False,
+                apply_command=recovery_command(store, "repair", "--apply", "--older-than-minutes", str(args.older_than_minutes)))
+
+
 def main():
     parser = argparse.ArgumentParser(prog="teerex cartridges" if sys.argv[0] == "-c" else None, description=__doc__)
     parser.add_argument("--root", default=os.path.join(os.environ["HOME"], ".local/opt/teerex-cartridges"))
@@ -406,6 +552,12 @@ def main():
         if name == "remove":
             p.add_argument("--deactivate", action="store_true")
     sub.add_parser("list")
+    sub.add_parser("doctor", help="read-only root, registry, payload and retained-data findings; never repairs")
+    p = sub.add_parser("repair", help="explicit cleanup of old owned staging directories only; never registry/code/data repair")
+    mode = p.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--plan", action="store_true")
+    mode.add_argument("--apply", action="store_true")
+    p.add_argument("--older-than-minutes", type=int, default=30, help="minimum age of every stage member, default 30; must be positive")
     p = sub.add_parser("run", help="execute an active cartridge with cooperative dependency leases")
     p.add_argument("id")
     p.add_argument("args", nargs=argparse.REMAINDER)
@@ -414,7 +566,15 @@ def main():
     os.umask(0o077)
     root = Path(args.root)
     store = Store(root, create=args.command == "install" and args.apply)
-    require(store.exists or args.command in ("install", "list"), "cartridge root does not exist")
+    require(store.exists or args.command in ("install", "list", "doctor"), "cartridge root does not exist")
+    if args.command in ("doctor", "repair"):
+        from contextlib import nullcontext
+        if args.command == "repair":
+            require(args.older_than_minutes > 0, "repair age threshold must be positive")
+            require(os.path.lexists(root / ".lock"), "repair requires an existing lifecycle lock; inspect with doctor")
+        with existing_lock(root / ".lock", exclusive=args.command == "repair") if os.path.lexists(root / ".lock") else nullcontext():
+            emit(doctor(store) if args.command == "doctor" else repair(store, args))
+        return
     run_fds = []
     try:
         # Plans on an absent root are read-only. Existing-root plans take the

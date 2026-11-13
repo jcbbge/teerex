@@ -77,6 +77,7 @@ class RootEntry(Lifecycle):
     def test_help_and_isolation(self):
         result = subprocess.run([str(BIN), "--help"], capture_output=True, text=True)
         self.assertIn("cartridges install|list|run|activate|remove|restore", result.stdout)
+        self.assertIn("cartridges doctor|repair", result.stdout)
         (self.home / "json.py").write_text('raise RuntimeError("cwd module executed")')
         result = subprocess.run([str(BIN), "cartridges", "list"], cwd=self.home,
                                 env=dict(self.env, PYTHONPATH=str(self.home)), capture_output=True, text=True)

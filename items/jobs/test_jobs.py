@@ -75,7 +75,7 @@ class JobsTest(unittest.TestCase):
 
     def command(self, operation, **options):
         args = [BIN, "jobs", operation, "--registry", str(options.pop("registry", self.registry))]
-        if operation != "list":
+        if operation not in ("list", "doctor"):
             target = dict(socket=str(self.socket), session=self.session, block=self.block)
             target.update(options)
             options = target
@@ -109,6 +109,97 @@ class JobsTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(listing["entries"], [])
         self.assertEqual(list(self.registry.iterdir()), before)
+
+    def test_doctor_empty_registry_creates_no_files(self):
+        before = list(self.registry.iterdir())
+        result, report = self.invoke("doctor")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(report["entries"], [])
+        self.assertTrue(report["live_checks_complete"])
+        self.assertEqual(list(self.registry.iterdir()), before)
+
+    def test_doctor_reports_live_absent_due_intent_pending_drift_and_orphans_without_mutation(self):
+        self.track()
+        self.detached()
+        self.track()
+        self.rpc("block.close", session_id=self.session, block_id=self.block)
+        state = self.registry / "state.json"
+        raw = json.loads(state.read_text())
+        raw["entries"][0]["deadline_unix_ms"] = 1
+        raw["entries"][0]["last_action"] = dict(operation="present", reason="lost ACK fixture", at_unix_ms=1, outcome="uncertain")
+        state.write_text(json.dumps(raw))
+        pending = json.loads(state.read_text())
+        pending["entries"][0]["generation"] = pending["next_generation"]
+        pending["next_generation"] += 1
+        (self.registry / "state.next").write_text(json.dumps(pending))
+        (self.registry / "state.next").chmod(0o600)
+        (self.registry / "unrecognized").write_text("preserve this orphan")
+        before = {p.name: p.read_bytes() for p in self.registry.iterdir()}
+        view = self.view()
+        calls = self.work / "queries"
+        self.shim("import subprocess,sys\n"
+                  f"with open({str(calls)!r},'a') as f: f.write('query\\n')\n"
+                  f"r=subprocess.run([{self.rex!r},*sys.argv[1:]],capture_output=True)\n"
+                  "sys.stdout.buffer.write(r.stdout);sys.stderr.buffer.write(r.stderr);sys.exit(r.returncode)\n")
+        result, report = self.invoke("doctor", socket=self.socket)
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertEqual(calls.read_text().splitlines(), ["query", "query"])
+        self.assertEqual([e["live_state"] for e in report["entries"]], ["present", "absent"])
+        self.assertTrue(report["entries"][0]["review_due"])
+        self.assertTrue(report["entries"][0]["uncertain_present"])
+        self.assertTrue(report["entries"][0]["generation_drift"])
+        kinds = {f["kind"] for f in report["findings"]}
+        self.assertTrue({"review_due", "uncertain_present", "generation_drift", "pending_state", "orphan_file", "absent_pane"} <= kinds)
+        for finding in report["findings"]:
+            self.assertEqual(finding["next_command"][:2], ["teerex", "jobs"])
+        self.assertEqual({p.name: p.read_bytes() for p in self.registry.iterdir()}, before)
+        self.assertEqual(self.view(), view)
+        self.assertFalse(report["applied"])
+        self.assertFalse(report["all_processes_verified_gone"])
+
+    def test_doctor_stale_identity_and_transport_failure_remain_unknown(self):
+        self.track()
+        state = self.registry / "state.json"
+        raw = json.loads(state.read_text())
+        raw["entries"][0]["source"]["instance_id"] = "old-instance"
+        state.write_text(json.dumps(raw))
+        before = state.read_bytes()
+        result, report = self.invoke("doctor")
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(report["entries"][0]["live_state"], "unknown")
+        self.assertEqual(report["entries"][0]["failure_reason"], "stale_server_identity")
+        self.shim("import sys\nsys.exit(7)\n")
+        result, report = self.invoke("doctor")
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(report["entries"][0]["live_state"], "unknown")
+        self.assertEqual(report["entries"][0]["failure_reason"], "rex_transport_incomplete")
+        self.assertFalse(report["live_checks_complete"])
+        self.assertEqual(state.read_bytes(), before)
+
+    def test_doctor_retains_invalid_pending_state_and_rejects_mutation_options(self):
+        self.track()
+        pending = self.registry / "state.next"
+        pending.write_text("uncommitted partial JSON")
+        pending.chmod(0o600)
+        result, report = self.invoke("doctor")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("invalid_pending_state", {f["kind"] for f in report["findings"]})
+        self.assertEqual(pending.read_text(), "uncommitted partial JSON")
+        self.assertEqual(self.invoke("doctor", owner="operator")[0].returncode, 2)
+
+    def test_doctor_partial_observation_without_final_ack_is_unknown(self):
+        self.track()
+        before = (self.registry / "state.json").read_bytes()
+        self.shim("import json,subprocess,sys\n"
+                  f"r=subprocess.run([{self.rex!r},*sys.argv[1:]],capture_output=True,check=True)\n"
+                  "for line in r.stdout.splitlines():\n"
+                  " if json.loads(line)['event'] != 'verified': print(line.decode(),flush=True)\n")
+        result, report = self.invoke("doctor")
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(report["entries"][0]["live_state"], "unknown")
+        self.assertIsNotNone(report["entries"][0]["observation"])
+        self.assertFalse(report["live_checks_complete"])
+        self.assertEqual((self.registry / "state.json").read_bytes(), before)
 
     def test_tracking_persists_without_owning_process_and_offline_list_is_stale(self):
         before = self.view()

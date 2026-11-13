@@ -22,6 +22,7 @@ const usage =
     \\  snapshot|restore|update                       Recovery aliases; update is manual handoff
     \\  fleet install|rollback                       Explicit named-host installation plan/apply
     \\  cartridges install|list|run|activate|remove|restore  Independent native payloads
+    \\  cartridges doctor|repair                     Read-only findings; explicit old-stage cleanup plans
     \\  targets resolve|exec                         Named-host lookup and explicit transport
     \\  run-visible                                  Visible noninteractive argv, output and actual exit
     \\  replay record|play|live                       Capture bytes, faithful replay and independent live checks
