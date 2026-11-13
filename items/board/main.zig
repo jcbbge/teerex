@@ -13,7 +13,7 @@ const usage =
     \\Feed: teerex board feed --help
     \\Replay is JSONL v1; EOF holds the final frame, q exits. --once prints it and exits.
     \\Keys: j/k or arrows select; Enter jump; Space scratchpad; m machine;
-    \\      s stream; ? keys; q quit. Mouse selects; double-click jumps; wheel scrolls.
+    \\      ? keys; q quit. Mouse selects; double-click jumps; wheel scrolls.
     \\Uses ANSI theme slots, queries contrast, and uses kitty charts when supported.
     \\NO_COLOR disables colour and graphics. --no-graphics forces Unicode marks.
     \\--benchmark N measures N changed 60-column frames without terminal output.
@@ -325,37 +325,19 @@ const UI = struct {
             }
             try add(&lines, a, try fmt(a, "{d}/{d} steps done", .{ integer(num(get(r, "done"))), integer(num(get(r, "total"))) }), .secondary);
         }
-        try self.section(&lines, a, if (self.stream_focus) "stream  ◄" else "stream", width);
-        var shown_stream: usize = 0;
-        var offset = self.stream_offset;
-        var i = model.stream.items.len;
-        while (i > 0 and lines.items.len + 2 < height) {
-            i -= 1;
-            const v = model.stream.items[i].value;
-            if (!eq(text(v, "host"), host.name)) continue;
-            if (offset > 0) {
-                offset -= 1;
-                continue;
-            }
-            const role = text(v, "role");
-            const time: u64 = integer(num(get(v, "t")) / 1000) % 86400;
-            try add(&lines, a, try fmt(a, "{d:0>2}:{d:0>2}:{d:0>2}  {s}  {s}", .{ time / 3600, time / 60 % 60, time % 60, text(v, "agent"), text(v, "text") }), if (eq(role, "problem")) .problem else if (eq(role, "pass")) .pass else if (eq(role, "accent")) .accent else .words);
-            shown_stream += 1;
-        }
-        if (shown_stream == 0 and lines.items.len + 2 < height) try add(&lines, a, "Listening for the next event…", .secondary);
         if (self.help) {
             lines.shrinkRetainingCapacity(@min(lines.items.len, 2));
             self.hit = @splat(null);
             try add(&lines, a, "↑↓ / j k  select · Enter  jump to pane", .accent);
             try add(&lines, a, "Space  Now + progress · m  hive / m5", .words);
-            try add(&lines, a, "s  stream · wheel  browse · q  quit", .words);
+            try add(&lines, a, "wheel  browse · q  quit", .words);
             try add(&lines, a, "Click selects · double-click jumps", .words);
         }
         if (model.invalid > 0) try add(&lines, a, try fmt(a, "! {d} unreadable events ignored", .{model.invalid}), .problem);
         if (self.status.len > 0) try add(&lines, a, self.status, .accent);
         if (model.ended and !model.replay) try add(&lines, a, "! Live feed stopped · q quits", .problem);
         // Keep keys anchored and never let the terminal's bottom-right cell scroll.
-        const footer = if (width < 55) "╰ ⏎ jump  ␣ pad  m host  s stream  ? ╯" else "╰ ⏎ jump  ␣ scratchpad  m machine  s stream  ? keys ╯";
+        const footer = if (width < 55) "╰ ⏎ jump  ␣ pad  m host  ? ╯" else "╰ ⏎ jump  ␣ scratchpad  m machine  ? keys ╯";
         if (lines.items.len >= height) lines.shrinkRetainingCapacity(height - 1);
         while (lines.items.len + 1 < height) try add(&lines, a, "", .words);
         try add(&lines, a, footer, .lines);
@@ -860,10 +842,6 @@ pub fn run(allocator: A, args: []const []const u8) !u8 {
                         ui.host = 1 - ui.host;
                         ui.selected = 0;
                         ui.stream_offset = 0;
-                        dirty = true;
-                    },
-                    's' => {
-                        ui.stream_focus = !ui.stream_focus;
                         dirty = true;
                     },
                     ' ' => {

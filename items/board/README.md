@@ -29,17 +29,17 @@ meaning without colour. One new question flashes its callout once (180 ms),
 and OSC 7501's documented `blocked` state marks the board as needing attention.
 The board owns only its `teerex/board` status record and clears it on exit.
 
-The selected host filters agents and the newest-first stream. The host key
-switches all three panels; both feeds continue receiving events. Host failures
+The selected host filters agents. There is no event stream section: it
+repeated low-value events and cost attention (Josh, 2026-11-13). The host key
+switches both panels; both feeds continue receiving events. Host failures
 retain the last readings with an explicit unavailable notice.
 
 | Key | Action |
 |---|---|
-| Up/Down, j/k | Select a live agent, or scroll when the stream has focus |
+| Up/Down, j/k | Select a live agent |
 | Enter | `teerex --config … --host ROW_HOST surfaces focus` on that exact pane |
 | Space | Inline scratchpad via the selected host's `scratch show --json`; the event's Now/progress remain available if the read fails |
 | m | Switch hive / M5 |
-| s | Toggle stream focus |
 | ? | Keys overlay |
 | q, Ctrl-C, Ctrl-D | Exit and restore terminal settings |
 | Mouse | Click selects, double-click jumps, wheel browses |

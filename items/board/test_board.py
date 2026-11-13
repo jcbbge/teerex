@@ -85,7 +85,7 @@ class Pane:
         if config: argv += ['--config', str(config)]
         self.proc = subprocess.Popen(argv, stdin=self.slave, stdout=self.slave, stderr=self.slave, env=env)
         self.output = b''
-        self.until(lambda: b'stream' in self.output)
+        self.until(lambda: b'jump' in self.output)
     def resize(self, width, height=30):
         self.width = width
         fcntl.ioctl(self.slave, termios.TIOCSWINSZ, struct.pack('HHHH', height, width, 0, 0))
@@ -144,9 +144,12 @@ class BoardTest(unittest.TestCase):
         p = self.pane(width=width)
         view, scrolls = screen(p.output,width)
         self.assertEqual(scrolls,0,view)
-        for word in ['hive','REPLAY','cpu','mem','disk','net','needs you','working','stream','Which sound','4/6','2/6','jump']:
+        for word in ['hive','REPLAY','cpu','mem','disk','net','needs you','working','Which sound','4/6','2/6','jump']:
             self.assertIn(word,view)
         self.assertLess(view.index('Which sound'),view.index('codex-render'))
+        # The event stream was noise (Josh, 2026-11-13): no stream section and no stream key.
+        self.assertNotIn('Listening for the next event',view)
+        self.assertNotIn(' stream',view)
         self.assertIn(b'\x1b[?2026h',p.output)
         self.assertIn(b'7501;state=blocked:id=teerex/board',p.output)
         self.assertNotIn(b'\x1b[2J',p.output)
@@ -162,7 +165,7 @@ class BoardTest(unittest.TestCase):
         p.key(b'?'); p.key(b'j'); p.key(b' ')
         self.assertIn('Scratchpad',p.view())
         self.assertIn('three widths',p.view())
-        p.key(b's'); self.assertIn('stream  ◄',p.view())
+        p.key(b's'); self.assertNotIn('stream',p.view())
         p.resize(40)
         p.until(lambda: len(p.output)>0 and b'\x1b[30;1H' in p.output)
         p.settle()
