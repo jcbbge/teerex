@@ -159,7 +159,7 @@ So `full_text` is `unknown` whenever either capture is partial, exactly as `full
 
 **Match counts.** If a rule matches a different number of times in the two captures, the masked texts differ, so the verdict is `changed`. A new spinner line is a structural change, not cosmetic.
 
-**`non_text_evidence_changed`** is `true` if any process, last-exit, reported-directory or program-status field changed or changed availability. It is `null` if any such field is unknown (`changed=null`) without an availability change, and `false` otherwise.
+**`non_text_evidence_changed`** is `true` if any process, last-exit, reported-directory or program-status field changed or changed availability. It is `null` (unknown, which wakes) if a whole method (process, reported directory or program status) is absent or unavailable in either sample, or if a delta is unknown for any other reason. An optional field that is absent in **both** samples with no availability change (for example `process.last_exit` on a pane whose program is still running) is not new non-text evidence and does not make the result `null`. Otherwise it is `false`. *(Contract fix decided at implementation by the teerex lead, 13 November 2026: without it, every active pane lacks `last_exit`, so `watch` would wake on every spinner tick and V-W1 could not pass.)*
 
 **`wake`** is computed as:
 
@@ -290,6 +290,7 @@ These are added to `items/observe/test_observe.py` (offline `CompareTest` cases 
 | V-A1 | Two complete captures differ only in `(12s` → `(13s` and `⠋` → `⠙`. `compare --view progress-v1` | `captured_text` and `full_text` are `cosmetic_only`; 2 exact spans; `wake=false`; raw `captured_text_changed=true` still present | The same captures, plus one new line `Continue? [y/n]`, must give `changed` and `wake=true`. |
 | V-A2 | Timer change on a line containing `error` | `changed` (protected line), `protected_lines≥1` | The same change on an unprotected line gives `cosmetic_only`. This proves the protection itself, not general noise, makes the difference. |
 | V-A3 | Text cosmetic-only, but `process.last_exit` becomes available (exit 3) | `non_text_evidence_changed=true`, `wake=true` | No `--view` path may hide this. A deliberately broken build that masks it is detected by this row. |
+| V-A3b | Text cosmetic-only; `process.last_exit` absent in both samples; `process` method available in both | `non_text_evidence_changed=false`, `cosmetic_only`, `wake=false` | The same pair with the whole `process` method unavailable in the after sample must give `null` and `wake=true`. |
 | V-A4 | Text cosmetic-only; root `program_status` goes `working` → `done` | `wake=true` | Same for `blocked:permission`. |
 | V-A5 | Both captures partial (`--max-bytes 256`), identical prefix, tail differs (readiness [X1](readiness-acceptance.md#6-counterexamples-runnable-assertions) fixture) | `captured_text=unchanged`, `full_text=unknown` | Any output with `full_text` of `unchanged` or `cosmetic_only` fails. |
 | V-A6 | Rule-count mismatch: a second spinner line appears | `changed` | Masking both spinners away into equality fails. |
