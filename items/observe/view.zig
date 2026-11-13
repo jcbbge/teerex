@@ -166,8 +166,8 @@ fn digits(line: []const u8, start: usize, max: usize) usize {
     return end;
 }
 
-fn match(rule: Rule, line: []const u8, offset: usize) ?usize {
-    if (rule.at_start and std.mem.trim(u8, line[0..offset], " \t").len != 0) return null;
+fn match(rule: Rule, line: []const u8, offset: usize, leading_space: usize) ?usize {
+    if (rule.at_start and offset > leading_space) return null;
     var pos = offset;
     for (rule.tokens) |token| switch (token) {
         .literal => |literal| {
@@ -208,11 +208,13 @@ fn mask(allocator: std.mem.Allocator, rules: Rules, text: []const u8) !Masked {
         if (line_index != 0) try output.append(allocator, '\n');
         const protect = protected(line, rules.extra);
         if (protect) try protected_lines.append(allocator, line_index);
+        var leading_space: usize = 0;
+        while (leading_space < line.len and (line[leading_space] == ' ' or line[leading_space] == '\t')) : (leading_space += 1) {}
         var pos: usize = 0;
         while (pos < line.len) {
             var found = false;
             if (!protect) for (rules.rules, 0..) |rule, index| {
-                if (match(rule, line, pos)) |end| {
+                if (match(rule, line, pos, leading_space)) |end| {
                     try matches.append(allocator, .{ .rule = index, .line = line_index, .offset = pos, .text = line[pos..end] });
                     const placeholder = try std.fmt.allocPrint(allocator, "\xef\xbf\xbc{d};", .{index});
                     try output.appendSlice(allocator, placeholder);
@@ -261,9 +263,15 @@ pub fn computeView(allocator: std.mem.Allocator, rules: Rules, before: anytype, 
     }
     const captured = verdict(raw.capture.captured_text_changed, same, truncated);
     const full = verdict(raw.capture.full_text_changed, same, truncated);
-    var count = a.protected_lines.len;
-    for (b.protected_lines) |line| if (std.mem.indexOfScalar(usize, a.protected_lines, line) == null) {
-        count += 1;
-    };
+    var count = a.protected_lines.len + b.protected_lines.len;
+    var ai: usize = 0;
+    var bi: usize = 0;
+    while (ai < a.protected_lines.len and bi < b.protected_lines.len) {
+        const left = a.protected_lines[ai];
+        const right = b.protected_lines[bi];
+        if (left == right) count -= 1;
+        if (left <= right) ai += 1;
+        if (right <= left) bi += 1;
+    }
     return .{ .rules_id = rules.id, .rules_sha256 = rules.sha256, .captured_text = captured, .full_text = full, .non_text_evidence_changed = non_text, .spans = try spans.toOwnedSlice(allocator), .spans_truncated = truncated, .protected_lines = count, .wake = non_text != false or captured == .changed or captured == .unknown or full == .changed };
 }

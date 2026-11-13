@@ -287,7 +287,7 @@ class CompareTest(unittest.TestCase):
             self.assertEqual((r.returncode, r.stdout, r.stderr), (2, '', 'teerex: view refused: ' + reason + '\n'))
         path.write_text(json.dumps(source([rule('[{one_of:|/-\\}]')])))
         self.assertEqual(compare_packets(self.root, self.before, self.after, ['--view-rules', str(path)]).returncode, 0)
-        for raw, reason in ((' ' * 16385, 'rules_too_large'), ('{"schema_version":1,"schema_version":1}', 'rules_schema')):
+        for raw, reason in ((' ' * 16385, 'rules_too_large'), (json.dumps(source([rule('elapsed {digits}')])).replace('"schema_version": 1', '"schema_version": 1, "schema_version": 1'), 'rules_schema')):
             path.write_text(raw)
             r = compare_packets(self.root, self.before, self.after, ['--view-rules', str(path)])
             self.assertEqual(r.stderr, 'teerex: view refused: ' + reason + '\n')
@@ -330,6 +330,12 @@ class CompareTest(unittest.TestCase):
         self.after['capture']['content'] = '\ufffc0;'
         result = compare_packets(self.root, self.before, self.after, ['--view-rules', str(path)])
         self.assertEqual(json.loads(result.stdout)['view']['captured_text'], 'changed')
+
+    def test_view_long_whitespace_and_protected_lines_are_bounded(self):
+        for before, after in ((' ' * 30000 + '(12s', ' ' * 30000 + '(13s'), ('?\n' * 10000 + '(12s', '?\n' * 10000 + '(13s')):
+            packet = self.viewed(before, after)
+            self.assertEqual(packet['view']['captured_text'], 'cosmetic_only')
+        self.assertEqual(packet['view']['protected_lines'], 10000)
 
     def test_view_V_C24_documentation_makes_no_state_claim(self):
         root = Path(__file__).resolve().parents[2]
