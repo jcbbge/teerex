@@ -347,6 +347,11 @@ def summarize(report):
     lines = ["# Safe-subset failing-CLI baseline", "", "Readiness and task completion are separate. Hidden full text remains unknown.", "", "| Row | Pass | Detail |", "| --- | --- | --- |"]
     lines += ["| %s | %s | %s |" % (name, str(row["pass"]).lower(), row["detail"]) for name, row in sorted(report["rows"].items())]
     lines += ["", "Ratios below name the measured quantity; lower is smaller. They are workload-specific, not productivity claims."]
+    lines += ["", "Waited-exec CPU includes reaped descendants; RSS is the largest single waited child, not a sum. Wall uses monotonic task time. Rex execs are counted by an argument-free wrapper; wrapper overhead is included. Pane-side CPU is sampled from the started child at exit when readable. Server, GUI, neighbours and energy are excluded.", "", "| Arm | Fixture | n | Calls | Rex execs | stdout bytes | stderr bytes | output-dir bytes | CPU ms | max RSS KiB | Wall cold / median / p95 ms |", "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |"]
+    for arm, modes in report["measurements"].items():
+        for mode, metric in modes.items():
+            wall = metric["wall_ms"]
+            lines.append("| %s | %s | %s | %g | %g | %g | %g | %g | %.3f | %.1f | %.3f / %.3f / %.3f |" % (arm, mode, metric["sampling_domain"]["n"], metric["calls"], metric["rex_client_launches"], metric["stdout_bytes"], metric["stderr_bytes"], metric["output_dir_bytes"], metric["cpu_ms"], metric["maxrss_kib"], wall["cold"], wall["warm_median"], wall["warm_p95"]))
     both = report["measurements"]
     if "teerex" in both and "reference" in both:
         for mode in sorted(set(both["teerex"]) & set(both["reference"])):
