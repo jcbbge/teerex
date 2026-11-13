@@ -48,8 +48,8 @@ Every verb accepts `--store`. `--help` lists flags. Supported operations:
 | `park --writer NAME --host H --socket ABS --session ID --block ID` | New parked investigation, question and complete next action required. Target check defaults yes; `--allow-unavailable-target yes` preserves an unavailable target honestly. Optional one `--observe yes` read. |
 | `add claim\|check\|omission\|cleanup --id ID --by NAME` | Append assigned `kN`, `cN`, `oN`, `uN` IDs. Claims take text/basis/evidence IDs/source/scope; checks require command, ran, process-exit, assertion, establishes and does-not-establish. Fields-file can append arrays. |
 | `attach --id ID --by NAME` | Append evidence plus optional claims/omissions or replacement uncertainty/cleanup/next action from fields-file. Explicit check assertion required when `--check-command` is used. |
-| `set --id ID --expect-generation N FIELD=JSON...` | Replace supported fields or ID-addressed element fields. Fields-file supports private notes. Question/next-action/hypothesis/uncertainty replacements retain previous values in bounded history. Moving an evidence locator retains `moved_from`. State cannot be set here. |
-| `close --id ID --state concluded\|abandoned --by NAME` | Apply final fields and lint before committing; next action may be null after close. |
+| `set --id ID --expect-generation N FIELD=JSON...` | Replace supported fields or ID-addressed element fields. Whole `kind_fields=JSON` and `--fields-file` replacements are supported and checked against the record kind; fields-file also supports private notes. Question/next-action/hypothesis/uncertainty replacements retain previous values in bounded history. Moving an evidence locator retains `moved_from`. State cannot be set here. |
+| `close --id ID --state concluded\|abandoned --by NAME` | Accept final `kind_fields` via fields-file with required `--expect-generation`, then validate and lint before committing; next action may be null after close. |
 | `show --id ID`, `resume --id ID --host H` | Read-only JSON or text. `--evidence-check no` suppresses artifact reads; resume adds a target check unless `--target-check no`. No record timestamp, inode, size or generation changes. |
 | `navigate --id ID --host H --focus yes` | Recheck target, then exactly one `surfaces focus`; any status other than available refuses. No open, relaunch, move, resize, rename, close, paste or send. |
 | `list [--kind K] [--state open\|parked\|all]` | All by default; open/parked first, then newest. JSON or text summaries. |
@@ -57,7 +57,7 @@ Every verb accepts `--store`. `--help` lists flags. Supported operations:
 | `export --id ID [--format json\|md] [--out NEW_ABS]` | Lint, project private fields away, preserve caveats and scan exported strings before writing. Never overwrite. `--include` cannot override privacy. |
 | `forget --id ID --expect-generation N --reason TEXT` | Explicit deletion of that record and its copies only. |
 
-All record writes accept `--expect-generation`; `set` and `forget` require it. Write receipts contain IDs, generation, byte counts and digests, never reasoning content. Kind-specific fields and evidence references are schema-checked on write. `new` accepts incomplete drafts; park/close/export enforce the applicable lint rules. Closed or superseded records of the original four kinds cannot be appended to; decision applicability and status updates remain explicit.
+All record writes accept `--expect-generation`; `set` and `forget` require it, as does `close` when supplying `kind_fields`. Write receipts contain IDs, generation, byte counts and digests, never reasoning content. Kind-specific fields and evidence references are schema-checked on write. `new` refuses missing required kind fields: handoffs need `direction`, `from`, `to`, `undo`; receipts need `shipped_identity.repo` and `shipped_identity.commit`. Other draft content can remain incomplete; park/close/export enforce the applicable lint rules. Decision proposals remain open drafts until `decide`. Closed or superseded records of the original four kinds cannot be appended to; decision applicability and status updates remain explicit.
 
 ### Evidence
 
@@ -121,3 +121,15 @@ Lint adds L9 decision shape (because claims, rejected alternative with why and i
 `python3 items/records/test_decisions.py -v` runs D1–D15 with temporary Git, program-version and fake-gh fixtures, alongside the original records suite in API13 CI lanes. No real issue, store or configuration is changed.
 
 `teerex records --help` and subcommand help use the public `teerex records` command name.
+
+### Repair an older incomplete handoff or receipt
+
+`show` and `lint` still read alpha.6 records with missing required fields. Read the current generation with `show`, then supply the complete kind-specific object. For a handoff at generation 2:
+
+```sh
+teerex records set --id existing-handoff --expect-generation 2 \
+  'kind_fields={"direction":"outbound","from":"author","to":"receiver","undo":"revert the described change"}'
+teerex records lint --id existing-handoff
+```
+
+Alternatively, `close --id ID --by NAME --state concluded --expect-generation N --fields-file ABS|-` accepts an object containing `kind_fields`, repairs it and closes it in one checked write. Unknown keys, invalid types and stale generations refuse before saving; close also refuses remaining lint violations. No migration rewrites existing records. Decision kind fields continue through `decide` and the guarded option commands so repair cannot bypass decision immutability or revisit conditions. Missing required fields on `new` return `kind_fields_required` plus public `missing_fields` paths, without creating a partial record.

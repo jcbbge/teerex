@@ -21,6 +21,12 @@ import time
 SCHEMA = "teerex.records/1"
 LIMIT = 1048576
 KINDS = ("investigation", "experiment", "receipt", "handoff", "decision")
+KIND_FIELDS = {"investigation": set(), "experiment": {"change_made", "pair_with", "cost"},
+               "receipt": {"shipped_identity", "human_caveat"},
+               "handoff": {"direction", "from", "to", "changes", "risks", "undo", "reply_to"},
+               "decision": {"decision", "because", "options", "invalidators", "card_id"}}
+REQUIRED_KIND_FIELDS = {"handoff": ("direction", "from", "to", "undo"),
+                        "receipt": ("shipped_identity.repo", "shipped_identity.commit")}
 PACKETS = {"friction_report": "teerex_friction", "run_visible_result": "teerex_run_visible", "run_result": "teerex_run",
            "observation_changes": "teerex_compare", "observation_wait": "teerex_watch"}
 FLAGS = ("retry_safe", "task_completion", "painted_visibility", "all_descendants_verified_gone", "atomic_snapshot", "freshness", "interpretation")
@@ -525,8 +531,7 @@ def validate(r):
         require(isinstance(evidence, dict) and type(evidence.get("private")) is bool and isinstance(evidence.get("label"), str), "invalid_field:evidence")
         require(re.fullmatch(r"e[1-9][0-9]*", evidence.get("id", "")), "invalid_field:evidence.id")
     require(isinstance(r["kind_fields"], dict), "invalid_field:kind_fields")
-    allowed_kind = {"investigation": set(), "experiment": {"change_made", "pair_with", "cost"}, "receipt": {"shipped_identity", "human_caveat"},
-                    "handoff": {"direction", "from", "to", "changes", "risks", "undo", "reply_to"}, "decision": {"decision", "because", "options", "invalidators", "card_id"}}[r["kind"]]
+    allowed_kind = KIND_FIELDS[r["kind"]]
     require(set(r["kind_fields"]) <= allowed_kind, "invalid_field:kind_fields")
     kind = r["kind_fields"]
     for field in ("change_made", "pair_with", "direction", "from", "to", "undo", "reply_to"):
@@ -747,6 +752,17 @@ def target_status(target, baseline, host, timeout, enabled=True):
     return result
 
 
+def missing_kind_fields(r):
+    missing = []
+    for path in REQUIRED_KIND_FIELDS.get(r["kind"], ()):
+        value = r["kind_fields"]
+        for part in path.split("."):
+            value = value.get(part) if isinstance(value, dict) else None
+        if not value:
+            missing.append("kind_fields." + path)
+    return missing
+
+
 def lint(r, folder, packets=None):
     violations = []
     def bad(rule, path, message):
@@ -778,8 +794,8 @@ def lint(r, folder, packets=None):
         if r["cleanup"]["status"] == "done" and t.get("storage_dir_retained") is True and t.get("storage_dir") and os.path.exists(t["storage_dir"]):
             bad("L7-cleanup-retained", "cleanup.status", "retained storage still exists")
     k = r["kind_fields"]
-    if (r["kind"] in ("experiment", "receipt") and not r["checks"] or r["kind"] == "receipt" and (not k.get("shipped_identity") or any(not k["shipped_identity"].get(x) for x in ("repo", "commit")))
-        or r["kind"] == "handoff" and any(not k.get(x) for x in ("direction", "from", "to", "undo")) or r["state"] == "parked" and (not r["target"] or not r["target_at_park"])):
+    if (missing_kind_fields(r) or r["kind"] in ("experiment", "receipt") and not r["checks"]
+        or r["state"] == "parked" and (not r["target"] or not r["target_at_park"])):
         bad("L6-kind-required", "kind_fields", "kind requirements incomplete")
     if r["kind"] == "handoff" and k.get("direction") == "inbound" and any(c["basis"] == "supplied" and not c["evidence"] for c in r["claims"]) and nxt is None:
         bad("L8-handoff-authority", "next_action", "inbound supplied claim grants no authority")
@@ -905,7 +921,7 @@ def set_field(r, path, value, by):
         option["status"] = value
         return
     parts = path.split(".")
-    if len(parts) == 1 and path in {"question", "next_action", "hypothesis", "discriminating_experiment", "uncertainty", "private", "notes"}:
+    if len(parts) == 1 and path in {"question", "next_action", "hypothesis", "discriminating_experiment", "uncertainty", "private", "notes", "kind_fields"}:
         require(path != "notes", "notes_require_fields_file", 2)
         replace(r, path, value, by)
     elif path == "cleanup.status":
@@ -1412,10 +1428,18 @@ def execute(o):
                     replace(r, path, value, actor)
         elif op == "close":
             require(o.state in ("concluded", "abandoned"), "close_state_required", 2)
-            assigned.extend(apply_content(r, content(o, {"claims", "uncertainty", "cleanup", "next_action"}), actor))
+            values = content(o, {"claims", "uncertainty", "cleanup", "next_action", "kind_fields"})
+            if "kind_fields" in values:
+                require(o.expect_generation is not None, "expect_generation_required", 2)
+                decision_set_guard(r, "kind_fields", values["kind_fields"], actor)
+            assigned.extend(apply_content(r, values, actor))
             r["state"] = o.state
         decision_link(r, actor)
         validate(r)
+        if op == "new":
+            missing = missing_kind_fields(r)
+            if missing:
+                raise Refusal("kind_fields_required", missing_fields=missing)
         if op in ("park", "close"):
             violations = lint(r, folder, packets)
             if op == "park" and r["question"] is None:
@@ -1466,7 +1490,7 @@ class SafeParser(argparse.ArgumentParser):
 
 
 def parser():
-    p = SafeParser(prog='teerex records', description=__doc__)
+    p = SafeParser(prog='teerex records', description=__doc__, epilog="new requires handoff direction/from/to/undo or receipt shipped_identity repo/commit. Repair older records with set kind_fields=JSON or close --fields-file and --expect-generation; decisions use decide.")
     sub = p.add_subparsers(dest="operation", required=True)
     for op in ("init", "new", "park", "add", "attach", "set", "close", "show", "resume", "navigate", "list", "lint", "export", "forget", "pin", "decide", "claim-status", "revalidate"):
         q = sub.add_parser(op, help={"resume": "read reasoning, historical evidence and live target; zero writes", "navigate": "one explicit verified focus; never relaunch", "park": "write private reasoning for an explicit Rex target"}.get(op, op + " private records"))

@@ -81,6 +81,64 @@ class RecordsFixture(unittest.TestCase):
 
 
 class RecordsTest(RecordsFixture):
+    def legacy_handoff(self, rid):
+        # Model alpha.6's already-created incomplete record without weakening new.
+        self.new(rid)
+        path = self.store / "records" / rid / "record.json"
+        record = self.read(rid)
+        record["kind"] = "handoff"
+        path.write_text(json.dumps(record))
+        self.assertIn("L6-kind-required", str(self.call("lint", "--id", rid, code=3)))
+        return path
+
+    def handoff_fields(self):
+        return dict(direction="outbound", **{"from": "author", "to": "receiver"}, undo="revert fixture change")
+
+    def test_kind_required_fields_refuse_new_without_partial_record(self):
+        for kind, fields in (("handoff", None), ("handoff", {}), ("handoff", {"direction": "outbound"}),
+                             ("receipt", None), ("receipt", {}), ("receipt", {"shipped_identity": {"repo": str(self.root)}})):
+            with self.subTest(kind=kind, fields=fields):
+                value = self.call("new", "--id", "incomplete", "--kind", kind, "--writer", "worker",
+                                  fields=self.fields if fields is None else dict(self.fields, kind_fields=fields), code=1)
+                self.assertEqual(value["failure_reason"], "kind_fields_required")
+                self.assertTrue(value["missing_fields"])
+                self.assertFalse((self.store / "records/incomplete").exists())
+        self.new("complete", "handoff", dict(self.fields, kind_fields=self.handoff_fields()))
+        self.call("lint", "--id", "complete")
+
+    def test_kind_fields_set_repairs_existing_records(self):
+        for rid, via_file in (("assignment", False), ("fields-file", True)):
+            with self.subTest(via_file=via_file):
+                path = self.legacy_handoff(rid)
+                before = path.read_bytes()
+                self.call("set", "--id", rid, "--expect-generation", 0,
+                          "kind_fields=" + json.dumps(self.handoff_fields()), code=1)
+                self.assertEqual(path.read_bytes(), before)
+                self.set("kind_fields=" + json.dumps(dict(self.handoff_fields(), unknown="no")), rid=rid, code=1)
+                self.assertEqual(path.read_bytes(), before)
+                if via_file:
+                    self.set(rid=rid, fields={"kind_fields": self.handoff_fields()})
+                else:
+                    self.set("kind_fields=" + json.dumps(self.handoff_fields()), rid=rid)
+                self.assertEqual(self.read(rid)["generation"], 2)
+                self.call("lint", "--id", rid)
+
+    def test_kind_fields_close_repairs_with_generation_and_validation(self):
+        path = self.legacy_handoff("closing")
+        args = ("--id", "closing", "--by", "worker", "--state", "concluded")
+        before = path.read_bytes()
+        self.call("close", *args, fields={"kind_fields": self.handoff_fields()}, code=2)
+        self.assertEqual(path.read_bytes(), before)
+        self.call("close", *args, "--expect-generation", 0, fields={"kind_fields": self.handoff_fields()}, code=1)
+        self.assertEqual(path.read_bytes(), before)
+        self.call("close", *args, "--expect-generation", 1,
+                  fields={"kind_fields": dict(self.handoff_fields(), direction="sideways")}, code=1)
+        self.assertEqual(path.read_bytes(), before)
+        self.call("close", *args, "--expect-generation", 1, fields={"kind_fields": self.handoff_fields()})
+        self.assertEqual(self.read("closing")["state"], "concluded")
+        self.assertEqual(self.read("closing")["generation"], 2)
+        self.call("lint", "--id", "closing")
+
     def test_R01_reasoning_first_git_identity_and_dirty_untracked(self):
         repo = self.root / "repo"
         repo.mkdir()
