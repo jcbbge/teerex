@@ -103,6 +103,12 @@ while True:
         raw,buf=buf.split(b"\x1b[201~\r",1)
         payload=raw.removeprefix(b"\x1b[200~").decode()
         with out.open("a") as f: f.write(json.dumps({"event":"input","payload":payload})+"\n")
+        if "TASK β asymmetric" in payload and behavior == "scratch-three":
+            binary=shlex.split(protocol.split("Acknowledge this protocol now by running:\n",1)[1].split("\n",1)[0])[0]
+            for task in ("Read contracts", "Build feature", "Run gates"):
+                subprocess.run([binary,"scratch","now",task],check=True)
+                subprocess.run([binary,"scratch","done"],check=True)
+            with out.open("a") as f: f.write(json.dumps({"event":"scratch-complete"})+"\n")
         if "TASK β asymmetric" in payload and behavior in ("exit7", "remote-exit7"):
             sys.exit(7)
 '''
@@ -166,7 +172,7 @@ class AgentsTest(unittest.TestCase):
         cls.server = subprocess.Popen([REX, "server", "run", "--listen", "unix://" + str(cls.socket),
                                        "--restore=false", "--config", "/dev/null", "--state-dir", str(cls.root / "state")],
                                       stdout=cls.log, stderr=cls.log,
-                                      env=dict(os.environ, TEEREX_CLUTCH_DIR=str(cls.root / "server-clutch"), PATH=str(Path(REX).parent) + os.pathsep + os.environ.get("PATH", "")))
+                                      env=dict(os.environ, HOME=str(cls.root), TEEREX_CLUTCH_DIR=str(cls.root / "server-clutch"), PATH=str(Path(REX).parent) + os.pathsep + os.environ.get("PATH", "")))
         cls.addClassCleanup(cls.stop_server)
         wait_for(lambda: cls.socket.exists())
         cls.version = cls.rpc("server.version", {})
@@ -199,7 +205,7 @@ class AgentsTest(unittest.TestCase):
         self.session = target["session_id"]
         self.starter = target["initial_windows"][0]["block_ids"][0]
         wait_for(lambda: events(self.starter_log))
-        self.env = dict(os.environ, TEEREX_CLUTCH_DIR=str(self.work / "clutch"), PATH=str(Path(REX).parent) + os.pathsep + os.environ.get("PATH", ""),
+        self.env = dict(os.environ, HOME=str(self.root), TEEREX_CLUTCH_DIR=str(self.work / "clutch"), PATH=str(Path(REX).parent) + os.pathsep + os.environ.get("PATH", ""),
                         REX_SERVER="unix:///tmp/poison.sock", REX_SESSION="session:poison", REX_BLOCK="block:poison")
         self.config = self.work / "profiles.json"
         self.settings = dict(schema_version=1, defaults=dict(registry=str(self.registry), socket=str(self.socket),
@@ -328,6 +334,21 @@ class AgentsTest(unittest.TestCase):
                 process.terminate()
             process.communicate(timeout=5)
 
+    def test_agent_keeps_three_step_scratchpad_visible(self):
+        p, packet = self.launch("scratch-three")
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        wait_for(lambda: any(v["event"] == "scratch-complete" for v in events(self.worker_log)))
+        state = self.record(packet["launch_id"])
+        pad = Path(state["scratchpad"])
+        self.assertEqual(pad.read_text().count("- [x]"), 3)
+        self.assertNotIn("- [ ]", pad.read_text())
+        side = state["scratch_pane_receipt"]["created"]["block_id"]
+        base = [BIN, "observe", "--socket", str(self.socket), "--session", self.session, "--block", side, "--tail"]
+        def displayed():
+            observed = subprocess.run(base, env=self.env, capture_output=True, text=True, timeout=10)
+            return observed.stdout if "✓ Run gates" in observed.stdout else None
+        self.assertIn("Read contracts", wait_for(displayed))
+
     def test_protocol_before_brief_exact_metadata_and_jobs(self):
         self.settings["profiles"]["probe"]["standing_flags"] *= 2
         p, packet = self.launch()
@@ -345,6 +366,14 @@ class AgentsTest(unittest.TestCase):
         self.assertEqual(inputs[1], "FROM probe: " + self.brief.read_text())
         self.assertEqual([v["code"] for v in worker if v["event"] == "ack"], [0])
         env = worker[0]["env"]
+        scratch = Path(state["scratchpad"])
+        self.assertTrue(scratch.is_file())
+        self.assertIn("Purpose: asymmetric lifecycle regression", scratch.read_text())
+        self.assertIn("Intent: TASK β asymmetric", scratch.read_text())
+        self.assertIn(str(scratch), inputs[0])
+        self.assertEqual(env["AGENT_SCRATCHPAD"], str(scratch))
+        self.assertEqual(env["LC_AGENT_SCRATCHPAD"], str(scratch))
+        self.assertTrue(state["scratch_pane_opened"], state.get("scratch_pane_receipt"))
         expected = dict(AGENT_SESSION=self.session, AGENT_PANE=state["target"]["block_id"], AGENT_NAME="probe",
                         AGENT_STARTER=self.session + " " + self.starter, AGENT_REPORT_TO=self.session + " " + self.starter)
         for k, v in expected.items():
@@ -505,6 +534,9 @@ class AgentsTest(unittest.TestCase):
         p, done = self.run_cli("prune", "--registry", str(self.registry), "--apply", timeout=60)
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
         self.assertEqual(done["live_after"], 2)
+        scratch_archive = next(v["scratchpad_archive"] for v in done["retired"] if v["launch_id"] == gone)
+        self.assertTrue(Path(scratch_archive).is_file())
+        self.assertFalse(Path(self.root / ".local/state/teerex/scratch" / self.session / (gone_block + ".md")).exists())
         for launch_id, reason in reasons.items():
             archived = self.registry / "archive" / launch_id
             self.assertEqual(json.loads((archived / "retired.json").read_text())["retired"]["reason"], reason)
@@ -516,6 +548,17 @@ class AgentsTest(unittest.TestCase):
         jobs = json.loads(subprocess.check_output([BIN, "jobs", "list", "--registry", str(self.registry)], env=self.env))
         self.assertNotIn(gone_block, [e["block_id"] for e in jobs["entries"]], "a gone pane's jobs registration is forgotten")
         self.assertIn(self.record(alive)["target"]["block_id"], [e["block_id"] for e in jobs["entries"]])
+        # The exited record is already archived, but its still-open pane owns the list.
+        exited_history = json.loads((self.registry / "archive" / exited / "retired.json").read_text())
+        exited_pad = Path(exited_history["scratchpad"])
+        self.assertTrue(exited_pad.exists())
+        closed = subprocess.run([BIN, "surfaces", "close", "--socket", str(self.socket), "--session", self.session,
+                                 "--pane", exited_history["target"]["block_id"]], capture_output=True, text=True, env=self.env)
+        self.assertEqual(closed.returncode, 0, closed.stdout + closed.stderr)
+        p, later = self.run_cli("prune", "--registry", str(self.registry), "--apply", timeout=60)
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertFalse(exited_pad.exists())
+        self.assertEqual(len(later["archived_scratchpads"]), 1)
 
         # Fill to the auto-prune threshold with old exited records; the next launch archives them itself.
         template = self.record(alive)
@@ -638,6 +681,8 @@ class AgentsTest(unittest.TestCase):
         p, _ = root("seat", "register", *target, "--owner", "operator")
         self.assertEqual(p.returncode, 0, p.stderr + p.stdout)
         self.settings["profiles"]["probe"]["argv"][-1] = "exit7"
+        # This regression isolates moving the retained agent, without a companion pane.
+        self.settings["profiles"]["probe"]["scratch_pane"] = False
         self.config.write_text(json.dumps(self.settings))
         # A named local route must retain its exact Rex pin through the in-pane supervisor's notification.
         poison = self.work / "poison"

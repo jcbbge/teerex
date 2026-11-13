@@ -274,6 +274,9 @@ def prune_records(root, apply, at_least=0):
         if apply:
             if reason == "pane_gone":
                 item["jobs"] = forget_job(root, state)
+            if state.get("scratchpad") and (reason == "pane_gone" or pane_absent(state) is True):
+                target = state["target"]
+                item["scratchpad_archive"] = scratch_archive(state["scratchpad"], target["session_id"], target["block_id"])
             with Registry(root) as registry:
                 fd = archive_dir(registry)
                 try:
@@ -315,6 +318,24 @@ def prune_records(root, apply, at_least=0):
                     os.rename(n, "orphans/" + n, src_dir_fd=registry.fd, dst_dir_fd=fd)
                 finally:
                     os.close(fd)
+    # A child may exit while its retained pane stays open. Its record is already
+    # history when that pane eventually closes, so revisit only its remaining pad.
+    result["archived_scratchpads"] = []
+    history = Path(root) / "archive"
+    if history.is_dir():
+        for entry in history.iterdir():
+            if not re.fullmatch("[0-9a-f]{32}", entry.name) or entry.is_symlink() or not entry.is_dir():
+                continue
+            try:
+                old = json.loads(read_file(str(entry / "retired.json"), private=True))
+                pad = old.get("scratchpad")
+                target = old.get("target") or {}
+                if not pad or not Path(pad).exists() or pane_absent(old) is not True:
+                    continue
+                archived = scratch_archive(pad, target["session_id"], target["block_id"]) if apply else pad
+                result["archived_scratchpads"].append(archived)
+            except (Refusal, OSError, ValueError, KeyError):
+                result["unknown"] += 1
     result["live_after"] = result["live_before"] - (len(result["retired"]) if apply else 0)
     return result
 
@@ -332,7 +353,7 @@ def receipt(state, outcome, **extra):
     result = {k: state.get(k) for k in ("launch_id", "name", "owner", "purpose", "review_at", "profile", "target",
                                         "starter", "report_to", "phase", "tracked", "protocol_acknowledged",
                                         "brief_attempted", "brief_outcome", "immediate_child_term", "remote_child_term", "notifications",
-                                        "auto_prune")}
+                                        "auto_prune", "scratchpad", "scratch_pane_opened", "scratch_pane_receipt")}
     result["execution_host"] = state.get("execution", {}).get("host") if state.get("execution") else None
     result["immediate_child_role"] = "ssh_transport" if state.get("execution") else "agent_program"
     result.update(schema_version=1, kind="agents_result", outcome=outcome, agent_readiness="not_assessed",
@@ -538,7 +559,7 @@ def remote_exec(o):
     metadata = payload["metadata"]
     require(isinstance(metadata, dict) and set(metadata) == {"AGENT_SESSION", "AGENT_PANE", "REX_SESSION", "REX_BLOCK",
                                                            "AGENT_NAME", "AGENT_STARTER", "AGENT_REPORT_TO", "AGENT_LAUNCH_ID",
-                                                           "AGENT_REGISTRY"}, "invalid_compute_metadata")
+                                                           "AGENT_REGISTRY", "AGENT_SCRATCHPAD"}, "invalid_compute_metadata")
     require(all(isinstance(v, str) and "\0" not in v for v in metadata.values()), "invalid_compute_metadata")
     require(metadata["AGENT_LAUNCH_ID"] == payload["launch_id"], "compute_launch_mismatch")
     sid, bid = address_id(metadata["AGENT_SESSION"], "session"), address_id(metadata["AGENT_PANE"], "block")
@@ -832,6 +853,7 @@ def launch(o):
     require(type(profile.get("hook_events", False)) is bool, "invalid_hook_events")
     if profile.get("hook_events"):
         validate_adapter(profile.get("harness", o.profile), argv)
+    require(type(profile.get("scratch_pane", True)) is bool, "invalid_scratch_pane")
     execution, callbacks = execution_config(profile)
     delivery = delivery_config(profile.get("delivery"))
     require(not (delivery is not None and execution is not None), "remote_fenced_delivery_not_yet_supported")
@@ -865,6 +887,8 @@ def launch(o):
         review = o.review_at or now() + cfg.get("defaults", {}).get("review_after_ms", 3600000)
         require(type(review) is int and now() < review <= now() + 30 * 86400000, "invalid_review_at")
         brief = message(read_file(o.brief_file, 32768)) if o.brief_file else None
+        intent = scratch_line(profile["intent"] if "intent" in profile else
+                              next((line.strip() for line in (brief or "").splitlines() if line.strip()), purpose))
         launch_id, token = secrets.token_hex(16), secrets.token_hex(32)
         target = dict(host=host, server="unix://" + socket, session_id=session, block_id=None)
         starter = dict(host=host, server="unix://" + socket, session_id=ss, block_id=sb) if not human else None
@@ -877,7 +901,7 @@ def launch(o):
                      immediate_child_term=None, notifications={}, brief_file=None, protocol_file=None,
                      hook_events=profile.get("hook_events", False), client_path=os.environ.get("PATH", os.defpath),
                      rex_executable=os.environ.get("TEEREX_INTERNAL_REX"), delivery=delivery, execution=execution,
-                     callbacks=callbacks, remote_child_term=None, human=human)
+                     callbacks=callbacks, remote_child_term=None, human=human, scratch_pane=profile.get("scratch_pane", True))
         # Retire exited/never-started/pane-gone records before the cap can refuse a launch; history is archived.
         pruned = prune_records(root, apply=True, at_least=AUTO_PRUNE_AT)
         state["auto_prune"] = dict(retired=len(pruned["retired"]), live_before=pruned["live_before"])
@@ -900,6 +924,14 @@ def launch(o):
         if not succeeded(code, packet, "created_and_verified" if human else "created_and_attached"):
             return 1, receipt(state, "creation_uncertain", client_exit=code)
         block = state["target"]["block_id"]
+        scratchpad = scratch_init(session, block, name, purpose, scratch_line(intent))
+        state = update(root, launch_id, lambda s: s.update(scratchpad=scratchpad))
+        if state["scratch_pane"]:
+            side_code, side_packet = invoke(["surfaces", "open", "--socket", socket, "--session", session,
+                                            "--layout", "tiled", "--anchor", block, "--label", name + " scratchpad",
+                                            "--", RUNTIME, "scratch", "watch", "--session", session, "--block", block])
+            state = update(root, launch_id, lambda s: s.update(scratch_pane_receipt=side_packet,
+                            scratch_pane_opened=succeeded(side_code, side_packet, "created_and_verified")))
         code, packet = invoke(["jobs", "track", "--registry", root, "--socket", socket, "--session", session, "--block", block,
                                "--owner", owner, "--kind", "agent", "--purpose", purpose,
                                "--deadline-unix-ms", str(review), "--cleanup", "manual"])
@@ -934,6 +966,8 @@ def launch(o):
         protocol = ("Messaging protocol (not a task brief):\n"
                     f"Your name is {name}; your pane is {session} {block}.\n"
                     f"Your starter is {ss} {sb}; report-to is {rs} {rb}.\n"
+                    f"Your session scratchpad is {scratchpad} (AGENT_SCRATCHPAD).\n"
+                    "Keep its Now/To-do/Done current before and after every step; Now has at most one task.\n"
                     "Report stops, results, blockers and questions directly to report-to; never type into a registered human seat.\n"
                     "A finished turn is idle, not process death. Supply report bytes on stdin then EOF using:\n" +
                     shlex.join(report_command) + "\n" +
@@ -1143,7 +1177,7 @@ def supervise(o):
     metadata = dict(AGENT_SESSION=sid, AGENT_PANE=bid, REX_SESSION=sid, REX_BLOCK=bid, AGENT_NAME=state["name"],
                     AGENT_STARTER=(state["starter"]["session_id"] + " " + state["starter"]["block_id"]) if state["starter"] else "",
                     AGENT_REPORT_TO=(state["report_to"]["session_id"] + " " + state["report_to"]["block_id"]) if state["report_to"] else "",
-                    AGENT_LAUNCH_ID=o.launch_id, AGENT_REGISTRY=o.registry)
+                    AGENT_LAUNCH_ID=o.launch_id, AGENT_REGISTRY=o.registry, AGENT_SCRATCHPAD=state["scratchpad"])
     broker = Channel(o.registry, state) if state.get("delivery") is not None else None
     if broker is not None:
         metadata.pop("AGENT_REGISTRY")
@@ -1306,7 +1340,7 @@ def parser():
     source = q.add_mutually_exclusive_group(required=True)
     source.add_argument("--payload", help="Codex notify appends one JSON argv payload")
     source.add_argument("--event-file", help="normalized bounded Stop JSON file or stdin")
-    q = sub.add_parser("launch", help="create visible pane, track jobs, send protocol, await agent ACK, attempt brief once")
+    q = sub.add_parser("launch", help="create visible agent and scratchpad; profiles: intent, scratch_pane (default true); await ACK before brief")
     q.add_argument("--config", required=True)
     q.add_argument("--profile", required=True)
     for key in ("registry", "socket", "session", "name", "cwd", "starter-session", "starter-block", "report-to-session",

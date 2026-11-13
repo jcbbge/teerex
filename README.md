@@ -14,6 +14,7 @@ Licensed under [Apache-2.0](LICENSE) for teerex's original material. Third-party
 | Run a command in a visible tab and get its real exit and output | `run-visible` (`--detach` returns at once; `run-visible receipt` reads the result) |
 | Open, find, rename, move, focus or close panes and sessions | `surfaces open/ensure/resolve/rename/move/focus/close`, `surfaces session ensure` |
 | Start an agent that acknowledges its protocol before its brief, is tracked, and reports its stop | `agents launch` (from profiles), `agents human` (Josh types `claude`/`codex`/`pi`) |
+| Keep the current task and later work visible beside each agent | `scratch init/now/todo/done/show/path/watch` |
 | Message a pane without clobbering what someone is typing | `send` (typing guard on by default), `ask` (decision cards) |
 | Take a pane back from agents, and hand it back | `clutch take/release` (cooperative) |
 | Let a sandboxed child report back | `run-visible --channel-dir`, `agents channel`, `agents fence-probe` |

@@ -130,6 +130,9 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    const scratch = b.createModule(.{ .root_source_file = b.path("items/scratch/main.zig"), .target = target, .optimize = optimize });
+    exe.root_module.addImport("rex_scratch", scratch);
+    agents.addImport("rex_scratch", scratch);
     exe.root_module.addImport("rex_agents", agents);
     const channel = b.createModule(.{ .root_source_file = b.path("src/scoped_channel.zig"), .target = target, .optimize = optimize });
     agents.addImport("scoped_channel", channel);

@@ -15,6 +15,7 @@ const usage =
     \\  seat register|inspect|clear              Exact-address operator seat
     \\  inbox append|inspect|clear                    Private retained messages
     \\  ask                                          Complete typed decisions or explicit resolution
+    \\  scratch init|now|todo|done|show|path|watch  Per-pane working scratchpad
     \\  agents launch|profiles|shell|ack|deliver|inspect|stop|present
     \\         exec|exited|channel|fence-probe       Compute callbacks / local delivery / fence checks
     \\  spawn --profile NAME --profiles ABS           Managed protocol-ACK-before-brief launch
@@ -39,7 +40,7 @@ const usage =
     \\Where: configured command host; paths belong there, never silently uploaded.
     \\Why: report actual activity/results and unknowns, not infer readiness or completion.
     \\How: explicit config/host or socket/full IDs; no retries, fallback or autostart.
-    \\Python3.9+ is required for targets, boards, agents, recovery, records, fleet, cartridges, replay, mcp and palette install.
+    \\Python3.9+ is required for targets, boards, agents, recovery, records, scratch, fleet, cartridges, replay, mcp and palette install.
     \\Legacy direct-socket native tools do not require Python. SSH trust/key are explicit.
     \\Native call history adds no runtime dependency; missing end records stay unknown.
     \\Personal install/restart/close/config actions need their own authorization.
@@ -183,6 +184,7 @@ fn run(allocator: std.mem.Allocator) !void {
     if (std.mem.eql(u8, command, "send")) finish(allocator, try send(allocator, rest));
     if (std.mem.eql(u8, command, "boards")) finish(allocator, try @import("rex_boards").run(allocator, rest));
     if (std.mem.eql(u8, command, "seat") or std.mem.eql(u8, command, "inbox") or std.mem.eql(u8, command, "ask") or std.mem.eql(u8, command, "fleet")) finish(allocator, try @import("rex_boards").run(allocator, args));
+    if (std.mem.eql(u8, command, "scratch")) finish(allocator, try @import("rex_scratch").run(allocator, rest));
     if (std.mem.eql(u8, command, "agents")) finish(allocator, try @import("rex_agents").run(allocator, rest));
     if (std.mem.eql(u8, command, "spawn")) {
         var managed = false;
