@@ -81,8 +81,8 @@ class VisibleTest(unittest.TestCase):
                 "--app", "teerex-test", "--title", "Visible α command", *extra,
                 "--", *(argv if argv is not None else [sys.executable, "-c", script])]
 
-    def invoke(self, *args, **kwargs):
-        r = subprocess.run(self.command(*args, **kwargs), env=self.runtime_env, capture_output=True, text=True, timeout=20)
+    def invoke(self, *args, client_timeout=20, **kwargs):
+        r = subprocess.run(self.command(*args, **kwargs), env=self.runtime_env, capture_output=True, text=True, timeout=client_timeout)
         self.assertTrue(r.stdout, r.stderr)
         v = json.loads(r.stdout)
         if v.get("storage_retained") and not v.get("full_output_requested"):
@@ -249,7 +249,9 @@ for i in range(256):
  assert json.loads(data)['code']==1
 assert json.loads(data)['result']['failure_reason']=='channel_request_limit'
 """
-        result, packet = self.invoke(script, extra=self.channel_options(directory, block) + ["--timeout-ms", "60000"])
+        # 256 refused requests: allow the command's own 60 s budget on slow hosted Macs.
+        result, packet = self.invoke(script, extra=self.channel_options(directory, block) + ["--timeout-ms", "60000"],
+                                     client_timeout=75)
         self.assert_good(result, packet)
         lines = [json.loads(line) for line in (directory / "receipts.jsonl").read_text().splitlines()]
         self.assertEqual(len(lines), 256)
