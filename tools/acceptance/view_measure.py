@@ -7,6 +7,7 @@ stdlib subprocess timing/rusage and never access a personal endpoint or store.
 import argparse
 from concurrent.futures import ProcessPoolExecutor
 import json
+import hashlib
 import os
 from pathlib import Path
 import random
@@ -163,6 +164,9 @@ def main():
         p.error('invalid measurement bounds')
     out = Path(a.output)
     out.mkdir(parents=True, exist_ok=True)
+    source_revision = subprocess.check_output(['git', '-C', str(ROOT), 'rev-parse', 'HEAD'], text=True).strip()
+    binary_sha256 = hashlib.sha256(Path(a.teerex).read_bytes()).hexdigest()
+    driver_sha256 = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
     (out / 'runs.jsonl').write_text('')
     with tempfile.TemporaryDirectory(prefix='teerex-view-', dir='/tmp') as temp:
         root = Path(temp)
@@ -198,7 +202,7 @@ def main():
                 except subprocess.TimeoutExpired:
                     server.kill()
                     server.wait()
-    report = dict(schema_version=1, kind='presentation_view_measurement', rex=identity, workload=dict(warm_runs=a.warm_runs, duration=a.duration, delay_range=[a.delay_min, a.delay_max], concurrent_workers=a.workers, tick_ms=100), measurements={'view': measurements}, exclusions=['A3 requires externally owned latest-view capture', 'optional paid-harness arm not run', 'server/fixture costs excluded consistently in every arm', 'CPU/RSS use per-worker child rusage; maxrss is a worker lifetime maximum', 'delay draws deterministic seed 0; independent fixtures per arm'])
+    report = dict(schema_version=1, kind='presentation_view_measurement', source_revision=source_revision, binary_sha256=binary_sha256, driver_sha256=driver_sha256, rex=identity, workload=dict(warm_runs=a.warm_runs, duration=a.duration, delay_range=[a.delay_min, a.delay_max], concurrent_workers=a.workers, tick_ms=100), measurements={'view': measurements}, exclusions=['A3 requires externally owned latest-view capture', 'optional paid-harness arm not run', 'server/fixture costs excluded consistently in every arm', 'CPU/RSS use per-worker child rusage; maxrss is a worker lifetime maximum', 'delay draws deterministic seed 0; independent fixtures per arm'])
     (out / 'report.json').write_text(json.dumps(report, indent=2) + '\n')
     failed = sum(v['false_suppression'] for arm in measurements.values() for v in arm.values())
     lines = ['# Presentation view measurement', '', 'Synthetic disposable Rex only. No personal pane or harness transcript was read.', '', 'False suppression: ' + str(failed) + '.', '', 'Ratios below are A2 divided by the named arm; values below 1 are smaller. Calls and bytes are totals over cold plus warm runs. Wall time is warm median command execution time; A0 caller sleep is excluded.', '', '| Event | Reference | Calls | stdout bytes | Warm wall |', '|---|---|---:|---:|---:|']
@@ -209,6 +213,7 @@ def main():
             wall = x['wall_ms']['warm_median'] / y['wall_ms']['warm_median'] if a.warm_runs and y['wall_ms']['warm_median'] else float('nan')
             lines.append(f'| {event} | {reference} | {ratio("calls"):.4f} | {ratio("stdout_bytes"):.4f} | {wall:.4f} |')
     lines += ['', 'The view is opt-in. Ratios do not establish activity or completion. A2 is not better in fields with ratios ≥1. No benefit is claimed if false suppression is nonzero or contract gates fail.', '', 'F0/F1 payload ratios and CPU/RSS, launches, false wakes, detection latencies, hidden-tail unknowns and bytes to detect are in report.json. Hidden-tail events remain unknown and are excluded from false suppression because the event is outside acquired text. A3 and the optional agent arm were not run.']
+    lines += ['', 'Measured source: `' + source_revision + '`. Binary and driver SHA-256 values are in report.json.']
     (out / 'summary.md').write_text('\n'.join(lines) + '\n')
     return int(failed != 0)
 
