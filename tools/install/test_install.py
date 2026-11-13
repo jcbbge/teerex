@@ -6,10 +6,13 @@ Pass --public to additionally download and install the real alpha.1 release.
 """
 import hashlib
 import io
+import importlib.util
 import json
 import os
 from pathlib import Path
 import platform
+import shlex
+import shutil
 import struct
 import subprocess
 import sys
@@ -30,6 +33,21 @@ OLD = "v9.8.7-alpha.1"
 NEW = "v9.8.8-beta.2"
 
 
+def fixture_compiler():
+    if "CC" in os.environ:
+        command = shlex.split(os.environ["CC"])
+        if not command:
+            raise RuntimeError("CC is set but empty; select a C compiler for fixture builds")
+        return command
+    for name in ("cc", "clang"):
+        compiler = shutil.which(name)
+        if compiler:
+            return [compiler]
+    if importlib.util.find_spec("ziglang") is not None:
+        return [sys.executable, "-m", "ziglang", "cc"]
+    raise RuntimeError("Fixture builds require CC, cc/clang on PATH, or an importable ziglang package")
+
+
 class PlatformContract(unittest.TestCase):
     def test_help_and_unsupported_platform(self):
         result = subprocess.run(["/bin/bash", str(INSTALLER), "--help"], capture_output=True, text=True)
@@ -45,6 +63,7 @@ class PlatformContract(unittest.TestCase):
 class Lifecycle(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        compiler = fixture_compiler()
         cls.build_temp = tempfile.TemporaryDirectory(prefix="teerex-installer-stubs-")
         build = Path(cls.build_temp.name)
         cls.binaries = {}
@@ -55,8 +74,7 @@ class Lifecycle(unittest.TestCase):
                               'if (probe) { FILE *f = fopen(probe, "a"); if (f) { fputs("executed\\n", f); fclose(f); } } '
                               'puts("installer fixture ' + label + '"); return ' + str(status) + '; }\n')
             binary = build / label
-            compiler = "/usr/bin/clang" if MAC else "/usr/bin/cc"
-            subprocess.run([compiler, str(source), "-o", str(binary)], check=True, capture_output=True)
+            subprocess.run([*compiler, str(source), "-o", str(binary)], check=True, capture_output=True)
             cls.binaries[label] = binary.read_bytes()
 
     @classmethod

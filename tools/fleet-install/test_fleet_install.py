@@ -3,12 +3,14 @@
 import base64
 import hashlib
 import io
+import importlib.util
 import json
 import os
 from pathlib import Path
 import platform
 import pwd
 import shutil
+import shlex
 import struct
 import subprocess
 import sys
@@ -26,10 +28,26 @@ ARCHIVE_PLATFORM = "aarch64-macos" if MAC else "x86_64-linux"
 OLD, NEW, BAD = "v9.7.1-test", "v9.7.2-test", "v9.7.3-test"
 
 
+def fixture_compiler():
+    if "CC" in os.environ:
+        command = shlex.split(os.environ["CC"])
+        if not command:
+            raise RuntimeError("CC is set but empty; select a C compiler for fixture builds")
+        return command
+    for name in ("cc", "clang"):
+        compiler = shutil.which(name)
+        if compiler:
+            return [compiler]
+    if importlib.util.find_spec("ziglang") is not None:
+        return [sys.executable, "-m", "ziglang", "cc"]
+    raise RuntimeError("Fixture builds require CC, cc/clang on PATH, or an importable ziglang package")
+
+
 @unittest.skipUnless(SUPPORTED and os.getuid() != 0, "requires disposable supported non-root host")
 class FleetContract(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        compiler = fixture_compiler()
         cls.build_temp = tempfile.TemporaryDirectory(prefix="teerex-fleet-build-")
         cls.build = Path(cls.build_temp.name).resolve()
         cls.binaries = {}
@@ -37,7 +55,7 @@ class FleetContract(unittest.TestCase):
             source = cls.build / (tag + ".c")
             source.write_text('#include <stdio.h>\n#include <string.h>\nint main(int n,char**v){if(n==2&&!strcmp(v[1],"--version")){puts("teerex ' + output + '");return 0;}puts("native fleet help fixture");return 0;}\n')
             binary = cls.build / tag
-            subprocess.run(["/usr/bin/cc", str(source), "-o", str(binary)], check=True, capture_output=True)
+            subprocess.run([*compiler, str(source), "-o", str(binary)], check=True, capture_output=True)
             cls.binaries[tag] = binary.read_bytes()
 
     @classmethod
