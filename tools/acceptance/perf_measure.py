@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 import platform
 import signal
+import shutil
 import statistics
 import subprocess
 import sys
@@ -19,6 +20,15 @@ import tempfile
 import time
 
 ROOT = Path(__file__).resolve().parents[2]
+WORKLOADS = ('observe', 'watch_to_change', 'send_ignore', 'send_guard', 'send_guard_saved_draft', 'surfaces_open', 'surfaces_close', 'run_visible_small', 'agents_prune_plan', 'boards_calls', 'cartridges_list')
+
+class CommandFailed(RuntimeError):
+    def __init__(self, row, stdout, stderr):
+        self.row = row
+        try: self.receipt = json.loads(stdout)
+        except (ValueError, UnicodeError): self.receipt = {'non_json_stdout_bytes':len(stdout)}
+        self.diagnostic = stderr.decode('utf-8', 'replace')[-1500:]
+        super().__init__('measured command failed: exit ' + str(row['exit_code']))
 
 
 def measured(argv, env, after_start=None, timeout=30):
@@ -52,7 +62,7 @@ def measured(argv, env, after_start=None, timeout=30):
                    maxrss_kib=usage.ru_maxrss / (1024 if sys.platform == 'darwin' else 1),
                    stdout_bytes=len(stdout), stderr_bytes=len(stderr), exit_code=p.returncode)
         if p.returncode:
-            raise RuntimeError('measured command failed: exit ' + str(p.returncode) + '; diagnostic=' + stderr.decode('utf-8', 'replace')[-1500:])
+            raise CommandFailed(row, stdout, stderr)
         return row, json.loads(stdout)
 
 
@@ -127,11 +137,17 @@ class Fixture:
         n = self.args.warm_runs + 1
         results, observations = {}, {}
         def collect(name, command, validate=lambda value: None, prepare=None, finish=None, cause=None):
+            if self.args.workload and name not in self.args.workload: return
             rows = []
             for i in range(n):
                 if prepare: prepare(i)
                 argv, start_hook = command(i)
-                row, packet = measured(self.cli + argv, self.env, start_hook)
+                try:
+                    row, packet = measured(self.cli + argv, self.env, start_hook)
+                except CommandFailed as exc:
+                    self.args.output.mkdir(parents=True, exist_ok=True)
+                    (self.args.output / 'failure.json').write_text(json.dumps(dict(machine=self.args.machine, workload=name, trial=i, metrics=exc.row, receipt=exc.receipt, diagnostic=exc.diagnostic), indent=2)+'\n')
+                    raise
                 validate(packet)
                 if finish: finish(packet)
                 rows.append(row)
@@ -153,13 +169,17 @@ class Fixture:
         else: raise RuntimeError('watch fixture did not start')
         baseline = self.root / 'baseline.json'
         expected_watch = {}
+        def trigger_watch(i):
+            pending = gate.with_suffix('.next')
+            pending.write_text(str(i))
+            pending.replace(gate)
         def watch_prepare(i):
             expected_watch['index'] = str(i)
             baseline.write_text(json.dumps(self.invoke(['observe', *self.target(sid, bid)])))
         def watch_valid(packet):
             if packet['outcome'] != 'change_observed' or gate.with_suffix('.emitted').read_text() != expected_watch['index']:
                 raise RuntimeError('watch did not detect the intended fixture event')
-        collect('watch_to_change', lambda i: (['watch', *self.target(sid, bid), '--baseline', str(baseline), '--timeout-ms', '5000'], lambda: gate.write_text(str(i))), prepare=watch_prepare, validate=watch_valid,
+        collect('watch_to_change', lambda i: (['watch', *self.target(sid, bid), '--baseline', str(baseline), '--timeout-ms', '5000'], lambda: trigger_watch(i)), prepare=watch_prepare, validate=watch_valid,
                 cause='Includes a controlled 100ms event delay and the default 250ms polling interval; baseline collection excluded.')
         message = self.root / 'message'; message.write_text('synthetic qualification message')
         for mode in ('ignore', 'guard'):
@@ -187,12 +207,14 @@ class Fixture:
             packet = self.invoke(['surfaces', 'open', *self.pane(), '--layout', 'tab', '--label', 'qualification-close', '--', '/bin/cat'])
             opened['bid'] = packet['created']['block_id']
         collect('surfaces_close', lambda i: (['surfaces', 'close', *self.pane(), '--pane', opened['bid']], None), prepare=prepare_close)
+        true_executable = shutil.which('true')
+        if true_executable is None: raise RuntimeError('system true executable unavailable')
         envfile = self.root / 'env.json'; envfile.write_text('{}'); envfile.chmod(0o600)
         def visible_valid(p):
             if not p['success'] or p['exit_report']['exit_code'] != 0: raise RuntimeError('visible small command lacked exit0/cleanup proof')
             observations['run_visible_cleanup'] = dict(outcome=p['outcome'], exit_code=p['exit_report']['exit_code'], block_absence_verified=p['cleanup']['block_absence_verified'])
-        collect('run_visible_small', lambda i: (['run-visible', '--socket', str(self.socket), '--session', self.sid, '--cwd', str(self.root), '--env-file', str(envfile), '--stdin-file', '/dev/null', '--app', 'qualification', '--title', 'Small command', '--timeout-ms', '10000', '--', '/bin/true'], None), validate=visible_valid,
-                cause='Python foreground controller plus visible placement, identity/permit handshake, child exit and verified pane cleanup. No shell command work (/bin/true).')
+        collect('run_visible_small', lambda i: (['run-visible', '--socket', str(self.socket), '--session', self.sid, '--cwd', str(self.root), '--env-file', str(envfile), '--stdin-file', '/dev/null', '--app', 'qualification', '--title', 'Small command', '--timeout-ms', '10000', '--', true_executable], None), validate=visible_valid,
+                cause='Python foreground controller plus visible placement, identity/permit handshake, child exit and verified pane cleanup. No shell command work (system true executable selected on this host).')
         registry = self.root / 'registry'; registry.mkdir(mode=0o700)
         collect('agents_prune_plan', lambda i: (['agents', 'prune', '--registry', str(registry)], None), cause='Empty private registry; Python entry and plan/registry validation only, no live-agent retirement.')
         collect('boards_calls', lambda i: (['boards', 'calls', '--once', '--json', '--limit', '32'], None), cause='Reads only this fixture private call log, with up to 32 metadata entries; no message bodies or remote hosts.')
@@ -208,6 +230,7 @@ def main():
     p.add_argument('--source-revision', required=True)
     p.add_argument('--output', type=Path, required=True)
     p.add_argument('--warm-runs', type=int, default=20)
+    p.add_argument('--workload', action='append', choices=WORKLOADS, help='select explicit workloads; default is all')
     a = p.parse_args()
     if a.warm_runs < 0: p.error('warm-runs must be nonnegative')
     a.rex, a.teerex = str(Path(a.rex).resolve()), str(Path(a.teerex).resolve())
@@ -220,7 +243,7 @@ def main():
                   identity=dict(label_basis='explicit_caller_label', system=platform.system(), release=platform.release(), machine=platform.machine(), python=platform.python_version(), rex=fixture.identity),
                   source_revision=a.source_revision, binary_sha256=hashlib.sha256(Path(a.teerex).read_bytes()).hexdigest(),
                   driver_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(), warm_runs=a.warm_runs,
-                  qualified_warm_count=a.warm_runs >= 20, measurements=results, receipt_evidence=observations,
+                  qualified_warm_count=a.warm_runs >= 20, requested_workloads=a.workload or list(WORKLOADS), measurements=results, receipt_evidence=observations,
                   scope='Local command host against own API13 server; no personal state. Cold is first invocation, no OS cache flush.',
                   excluded=['server startup and resident server CPU/RSS', 'fixture preparation and teardown', 'SSH transport', 'caller Python CPU/RSS'],
                   rss_scope='Per invocation wait4 rusage, KiB; includes waited helper descendants, not resident Rex server or arbitrary detached processes.')
