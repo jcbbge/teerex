@@ -8,7 +8,7 @@ teerex is the only way agents use Rex. Every pane, read, wait, run, launch, mess
 
 - A pane is a Rex **block**. You address it by session and block: `session:UUID` and `block:UUID`.
 - Your own pane is in `REX_SESSION`/`REX_BLOCK` (over ssh: `LC_REX_SESSION`/`LC_REX_BLOCK`).
-- The server socket is in `REX_SERVER` as `unix://…`. Decode it, or use the personal path: `/run/user/$UID/rex/server.sock` on hive, `~/Library/Application Support/rex/server.sock` on a Mac.
+- **The socket:** `observe`, `watch`, `run-visible`, `send`, `spawn`, `doctor` and `run` fill in `--socket` for you, from `REX_SERVER` or else the personal server, so you can leave it out. For other verbs (`surfaces`, `jobs`, `agents`), pass `--socket /run/user/$UID/rex/server.sock` on hive, or `~/Library/Application Support/rex/server.sock` on a Mac. `REX_SERVER` is often empty inside agent panes.
 - **Labels and short ids work.** A command that needs a canonical id gets one from `teerex surfaces resolve`:
 
 ```sh
@@ -20,8 +20,10 @@ teerex surfaces resolve --socket "$S" --session rivet --pane "codex-feat20"   # 
 ## Read and wait
 
 ```sh
-teerex observe --socket "$S" --session "$SES" --block "$B" > before.json            # bounded, attributed read
-teerex watch   --socket "$S" --session "$SES" --block "$B" --baseline before.json \
+teerex observe --session "$SES" --block "$B" --tail                                 # newest output; text is in .capture.content
+teerex observe --session "$SES" --block "$B" --state                                # is that agent idle, working or waiting?
+teerex observe --session "$SES" --block "$B" > before.json                          # a baseline for watch
+teerex watch   --session "$SES" --block "$B" --baseline before.json \
                --status-state done --status-state error --no-deadline                # wake on done OR error
 teerex compare --before before.json --after after.json [--view progress-v1]          # offline
 ```
@@ -34,11 +36,13 @@ teerex compare --before before.json --after after.json [--view progress-v1]     
 ## Run a command visibly
 
 ```sh
-teerex run-visible --socket "$S" --session "$SES" --cwd "$PWD" --env-file env.json --stdin-file /dev/null \
+teerex run-visible --session "$SES" --cwd "$PWD" --env-file env.json --stdin-file /dev/null \
   --app build --title "make test" --timeout-ms 600000 -- make test
 ```
 
 - The command runs in a tab Josh can see, and you get back its real exit code and its output.
+- `--env-file` is a JSON object that **replaces** the whole environment, so include at least `PATH`: `printf '{"PATH":"/usr/bin:/bin"}' > env.json`. Use `--stdin-file /dev/null` for no input.
+- teerex itself exits 1 when your command fails. Your command's own exit code is in the result at `exit_report.exit_code`; read that, not teerex's exit status.
 - Long or unbounded work: use `--no-deadline`.
 - Track it as a job: add `--registry … --owner … --purpose …`.
 - Let a sandboxed child report back:
