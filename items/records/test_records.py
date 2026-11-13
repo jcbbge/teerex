@@ -613,10 +613,10 @@ class LiveRecordsTest(RecordsFixture):
         envfile = self.root / "env.json"
         envfile.write_text("{}")
         envfile.chmod(0o600)
-        for label, program, code in (("failure", "/bin/false", 1), ("success", "/bin/true", 0)):
+        for label, code in (("failure", 1), ("success", 0)):
             value = self.raw("run-visible", "--socket", self.socket, "--session", self.session, "--cwd", self.root,
                              "--env-file", envfile, "--stdin-file", "/dev/null", "--app", "records", "--title", label,
-                             "--output-dir", self.root / label, "--", program, code=code)
+                             "--output-dir", self.root / label, "--", sys.executable, "-c", "import sys; sys.exit(" + str(code) + ")", code=code)
             path = self.root / (label + ".json")
             path.write_text(json.dumps(value))
             packets.append(path)
