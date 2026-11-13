@@ -241,7 +241,7 @@ end
 local blocks=call("session.list_blocks",{session_id=a.session_id}).blocks or {}
 local target
 for _,b in ipairs(blocks) do if b.block_id==a.block_id then target=b end end
-local result={placement=target and target.placement or "absent",block_id=a.block_id,focus_requested=false}
+local result={placement=target and target.placement or "absent",block_id=a.block_id,label=target and target.label,focus_requested=false}
 if a.operation=="forward" and target and target.placement=="detached" then
  local view=call("session.view",{session_id=a.session_id})
  local anchor
@@ -1266,11 +1266,8 @@ def turn_report_rule(root, state, kind):
                     address = candidate.get("target") or {}
                     if all(address.get(k) == target.get(k) for k in ("session_id", "block_id")):
                         names.add(candidate.get("name"))
-                code, packet = invoke(["surfaces", "inspect", "--socket", state["socket"],
-                    "--session", target["session_id"], "--pane", target["block_id"]],
-                    client_path=state["client_path"], rex_executable=state["rex_executable"])
-                if not code and isinstance(packet, dict):
-                    names.add((packet.get("actual") or {}).get("label"))
+                packet = detached_operation(dict(state, target=target), "inspect")
+                names.add(packet.get("label"))
             if on in names:
                 return "waiting_on_report_to_or_seat"
         return "progress_turn_suppressed"

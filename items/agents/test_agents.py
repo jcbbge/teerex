@@ -534,6 +534,30 @@ class AgentsTest(unittest.TestCase):
         stops = [e for e in timeline["events"] if e["event"] in ("Stop", "StopFailure")]
         self.assertEqual(len(stops), len(cases))
         self.assertEqual(stops[0]["delivery_rule"], "progress_turn_suppressed")
+    def test_waiting_report_matches_detached_report_to_label(self):
+        log = self.work / "detached-report-to.jsonl"
+        made = self.rpc("session.new_block", dict(session_id=self.session,
+            flavor="com.superlogical.terminal.shell", label="detached-lead",
+            options=dict(shell="none", command=[sys.executable, str(self.fixture), str(log), "noack"],
+                         exit=dict(on_completion=False))))
+        block = made["block_id"]
+        wait_for(lambda: events(log))
+        self.rpc("session.move_block", dict(session_id=self.session, block_id=block,
+            anchor_block_id=self.starter, direction="horizontal", side="after", ratio=2/3))
+        self.settings["defaults"].update(report_to_session=self.session, report_to_block=block)
+        p, launched = self.launch()
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.rpc("session.detach_block", dict(session_id=self.session, block_id=block))
+        pad = Path(launched["scratchpad"])
+        pad.write_text("# worker\nWaiting: detached-lead · review · since 2026-11-13T00:00:00Z\n\n## Now\n- [ ] integrate\n\n## To-do\n- [ ] test\n\n## Done\n")
+        event = self.work / "detached-report.json"
+        event.write_text(json.dumps(dict(hook_event_name="Stop", last_assistant_message="review needed")))
+        p, result = self.run_cli("stop", "--registry", str(self.registry), "--launch-id", launched["launch_id"],
+                                "--event-file", str(event))
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertEqual(result["delivery_rule"], "waiting_on_report_to_or_seat")
+        wait_for(lambda: any(v["event"] == "input" and "review needed" in v["payload"] for v in events(log)))
+
     def test_turn_end_notifies_waiters_and_wakes_done_then_report_once(self):
         p, launched = self.launch()
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
