@@ -414,7 +414,9 @@ exec(compile(source, sys.argv[0], "exec"), {"__name__": "__main__"})
         prefix = [sys.executable, "-I", str(interpreter), str(CLI)] if PREFIX == [sys.executable, str(CLI)] else PREFIX
         command = prefix + ["--root", str(self.root), "install", "alpha", "--catalog", str(self.catalog), "--apply"]
         env = dict(self.env, PATH=str(self.home) + os.pathsep + self.env.get("PATH", ""))
-        process = subprocess.Popen(command, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        # A background job may inherit SIGINT as ignored; the contract is about default disposition.
+        process = subprocess.Popen(command, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                                   preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_DFL))
         try:
             with selectors.DefaultSelector() as ready:
                 ready.register(process.stdout, selectors.EVENT_READ)
