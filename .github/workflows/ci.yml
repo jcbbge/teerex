@@ -244,6 +244,18 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y bubblewrap openssh-server
           sudo install -d -m 755 /run/sshd
+          # Ubuntu restricts unprofiled user namespaces. Grant only the fixture's
+          # bwrap executable; never disable the system-wide AppArmor restriction.
+          cat > "$RUNNER_TEMP/teerex-ci-bwrap.apparmor" <<'PROFILE'
+          abi <abi/4.0>,
+          include <tunables/global>
+          profile teerex-ci-bwrap /usr/bin/bwrap flags=(unconfined) {
+            userns,
+          }
+          PROFILE
+          sudo apparmor_parser --skip-kernel-load "$RUNNER_TEMP/teerex-ci-bwrap.apparmor"
+          sudo apparmor_parser --add "$RUNNER_TEMP/teerex-ci-bwrap.apparmor"
+          sysctl kernel.apparmor_restrict_unprivileged_userns
           bwrap --ro-bind / / /bin/true
 
       - name: Run API13 boards, managed agent and recovery integration
