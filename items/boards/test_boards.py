@@ -404,17 +404,23 @@ Recommendation: Leave and notify owner; it is not ours to remove.""")
         p.stderr.close()
         self.assertEqual(self.inspect()["seats"][0]["records"], [])
         for sig in (signal.SIGINT, signal.SIGTERM):
-            command[-1] = "2000"
-            p = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-            p.stdin.write("cancel before EOF")
-            p.stdin.flush()
-            time.sleep(.1)
-            p.send_signal(sig)
-            self.assertEqual(p.wait(timeout=3), 128 + sig)
-            self.assertEqual(json.loads(p.stdout.read())["outcome"], "cancelled")
-            p.stdin.close()
-            p.stdout.close()
-            p.stderr.close()
+            command[-1] = "10000"
+            reader, writer = os.pipe()
+            with os.fdopen(reader, "rb") as source, os.fdopen(writer, "wb") as producer:
+                with subprocess.Popen(command, stdin=source, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) as p:
+                    producer.write(b"cancel before EOF")
+                    producer.flush()
+                    # Consumption proves the helper reached its guarded stdin loop;
+                    # a fixed sleep can signal Python before its handlers exist.
+                    deadline = time.monotonic() + 3
+                    while struct.unpack("I", fcntl.ioctl(source, termios.FIONREAD, struct.pack("I", 0)))[0]:
+                        self.assertIsNone(p.poll(), "helper exited before reading partial stdin")
+                        self.assertLess(time.monotonic(), deadline, "helper never consumed partial stdin")
+                        time.sleep(.01)
+                    p.send_signal(sig)
+                    out, err = p.communicate(timeout=3)
+                    self.assertEqual(p.returncode, 128 + sig, out + err)
+                    self.assertEqual(json.loads(out)["outcome"], "cancelled")
             self.assertEqual(self.inspect()["seats"][0]["records"], [])
 
     def test_named_host_partial_failures_never_omit_rows(self):
