@@ -254,13 +254,6 @@ def scratch_turn(state, event, path):
                 (baseline["now"] != progress["now"] or
                  (not data["now"] and baseline["done"] != progress["done"] and
                   progress["done_count"] > baseline.get("done_count", 0))))
-        # Older managed callers have only a turn time, until their next prompt snapshot.
-        if baseline is None:
-            try:
-                parsed = datetime.datetime.fromisoformat(updated.replace("Z", "+00:00"))
-                fresh = fresh or bool(data["now"] and parsed.tzinfo is not None and parsed.timestamp() * 1000 >= start)
-            except ValueError:
-                pass
         reason = "progress_or_waiting" if fresh else "no_progress_or_waiting"
     except (OSError, ValueError) as exc:
         fresh, reason = False, type(exc).__name__
