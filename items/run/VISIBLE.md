@@ -50,6 +50,12 @@ teerex --rex /absolute/rex run-visible \
 
 The address strings above are placeholders; use actual canonical lowercase UUIDs. `--app` matches `[A-Za-z0-9_.+-]{1,32}`. Title is1..128 UTF-8 bytes with no C0/C1/DEL controls. Title also labels the placed terminal; every emitted status repeats app/title because an OSC report replaces its record. Status protocol: [official OSC7501 reference](https://www.superlogical.com/rex/docs/build/program-status).
 
+### Optional jobs responsibility
+
+Supply `--registry ABS --owner LABEL --purpose TEXT` together, or omit all three. After verified placement and pane identity, the controller calls its current executable's `jobs track` with kind `command`, cleanup `manual`, and a review deadline calculated immediately before tracking from the execution budget (30 days, jobs' maximum, for `--no-deadline`). This review timestamp is metadata, not enforcement; the helper's execution clock still starts after the permit. Tracking must return a verified registration before argv is permitted. A tracking failure starts no argv and requests owned-pane close, even with `--keep-open`.
+
+On exit, deadline or cancellation, the controller lists the selected registry to obtain the current generation, then makes at most one `jobs forget` attempt under the original owner label. Adoption/owner changes, contention or transport failure remain visible rather than authorizing an overwrite. An opted-in receipt adds `jobs` with track outcome, generation, forget outcome and bounded operation receipts. Failed forget retains the program's actual exit evidence and success calculation; inspect the registry and reconcile it explicitly. No registry format is duplicated. No jobs field or registry call is added when these flags are absent.
+
 ### Budgets and raw output
 
 - `--max-bytes`: combined raw **first-arrival prefix** retention across stdout/stderr, default4096, range1..65536. Per-stream ordering is preserved; cross-stream read order is not original write ordering. UTF-8 is decoded only after collection; an invalid/split retained prefix is base64, preserving exact bytes including binary/NUL/trailing newlines.

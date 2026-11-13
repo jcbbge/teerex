@@ -54,3 +54,7 @@ Combined teerex source now wires the root verb/host injection and passes the new
 ## Rivet LONG steps (source follow-on)
 
 The native runner now accepts `--no-deadline` instead of `--timeout-ms` for LONG steps. Pass one or the other; the default remains 10000 ms. Execution ends on actual child exit or SIGINT/SIGTERM, with startup/cleanup budgets unchanged and `limits.execution_ms:null`. The earlier candidate patch above still supplies a finite budget; the Rivet owner must explicitly choose the new flag when updating its adapter. This source change neither applies that patch nor changes a service.
+
+## Rivet responsibility mapping (source follow-on)
+
+Pass `--registry ABS --owner rivet --purpose 'item · step'` to track the visible command before it starts and forget its current generation after it ends. All three flags are required together. The controller uses native jobs track/list/forget and reports them in `jobs`; Rivet should inspect a failed forget without repeating execution. Unlimited steps use a 30-day review timestamp, not a 30-day execution deadline. Omitting the flags preserves the original adapter behavior.

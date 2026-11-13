@@ -255,6 +255,32 @@ def capture(root, stream, maximum, result):
                 complete=bool(result and result["pipes_eof"] and seen == len(data)))
 
 
+def forget_job(runtime, pin, packet):
+    jobs = packet.get("jobs")
+    if not jobs or jobs["generation"] is None or jobs["forget_outcome"] != "not_attempted":
+        return
+    jobs["forget_outcome"] = "uncertain"
+    try:
+        listing = invoke(runtime, pin, ["jobs", "list", "--registry", jobs["registry"]])
+        jobs["lookup"] = listing
+        if listing["code"] or not listing["receipt"] or listing["receipt"].get("kind") != "jobs_list":
+            jobs["forget_outcome"] = "lookup_failed"
+            return
+        entry = next((e for e in listing["receipt"]["entries"] if e["socket"] == packet["server"][7:]
+                      and e["session_id"] == packet["session_id"] and e["block_id"] == packet["created"]["block_id"]), None)
+        if entry is None:
+            jobs["forget_outcome"] = "registration_absent"
+            return
+        transport = invoke(runtime, pin, ["jobs", "forget", "--registry", jobs["registry"],
+                           "--socket", packet["server"][7:], "--session", packet["session_id"],
+                           "--block", packet["created"]["block_id"], "--owner", jobs["owner"],
+                           "--generation", str(entry["generation"]), "--reason", "run-visible ended; exit evidence is separate"])
+        jobs["forget"] = transport
+        jobs["forget_outcome"] = "forgotten" if transport["code"] == 0 and transport["receipt"] and transport["receipt"].get("outcome") == "record_forgotten" else "failed_or_uncertain"
+    except (OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError) as exc:
+        jobs.update(forget_outcome="failed_or_uncertain", failure_reason=str(exc)[:600])
+
+
 def controller(runtime, source, args):
     global RECEIPT
     parser = argparse.ArgumentParser(prog="teerex run-visible", description=(
@@ -265,6 +291,9 @@ def controller(runtime, source, args):
         "Closing a pane does not prove descendant/remote death; SIGKILL/controller loss cannot guarantee cleanup."))
     for name in ("socket", "session", "cwd", "env-file", "stdin-file", "app", "title"):
         parser.add_argument("--" + name, required=True)
+    parser.add_argument("--registry", help="opt-in existing private jobs registry; requires --owner and --purpose")
+    parser.add_argument("--owner", help="jobs responsibility label (requires --registry and --purpose)")
+    parser.add_argument("--purpose", help="jobs purpose text (requires --registry and --owner)")
     parser.add_argument("--layout", choices=("tab", "tiled"), default="tab")
     parser.add_argument("--anchor")
     parser.add_argument("--direction", choices=("left", "right", "up", "down"))
@@ -281,10 +310,12 @@ def controller(runtime, source, args):
     o.timeout_ms = None if o.no_deadline else (o.timeout_ms if o.timeout_ms is not None else 10000)
     if not o.argv or o.argv[0] != "--" or len(o.argv) < 2 or not o.argv[1]:
         parser.error("-- and nonempty argv required")
-    for name in ("socket", "cwd", "env_file", "stdin_file", "output_dir"):
+    for name in ("socket", "cwd", "env_file", "stdin_file", "output_dir", "registry"):
         path = getattr(o, name)
         if path is not None and not os.path.isabs(path):
             parser.error(name + " must be absolute")
+    if any(v is not None for v in (o.registry, o.owner, o.purpose)) and not all(v is not None for v in (o.registry, o.owner, o.purpose)):
+        parser.error("--registry, --owner and --purpose require all three or none")
     if not re.fullmatch(r"session:[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}", o.session):
         parser.error("full lowercase session ID required")
     if (o.layout == "tiled") != bool(o.anchor) or (o.layout == "tab" and (o.direction or o.ratio is not None)):
@@ -345,6 +376,8 @@ def controller(runtime, source, args):
                   limits=dict(startup_ms=o.startup_ms, execution_ms=o.timeout_ms, max_bytes=o.max_bytes, full_output_bytes=FILE_LIMIT))
     if o.no_deadline:
         packet["timeout_ms"] = None
+    if o.registry:
+        packet["jobs"] = dict(registry=o.registry, owner=o.owner, purpose=o.purpose, track_outcome="not_attempted", generation=None, forget_outcome="not_attempted")
     RECEIPT = packet
     started = time.monotonic()
     end = started + o.startup_ms / 1000
@@ -368,8 +401,24 @@ def controller(runtime, source, args):
                 if ready != dict(machine=identity, session_id=o.session, block_id=bid):
                     reason = "foreign_pane_host_or_identity_refused"
                 else:
-                    save(root / "permit.json", ready)
-                    permitted = True
+                    if o.registry:
+                        jobs = packet["jobs"]
+                        # Jobs review is metadata only; the helper enforces its independent execution budget.
+                        deadline_ms = int(time.time() * 1000) + (o.timeout_ms if o.timeout_ms is not None else 30 * 86400000)
+                        jobs["track_outcome"] = "uncertain"
+                        tracked = invoke(runtime, pin, ["jobs", "track", "--registry", o.registry, *common, "--block", bid,
+                                         "--owner", o.owner, "--kind", "command", "--purpose", o.purpose,
+                                         "--deadline-unix-ms", str(deadline_ms), "--cleanup", "manual"])
+                        jobs["track"] = tracked
+                        entry = tracked["receipt"].get("entry") if tracked["receipt"] else None
+                        if tracked["code"] != 0 or not entry or tracked["receipt"].get("outcome") != "verified":
+                            jobs["track_outcome"] = "failed_or_uncertain"
+                            reason = "jobs_tracking_failed"
+                        else:
+                            jobs.update(track_outcome="tracked", generation=entry["generation"])
+                    if not reason and not STOP:
+                        save(root / "permit.json", ready)
+                        permitted = True
                 break
             time.sleep(.02)
         if not permitted and reason is None:
@@ -416,6 +465,7 @@ def controller(runtime, source, args):
         packet[stream]["full_complete"] = bool(o.output_dir and result and result["pipes_eof"] and result["stop_reason"] != "full_output_limit_exceeded")
     cleanup_ok = packet["pane_retained_on_request"] or packet["cleanup"]["block_absence_verified"]
     packet["success"] = bool(result and packet["outcome"] == "exit_reported" and result["exit_code"] == 0 and cleanup_ok)
+    forget_job(runtime, pin, packet)
     packet["elapsed_ms"] = int((time.monotonic() - started) * 1000)
     save(root / "controller.json", packet)
     # Unknown create/close/result outcomes keep all evidence; never remove files an uncertain pane may need.
@@ -451,6 +501,7 @@ def main():
                     packet["cleanup"]["transport"] = invoke(sys.argv[1], pin, ["surfaces", "close", "--socket",
                         packet["server"][7:], "--session", packet["session_id"], "--pane", packet["created"]["block_id"]])
                 # Keep unknown: this exception path did not finish verifying the close receipt.
+        forget_job(sys.argv[1], os.environ.get("TEEREX_INTERNAL_REX") or os.environ.get("TEEREX_REX"), packet)
         print(json.dumps(packet, ensure_ascii=True), flush=True)
         return 1
 

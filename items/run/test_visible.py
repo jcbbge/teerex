@@ -110,6 +110,63 @@ class VisibleTest(unittest.TestCase):
         self.anchor = json.loads(r.stdout)["created"]["block_id"]
         return self.anchor
 
+    def test_optional_jobs_track_during_run_and_forget_after(self):
+        registry = self.work / "jobs"
+        registry.mkdir(mode=0o700)
+        gate, started = self.work / "gate", self.work / "started"
+        script = (f"import pathlib,time;pathlib.Path({str(started)!r}).touch()\n"
+                  f"while not pathlib.Path({str(gate)!r}).exists(): time.sleep(.02)")
+        process = subprocess.Popen(self.command(script, extra=["--registry", str(registry), "--owner", "rivet", "--purpose", "item · step", "--no-deadline"]),
+                                   env=self.runtime_env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            for _ in range(250):
+                if started.exists() or process.poll() is not None:
+                    break
+                time.sleep(.02)
+            self.assertTrue(started.exists())
+            listing = json.loads(subprocess.check_output([BIN, "jobs", "list", "--registry", str(registry)]))
+            self.assertEqual(len(listing["entries"]), 1)
+            entry = listing["entries"][0]
+            self.assertEqual((entry["owner"], entry["purpose"], entry["kind"], entry["cleanup"]), ("rivet", "item · step", "command", "manual"))
+            self.assertIn(entry["block_id"], self.blocks())
+            self.assertGreater(entry["deadline_unix_ms"], int(time.time() * 1000) + 29 * 86400000)
+            gate.touch()
+            stdout, stderr = process.communicate(timeout=10)
+            self.assertEqual(process.returncode, 0, stderr + stdout)
+            receipt = json.loads(stdout)
+            self.assertEqual(receipt["jobs"]["track_outcome"], "tracked")
+            self.assertEqual(receipt["jobs"]["generation"], entry["generation"])
+            self.assertEqual(receipt["jobs"]["forget_outcome"], "forgotten")
+            self.assertEqual(json.loads(subprocess.check_output([BIN, "jobs", "list", "--registry", str(registry)]))["entries"], [])
+        finally:
+            gate.touch()
+            if process.poll() is None:
+                process.terminate()
+                process.communicate(timeout=10)
+
+    def test_optional_jobs_partial_flags_track_failure_and_forget_failure(self):
+        registry = self.work / "jobs"
+        registry.mkdir(mode=0o700)
+        for flags in (["--registry", str(registry)], ["--owner", "rivet"], ["--purpose", "step"],
+                      ["--registry", str(registry), "--owner", "rivet"]):
+            result = subprocess.run(self.command(extra=flags), env=self.runtime_env, capture_output=True, text=True, timeout=10)
+            self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+            self.assertEqual(self.blocks(), set())
+        marker = self.work / "must-not-run"
+        r, v = self.invoke(f"import pathlib;pathlib.Path({str(marker)!r}).touch()", extra=[
+                           "--registry", str(self.work / "missing"), "--owner", "rivet", "--purpose", "refuse"])
+        self.assertEqual(r.returncode, 1)
+        self.assertEqual(v["outcome"], "jobs_tracking_failed")
+        self.assertIsNone(v["exit_report"])
+        self.assertFalse(marker.exists())
+        self.assertTrue(v["cleanup"]["block_absence_verified"])
+        r, v = self.invoke(f"import os;os.chmod({str(registry)!r},0o755)", extra=[
+                           "--registry", str(registry), "--owner", "rivet", "--purpose", "failed forget"])
+        self.assert_good(r, v)
+        self.assertEqual(v["exit_report"]["exit_code"], 0)
+        self.assertEqual(v["jobs"]["forget_outcome"], "lookup_failed")
+        registry.chmod(0o700)
+
     def test_no_deadline_exit_cancellation_and_conflicting_timeout(self):
         r, v = self.invoke("import time;time.sleep(10.2);print('past default')", extra=["--no-deadline"])
         self.assert_good(r, v)
