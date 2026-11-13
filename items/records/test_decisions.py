@@ -38,7 +38,7 @@ class Decisions(RecordsFixture):
         return self.call("pin", "add", "--id", "a", "--by", "worker", "--type", typ, "--target", target, *args)
 
     def claim(self, text, depends="", *args):
-        return self.call("add", "claim", "--id", "a", "--by", "worker", "--text", text, "--basis", "inferred", "--depends-on", depends, *args)
+        return self.call("add", "claim", "--id", "a", "--by", "claim-author", "--text", text, "--basis", "inferred", "--depends-on", depends, *args)
 
     def decide(self, code=0):
         return self.call("decide", "--id", "a", "--by", "worker", "--expect-generation", self.gen(), fields=self.k, code=code)
@@ -156,6 +156,7 @@ class Decisions(RecordsFixture):
         self.assertNotIn(str(self.evidence), json.dumps(v))
         self.assertEqual(v["pins"][0]["last_value"], "teerex alpha.5")
         self.assertEqual(v["claims"][0]["status"], "provisional")
+        self.assertEqual(v["claims"][0]["status_history"][0]["by"], "claim-author")
         md = self.call("export", "--id", "a", "--format", "md")
         self.assertIn("Use one collector", md)
         self.assertIn("CLOSED:NOT_PLANNED", md)

@@ -1000,7 +1000,9 @@ def decision_validate(r):
                 require(x.get("condition") == "changes" or isinstance(x.get("condition"), dict) and set(x["condition"]) == {"becomes"} and isinstance(x["condition"]["becomes"], str), "invalid_field:invalidator.condition")
 
 
-def decision_link(r):
+def decision_link(r, by):
+    for c in r["claims"]:
+        c.setdefault("status_history", [dict(status="provisional", at=now(), by=by, reason="claim recorded")])
     decision_validate(r)
     claims = {c["id"]: c for c in r["claims"]}
     for c in list(claims.values()):
@@ -1412,7 +1414,7 @@ def execute(o):
             require(o.state in ("concluded", "abandoned"), "close_state_required", 2)
             assigned.extend(apply_content(r, content(o, {"claims", "uncertainty", "cleanup", "next_action"}), actor))
             r["state"] = o.state
-        decision_link(r)
+        decision_link(r, actor)
         validate(r)
         if op in ("park", "close"):
             violations = lint(r, folder, packets)
