@@ -152,7 +152,13 @@ class BoardsTest(unittest.TestCase):
             self.assertEqual((self.store / name).stat().st_mode & 0o777, 0o600)
         with (self.store / "lock").open("r+") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            self.invoke("seat", "inspect", code=1)
+            # Held throughout: the bounded wait ends in a named, retry-safe busy refusal.
+            busy = self.invoke("seat", "inspect", code=1)
+            self.assertIn("board_store_busy", json.dumps(busy))
+            # Released mid-wait: the overlapping caller proceeds instead of failing with EAGAIN.
+            import threading
+            threading.Timer(1.0, lambda: fcntl.flock(lock, fcntl.LOCK_UN)).start()
+            self.invoke("seat", "inspect")
         self.store.chmod(0o755)
         self.invoke("seat", "inspect", code=1)
         self.store.chmod(0o700)

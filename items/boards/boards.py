@@ -168,9 +168,26 @@ class Store:
         self.lock = None
         try:
             private(self.dir, True)
-            self.lock = self.open("lock", os.O_RDWR | os.O_CREAT)
+            # macOS can report ENOENT when processes race to create the same lock file; retry briefly.
+            for attempt in range(200):
+                try:
+                    self.lock = self.open("lock", os.O_RDWR | os.O_CREAT)
+                    break
+                except FileNotFoundError:
+                    if attempt == 199:
+                        raise
+                    time.sleep(.005)
             private(self.lock)
-            fcntl.flock(self.lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            # Concurrent sends, stop reports and a running fleet board share this store. Wait (bounded)
+            # instead of refusing every delivery that overlaps another one with EAGAIN.
+            deadline = time.monotonic() + 10
+            while True:
+                try:
+                    fcntl.flock(self.lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    check(time.monotonic() < deadline, "board_store_busy")
+                    time.sleep(.01)
             self.state = {"schema_version": 1, "generation": 0, "seats": [], "fleet": []}
             try:
                 fd = self.open("state.json", os.O_RDONLY)
