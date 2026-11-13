@@ -13,6 +13,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import threading
 import unittest
 
 
@@ -60,8 +61,10 @@ class SendTest(unittest.TestCase):
 
     @classmethod
     def rex_json(cls, *args):
-        return json.loads(subprocess.run(cls.base + list(args), capture_output=True,
-                                         text=True, timeout=10, check=True).stdout)
+        result = subprocess.run(cls.base + list(args), capture_output=True, text=True, timeout=10)
+        if result.returncode:
+            raise RuntimeError(result.stderr)
+        return json.loads(result.stdout)
 
     @classmethod
     def rpc(cls, method, args):
@@ -121,6 +124,119 @@ class SendTest(unittest.TestCase):
     @staticmethod
     def pasted(message, sender="worker"):
         return b"\x1b[200~FROM " + sender.encode() + b": " + message + b"\x1b[201~\r"
+
+    def prompt(self, suggestion="suggestion", ignore_clear=False):
+        log = self.work / ("prompt-" + str(time.monotonic_ns()))
+        fixture = Path(__file__).with_name("prompt_fixture.py")
+        made = self.rex_json("new", "--json", "--keep-open", "--shell=none", "--", sys.executable, str(fixture), str(log), suggestion, "ignore-clear" if ignore_clear else "clear")
+        target = made["session_id"], made["initial_windows"][0]["block_ids"][0]
+        for _ in range(100):
+            if log.exists():
+                return target, log
+            time.sleep(.02)
+        self.fail("prompt did not start")
+
+    def type_draft(self, target, text):
+        self.rpc("com.superlogical.terminal.write", {"session_id": target[0], "block_id": target[1], "args": {"data": text}})
+
+    def prompt_text(self, target):
+        return self.rpc("com.superlogical.terminal.format", {"session_id": target[0], "block_id": target[1],
+                        "args": {"format": "text", "max_bytes": 65536}})["content"]
+
+    def test_draft_guard_reference_parser_fixtures(self):
+        fixtures = [("│ ❯ │", ""), ("│ ❯ \x1b[2msuggest\x1b[0m │", ""),
+                    ("│ ❯ \x1b[90msuggest\x1b[0m │", ""), ("│ ❯ fix the tests │", "fix the tests"),
+                    ("│ ❯ fix\x1b[38;5;245m suggestion\x1b[0m │", "fix"),
+                    ("│ ❯ \x1b[38;2;100;100;100msuggest\x1b[0m │", ""),
+                    ("┃ > α😀\x1b[22m kept ┃", "α😀 kept"),
+                    ("| > \x1b[38;5;239mreal\x1b[39m |", "real"),
+                    ("> old\n" + "other\n" * 15, ""), ("> first\n> last", "last")]
+        lua = Path(__file__).with_name("draft.lua").read_text() + "\nlocal out={} for _,v in ipairs(rex.args.cases) do table.insert(out,draft_from_vt(v)) end io.write(rex.json.encode(out))"
+        target, _ = self.fixture()
+        result = self.rex_json("do", "--session", target[0], "--block", target[1], "-e", lua, "--args", json.dumps(dict(cases=[f[0] for f in fixtures])))
+        self.assertEqual(result, [f[1] for f in fixtures])
+
+    def test_guard_restores_existing_unicode_draft_without_submitting_it(self):
+        for text in ("OPERATOR_PRIVATE_DRAFT", "α😀 private café"):
+            target, log = self.prompt()
+            self.type_draft(target, text)
+            r, packet = self.send(target)
+            self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
+            self.assertEqual([json.loads(line) for line in log.read_text().splitlines()], ["FROM worker: hello"])
+            self.assertIn("> " + text, self.prompt_text(target))
+            draft = packet["draft"]
+            self.assertEqual(draft["mode"], "guard")
+            self.assertTrue(draft["detected"])
+            self.assertEqual(draft["chars"], len(text))
+            self.assertGreaterEqual(draft["waited_ms"], 1400)
+            self.assertFalse(draft["bound_reached"])
+            self.assertTrue(draft["cleared"] and draft["restored"] and draft["restore_verified"])
+            self.assertNotIn(text, r.stdout + r.stderr)
+
+    def test_guard_waits_for_typing_and_restores_in_order(self):
+        target, log = self.prompt()
+        text = "typingPRIVATE123"
+        self.type_draft(target, text[0])
+        def type_more():
+            for char in text[1:]:
+                time.sleep(.2)
+                self.type_draft(target, char)
+        writer = threading.Thread(target=type_more)
+        writer.start()
+        try:
+            r, packet = self.send(target)
+        finally:
+            writer.join()
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertGreater(packet["draft"]["waited_ms"], 3500)
+        self.assertEqual([json.loads(line) for line in log.read_text().splitlines()], ["FROM worker: hello"])
+        self.assertIn("> " + text, self.prompt_text(target))
+        self.assertNotIn(text, r.stdout + r.stderr)
+
+    def test_guard_refuses_uncleared_draft_and_validates_limits(self):
+        target, log = self.prompt(ignore_clear=True)
+        text = "PRIVATE_UNCLEARABLE_DRAFT"
+        self.type_draft(target, text)
+        command = self.command(target)
+        del command[-2:]  # Exercise the new default overall timeout.
+        result = subprocess.run(command, env=self.env, capture_output=True, text=True, timeout=5)
+        packet = json.loads(result.stdout)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertEqual(packet["timeout_ms"], 40000)
+        self.assertEqual(packet["failure_reason"], "draft_not_cleared")
+        self.assertFalse(packet["draft"]["cleared"])
+        self.assertFalse(packet["paste"]["attempted"])
+        self.assertEqual(log.read_text(), "")
+        self.assertIn(text, self.prompt_text(target))
+        self.assertNotIn(text, result.stdout + result.stderr)
+        for flags in (["--draft", "bad"], ["--draft-wait-ms", "55001"], ["--draft-wait-ms", "-1"]):
+            result = subprocess.run(command + flags, env=self.env, capture_output=True, text=True, timeout=5)
+            self.assertEqual(result.returncode, 2)
+        target, _ = self.prompt("")
+        command = self.command(target)
+        del command[-2:]
+        result = subprocess.run(command + ["--draft-wait-ms", "55000", "--timeout-ms", "115000"],
+                                env=self.env, capture_output=True, text=True, timeout=5)
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+
+    def test_guard_suggestions_empty_bound_and_ignore(self):
+        for suggestion in ("grey suggestion", ""):
+            target, log = self.prompt(suggestion)
+            r, packet = self.send(target)
+            self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
+            self.assertFalse(packet["draft"]["detected"])
+            self.assertLess(packet["draft"]["waited_ms"], 250)
+            self.assertEqual([json.loads(line) for line in log.read_text().splitlines()], ["FROM worker: hello"])
+        target, log = self.prompt()
+        self.type_draft(target, "savedPRIVATE")
+        r = subprocess.run(self.command(target) + ["--draft-wait-ms", "0"], env=self.env, capture_output=True, text=True, timeout=5)
+        self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
+        self.assertTrue(json.loads(r.stdout)["draft"]["bound_reached"])
+        self.assertIn("> savedPRIVATE", self.prompt_text(target))
+        r = subprocess.run(self.command(target) + ["--draft", "ignore"], env=self.env, capture_output=True, text=True, timeout=5)
+        self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
+        self.assertEqual(json.loads(log.read_text().splitlines()[-1]), "savedPRIVATEFROM worker: hello")
+        self.assertEqual(json.loads(r.stdout)["draft"]["mode"], "ignore")
 
     def test_exact_unicode_multiline_target_and_existing_draft(self):
         target, raw = self.fixture()

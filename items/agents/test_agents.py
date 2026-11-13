@@ -14,6 +14,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import threading
 import unittest
 
 BIN = str(Path(os.environ.get("TEEREX_BIN", "zig-out/bin/teerex")).resolve())
@@ -170,6 +171,45 @@ class AgentsTest(unittest.TestCase):
 
     def record(self, launch_id):
         return json.loads((self.registry / ("agents-" + launch_id + ".json")).read_text())
+
+    def test_stop_notification_waits_for_and_restores_operator_draft(self):
+        prompt_log = self.work / "prompt.jsonl"
+        fixture = Path(__file__).parents[1] / "send" / "prompt_fixture.py"
+        made = json.loads(subprocess.check_output(self.base + ["new", "--json", "--keep-open", "--shell=none", "--",
+                          sys.executable, str(fixture), str(prompt_log)]))
+        sid, bid = made["session_id"], made["initial_windows"][0]["block_ids"][0]
+        wait_for(lambda: prompt_log.exists())
+        self.settings["defaults"].update(starter_session=sid, starter_block=bid)
+        process, launch = self.launch()
+        self.assertEqual(process.returncode, 0, process.stderr + process.stdout)
+        text = "PRIVATE_OPERATOR_DRAFT_" + "x" * 34
+        def type_char(char):
+            self.rpc("com.superlogical.terminal.write", dict(session_id=sid, block_id=bid, args=dict(data=char)))
+        type_char(text[0])
+        def writer():
+            for char in text[1:]:
+                time.sleep(.2)
+                type_char(char)
+        thread = threading.Thread(target=writer)
+        thread.start()
+        event = self.work / "stop-event.json"
+        event.write_text(json.dumps(dict(hook_event_name="Stop", last_assistant_message="notification only")))
+        try:
+            process, receipt = self.run_cli("stop", "--registry", str(self.registry), "--launch-id", launch["launch_id"],
+                                           "--event-file", str(event), timeout=25)
+        finally:
+            thread.join()
+        self.assertEqual(process.returncode, 0, process.stderr + process.stdout)
+        lines = [json.loads(line) for line in prompt_log.read_text().splitlines()]
+        self.assertEqual(len(lines), 1)
+        self.assertIn("notification only", lines[0])
+        self.assertNotIn(text, lines[0])
+        capture = self.rpc("com.superlogical.terminal.format", dict(session_id=sid, block_id=bid, args=dict(format="text")))
+        self.assertIn("> " + text, capture["content"])
+        result = next(iter(self.record(launch["launch_id"])["notifications"].values()))["results"][0]["receipt"]
+        self.assertGreater(result["draft"]["waited_ms"], 10000)
+        self.assertTrue(result["draft"]["restore_verified"])
+        self.assertNotIn(text, process.stdout + process.stderr)
 
     def test_protocol_before_brief_exact_metadata_and_jobs(self):
         self.settings["profiles"]["probe"]["standing_flags"] *= 2

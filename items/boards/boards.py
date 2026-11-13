@@ -772,8 +772,10 @@ def parser():
     common(q)
     q.add_argument("--from", dest="sender", required=True)
     q.add_argument("--message-file", required=True)
-    q.add_argument("--timeout-ms", type=int, default=10000, choices=range(100, 60001), metavar="100..60000",
-                   help="registered stdin must reach EOF before deadline; no partial append; default 10000")
+    q.add_argument("--draft", choices=("guard", "ignore"), default="guard", help="native fallback draft policy; registered inbox append never types")
+    q.add_argument("--draft-wait-ms", type=int, default=30000, choices=range(55001), metavar="0..55000")
+    q.add_argument("--timeout-ms", type=int, default=None, choices=range(100, 115001), metavar="100..115000",
+                   help="registered stdin must reach EOF; native fallback guard defaults to draft wait+10000ms, ignore10000")
     q = commands.add_parser("ask", help="complete typed card or explicit resolution; never terminal input")
     common(q)
     q.set_defaults(operation="ask")
@@ -808,6 +810,7 @@ def main(argv=None):
     check(len([x for x in options if x != "--jobs-registry"]) == len(set(x for x in options if x != "--jobs-registry")), "duplicate_option")
     a = parser().parse_args(argv)
     if a.command == "try-route":
+        a.timeout_ms = a.timeout_ms if a.timeout_ms is not None else (a.draft_wait_ms + 10000 if a.draft == "guard" else 10000)
         a.input_deadline = time.monotonic() + a.timeout_ms / 1000
     if a.command == "probe":
         check(options.count("--jobs-registry") <= 1, "duplicate_option")

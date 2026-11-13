@@ -7,27 +7,45 @@ const usage =
     \\Send FROM <label>: <file bytes> as one paste, then Enter, to an explicit existing terminal.
     \\Requires Linux/macOS, Rex on PATH, existing API10..13 server, and canonical lowercase full IDs.
     \\Select a dedicated agent terminal: this can submit/execute input and does not establish prompt safety.
-    \\No clearing, draft detection/restoration, chunking, retry, inbox forwarding, or autostart.
+    \\--draft guard|ignore defaults guard: wait for quiet/empty draft, clear, send, restore without Enter.
+    \\--draft-wait-ms N defaults 30000 (0..55000); quiet window1500ms, restore delay400ms.
+    \\Ignore preserves prior paste/Enter behavior. No chunking, retry, inbox forwarding, or autostart.
     \\File: regular, or - reads stdin until EOF within the same deadline/cancellation budget, before any dispatch.
     \\Input: 1..65536 UTF-8 bytes; LF/tab allowed, other C0/DEL rejected. Encoded RPC capped at 60000 bytes.
     \\Local inbox markers refuse input. Same-host/TMPDIR agent-send mkdir lock serializes cooperating senders only.
-    \\Timeout defaults to 10000 ms (100..60000), including lock wait and Rex; stale locks are never stolen.
+    \\Timeout defaults to draft wait+10000ms (ignore:10000), range100..115000; includes lock/Rex.
+    \\Draft text is never reported. Keystrokes between final read and Ctrl-U can still race clearing.
+    \\Stale locks are never stolen.
     \\JSON reports attempts/acknowledgements, NOT application consumption, atomic delivery, or an input lease.
     \\Exit: 0 both ACKs, 1 refusal/error/uncertain, 2 usage, 124 deadline, 130 SIGINT, 143 SIGTERM.
     \\
 ;
 
 const Source = struct { rex_version: []const u8, platform: []const u8, api_revision: i64 };
+const Draft = struct {
+    mode: []const u8,
+    detected: bool = false,
+    chars: usize = 0,
+    waited_ms: u64 = 0,
+    bound_reached: bool = false,
+    cleared: ?bool = null,
+    restored: ?bool = null,
+    restore_verified: ?bool = null,
+};
 const Frame = struct {
     event: []const u8,
     source: ?Source = null,
     stage: ?[]const u8 = null,
+    draft: ?Draft = null,
     reason: ?[]const u8 = null,
     encoded_rpc_bytes: ?usize = null,
 };
 
 const Collector = struct {
     allocator: std.mem.Allocator,
+    timer: *std.time.Timer,
+    draft: Draft,
+    draft_wait_started: ?u64 = null,
     pending: std.ArrayList(u8) = .empty,
     source: ?Source = null,
     paste_attempted: bool = false,
@@ -39,7 +57,7 @@ const Collector = struct {
     encoded_rpc_bytes: ?usize = null,
 
     pub fn receive(self: *Collector, bytes: []const u8) !void {
-        // Fixed source emits at most eight small records, never the message.
+        // Fixed source emits bounded small records, never message or draft text.
         if (bytes.len > 8192 - self.pending.items.len) return error.InvalidSendFrame;
         try self.pending.appendSlice(self.allocator, bytes);
         while (std.mem.indexOfScalar(u8, self.pending.items, '\n')) |end| {
@@ -50,6 +68,16 @@ const Collector = struct {
             if (std.mem.eql(u8, f.event, "source")) {
                 if (self.source != null) return error.InvalidSendFrame;
                 self.source = f.source orelse return error.InvalidSendFrame;
+            } else if (std.mem.eql(u8, f.event, "draft")) {
+                const waited = self.draft.waited_ms;
+                self.draft = f.draft orelse return error.InvalidSendFrame;
+                self.draft.waited_ms = waited;
+                const elapsed = self.timer.read() / std.time.ns_per_ms;
+                if (std.mem.eql(u8, f.stage orelse "", "waiting")) self.draft_wait_started = elapsed;
+                if (std.mem.eql(u8, f.stage orelse "", "ready")) {
+                    if (self.draft_wait_started) |start| self.draft.waited_ms = elapsed - start;
+                    self.draft_wait_started = null;
+                }
             } else if (std.mem.eql(u8, f.event, "preflight")) {
                 self.encoded_rpc_bytes = f.encoded_rpc_bytes orelse return error.InvalidSendFrame;
             } else if (std.mem.eql(u8, f.event, "attempt")) {
@@ -143,6 +171,8 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
     var from: ?[]const u8 = null;
     var message_file: ?[]const u8 = null;
     var timeout: ?u64 = null;
+    var draft_mode: ?[]const u8 = null;
+    var draft_wait: ?u64 = null;
     var i: usize = 0;
     while (i < args.len) : (i += 2) {
         if (i + 1 == args.len) usageError("every option needs a value");
@@ -160,6 +190,10 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
             message_file = value;
         } else if (std.mem.eql(u8, name, "--timeout-ms") and timeout == null) {
             timeout = std.fmt.parseUnsigned(u64, value, 10) catch usageError("invalid timeout");
+        } else if (std.mem.eql(u8, name, "--draft") and draft_mode == null) {
+            draft_mode = value;
+        } else if (std.mem.eql(u8, name, "--draft-wait-ms") and draft_wait == null) {
+            draft_wait = std.fmt.parseUnsigned(u64, value, 10) catch usageError("invalid draft wait");
         } else usageError("unknown or repeated option");
     }
     const path = socket orelse usageError("--socket is required");
@@ -167,11 +201,14 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
     const bid = block orelse usageError("--block is required");
     const sender = from orelse usageError("--from is required");
     const file_path = message_file orelse usageError("--message-file is required");
-    const timeout_ms = timeout orelse 10000;
+    const mode = draft_mode orelse "guard";
+    const draft_wait_ms = draft_wait orelse 30000;
+    if ((!std.mem.eql(u8, mode, "guard") and !std.mem.eql(u8, mode, "ignore")) or draft_wait_ms > 55000) usageError("draft must be guard|ignore; draft wait must be 0..55000 ms");
+    const timeout_ms = timeout orelse (if (std.mem.eql(u8, mode, "guard")) draft_wait_ms + 10000 else 10000);
     if (!std.fs.path.isAbsolute(path) or (!std.mem.eql(u8, file_path, "-") and !std.fs.path.isAbsolute(file_path))) usageError("socket must be absolute; message file must be absolute or - for stdin");
     if (!fullId(sid, "session:") or !fullId(bid, "block:")) usageError("canonical lowercase full session:UUID and block:UUID are required");
     if (sender.len < 1 or sender.len > 128 or !textValid(sender, false)) usageError("from must be 1..128 UTF-8 bytes without controls");
-    if (timeout_ms < 100 or timeout_ms > 60000) usageError("timeout must be 100..60000 ms");
+    if (timeout_ms < 100 or timeout_ms > 115000) usageError("timeout must be 100..115000 ms");
     if (builtin.os.tag != .macos and builtin.os.tag != .linux) return error.SendRequiresUnix;
 
     const signals = supervised.Signals.init();
@@ -193,7 +230,7 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
     const lock_path = try std.fmt.allocPrint(allocator, "{s}/agent-send.{s}.lock", .{ if (configured_tmp.len != 0) configured_tmp else "/tmp", suffix });
     if (!std.fs.path.isAbsolute(lock_path)) usageError("TMPDIR must be absolute");
     const endpoint = try std.fmt.allocPrint(allocator, "unix://{s}", .{path});
-    var collector: Collector = .{ .allocator = allocator };
+    var collector: Collector = .{ .allocator = allocator, .timer = &timer, .draft = .{ .mode = mode } };
     var locked = false;
     var acquired = false;
     var backend_started = false;
@@ -240,6 +277,8 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
         const request = try std.json.Stringify.valueAlloc(allocator, .{
             .session_id = sid,
             .block_id = bid,
+            .draft_mode = mode,
+            .draft_wait_ms = draft_wait_ms,
             .text = try std.fmt.allocPrint(allocator, "FROM {s}: {s}", .{ sender, message }),
         }, .{});
         encoded_argument_bytes = request.len;
@@ -250,7 +289,7 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
             failure = "encoded_paste_exceeds_limit";
             break :work;
         }
-        const argv = [_][]const u8{ "rex", "--autostart=false", "--server", endpoint, "--timeout", "3s", "--color", "never", "do", "--session", sid, "--block", bid, "-e", @embedFile("send.lua"), "--args", request };
+        const argv = [_][]const u8{ "rex", "--autostart=false", "--server", endpoint, "--timeout", "3s", "--color", "never", "do", "--session", sid, "--block", bid, "-e", @embedFile("draft.lua") ++ "\n" ++ @embedFile("send.lua"), "--args", request };
         const before_spawn = timer.read() / std.time.ns_per_ms;
         if (before_spawn >= timeout_ms or supervised.requestedSignal() != 0) {
             outcome = "deadline_exceeded";
@@ -264,9 +303,10 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
         };
         const r = backend.?;
         const transport_ok = !r.stopped and r.term == .Exited and r.term.Exited == 0 and collector.pending.items.len == 0;
-        outcome = if (r.deadline_exceeded) "deadline_exceeded" else if (transport_ok and collector.enter_acknowledged and collector.finished) "events_acknowledged" else if (collector.paste_attempted) "uncertain" else if (collector.reason != null) "refused" else "backend_error";
-        if (!transport_ok and r.stderr.len != 0) std.debug.print("teerex send: Rex backend: {s}\n", .{r.stderr});
+        outcome = if (r.deadline_exceeded) "deadline_exceeded" else if (transport_ok and collector.enter_acknowledged and collector.finished and collector.reason == null) "events_acknowledged" else if (collector.paste_attempted) "uncertain" else if (collector.reason != null) "refused" else "backend_error";
+        if (!transport_ok and r.stderr.len != 0 and std.mem.eql(u8, mode, "ignore")) std.debug.print("teerex send: Rex backend: {s}\n", .{r.stderr});
     }
+    if (collector.draft_wait_started) |start| collector.draft.waited_ms = timer.read() / std.time.ns_per_ms - start;
     const signal = supervised.requestedSignal();
     if (signal != 0) outcome = "cancel_requested";
     // Keep the lock through subprocess cleanup. Never remove another sender's lock.
@@ -293,6 +333,7 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
         .outcome = outcome,
         .failure_reason = failure orelse collector.reason orelse if (backend != null and !success) @as(?[]const u8, "rex_transport_incomplete") else null,
         .cancellation_signal = if (signal == 0) @as(?u8, null) else signal,
+        .draft = collector.draft,
         .paste = .{ .attempted = collector.paste_attempted, .acknowledged = collector.paste_acknowledged },
         .enter = .{ .attempted = collector.enter_attempted, .acknowledged = collector.enter_acknowledged },
         .attempt_evidence = "received_local_pre_call_frames_not_server_dispatch_proof",

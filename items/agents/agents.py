@@ -194,6 +194,9 @@ def receipt(state, outcome, **extra):
 def invoke(arguments, timeout=10, client_path=None, rex_executable=None, input_bytes=None):
     """Bounded foreground client, never the agent. Retain diagnostics without treating exit as ACK."""
     import tempfile
+    if arguments and arguments[0] == "send":
+        # Native send can spend 55s guarding a draft plus a 60s transport budget.
+        timeout = max(timeout, 120)
     # Output sinks are private regular files, not pipes that a failed descendant can hold open.
     with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err, tempfile.TemporaryFile() as source:
         environment = dict(os.environ)
@@ -333,7 +336,7 @@ def remote_exec(o):
                            "--launch-id", payload["launch_id"], "--event-file", "-", "--callback-config", callbacks["config"],
                            "--callback-host", callbacks["host"]])
         # The compute-side adapter reads its own transcript, then forwards only bounded event bytes.
-        settings = {"hooks": {k: [{"hooks": [{"type": "command", "command": hook, "timeout": 15}]}]
+        settings = {"hooks": {k: [{"hooks": [{"type": "command", "command": hook, "timeout": 250}]}]
                               for k in ("Stop", "StopFailure")}}
         argv = argv + ["--settings", json.dumps(settings)]
     env = dict(os.environ)
@@ -614,11 +617,11 @@ def channel(o):
     raw = json.dumps(request, ensure_ascii=False).encode() + b"\n"
     require(len(raw) <= 49152, "channel_frame_too_large")
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
-        client.settimeout(12)
+        client.settimeout(250)
         try:
             client.connect(absolute(handle["socket"]))
             client.sendall(raw)
-            packet = frame_read(client, budget=12)
+            packet = frame_read(client, budget=250)
             require(set(packet) == {"code", "result"}, "invalid_channel_receipt")
             return packet["code"], packet["result"]
         except (OSError, ValueError, Refusal) as exc:
@@ -883,7 +886,7 @@ def stop(o):
         event.pop("transcript_path", None)
         args = callback_command(dict(config=absolute(o.callback_config), host=o.callback_host),
                                 ["stop", "--registry", o.registry, "--launch-id", o.launch_id, "--event-file", "-", "--event-id", event_id])
-        return invoke(args[1:], input_bytes=json.dumps(event, ensure_ascii=False).encode())
+        return invoke(args[1:], timeout=250, input_bytes=json.dumps(event, ensure_ascii=False).encode())
     return report_stop(o.registry, o.launch_id, event_id, event)
 
 
@@ -960,7 +963,7 @@ def supervise(o):
             hook = (shlex.join([RUNTIME, "agents", "channel", "--handle", broker.handle, "--operation", "stop",
                                "--event-file", "-"]) + " --request-id \"$(python3 -c 'import secrets; print(secrets.token_hex(16))')\"")
         require("--settings" not in argv, "profile_settings_conflict")
-        settings = {"hooks": {k: [{"hooks": [{"type": "command", "command": hook, "timeout": 15}]}]
+        settings = {"hooks": {k: [{"hooks": [{"type": "command", "command": hook, "timeout": 250}]}]
                               for k in ("Stop", "StopFailure")}}
         argv = argv + ["--settings", json.dumps(settings)]
     protocol = message(read_file(state["protocol_file"], 32768, private=True))
