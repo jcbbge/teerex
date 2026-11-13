@@ -1,6 +1,6 @@
 # Visible foreground argv execution (`run-visible`)
 
-**Source capability for [issue #20](https://github.com/jcbbge/teerex/issues/20), not part of published alpha.5.** Root dispatch, named-host selection and combined shipping belong to the integration change. The leaf export is `rex_run.runVisible(allocator, args) !u8`. [Acceptance](ACCEPTANCE.md) records executed disposable tests; [Rivet migration](MIGRATION.md) includes a tested opt-in patch without deleting the fallback. Legacy [`run`](README.md) remains Mac-local `rex.exec`, EOF stdin, no terminal mutation; this new verb does not change it.
+**Source capability for [issue #20](https://github.com/jcbbge/teerex/issues/20), not part of published alpha.5.** Combined source now wires root dispatch and named-host selection; publishing source does not rebuild frozen release assets. The leaf export is `rex_run.runVisible(allocator, args) !u8`. [Acceptance](ACCEPTANCE.md) records executed disposable tests; [Rivet migration](MIGRATION.md) includes a tested opt-in patch without deleting the fallback. Legacy [`run`](README.md) remains Mac-local `rex.exec`, EOF stdin, no terminal mutation; this new verb does not change it.
 
 ## Who
 

@@ -1,6 +1,6 @@
 # run
 
-**New, separate source capability:** [`run-visible`](VISIBLE.md) adds visible foreground argv execution for disposable Mac/Linux/API13, with [acceptance](ACCEPTANCE.md) and an [opt-in Rivet migration patch](MIGRATION.md). It is not in published alpha.5 and does not change the legacy `run` contract below. Root wiring and combined shipping are integration-owned.
+**New, separate source capability:** [`run-visible`](VISIBLE.md) adds visible foreground argv execution for disposable Mac/Linux/API13, with [acceptance](ACCEPTANCE.md) and an [opt-in Rivet migration patch](MIGRATION.md). It is not in published alpha.5 and does not change the legacy `run` contract below. Combined source now wires the root verb and named-host socket selection; publication does not rebuild alpha.5.
 
 [Operator/agent addendum: Who, What, When, Where, Why, How](../../docs/concierge/features.md#5-run-local-argv-and-actual-exit-evidence) covers current alpha.5 use, platform/API support, verification, privacy and lifecycle. [Install/upgrade current alpha.5](../../docs/concierge/setup.md); runtime remains Mac-only/API10–13. The [independent experimental run cartridge](../../docs/cartridges.md) is available on Mac, not marked ready. Dated increment evidence below is historical.
 

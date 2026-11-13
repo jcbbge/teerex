@@ -6,6 +6,7 @@ const usage =
     \\Usage: teerex [--rex ABS] COMMAND ...
     \\       teerex --config ABS --host NAME COMMAND ...
     \\       teerex targets resolve --config ABS --host NAME
+    \\       teerex targets exec --config ABS --host NAME [--tty] -- COMMAND ...
     \\       teerex --version
     \\
     \\Operating-layer commands:
@@ -19,7 +20,8 @@ const usage =
     \\  recovery snapshot|inspect|restore|update      Private snapshots and reviewed restoration
     \\  snapshot|restore|update                       Recovery aliases; update is manual handoff
     \\  fleet install|rollback                       Explicit named-host installation plan/apply
-    \\  targets resolve                              Shared named-host configuration lookup
+    \\  targets resolve|exec                         Named-host lookup and explicit transport
+    \\  run-visible                                  Visible noninteractive argv, output and actual exit
     \\Existing tools: observe, compare, watch, run, offstage, doctor, send, spawn,
     \\                jobs, adapters, maneuver-check, filter
     \\Use COMMAND --help for exact flags, effects, evidence and limits.
@@ -135,6 +137,7 @@ fn run(allocator: std.mem.Allocator) !void {
     if (std.mem.eql(u8, command, "snapshot") or std.mem.eql(u8, command, "restore") or std.mem.eql(u8, command, "update")) std.process.exit(try @import("rex_recovery").run(allocator, args));
     if (std.mem.eql(u8, command, "surfaces")) std.process.exit(try @import("rex_surfaces").run(allocator, rest));
     if (std.mem.eql(u8, command, "run")) std.process.exit(try @import("rex_run").run(allocator, rest));
+    if (std.mem.eql(u8, command, "run-visible")) std.process.exit(try @import("rex_run").runVisible(allocator, rest));
     if (std.mem.eql(u8, command, "offstage")) std.process.exit(try @import("rex_offstage").run(allocator, rest));
     if (std.mem.eql(u8, command, "doctor")) std.process.exit(try @import("rex_doctor").run(allocator, rest));
     if (std.mem.eql(u8, command, "jobs")) std.process.exit(try @import("rex_jobs").run(allocator, rest));

@@ -271,7 +271,7 @@ class VisibleTest(unittest.TestCase):
                     with __import__('contextlib').suppress(ProcessLookupError):
                         os.kill(int(pidfile.read_text()), signal.SIGKILL)
 
-    def test_bad_cwd_env_stdin_and_old_api_refuse_before_creation(self):
+    def test_bad_cwd_env_stdin_refuse_before_creation(self):
         before = self.blocks()
         r, v = self.invoke(argv=["/teerex-test-nonexistent-executable"])
         self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
@@ -297,13 +297,18 @@ class VisibleTest(unittest.TestCase):
         self.assertEqual(r.returncode, 1)
         self.assertIn("regular_file_required", v["failure_reason"])
         self.assertEqual(self.blocks(), before)
-        self.stdin.unlink()
-        self.stdin.write_bytes(b'')
-        wrapper, log = self.wrapper("old-api")
+
+    def test_observed_api_gate_precedes_creation(self):
+        before = self.blocks()
+        if self.version["api_revision"] == 13:
+            wrapper, log = self.wrapper("old-api")
+        else:
+            wrapper, log = self.rex, None
         r, v = self.invoke(rex=wrapper)
-        self.assertEqual(r.returncode, 1)
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
         self.assertIn("requires_observed_api13", v["failure_reason"])
-        self.assertFalse(log.exists(), "old API refusal must precede surfaces mutation")
+        if log is not None:
+            self.assertFalse(log.exists(), "old API refusal must precede surfaces mutation")
         self.assertEqual(self.blocks(), before)
 
     def wrapper(self, mode):

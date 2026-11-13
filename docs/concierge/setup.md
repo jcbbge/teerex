@@ -11,6 +11,40 @@
 - **Why:** gain inspectable surfaces, boards, seat/decisions, managed launch/responsibility, structural recovery/manual update inventory and named-host fleet tools without disturbing existing agents.
 - **How:** use the pinned source installer and checksummed matching core below. Install code only; live reads, palette/config changes, agent-core migration, fleet rollout and server operations need their own explicit scope.
 
+## Source-only follow-ons are not an alpha.5 upgrade
+
+Published alpha.5 is still the release selected below. Later source adds [`run-visible`](../../items/run/VISIBLE.md) and [`targets exec --tty`](../fleet-install.md#source-only-interactive-transport); neither exists in its immutable archives. A source build can still print `teerex 0.1.0-alpha.5`: record the exact source commit and built SHA256, not that string as release-byte proof. #14/#21, #16 nested routing, real Rivet harness/fence/service cutover and fallback deletion are not completed by these additions.
+
+- **Who:** an explicitly authorized source reviewer; this route does not install globally or authorize running commands on a personal server.
+- **What:** build a separate inspectable candidate and read its help. Existing managed release, launcher, profiles, Rex and live panes stay untouched.
+- **When:** deliberately evaluating newer source, not while following the published-release installation branch below.
+- **Where:** a new private checkout/output directory on Mac arm64 or Linux x86_64, with Git, Zig0.15.2 and Python3.9+ already available. Runtime run-visible requires an explicitly selected existing API13 server; child streams are noninteractive pipes.
+- **Why:** review the new visible argv/output/exit lifecycle without confusing it with frozen release bytes or prematurely applying the opt-in [Rivet adapter](../../items/run/MIGRATION.md).
+- **How:** substitute the exact reviewed pushed40-hex integration commit below. Leave the candidate separate, record its hash and use only its absolute path after any separately authorized runtime review. Missing tools or an unsupported API are blockers, not permission to install packages or restart Rex.
+
+```sh
+set -euo pipefail
+umask 077
+SOURCE_COMMIT=REPLACE_WITH_REVIEWED_40_HEX_INTEGRATION_COMMIT
+[[ "$SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]] # stop until the exact reviewed commit is supplied
+WORK=$(mktemp -d)
+git clone --quiet --filter=blob:none --no-checkout https://github.com/jcbbge/teerex.git "$WORK/source"
+git -C "$WORK/source" fetch --quiet --depth 1 origin "$SOURCE_COMMIT"
+git -C "$WORK/source" checkout --quiet --detach "$SOURCE_COMMIT"
+test "$(git -C "$WORK/source" rev-parse HEAD)" = "$SOURCE_COMMIT"
+test "$(zig version)" = 0.15.2
+(
+  cd "$WORK/source"
+  zig build -Doptimize=ReleaseSmall --prefix "$WORK/build"
+)
+CANDIDATE="$WORK/build/bin/teerex"
+"$CANDIDATE" run-visible --help
+"$CANDIDATE" targets exec --help
+if [ "$(uname -s)" = Darwin ]; then shasum -a 256 "$CANDIDATE"; else sha256sum "$CANDIDATE"; fi
+```
+
+Verification above is offline help/build verification, not a live command or compatibility test. Runtime limits, exact required env/stdin files, output retention, default close/keep-open, cancellation and uncertain cleanup are in the [WWWWW+H contract](../../items/run/VISIBLE.md); only disposable fixtures are authorized by repository tests. To roll back this source evaluation, stop invoking the candidate and keep using the untouched managed release. Do not delete retained launch evidence, close personal panes, replace launchers or rerun an uncertain command as a rollback side effect. Publishing source does not create a checksummed binary release.
+
 ## Supported platforms and API boundaries
 
 | Operation | Supported contract / executed coverage |

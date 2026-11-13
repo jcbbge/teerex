@@ -10,6 +10,12 @@ The existing four lanes retain their pinned toolchains/Rex builds and legacy sui
 
 Local real loopback SSH tests are separate opt-in checks (`python3 tools/fleet-install/test_ssh.py`), requiring disposable sshd/sudo and generated keys. They are not silently counted as hosted CI. No personal endpoints/credentials are required. A green diagnostic85c3f29 workflow predates the new alpha.5 source and is not its exact-head CI result.
 
+## Unreleased visible-runner source coverage
+
+Current source adds the separate `run-visible` root verb and the opt-in `targets exec --tty` transport. These are not rebuilt alpha.5 assets. All four lanes run the expanded10 named-target contracts, including literal program options after `--`, selected run-visible socket placement and default-versus-opt-in SSH transport. API13 lanes run `items/run/test_visible.py` (13 tests); API10/12 lanes select its actual observed-API pre-creation refusal case. The previous wrapper-only refusal fixture was split from input-validation coverage so older lanes can execute this check against their real pinned servers. Legacy Mac run11 remains unchanged and still runs.
+
+Local combined Linux/Mac acceptance passes the new suites, surfaces15 on both, Mac legacy run11, and actual Mac API10/API12 refusal. Real loopback OpenSSH separately checks actual PTY allocation, literal argv/status and unknown/changed host-key refusal; it is not silently counted as hosted CI. The source push needs its own exact-head four-lane result. #14/#21 agent changes are not included in this slice, and no release, personal operation, Rivet application or fallback deletion follows a green workflow.
+
 ## Required lanes and coverage
 
 | Check | Explicit runner | Selected coverage |

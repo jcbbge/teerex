@@ -41,6 +41,14 @@ Distinct same-server report sessions now work: the failing regression proved the
 
 New operating-layer commands ship in the combined CLI, not as falsely independent cartridge payloads. Existing ten-Mac/seven-Linux native cartridges remain independently installable under their established contract. No new plugin system or detached fleet service is added.
 
+## Unreleased source follow-ons
+
+[`run-visible`](../items/run/VISIBLE.md) is a separate combined-root command for issue #20, not a change to legacy `run` or a capability in published alpha.5. It composes public surfaces for a labeled tab/tiled pane; requires explicit argv/cwd/env/stdin; gates execution on observed in-pane boot/session/block identity; and keeps raw output, actual exit/signal, requested cancellation, owned-pane close/retention and unknown outcomes separate. Mac/Linux API13 and Python3.9+ are the supported source boundary. Child stdout/stderr are pipes teed into the visible terminal, not interactive TTYs. Full files are opt-in/private/capped and retained for the caller; pane closure is not descendant-death proof.
+
+The combined source passes13 visible tests and10 named-target contracts on both Linux and Mac, Mac legacy run11, surfaces15 on both, and real older Mac API10/API12 pre-creation refusal. The worker's [acceptance record](../items/run/ACCEPTANCE.md) additionally distinguishes real cross-host refusal, Python3.9 kqueue controls, rendered terminal content and fault-injected evidence loss. Exact pushed-head CI is separate; native Rex.app graphical painting, real harness/fence/service/fleet-board integration and production cutover are not inferred. The [paired Rivet adapter](../items/run/MIGRATION.md) remains opt-in, unapplied and keeps the old fallback/guards.
+
+[`targets exec --tty`](fleet-install.md#source-only-interactive-transport) explicitly requests an SSH PTY while preserving strict trust/no-forwarding/no-reuse defaults. It is not used for machine-readable callbacks and does not enable a fenced remote channel. #14/#21 callback/delivery implementations remain separately owned and are not included merely because this transport option exists. #16's deeper selector-routing repair remains separate from the new run-visible socket route. Follow [source-only setup](concierge/setup.md#source-only-follow-ons-are-not-an-alpha5-upgrade), recording the exact reviewed source commit and built hash; a version string still reading alpha.5 is not released-byte identity.
+
 ## What remains an honest blocker
 
 - Public preview.16 process evidence exposes argv0, not arbitrary command arguments. Recovery must use deliberately supplied launch metadata, not pretend to rediscover secret-bearing argv.

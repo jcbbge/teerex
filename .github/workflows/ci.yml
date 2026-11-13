@@ -267,6 +267,20 @@ jobs:
           REX_BIN: ${{ runner.temp }}/rex-bin/rex
         run: python3 tools/cartridges/test_payloads.py --catalog "$RUNNER_TEMP/cartridge-catalog" --with-rex
 
+      - name: Run API13 visible foreground execution and cleanup contracts
+        if: matrix.rex-api == 13
+        env:
+          TEEREX_BIN: ${{ github.workspace }}/zig-out/bin/teerex
+          REX_BIN: ${{ runner.temp }}/rex-bin/rex
+        run: python3 items/run/test_visible.py -v
+
+      - name: Refuse visible execution before creation on older APIs
+        if: matrix.rex-api != 13
+        env:
+          TEEREX_BIN: ${{ github.workspace }}/zig-out/bin/teerex
+          REX_BIN: ${{ runner.temp }}/rex-bin/rex
+        run: python3 items/run/test_visible.py VisibleTest.test_observed_api_gate_precedes_creation -v
+
       - name: Run disposable-Mac execution and cleanup regressions
         if: runner.os == 'macOS'
         env:

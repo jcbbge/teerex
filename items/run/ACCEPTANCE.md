@@ -2,6 +2,12 @@
 
 **Delivery state:** leaf implementation, help, WWWWW+H contract, dedicated public tests and opt-in Rivet patch, based on public `origin/main` **0da427f1706093c1d216c541d69ce6a80fa81bec**. Root help/dispatch/target injection and combined source shipping are integration-owned. Published alpha.5 is unchanged and does not contain this capability. This record is not a production/fleet certification or claim that issue #20 is already released.
 
+## Combined source integration
+
+The later integration wires root `run-visible` help/dispatch and named-host socket injection, without changing legacy `run` or adding a Zig dependency. Its exact combined executable passes `test_visible.py` **13 tests** and `src/test_targets.py` **10 tests** on Linux/Python3.13.5 and native macOS26.3.1/Python3.14.3; Mac system Python3.9.6 also passes all13. The former combined input/old-API test was split so CI can select `VisibleTest.test_observed_api_gate_precedes_creation` against actual older servers. Checksum-pinned Mac API10/API12 each pass that refusal before creation. Legacy Mac run11, surfaces15 on both, send10/spawn7/child4 on both, unchanged agents12 with both integration gates on both, and fleet11 on both pass as adjacent controls. Exact pushed-head hosted CI remains separate from these local results.
+
+Current setup/changelog/agent handoff explicitly separate this source build and `targets exec --tty` from immutable alpha.5 release bytes. The Rivet adapter is still opt-in/unapplied with fallback/guards retained; #14/#21, #16 deeper routing, native GUI painting and real harness/fence/service/fleet-board cutover are not completed here. The table and12-test record below preserve the initial standalone leaf acceptance, rather than relabeling those runs as the later combined source.
+
 ## Real runtimes and executed checks
 
 All Rex servers used private random disposable sockets, `/dev/null` config, private state, restore disabled and only test-created sessions/panes. No personal M5/hive/default socket or running service was accessed or restarted. Rex and Zig archives were SHA256-checked against the existing CI pins; no vendor binaries are committed.

@@ -11,7 +11,7 @@ import sys
 MAX_CONFIG = 1024 * 1024
 NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}\Z")
 PATH_FIELDS = ("home", "socket", "rex", "teerex", "store")
-REX_COMMANDS = {"observe", "watch", "send", "spawn", "run", "doctor", "offstage", "jobs", "adapters", "surfaces", "boards", "agents", "snapshot", "restore", "update", "recovery"}
+REX_COMMANDS = {"observe", "watch", "send", "spawn", "run", "run-visible", "doctor", "offstage", "jobs", "adapters", "surfaces", "boards", "agents", "snapshot", "restore", "update", "recovery"}
 
 
 def absolute(value, field):
@@ -70,10 +70,10 @@ def resolve_host(config_path, name):
     return host
 
 
-def ssh_argv(host):
+def ssh_argv(host, *, tty=False):
     # OpenSSH parses -o values again; keep spaces/quotes and percent tokens literal.
     known_hosts = host["known_hosts"].replace("%", "%%").replace("\\", "\\\\").replace('"', '\\"')
-    return ["ssh", "-F", "/dev/null", "-T", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes",
+    return ["ssh", "-F", "/dev/null", "-tt" if tty else "-T", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes",
             "-o", "GlobalKnownHostsFile=/dev/null", "-o", "UpdateHostKeys=no", "-o", "ControlMaster=no", "-o", "ControlPath=none",
             "-o", "IdentitiesOnly=yes", "-o", "ForwardAgent=no", "-o", "ClearAllForwardings=yes",
             "-o", "ConnectTimeout=10", "-o", 'UserKnownHostsFile="' + known_hosts + '"',
@@ -112,12 +112,12 @@ def receipt(host, argv):
             "retry": False, "file_paths": "selected_command_host"}
 
 
-def execute(host, command):
+def execute(host, command, *, tty=False):
     argv = command_argv(host, command)
     print(json.dumps(receipt(host, argv), separators=(",", ":")), file=sys.stderr, flush=True)
     if host["transport"] == "ssh":
         # SSH's remote interface is a shell string; quote each literal argument exactly once.
-        argv = [*ssh_argv(host), shlex.join(argv)]
+        argv = [*ssh_argv(host, tty=tty), shlex.join(argv)]
     env = dict(os.environ)
     for key in ("REX_SERVER", "REX_SESSION", "REX_BLOCK", "REX_CLIENT", "TEEREX_INTERNAL_REX"):
         env.pop(key, None)
@@ -132,6 +132,7 @@ def main(argv=None):
         child.add_argument("--config", required=True)
         child.add_argument("--host", required=True)
         if operation == "exec":
+            child.add_argument("--tty", action="store_true", help="explicitly force an SSH PTY; local targets retain inherited streams without allocating a PTY; never use for machine-readable callbacks")
             child.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args(argv)
     try:
@@ -139,7 +140,7 @@ def main(argv=None):
         if args.operation == "resolve":
             print(json.dumps({"schema_version": 1, "host": host, "identity_basis": "explicit_configuration_not_observed_identity"}, separators=(",", ":")))
         else:
-            execute(host, args.command[1:] if args.command[:1] == ["--"] else args.command)
+            execute(host, args.command[1:] if args.command[:1] == ["--"] else args.command, tty=args.tty)
         return 0
     except (OSError, ValueError, UnicodeError) as exc:
         print(json.dumps({"schema_version": 1, "kind": "target_error", "error": str(exc), "retry": False}), file=sys.stderr)

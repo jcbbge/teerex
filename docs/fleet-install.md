@@ -48,6 +48,19 @@ The optional `install` fields are installation-only additions, not another host 
 
 Configured `host_id` is a declaration, **not an independently measured machine identity**. Receipts say so and record observed hostname/user/HOME/platform separately. SSH authenticates the selected endpoint against the operator's trusted file; it cannot prove the human's nickname matches the intended physical machine. Configured socket/rex/store are shared target data but are not contacted, installed or modified by fleet installation.
 
+## Source-only interactive transport
+
+The source integration after alpha.5 adds `teerex targets exec --config ABS --host NAME --tty -- COMMAND ...`. It is **not present in the immutable alpha.5 binaries** and is not an install/upgrade step. Use it only with a reviewed executable built from the newer source.
+
+- **Who:** an operator or visible supervisor explicitly authorized to run the selected command; selecting a host does not grant authority.
+- **What:** opt into an SSH PTY for one command. Without `--tty`, existing SSH transport remains non-TTY. Local targets retain inherited streams without allocating a PTY.
+- **When:** a compute process needs interactive terminal semantics. Do not use TTY mode for machine-readable ACK/Stop callback receipts: a PTY can merge streams and transform line endings.
+- **Where:** the shared config is read on the invoking command host; executable/cwd/program-file paths belong to the configured execution host. Nothing uploads local files or shares a remote registry implicitly.
+- **Why:** reuse one explicit host resolver and lossless argv serializer rather than construct a second SSH route in a profile or wrapper.
+- **How:** use the `targets exec` form, placing `--tty` before the literal `--`. Strict pinned trust, batch authentication, disabled forwarding/reuse and one-shot execution remain; a transport failure does not prove a remote command had no effect and does not authorize a retry.
+
+Disposable Linux acceptance separately verified actual PTY allocation versus default non-TTY streams, exact asymmetric literal argv and exit status, plus unknown/changed-key refusal. This is transport evidence, not cross-host agent-callback, sandbox, native Mac or release certification. The opt-in does not enable reverse forwarding or complete issue #14/#21.
+
 ## Plans, apply, and PATH consent
 
 Current reviewed public tag is `v0.1.0-alpha.5`. Replace `TAG` below with that exact tag after setup verification, not a branch or release resolver; there is no `latest`.

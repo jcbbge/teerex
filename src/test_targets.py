@@ -68,6 +68,16 @@ class TargetsTest(unittest.TestCase):
         self.assertEqual(receipt["host_id"], "fixture")
         self.assertIs(receipt["retry"], False)
 
+    def test_visible_execution_routes_socket_without_parsing_literal_argv(self):
+        command = ["run-visible", "--session", "session:12345678-1234-1234-1234-123456789abc",
+                   "--cwd", str(self.root), "--env-file", str(self.root / "env.json"),
+                   "--stdin-file", "/dev/null", "--app", "fixture", "--title", "Visible α",
+                   "--", "/absolute/program", "--socket", "literal-not-a-selector", "--tty"]
+        result = self.call("--config", str(self.config), "--host", "hive", *command)
+        self.assertEqual(result.returncode, 7, result.stderr)
+        self.assertEqual(json.loads(self.output.read_text()),
+                         ["--rex", self.host["rex"], "run-visible", "--socket", self.host["socket"], *command[1:]])
+
     def test_named_seat_send_appends_once_and_corrupt_store_never_falls_back(self):
         store = Path(self.host["store"])
         store.mkdir(mode=0o700)
@@ -145,6 +155,48 @@ class TargetsTest(unittest.TestCase):
         self.assertIn("PINNED_DIAGNOSTIC", result.stderr)
         self.assertIn(str(pinned), result.stderr)
         self.assertFalse((self.root / "MUST_NOT_RUN").exists())
+
+    def test_explicit_ssh_tty_preserves_trust_and_literal_command(self):
+        ssh_output = self.root / "ssh-argv.json"
+        ssh = self.root / "ssh"
+        ssh.write_text("#!/usr/bin/env python3\nimport json,os,sys\nfrom pathlib import Path\n"
+                       + "Path(" + repr(str(ssh_output)) + ").write_text(json.dumps(sys.argv[1:]))\n"
+                       + "os.execv('/bin/sh', ['/bin/sh', '-c', sys.argv[-1]])\n")
+        ssh.chmod(0o700)
+        self.host.update(transport="ssh", address="operator@example.invalid", port=2223,
+                         known_hosts=str(self.root / 'known % hosts "quoted"'),
+                         identity_file=str(self.root / "identity with spaces"))
+        self.save()
+        literal = "α 'quoted' ; touch " + str(self.root / "MUST_NOT_EXIST") + "\n$(false)"
+        command = ["agents", "exec", "--payload", literal, "--", "--tty"]
+        for tty in (False, True):
+            with self.subTest(tty=tty):
+                result = subprocess.run([str(BIN), "targets", "exec", "--config", str(self.config),
+                                         "--host", "hive", *(["--tty"] if tty else []), "--", *command],
+                                        env=dict(os.environ, PATH=str(self.root) + os.pathsep + os.environ["PATH"]),
+                                        capture_output=True, text=True, timeout=10)
+                self.assertEqual(result.returncode, 7, result.stderr)
+                actual = json.loads(ssh_output.read_text())
+                self.assertEqual(actual[:3], ["-F", "/dev/null", "-tt" if tty else "-T"])
+                self.assertEqual(actual.count("-tt"), int(tty))
+                self.assertEqual(actual.count("-T"), int(not tty))
+                options = [actual[i + 1] for i, value in enumerate(actual[:-1]) if value == "-o"]
+                for required in ("BatchMode=yes", "StrictHostKeyChecking=yes", "GlobalKnownHostsFile=/dev/null",
+                                 "UpdateHostKeys=no", "ControlMaster=no", "ControlPath=none", "IdentitiesOnly=yes",
+                                 "ForwardAgent=no", "ClearAllForwardings=yes", "ConnectTimeout=10"):
+                    self.assertIn(required, options)
+                self.assertIn('UserKnownHostsFile="' + str(self.root) + r'/known %% hosts \"quoted\""', options)
+                self.assertEqual(actual[-6:-1], ["-i", self.host["identity_file"], "-p", "2223", self.host["address"]])
+                self.assertEqual(json.loads(self.output.read_text()), ["--rex", self.host["rex"], *command])
+                self.assertFalse((self.root / "MUST_NOT_EXIST").exists())
+                self.assertNotIn(literal, result.stderr)
+                self.assertIs(json.loads(result.stderr)["retry"], False)
+
+    def test_tty_on_local_transport_does_not_allocate_or_parse_program_options(self):
+        result = self.call("targets", "exec", "--config", str(self.config), "--host", "hive", "--tty",
+                           "--", "filter", "--", "--tty")
+        self.assertEqual(result.returncode, 7, result.stderr)
+        self.assertEqual(json.loads(self.output.read_text()), ["--rex", self.host["rex"], "filter", "--", "--tty"])
 
     def test_ssh_requires_explicit_pretrusted_fields_before_launch(self):
         self.host.update(transport="ssh", address="-oProxyCommand=evil", port=22)
