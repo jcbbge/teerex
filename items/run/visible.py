@@ -213,6 +213,8 @@ def supervise(root):
 
 def invoke(runtime, pin, args, budget=5, interruptible=False):
     """Bounded receipts/diagnostics, one mutation attempt; no retry on lost evidence."""
+    if args and args[0] == "jobs":
+        budget = max(budget, 20)  # Native 10s registry wait + 5s live query + cleanup margin.
     env = dict(os.environ)
     for key in ("REX_SERVER", "REX_SESSION", "REX_BLOCK", "REX_CLIENT"):
         env.pop(key, None)
@@ -537,6 +539,8 @@ def controller(runtime, source, args):
                             reason = "jobs_tracking_failed"
                         else:
                             jobs.update(track_outcome="tracked", generation=entry["generation"])
+                            if time.monotonic() >= end:
+                                reason = "jobs_tracking_exceeded_startup_budget"
                     if not reason and not STOP:
                         save(root / "permit.json", ready)
                         permitted = True

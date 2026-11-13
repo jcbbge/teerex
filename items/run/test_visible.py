@@ -337,6 +337,34 @@ assert json.loads(data)['result']['failure_reason']=='channel_request_limit'
                 process.terminate()
                 process.communicate(timeout=10)
 
+    def test_jobs_tracking_survives_native_queue_past_old_transport_budget(self):
+        import fcntl
+        registry = self.work / "queued-jobs"
+        registry.mkdir(mode=0o700)
+        lock_path = registry / "lock"
+        lock_path.touch(mode=0o600)
+        marker = self.work / "queued-started"
+        command = self.command(f"from pathlib import Path;Path({str(marker)!r}).touch()", extra=[
+            "--registry", str(registry), "--owner", "rivet", "--purpose", "queued runner", "--startup-ms", "30000"])
+        process = None
+        try:
+            with lock_path.open("r+") as lock:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                process = subprocess.Popen(command, env=self.runtime_env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                time.sleep(5.5)
+                self.assertIsNone(process.poll(), "native jobs queue must outlive the former5s wrapper budget")
+                self.assertFalse(marker.exists(), "queued tracking must not permit argv")
+            stdout, stderr = process.communicate(timeout=20)
+            packet = json.loads(stdout)
+            self.assertEqual(process.returncode, 0, stdout + stderr)
+            self.assertTrue(marker.exists())
+            self.assertEqual(packet["jobs"]["track_outcome"], "tracked")
+            self.assertEqual(packet["jobs"]["forget_outcome"], "forgotten")
+        finally:
+            if process is not None and process.poll() is None:
+                process.terminate()
+                process.communicate(timeout=25)
+
     def test_optional_jobs_partial_flags_track_failure_and_forget_failure(self):
         registry = self.work / "jobs"
         registry.mkdir(mode=0o700)
