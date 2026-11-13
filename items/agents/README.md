@@ -389,3 +389,7 @@ are copied. Binary/fixture copies are exclusively for tools on the other host.
 It verifies literal argv (including empty strings, quotes and newlines), routed
 protocol ACK, exactly one brief and measured remote exit 7 without a paid model.
 CI discovers the explicit test but skips physical estate access unless enabled.
+
+### Quiet progress reports
+
+Managed `agents stop` records every completed turn in the registry and timeline. A progress Stop sends no report to starter/report-to. Delivery occurs when Now is empty, Now is checked done with no To-do left, Waiting names the report-to agent (registered name or pane label) or `seat`, or the scratchpad cannot be read. StopFailure and measured process-exit alerts always deliver. The receipt and notification record carry `delivery_rule`; suppressed turns return `notification_suppressed`. Scratchpad parsing uses the shared scratch parser; Waiting also accepts the Revision 2b Markdown line.

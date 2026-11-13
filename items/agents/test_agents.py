@@ -468,6 +468,52 @@ class AgentsTest(unittest.TestCase):
                 process.terminate()
             process.communicate(timeout=5)
 
+    def test_turn_report_delivery_rules_keep_progress_quiet(self):
+        p, launched = self.launch()
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        launch_id = launched["launch_id"]
+        state = self.record(launch_id)
+        pad = Path(state["scratchpad"])
+        # Match the actual destination's label, rather than guessing its name.
+        label = "lead-worker"
+        renamed = subprocess.run([BIN, "surfaces", "rename", "--socket", str(self.socket),
+            "--session", self.session, "--pane", self.starter, "--label", label],
+            env=self.env, capture_output=True, text=True)
+        self.assertEqual(renamed.returncode, 0, renamed.stdout + renamed.stderr)
+        event = self.work / "quiet-event.json"
+        cases = [
+            ("progress", "- [ ] implement\n", "- [ ] test\n", "", "Stop", "progress_turn_suppressed", False),
+            ("finished", "", "", "", "Stop", "finished_now_empty", True),
+            ("done", "- [x] implement\n", "", "", "Stop", "finished_now_done", True),
+            ("waiting", "- [ ] integrate\n", "- [ ] test\n", "Waiting: lead-worker · need review · since 2026-11-13T00:00:00Z\n", "Stop", "waiting_on_report_to_or_seat", True),
+            ("other-wait", "- [ ] integrate\n", "", "Waiting: someone-else · dependency · since 2026-11-13T00:00:00Z\n", "Stop", "progress_turn_suppressed", False),
+            ("failure", "- [ ] implement\n", "- [ ] test\n", "", "StopFailure", "harness_failed", True),
+            ("missing", None, "", "", "Stop", "scratchpad_unreadable", True),
+        ]
+        expected = 0
+        for index, (name, current, todo, waiting, kind, rule, deliver) in enumerate(cases):
+            event_id = "%032x" % (index + 1)
+            if current is None:
+                pad.unlink()
+            else:
+                pad.write_text("# worker\n" + waiting + "\n## Now\n" + current + "\n## To-do\n" + todo + "\n## Done\n")
+            event.write_text(json.dumps(dict(hook_event_name=kind, last_assistant_message=name, error="failure")))
+            p, packet = self.run_cli("stop", "--registry", str(self.registry), "--launch-id", launch_id,
+                "--event-id", event_id, "--event-file", str(event))
+            self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+            self.assertEqual(packet["delivery_rule"], rule)
+            notice = self.record(launch_id)["notifications"][event_id]
+            self.assertEqual(len(notice["results"]), int(deliver))
+            expected += int(deliver)
+            if deliver:
+                wait_for(lambda: len([v for v in events(self.starter_log) if v["event"] == "input"]) == expected)
+            self.assertEqual(len([v for v in events(self.starter_log) if v["event"] == "input"]), expected)
+        p, timeline = self.run_cli("timeline", "--registry", str(self.registry), "--json")
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        stops = [e for e in timeline["events"] if e["event"] in ("Stop", "StopFailure")]
+        self.assertEqual(len(stops), len(cases))
+        self.assertEqual(stops[0]["delivery_rule"], "progress_turn_suppressed")
+
     def test_agent_keeps_three_step_scratchpad_visible(self):
         p, packet = self.launch("scratch-three")
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)

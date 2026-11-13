@@ -104,7 +104,7 @@ def lifecycle_events(state):
         first = (hook.get("text") or "").splitlines()
         # Terminal output is data: never allow a report to inject terminal controls.
         line = "".join(c for c in (first[0] if first else "") if ord(c) >= 32 and not 127 <= ord(c) <= 159)[:180]
-        add(hook.get("at"), hook["kind"], text=line, event_id=hook.get("event_id"))
+        add(hook.get("at"), hook["kind"], text=line, event_id=hook.get("event_id"), **({"delivery_rule": hook["delivery_rule"]} if hook.get("delivery_rule") else {}))
     if state.get("immediate_child_term") is not None:
         add(state.get("immediate_child_ended_at"), "child_exit", term=state["immediate_child_term"])
     retired = state.get("retired") or {}
@@ -1214,17 +1214,55 @@ def publish_fleet(root, state, event_id, reported_state, detail):
     return code
 
 
-def notify(root, launch_id, event_id, body, evidence, reported_state="unknown"):
+def turn_report_rule(root, state, kind):
+    if kind == "StopFailure":
+        return "harness_failed"
+    try:
+        path = Path(state["scratchpad"])
+        data = scratch_read(path)
+        raw = read_file(str(path)).decode("utf-8")
+        if not data.get("now"):
+            return "finished_now_empty"
+        section = re.search(r"(?ms)^## Now\s*\n(.*?)(?=^## |\Z)", raw)
+        if not data.get("todo") and section and re.search(r"(?m)^-\s+\[[xX]\]\s+", section[1]):
+            return "finished_now_done"
+        waiting = data.get("waiting")
+        match = re.search(r"(?m)^Waiting:\s*(.+?)\s*·\s*(.+?)\s*·\s*since\s+(.+)$", raw)
+        on = waiting.get("on") if isinstance(waiting, dict) else match[1].strip() if match else None
+        if on:
+            names = {"seat"}
+            target = state.get("report_to") or state.get("starter")
+            if target:
+                for record in Path(root).glob("agents-*.json"):
+                    candidate = json.loads(read_file(str(record), private=True))
+                    address = candidate.get("target") or {}
+                    if all(address.get(k) == target.get(k) for k in ("session_id", "block_id")):
+                        names.add(candidate.get("name"))
+                code, packet = invoke(["surfaces", "inspect", "--socket", state["socket"],
+                    "--session", target["session_id"], "--pane", target["block_id"]],
+                    client_path=state["client_path"], rex_executable=state["rex_executable"])
+                if not code and isinstance(packet, dict):
+                    names.add((packet.get("actual") or {}).get("label"))
+            if on in names:
+                return "waiting_on_report_to_or_seat"
+        return "progress_turn_suppressed"
+    except (OSError, ValueError, KeyError, Refusal, subprocess.SubprocessError):
+        return "scratchpad_unreadable"
+
+
+def notify(root, launch_id, event_id, body, evidence, reported_state="unknown", delivery_rule=None):
     with Registry(root) as registry:
         state = registry.read(launch_id)
         require(event_id not in state["notifications"], "notification_already_attempted")
         require(len(state["notifications"]) < 64, "notification_history_full")
-        state["notifications"][event_id] = dict(outcome="uncertain", evidence=evidence, attempted_at=now())
+        state["notifications"][event_id] = dict(outcome="uncertain", evidence=evidence, attempted_at=now(), delivery_rule=delivery_rule)
         registry.save(state)
     # Starter and report-to can differ; notify both, deduplicating the exact tuple.
     destinations = [state["starter"]] if state["starter"] is not None else []
     if state["report_to"] is not None and state["report_to"] != state["starter"]:
         destinations.append(state["report_to"])
+    if delivery_rule == "progress_turn_suppressed":
+        destinations = []
     results = []
     for i, destination in enumerate(destinations):
         code, packet = send(root, state, destination, body, "notice-" + event_id + "-" + str(i))
@@ -1232,12 +1270,12 @@ def notify(root, launch_id, event_id, body, evidence, reported_state="unknown"):
                             outcome="transport_acknowledged" if transport_ack(code, packet) else "uncertain"))
     def reported(s):
         s["notifications"][event_id]["results"] = results
-        s["notifications"][event_id]["outcome"] = ("transport_acknowledged" if all(r["outcome"] == "transport_acknowledged"
+        s["notifications"][event_id]["outcome"] = ("suppressed" if delivery_rule == "progress_turn_suppressed" else "transport_acknowledged" if all(r["outcome"] == "transport_acknowledged"
                                                                                    for r in results) else "uncertain")
     state = update(root, launch_id, reported)
     fleet_code = publish_fleet(root, state, event_id, reported_state, body.replace("\n", " "))
-    ok = state["notifications"][event_id]["outcome"] == "transport_acknowledged" and fleet_code == 0
-    return (0 if ok else 1), receipt(state, "notification_acknowledged" if ok else "notification_uncertain")
+    ok = state["notifications"][event_id]["outcome"] in ("transport_acknowledged", "suppressed") and fleet_code == 0
+    return (0 if ok else 1), receipt(state, "notification_suppressed" if delivery_rule == "progress_turn_suppressed" else "notification_acknowledged" if ok else "notification_uncertain", delivery_rule=delivery_rule)
 
 
 def transcript_last_text(path):
@@ -1301,7 +1339,7 @@ def report_stop(root, launch_id, event_id, event, allow_transcript=True):
         state = update(root, launch_id, started)
         return 0, receipt(state, "turn_started")
     check = None
-    if event.get("scratch_harness") in ("claude", "codex", "pi"):
+    if kind != "StopFailure" and event.get("scratch_harness") in ("claude", "codex", "pi"):
         def checked(s):
             basis = "prompt_submit_or_initial_child_start"
             if event["scratch_harness"] == "codex" and event.get("codex_notify"):
@@ -1346,11 +1384,12 @@ def report_stop(root, launch_id, event_id, event, allow_transcript=True):
     body = f"{title}: {state['name']}\n{details}"
     if check and check["status"] == "stale":
         body += "\nScratchpad: stale; " + check["action"]
+    delivery_rule = turn_report_rule(root, state, kind)
     def remembered(s):
-        s["last_hook"] = dict(kind=kind, at=now(), text=details, event_id=event_id, evidence="harness_report_not_process_death", scratchpad_check=check)
+        s["last_hook"] = dict(kind=kind, at=now(), text=details, event_id=event_id, evidence="harness_report_not_process_death", scratchpad_check=check, delivery_rule=delivery_rule)
     update(root, launch_id, remembered)
     code, packet = notify(root, launch_id, event_id, body, "harness_report_not_process_death",
-                          reported_state="idle" if kind == "Stop" else "unknown")
+                          reported_state="idle" if kind == "Stop" else "unknown", delivery_rule=delivery_rule)
     if check is not None:
         packet["scratchpad_check"] = check
     return code, packet
@@ -1615,7 +1654,7 @@ def parser():
     q.add_argument("--event-file", help="stop only: absolute JSON file or -; <=32KiB/EOF within 2s")
     q.add_argument("--session", help="ack only: exact own session:UUID, not a destination selector")
     q.add_argument("--block", help="ack only: exact own block:UUID, not a destination selector")
-    q = sub.add_parser("hook", help="Claude/Pi turn-end enforcement and Codex post-turn reminder; start hooks record turn time; bounded callback")
+    q = sub.add_parser("hook", help="scratch enforcement; progress Stop reports stay in timeline; finished/waiting/failure reports deliver")
     q.add_argument("--harness", required=True, choices=("claude", "codex", "pi"))
     q.add_argument("--command-json", required=True, help="literal callback argv JSON")
     source = q.add_mutually_exclusive_group(required=True)
