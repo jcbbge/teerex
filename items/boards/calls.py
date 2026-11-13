@@ -106,19 +106,64 @@ def recent(limit):
     return rows[:limit]
 
 
-def run_helper(source, pid, start_at):
+def resolved_target(server):
+    """Complete the existing native shape with the resolver's selected endpoint.
+
+    No new shape or value is collected here. Failed/unfinished resolution stays
+    explicitly unknown, and never changes the selected command's behavior.
+    """
+    try:
+        import teerex_friction as friction
+        import hashlib
+        import hmac
+        ident = globals().get("_active_call_id")
+        if ident is None:
+            return
+        with locked() as fd:
+            c = friction.consent(fd)
+            now = int(time.time()*1000)
+            if not c or not c["enabled_at"] <= now < c["expires_at"]:
+                return
+            salt = friction.read(fd,"friction-salt",32)
+            if len(salt) != 32:
+                return
+            for name,raw in friction.segments(fd):
+                lines=[];changed=False
+                for line in raw.splitlines(keepends=True):
+                    try:
+                        record=json.loads(line)
+                        if record["call_id"]==ident and record["context"].get("target_unknown"):
+                            via=record["caller"].get("via")
+                            if c["scope"]!="all" and via not in c["scope"][8:].split(","):
+                                return
+                            record["context"]["server_key"]="k:"+hmac.new(salt,server.encode(),hashlib.sha256).hexdigest()[:16]
+                            record["context"]["target_unknown"]=False
+                            line=friction.encode(record);changed=True
+                    except (ValueError,KeyError,TypeError,AttributeError):
+                        pass
+                    lines.append(line)
+                if changed:
+                    rewritten=b"".join(lines)
+                    if len(rewritten)<=friction.LIMIT:
+                        friction.atomic(fd,name,rewritten)
+    except (OSError,ValueError,TypeError,KeyError,ImportError):
+        pass
+
+
+def run_helper(source, pid, start_at, call_id=None):
     # An existing native controller may launch this helper as a child; its own
     # exact exit remains the native controller's responsibility.
     owned = os.getpid() == pid and start_at > 0
     if owned:
-        os.environ["TEEREX_CALL_START"] = str(pid) + ":" + str(start_at)
+        globals()["_active_call_id"] = call_id
+        os.environ["TEEREX_CALL_START"] = str(pid) + ":" + str(start_at) + (":" + call_id if call_id else "")
     started = time.monotonic()
     elapsed_before_helper = max(0, (time.time_ns() - start_at) // 1000000)
     def finish(code):
         if not owned:
             return
         try:
-            append(dict(schema_version=1, phase="end", at=int(time.time()*1000), pid=pid,
+            append(dict(schema_version=1, call_id=call_id, phase="end", at=int(time.time()*1000), pid=pid,
                         start_at=start_at, exit=code, elapsed_ms=elapsed_before_helper + round((time.monotonic()-started)*1000)))
         except (OSError, ValueError):
             pass  # History must never alter stdout, stderr, exit, or signals.

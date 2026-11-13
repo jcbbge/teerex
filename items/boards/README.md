@@ -271,3 +271,75 @@ Actual surfaces-created panes ran the renderer, and Rex terminal HTML captures w
 ## Default socket for probe
 
 Combined `teerex boards probe` may omit `--socket`: the root resolves `REX_SERVER` or the platform socket in process and exports `TEEREX_SOCKET_SOURCE`. Its JSON then includes `socket_source` (`REX_SERVER` or `platform_default`). Explicit-socket packets are unchanged. Offline store commands and terminal board renderers receive no injected socket or output wrapper; PID, stdin and stdout TTY stay with the foreground command.
+
+
+## Friction (opt-in)
+
+`teerex boards friction` adds a local sidecar to the ordinary invocation log.
+It installs no service, shell hook, schedule or automation. Python 3.9+ stdlib
+runs in the existing process with `-I`; native collection also works without Python.
+Every command requires `--log-dir ABS`, an existing, owned directory with mode
+0700. Files must be owned regular files at 0600, with no symlink or hardlink.
+The hook uses the #13 lock and never changes the invoked command's output or exit.
+
+- `enable --for-days N --scope all|callers:a,b [--by NAME]` grants 1–30 days;
+  active consent refuses `consent_exists`. Disable before changing consent.
+- `disable` removes consent and reports `was_enabled`; repeated disable succeeds.
+- `status` reports enabled/expired, expiry, scope, sidecar counts, time range,
+  salt presence and labels. It never displays the salt.
+- `label --path ABS --name NAME` labels the canonical directory key under active
+  consent. Names and callers match `[a-z0-9][a-z0-9._-]{0,63}`.
+- `forget (--all|--before TS|--caller NAME) [--yes]` previews by default;
+  `--yes` atomically rewrites retained lines with fsync and rename. `--all`
+  also deletes the salt and labels. Disable and enable to resume with a fresh salt.
+  Invocation history is retained under its own policy.
+- `report [--since TS] [--min-episodes K] [--gap-s S] [--json]` reads only;
+  defaults K=3, S=300. Times use Unix milliseconds; CLI filters also accept
+  timezone-qualified ISO8601. Named-host routing runs the report on that host.
+
+Consent lives in `friction-consent.json`, with 32 random bytes in `friction-salt`.
+Shapes rotate at 4 MiB once into `friction.jsonl.1` (8 MiB maximum).
+Missing, malformed, expired or out-of-scope consent collects nothing. A collection
+write failure marks the ordinary start line `friction_write: failed` when possible;
+when its shared lock or history cannot be written, logging stays silent.
+
+A shape contains allowlisted, sorted flag **names**, counts, pipe/file stdin
+presence, validated caller/agent names, version and host. It contains no argv,
+flag values, message, brief, stdin contents, parent command line or file contents.
+Directory and nearest `.git` ancestor (stat only) use HMAC-SHA256 keys truncated
+to 16 hex digits. Explicit/default direct sockets use the same endpoint selection
+as dispatch, including percent-decoded `REX_SERVER`. Named-host configuration is
+resolved after the native start hook. The ordinary resolver supplies its validated
+endpoint to the same in-process hook, which atomically completes the existing
+shape under the shared lock. SSH endpoint keys include address and port as well
+as socket path, so identical remote paths cannot pool across machines. Failed or
+unfinished resolution leaves `target_unknown: true`; reports count those as
+`unresolved_context` and exclude them from runs. No telemetry-only config read
+or additional process is introduced.
+Offline commands have a null server key. Salt deletion breaks links across windows.
+
+An OS-random `call_id` joins shapes to the existing #13 start/end records and
+survives native `--rex` and embedded helper exec without an extra process. #13
+uses `at`, `start_at`, `phase`, `exit` and `elapsed_ms`; it currently supplies no
+backend refusal reason. Exit 0 means ok, 2 means usage; unexplained nonzero or a
+missing end stays uncertain. A defect needs an explicit refusal outcome and reason.
+
+Reports split hashed agent/pane episodes after the configured gap. They count
+contiguous 2–6-step sequences once per distinct episode and context (host,
+repo-or-directory, server, version). Equal-support subruns disappear. Sequences
+that reach the threshold only across contexts appear as `similar_not_same`.
+A single-step **explicit refusal** may also appear as a defect summary; singleton
+successes never become verb candidates. Retry after an uncertain mutation and
+operator authority steps produce `refuse_automation`, without suggestion text.
+Known issue mappings precede general verb candidates. Labels are user supplied.
+Savings are inferred inter-step gaps, never measured benefit. Reports generate
+no scripts and execute no suggestions.
+
+Read-only report/forget preview leave the selected data unchanged. As with every
+teerex command, their own invocation is still logged if the hook's active log
+is that same directory; use a separate `TEEREX_CALL_LOG_DIR` for a byte-stable
+inspection. Consent is checked at invocation start, so disable/forget may record
+one final shape before applying their operation.
+
+Acceptance: `python3 items/boards/test_friction.py -v` uses only private temporary
+logs and synthetic joined episodes. CI runs it on both Linux and macOS lanes.

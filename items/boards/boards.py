@@ -1080,6 +1080,29 @@ def parser():
     q.add_argument("--answer", help="resolution answer, or optional Reply hint on a new card")
     c = commands.add_parser("boards", help="run in a visible Rex terminal; Ctrl+C stops; never starts a hidden watcher")
     views = c.add_subparsers(dest="view", required=True)
+    friction = views.add_parser("friction", help="opt-in call shapes and read-only repeated-sequence report", description="Explicit private consent for 1..30 days; no argv or values. Shape data rotates at 4 MiB once (8 MiB maximum). Collection failure never changes a command. No scripts or automatic action.")
+    operations = friction.add_subparsers(dest="operation", required=True)
+    for operation in ("enable", "disable", "status", "forget", "label", "report"):
+        q = operations.add_parser(operation)
+        q.add_argument("--log-dir", required=True, help="existing owned 0700 absolute call-log directory")
+        if operation == "enable":
+            q.add_argument("--for-days", type=bounded_int(1,30), required=True)
+            q.add_argument("--scope", required=True, help="all or callers:a,b")
+            q.add_argument("--by", default="operator")
+        if operation == "forget":
+            group = q.add_mutually_exclusive_group(required=True)
+            group.add_argument("--all", action="store_true")
+            group.add_argument("--before", help="UTC ISO8601 or Unix milliseconds")
+            group.add_argument("--caller")
+            q.add_argument("--yes", action="store_true", help="apply; default is read-only preview")
+        if operation == "label":
+            q.add_argument("--path", required=True)
+            q.add_argument("--name", required=True)
+        if operation == "report":
+            q.add_argument("--since")
+            q.add_argument("--min-episodes", type=bounded_int(1,100000), default=3)
+            q.add_argument("--gap-s", type=bounded_int(1,86400), default=300)
+            q.add_argument("--json", action="store_true")
     q = views.add_parser("calls", help="recent private invocation metadata", description="Private Zig start/helper or native end metadata in ~/.local/state/teerex/calls (TEEREX_CALL_LOG_DIR overrides). Active log rotates at 1 MiB; immutable history never deleted. Pairs latest 8 MiB by PID/start timestamp; missing end is unknown. Only flag names and canonical IDs; no bodies or other argument values. Logging is silent best effort; no supervisor or daemon.")
     q.add_argument("--once", action="store_true")
     q.add_argument("--json", action="store_true")
@@ -1115,6 +1138,9 @@ def main(argv=None):
     options = [x.split("=", 1)[0] for x in argv if x.startswith("--")]
     check(len([x for x in options if x not in ("--jobs-registry", "--agents-registry", "--option")]) == len(set(x for x in options if x not in ("--jobs-registry", "--agents-registry", "--option"))), "duplicate_option")
     a = parser().parse_args(argv)
+    if a.command == "boards" and a.view == "friction":
+        import teerex_friction
+        return teerex_friction.main(a)
     if a.command == "boards" and a.view == "calls":
         return calls_board(a)
     if a.command == "try-route":

@@ -11,7 +11,7 @@ const usage =
     \\
     \\Operating-layer commands:
     \\  surfaces resolve|session ensure|ensure|open|inspect|rename|move|focus|close|palette  Visible terminals and native palette plans
-    \\  boards inbox|fleet|calls|probe|state                Live boards, typed store and remap plans
+    \\  boards inbox|fleet|calls|friction|probe|state                Live boards, typed store and remap plans
     \\  seat register|inspect|clear              Exact-address operator seat
     \\  inbox append|inspect|clear                    Private retained messages
     \\  ask                                          Complete typed decisions or explicit resolution
@@ -49,6 +49,7 @@ const usage =
 pub fn main() void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
+    @import("rex_boards").call_log.server_uri = frictionServer;
     @import("rex_boards").call_log.start(arena.allocator(), version);
     run(arena.allocator()) catch |err| {
         std.debug.print("teerex: {s}\n", .{@errorName(err)});
@@ -64,7 +65,7 @@ fn finish(allocator: std.mem.Allocator, code: u8) noreturn {
 
 fn python(allocator: std.mem.Allocator, args: []const []const u8) !void {
     var argv: std.ArrayList([]const u8) = .empty;
-    try argv.appendSlice(allocator, &.{ "python3", "-I", "-c", try @import("rex_boards").call_log.python(allocator, @embedFile("targets.py")) });
+    try argv.appendSlice(allocator, &.{ "python3", "-I", "-c", try @import("rex_boards").call_log.namedHostPython(allocator, @embedFile("targets.py")) });
     try argv.appendSlice(allocator, args);
     return std.process.execv(allocator, argv.items);
 }
@@ -272,6 +273,25 @@ fn defaultSocket(allocator: std.mem.Allocator, env: *const std.process.EnvMap) !
         else => return error.UnsupportedSocketPlatform,
     };
     return .{ .path = path, .source = "platform_default" };
+}
+
+// Share target selection with the consent-gated collector without probing or
+// reading configuration. Named-host resolution remains unknown at this hook.
+fn frictionServer(allocator: std.mem.Allocator, original: []const []const u8) !?[]const u8 {
+    var args = original;
+    if (args.len > 2 and eq(args[0], "--rex")) args = args[2..];
+    if (args.len == 0 or eq(args[0], "--config") or eq(args[0], "--host") or eq(args[0], "targets")) return null;
+    for (args, 0..) |arg, i| {
+        if (eq(arg, "--")) break;
+        if (eq(arg, "--socket") and i + 1 < args.len and std.fs.path.isAbsolute(args[i + 1]))
+            return try std.fmt.allocPrint(allocator, "unix://{s}", .{args[i + 1]});
+        if (std.mem.startsWith(u8, arg, "--socket=") and std.fs.path.isAbsolute(arg[9..]))
+            return try std.fmt.allocPrint(allocator, "unix://{s}", .{arg[9..]});
+    }
+    if (!takesSocket(args)) return null;
+    var env = try std.process.getEnvMap(allocator);
+    const selected = try defaultSocket(allocator, &env);
+    return try std.fmt.allocPrint(allocator, "unix://{s}", .{selected.path});
 }
 
 // A borrowed argv remains untouched for explicit sockets and offline leaves.

@@ -160,6 +160,14 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         host = resolve_host(args.config, args.host)
+        # The ordinary resolver supplies metadata to the existing in-process hook;
+        # standalone use has no hook and never gains a telemetry dependency.
+        calls = sys.modules.get("teerex_calls")
+        if calls is not None:
+            server = "unix://" + host["socket"]
+            if host["transport"] == "ssh":
+                server = "ssh://" + host["address"] + ":" + str(host["port"]) + host["socket"]
+            calls.resolved_target(server)
         if args.operation == "resolve":
             print(json.dumps({"schema_version": 1, "host": host, "identity_basis": "explicit_configuration_not_observed_identity"}, separators=(",", ":")))
         else:
