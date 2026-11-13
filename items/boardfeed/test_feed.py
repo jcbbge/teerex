@@ -130,13 +130,17 @@ class FeedTests(unittest.TestCase):
                 session=created['session_id'];block=created['initial_windows'][0]['block_ids'][0]
                 record=root/'agents-registry'/'agents-fixture.json'
                 record.write_text(json.dumps(dict(launch_id='fixture',name='worker',phase='brief_submitted',target=dict(session_id=session,block_id=block))))
-                wait_for(lambda e:e['kind']=='agent' and e['name']=='worker')
+                row=wait_for(lambda e:e['kind']=='agent' and e['name']=='worker')
+                self.assertEqual(row['placement'],'placed')
                 wait_for(lambda e:e['kind']=='agent' and e['state']=='waiting' and e['question']=='Choose?')
                 (root/'scratch'/session).mkdir()
                 (root/'scratch'/session/(block+'.md')).write_text('## Now\n- [ ] Test push\n')
                 wait_for(lambda e:e['kind']=='agent' and e['now']=='Test push')
                 (root/'calls'/'calls.jsonl').write_text(json.dumps(dict(phase='start',call_id='x',verb='send'))+'\n'+json.dumps(dict(phase='end',call_id='x',exit=0))+'\n')
                 wait_for(lambda e:e['kind']=='stream' and e['text']=='message delivered')
+                closed=subprocess.run([REX,'--autostart=false','-S',endpoint,'block','close','--session',session,block],capture_output=True,text=True,timeout=5)
+                self.assertEqual(closed.returncode,0,closed.stderr)
+                wait_for(lambda e:e['kind']=='agent' and e['state']=='gone')
                 if os.environ.get('TEEREX_BIN'):
                     config=root/'hosts.json'
                     config.write_text(json.dumps(dict(schema_version=1,hosts=dict(hive=dict(host_id='hive',platform='linux-x86_64' if sys.platform=='linux' else 'macos-arm64',transport='local',home=tmp,socket=str(socket),rex=REX,teerex=os.environ['TEEREX_BIN'],store=str(root/'store'))))))

@@ -14,7 +14,8 @@ The named-host transport injects the configured socket and Rex executable.
 Python 3.9+ is required, using only its standard library.
 
 Rex `events --all --json` provides pane, title, focus, process and program status
-changes. Initial process/status reads seed registered panes. inotify on Linux
+changes. Initial process/status reads seed registered panes. Session view events refresh
+placement and remove closed panes from the agent view. inotify on Linux
 and kqueue vnode notifications on macOS watch registries, call logs and
 scratchpads, including directory creation and atomic replacement. Only changed
 agent projections are emitted; a removed record emits `gone`. Successful call

@@ -245,7 +245,7 @@ class MacVitals:
 
 class State:
     def __init__(self, a):
-        self.a=a; self.rows={};self.calls={};self.call_starts={};self.roots={};self.pids={};self.status={};self.questions={};self.reports={};self.seeded=set()
+        self.a=a; self.rows={};self.calls={};self.call_starts={};self.roots={};self.pids={};self.status={};self.questions={};self.reports={};self.seeded=set();self.views={};self.placements={}
         self.lock=threading.RLock()
 
     def scan(self):
@@ -281,6 +281,8 @@ class State:
                             elif hook.get('kind')=='StopFailure': state='error'
                             if record.get('immediate_child_term') is not None: state='gone'
                             elif record.get('last_report_file') or record.get('report_file'): state='idle'
+                            if session not in self.views:self.refresh_view(session)
+                            if session in self.views and block not in self.views[session]:state='gone'
                             if block not in self.seeded:
                                 self.seeded.add(block)
                                 try:
@@ -292,7 +294,7 @@ class State:
                                     self.update_status(block,status)
                                 except (OSError,ValueError,subprocess.SubprocessError):pass
                             if state!='gone':state=self.status.get(block,state)
-                            row=dict(id=identifier,name=record.get('name') or record.get('owner') or 'agent',session=session,block=block,state=state,placement='detached' if record.get('placement')=='detached' else 'placed',now=next(iter(sections['Now']),None),done=len(sections['Done']),total=sum(map(len,sections.values())),question=self.questions.get(block),since=hook.get('at') or record.get('created_at') or record.get('registered_at_unix_ms') or 0,cpu=None,rss=None)
+                            row=dict(id=identifier,name=record.get('name') or record.get('owner') or 'agent',session=session,block=block,state=state,placement=self.placements.get(block,'detached' if record.get('placement')=='detached' else 'placed'),now=next(iter(sections['Now']),None),done=len(sections['Done']),total=sum(map(len,sections.values())),question=self.questions.get(block),since=hook.get('at') or record.get('created_at') or record.get('registered_at_unix_ms') or 0,cpu=None,rss=None)
                             if identifier not in rows or registry==self.a.agents_registry: rows[identifier]=row
                     except (OSError,ValueError,UnicodeError,TypeError): continue
             for identifier,row in rows.items():
@@ -307,6 +309,15 @@ class State:
             self.rows=rows
             self.roots={self.pids[row['block']]:row['name'] for row in rows.values() if row['block'] in self.pids}
             self.tail_calls()
+
+    def refresh_view(self,session):
+        try:
+            command=[self.a.rex,'--autostart=false','--server','unix://'+self.a.socket,'--timeout','2s','block','ls','--session',session,'--json']
+            data=json.loads(subprocess.check_output(command,stderr=subprocess.DEVNULL,timeout=3))
+            blocks=data.get('blocks',[]) if isinstance(data,dict) else data
+            self.views[session]={b['block_id'] for b in blocks}
+            for b in blocks:self.placements[b['block_id']]='placed' if b.get('placement')=='placed' else 'detached'
+        except (OSError,ValueError,TypeError,KeyError,subprocess.SubprocessError):pass
 
     def tail_calls(self):
         for path in self.a.calls.glob('*.jsonl') if self.a.calls.exists() else []:
@@ -363,10 +374,13 @@ class State:
 
     def rex_event(self,event):
         kind=event.get('type');p=event.get('payload') or {}
+        session=p.get('session_id')
         if kind=='session_event':event=p.get('event') or {};kind=event.get('type');p=event.get('payload') or {}
         block=p.get('block_id');name=p.get('name') if kind=='block_event' else kind
         payload=p.get('payload') or {}
         with self.lock:
+            if name in ('session_view_changed','block_removed','block_closed') and session:
+                self.refresh_view(session);self.scan()
             if name=='process_changed':
                 process=payload.get('child') or payload.get('foreground') or {}
                 if block not in self.pids and type(process.get('pid')) is int:self.pids[block]=process['pid']
