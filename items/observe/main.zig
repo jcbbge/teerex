@@ -5,7 +5,7 @@ const supervised = @import("supervised_child");
 const observation_usage =
     \\Usage: teerex observe --socket /absolute/path --session session:UUID --block block:UUID [--max-bytes N] [--timeout-ms N]
     \\       teerex compare --before /path/to/before.json --after /path/to/after.json
-    \\       teerex watch --socket /absolute/path --session session:UUID --block block:UUID --baseline FILE --timeout-ms N [--interval-ms N]
+    \\       teerex watch --socket /absolute/path --session session:UUID --block block:UUID --baseline FILE (--timeout-ms N | --no-deadline) [--interval-ms N]
     \\                    [--status-state idle|working|done|blocked|error [--status-id RECORD_ID]]
     \\
     \\Read bounded terminal text and process/directory/status evidence from an explicit Rex target.
@@ -16,9 +16,12 @@ const observation_usage =
     \\Observe/compare do not send input, edit configuration, or save files. No autostart or implicit target.
     \\Observe supports macOS/Linux; its collection budget defaults to 5000 ms (100..60000), plus bounded cleanup.
     \\Watch is a foreground, read-only macOS/Linux wait using the baseline's byte limit and exact target/source.
-    \\Watch requires a 100..60000 ms deadline; interval defaults to 250 ms (50..5000) AFTER each collection.
+    \\Watch requires 100..60000 ms; status watches allow up to 86400000 ms or --no-deadline.
+    \\Interval defaults to 250 ms (50..5000) AFTER each collection.
     \\Watch returns evidence/availability changes, or deadline/unknown/error/cancellation, never completion.
-    \\With --status-state, wait only for differing matching report evidence relative to the baseline.
+    \\Repeat --status-state for OR matching; duplicates are refused. With --status-state, wait only for differing matching report evidence relative to the baseline.
+    \\--no-deadline requires --status-state and excludes --timeout-ms; cancellation/error handling stays active.
+    \\condition.states lists requests; condition.matched_state identifies the match (null otherwise).
     \\No --status-id selects the root report; named IDs match exactly. Retained identical reports do not wake it.
     \\Its monotonic collection deadline includes polling; cleanup may add 500 ms plus scheduling/output time.
     \\Watch exit: 0 change observed, 1 collection/compatibility error, 2 usage, 124 deadline, 130/143 cancellation.
@@ -144,8 +147,8 @@ const WatchCollector = struct {
     allocator: std.mem.Allocator,
     baseline: Observation,
     timer: *std.time.Timer,
-    timeout_ms: u64,
-    status_state: ?[]const u8,
+    timeout_ms: ?u64,
+    status_states: []const []const u8,
     status_id: ?[]const u8,
     pending: std.ArrayList(u8) = .empty,
     attempts: usize = 1,
@@ -166,7 +169,7 @@ const WatchCollector = struct {
     }
 
     fn satisfied(self: *const WatchCollector) bool {
-        return if (self.status_state != null) self.matched_status != null else self.changed_fields.items.len != 0 or self.availability_fields.items.len != 0;
+        return if (self.status_states.len != 0) self.matched_status != null else self.changed_fields.items.len != 0 or self.availability_fields.items.len != 0;
     }
 
     pub fn receive(self: *WatchCollector, bytes: []const u8) !void {
@@ -210,7 +213,7 @@ const WatchCollector = struct {
         const after = try observation(allocator, target.server, target.session_id, target.block_id, self.baseline.capture.max_bytes, event.data.?, 0);
         var comparison = try compareObservations(self.baseline, after);
         const compared_at = self.timer.read() / std.time.ns_per_ms;
-        if (compared_at >= self.timeout_ms) {
+        if (self.timeout_ms != null and compared_at >= self.timeout_ms.?) {
             self.late = true;
             return;
         }
@@ -236,9 +239,14 @@ const WatchCollector = struct {
                 try self.unknown_fields.append(self.allocator, field);
             } else if (delta.changed.?) try self.changed_fields.append(self.allocator, field);
         }
-        if (self.status_state) |state| {
+        if (self.status_states.len != 0) {
             if (after.program_status) |node| for (node.data.records) |record| {
-                if (!equal(record.id, self.status_id) or !std.mem.eql(u8, record.state, state)) continue;
+                if (!equal(record.id, self.status_id)) continue;
+                var matching_state: ?[]const u8 = null;
+                for (self.status_states) |state| {
+                    if (std.mem.eql(u8, record.state, state)) matching_state = state;
+                }
+                const state = matching_state orelse continue;
                 var identical = false;
                 if (self.baseline.program_status) |old| for (old.data.records) |previous| {
                     if (equal(record.id, previous.id)) {
@@ -590,13 +598,19 @@ fn watch(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
     var baseline_path: ?[]const u8 = null;
     var timeout: ?u64 = null;
     var interval: ?u64 = null;
-    var status_state: ?[]const u8 = null;
+    var status_states: std.ArrayList([]const u8) = .empty;
+    var no_deadline = false;
     var status_id: ?[]const u8 = null;
     var i: usize = 0;
-    while (i < args.len) : (i += 2) {
+    while (i < args.len) : (i += 1) {
+        if (std.mem.eql(u8, args[i], "--no-deadline") and !no_deadline) {
+            no_deadline = true;
+            continue;
+        }
         if (i + 1 == args.len) usageError("every watch option needs a value");
         const name = args[i];
-        const value = args[i + 1];
+        i += 1;
+        const value = args[i];
         if (std.mem.eql(u8, name, "--socket") and socket == null) {
             socket = value;
         } else if (std.mem.eql(u8, name, "--session") and session == null) {
@@ -609,8 +623,11 @@ fn watch(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
             timeout = std.fmt.parseUnsigned(u64, value, 10) catch usageError("invalid watch deadline");
         } else if (std.mem.eql(u8, name, "--interval-ms") and interval == null) {
             interval = std.fmt.parseUnsigned(u64, value, 10) catch usageError("invalid watch interval");
-        } else if (std.mem.eql(u8, name, "--status-state") and status_state == null) {
-            status_state = value;
+        } else if (std.mem.eql(u8, name, "--status-state")) {
+            for (status_states.items) |state| {
+                if (std.mem.eql(u8, state, value)) usageError("duplicate --status-state");
+            }
+            try status_states.append(allocator, value);
         } else if (std.mem.eql(u8, name, "--status-id") and status_id == null) {
             status_id = value;
         } else usageError("unknown or repeated watch option");
@@ -619,12 +636,15 @@ fn watch(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
     const session_id = session orelse usageError("--session is required");
     const block_id = block orelse usageError("--block is required");
     const baseline_file = baseline_path orelse usageError("--baseline is required");
-    const timeout_ms = timeout orelse usageError("--timeout-ms is required");
+    if (no_deadline and timeout != null) usageError("--no-deadline and --timeout-ms are mutually exclusive");
+    if (!no_deadline and timeout == null) usageError("--timeout-ms or --no-deadline is required");
+    if (no_deadline and status_states.items.len == 0) usageError("--no-deadline requires --status-state");
+    const timeout_ms = timeout;
     const interval_ms = interval orelse 250;
     if (status_id) |id| {
-        if (status_state == null or id.len == 0 or id.len > 1024) usageError("--status-id needs a status condition and a nonempty ID of at most 1024 bytes");
+        if (status_states.items.len == 0 or id.len == 0 or id.len > 1024) usageError("--status-id needs a status condition and a nonempty ID of at most 1024 bytes");
     }
-    if (status_state) |state| {
+    for (status_states.items) |state| {
         var supported = false;
         inline for (.{ "idle", "working", "done", "blocked", "error" }) |known| {
             supported = supported or std.mem.eql(u8, state, known);
@@ -632,7 +652,7 @@ fn watch(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
         if (!supported) usageError("--status-state must be idle, working, done, blocked, or error");
     }
     if (!std.fs.path.isAbsolute(socket_path) or !fullId(session_id, "session:") or !fullId(block_id, "block:")) usageError("watch needs an absolute socket and full session/block IDs");
-    if (timeout_ms < 100 or timeout_ms > 60000 or interval_ms < 50 or interval_ms > 5000) usageError("watch deadline or interval out of range");
+    if ((timeout_ms != null and (timeout_ms.? < 100 or timeout_ms.? > @as(u64, if (status_states.items.len != 0) 86400000 else 60000))) or interval_ms < 50 or interval_ms > 5000) usageError("watch deadline or interval out of range");
     if (builtin.os.tag != .macos and builtin.os.tag != .linux) return error.UnsupportedObservationPlatform;
 
     const baseline = try readObservation(allocator, baseline_file);
@@ -647,7 +667,7 @@ fn watch(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
     defer signals.deinit();
     var timer = try std.time.Timer.start();
     const started_at = std.time.milliTimestamp();
-    var collector: WatchCollector = .{ .allocator = allocator, .baseline = baseline, .timer = &timer, .timeout_ms = timeout_ms, .status_state = status_state, .status_id = status_id };
+    var collector: WatchCollector = .{ .allocator = allocator, .baseline = baseline, .timer = &timer, .timeout_ms = timeout_ms, .status_states = status_states.items, .status_id = status_id };
     defer if (collector.last_after_id) |id| std.heap.page_allocator.free(id);
     const result: ?supervised.Result = supervised.collect(allocator, argv, &env, timeout_ms, &collector) catch |err| blk: {
         collector.failure = if (err == error.FileNotFound) "ObservationCommandFailed" else @errorName(err);
@@ -676,9 +696,11 @@ fn watch(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
         .started_at_unix_ms = started_at,
         .elapsed_ms = timer.read() / std.time.ns_per_ms,
         .limits = .{ .timeout_ms = timeout_ms, .interval_after_collection_ms = interval_ms, .max_encoded_content_bytes = baseline.capture.max_bytes, .max_sample_bytes = 1024 * 1024 },
-        .condition = if (status_state) |state| @as(?struct { record_id: ?[]const u8, state: []const u8, requirement: []const u8 }, .{
+        .condition = if (status_states.items.len != 0) @as(?struct { record_id: ?[]const u8, state: ?[]const u8, states: []const []const u8, matched_state: ?[]const u8, requirement: []const u8 }, .{
             .record_id = status_id,
-            .state = state,
+            .state = if (status_states.items.len == 1) status_states.items[0] else null,
+            .states = status_states.items,
+            .matched_state = if (collector.matched_status) |report| report.state else null,
             .requirement = "different_report_evidence_from_baseline",
         }) else null,
         .matched_status_report = collector.matched_status,

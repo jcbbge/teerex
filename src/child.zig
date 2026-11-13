@@ -117,7 +117,7 @@ pub const Result = struct {
 // macOS and Linux. Caller owns Signals and the receiver's stdout retention policy.
 // An optional isComplete() requests owned-group cleanup, not command success.
 // All invocations use EOF stdin, bounded diagnostics, and an owned process group.
-pub fn collect(allocator: std.mem.Allocator, argv: []const []const u8, env: *const std.process.EnvMap, deadline_ms: u64, receiver: anytype) !Result {
+pub fn collect(allocator: std.mem.Allocator, argv: []const []const u8, env: *const std.process.EnvMap, deadline_ms: ?u64, receiver: anytype) !Result {
     var timer = try std.time.Timer.start();
     const started_at = std.time.milliTimestamp();
     const selected_argv = if (argv.len != 0 and std.mem.eql(u8, argv[0], "rex") and env.get("TEEREX_INTERNAL_REX") != null) blk: {
@@ -160,7 +160,7 @@ pub fn collect(allocator: std.mem.Allocator, argv: []const []const u8, env: *con
         const elapsed_ms = timer.read() / std.time.ns_per_ms;
         const requested_signal = requestedSignal();
         const complete = if (@hasDecl(@TypeOf(receiver.*), "isComplete")) receiver.isComplete() else false;
-        if (stopped_at == null and (requested_signal != 0 or elapsed_ms >= deadline_ms or complete)) {
+        if (stopped_at == null and (requested_signal != 0 or (deadline_ms != null and elapsed_ms >= deadline_ms.?) or complete)) {
             stopped_at = elapsed_ms;
             stop_signal = requested_signal;
             deadline_exceeded = requested_signal == 0 and !complete;

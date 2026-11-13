@@ -310,9 +310,11 @@ class ObserveTest(unittest.TestCase):
                       status_state=None, status_id=None):
         command = [str(BIN), "watch", "--socket", str(socket or self.socket),
                    "--session", target[0], "--block", target[1], "--baseline", str(baseline),
-                   "--timeout-ms", str(timeout), "--interval-ms", str(interval)]
+                   "--interval-ms", str(interval)]
+        command += ["--no-deadline"] if timeout is None else ["--timeout-ms", str(timeout)]
         if status_state is not None:
-            command += ["--status-state", status_state]
+            for state in ([status_state] if isinstance(status_state, str) else status_state):
+                command += ["--status-state", state]
         if status_id is not None:
             command += ["--status-id", status_id]
         return command
@@ -801,6 +803,7 @@ class ObserveTest(unittest.TestCase):
                     self.assertEqual(packet["outcome"], "status_report_matched")
                     self.assertEqual(packet["condition"], {
                         "record_id": record_id, "state": state,
+                        "states": [state], "matched_state": state,
                         "requirement": "different_report_evidence_from_baseline"})
                     report = packet["matched_status_report"]
                     self.assertEqual((report["record_id"], report["state"]), (record_id, state))
@@ -820,6 +823,57 @@ class ObserveTest(unittest.TestCase):
                     if process.poll() is None:
                         process.terminate()
                         process.communicate(timeout=3)
+
+    def test_watch_multiple_states_and_status_deadlines(self):
+        for state, timeout in [("done", 60001), ("error", 86400000), ("done", None)]:
+            with self.subTest(state=state, timeout=timeout):
+                report = f"\x1b]7501;id=worker:state={state}\x1b\\"
+                target, gate = self.gated_fixture("", f"sys.stdout.write({report!r});sys.stdout.flush()")
+                baseline, _ = self.baseline(target)
+                result = self.triggered_watch(target, baseline, gate, timeout=timeout,
+                                              status_state=["done", "error"], status_id="worker")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                packet = json.loads(result.stdout)
+                self.assertEqual(packet["outcome"], "status_report_matched")
+                self.assertEqual(packet["condition"]["states"], ["done", "error"])
+                self.assertEqual(packet["condition"]["matched_state"], state)
+                self.assertEqual(packet["matched_status_report"]["state"], state)
+                self.assertEqual(packet["limits"]["timeout_ms"], timeout)
+
+    def test_watch_no_deadline_cancellation_and_usage(self):
+        baseline, _ = self.baseline(self.a)
+        command = self.watch_command(self.a, baseline, timeout=None, status_state=["done", "error"])
+        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            time.sleep(.3)
+            self.assertIsNone(process.poll())
+            process.terminate()
+            stdout, stderr = process.communicate(timeout=5)
+            self.assertEqual(process.returncode, 143, stderr)
+            packet = json.loads(stdout)
+            self.assertEqual(packet["outcome"], "cancel_requested")
+            self.assertEqual(packet["cancellation_signal"], signal.SIGTERM)
+            self.assertIsNone(packet["limits"]["timeout_ms"])
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.communicate(timeout=3)
+        missing = self.root / "unlimited-missing.sock"
+        packet = json.loads(baseline.read_text())
+        packet["target"]["server"] = "unix://" + str(missing)
+        baseline.write_text(json.dumps(packet))
+        failed = subprocess.run(self.watch_command(self.a, baseline, timeout=None,
+                                status_state="done", socket=missing),
+                                capture_output=True, text=True, timeout=5)
+        self.assertEqual(failed.returncode, 1, failed.stderr)
+        self.assertEqual(json.loads(failed.stdout)["outcome"], "observation_failed")
+        for invalid in [command + ["--timeout-ms", "1000"], command + ["--no-deadline"],
+                        command + ["--status-state", "error"],
+                        self.watch_command(self.a, baseline, timeout=None),
+                        self.watch_command(self.a, baseline, timeout=86400001, status_state="done")]:
+            result = subprocess.run(invalid, capture_output=True, text=True, timeout=5)
+            self.assertEqual(result.returncode, 2, result.stderr)
+            self.assertEqual(result.stdout, "")
 
     def test_watch_target_source_transport_and_usage_fail_closed(self):
         baseline, before = self.baseline(self.a)
