@@ -147,6 +147,8 @@ class SpawnTest(unittest.TestCase):
         index = command.index("--cwd")
         del command[index:index + 2]
         for global_pin in (False, True):
+            if global_pin and Path(BIN).name != "teerex":
+                continue  # --rex is a combined-CLI global option; a standalone cartridge payload has no global options.
             with self.subTest(global_pin=global_pin):
                 output.unlink(missing_ok=True)
                 env = dict(self.env, HOME=str(self.work), PATH="/no-rex-here", TEEREX_REX=self.rex)
