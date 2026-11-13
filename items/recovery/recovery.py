@@ -561,7 +561,7 @@ def restore_apply(rex, saved, plan, store, args):
     session_map = {}
     created_panes = []
     declared = declared_addresses(saved)
-    omissions = {o["block_id"] for o in plan["omissions"]}
+    omissions = {o["block_id"] for o in plan["omissions"] if "block_id" in o}
 
     def opened(sid, old_sid, pane, layout, anchor=None, direction=None, ratio=None, bounds=None):
         b = pane["block"]
@@ -691,14 +691,14 @@ def restore_apply(rex, saved, plan, store, args):
                 remapped_launches.append(launch)
         receipt = {"schema_version": 1, "kind": "recovery_remap", "source": saved["source"], "target": plan["context"]["target"],
                    "sessions": session_map, "mappings": mappings, "launches": remapped_launches,
-                   "outcome": "partial_restore_with_explicit_omissions" if omissions else "structure_restored_routing_queued",
+                   "outcome": "partial_restore_with_explicit_omissions" if plan["omissions"] else "structure_restored_routing_queued",
                    "omissions": plan["omissions"], "support": OMISSIONS, "agent_readiness": "not_assessed",
                    "command_execution": "not_assessed", "board_state_applied": False, "board_handoff": board_handoff, "retry_safe": False}
         store.create("remap.json", receipt)
         store.journal({"event": "finished", "outcome": receipt["outcome"]})
         return {"schema_version": 1, "kind": "restore_result", "outcome": receipt["outcome"], "mapped_panes": len(mappings),
                 "receipt": os.path.join(store.path, "remap.json"), "board_state_applied": False,
-                "agent_readiness": "not_assessed", "retry_safe": False}, 3 if omissions else 0
+                "agent_readiness": "not_assessed", "retry_safe": False}, 3 if plan["omissions"] else 0
     except BaseException:
         store.journal({"event": "interrupted_or_failed", "outcome": "partial_or_uncertain_inspect_journal_before_any_action", "mapped_panes": len(mappings), "retry_safe": False})
         raise
