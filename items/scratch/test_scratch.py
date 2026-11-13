@@ -35,6 +35,43 @@ class ScratchTest(unittest.TestCase):
     def data(self):
         return json.loads(self.cli("show", "--json").stdout)
 
+    def hook(self, kind, **fields):
+        return subprocess.run([BIN, "scratch", "hook"], env=self.env, input=json.dumps(dict(hook_event_name=kind, **fields)),
+                              text=True, capture_output=True, timeout=15)
+
+    def test_seat_hook_stale_blocks_once_per_turn_and_records_second_stop(self):
+        self.init()
+        self.env["AGENT_SCRATCHPAD"] = str(self.path)
+        settings = json.loads(self.cli("hook-settings", "--teerex", BIN).stdout)
+        self.assertEqual(set(settings["hooks"]), {"UserPromptSubmit", "Stop"})
+        self.assertIn(" scratch hook", settings["hooks"]["Stop"][0]["hooks"][0]["command"])
+        self.assertEqual(self.hook("UserPromptSubmit").returncode, 0)
+        self.path.write_text(self.path.read_text().replace(self.data()["updated"], "2000-01-01T00:00:00Z"))
+        first = self.hook("Stop")
+        self.assertEqual(first.returncode, 0, first.stderr)
+        self.assertEqual(json.loads(first.stdout), dict(decision="block", reason="update your scratchpad (Now/To-do/Done) before ending the turn"))
+        second = self.hook("Stop", stop_hook_active=True)
+        self.assertEqual(json.loads(second.stdout)["scratchpad_check"]["status"], "stale")
+        self.assertEqual(json.loads(second.stdout)["scratchpad_check"]["action"], "allow")
+        sidecar = Path(str(self.path) + ".turn.json")
+        self.assertEqual(stat.S_IMODE(sidecar.stat().st_mode), 0o600)
+        self.assertTrue(json.loads(sidecar.read_text())["scratchpad_check"]["already_reminded"])
+        self.hook("UserPromptSubmit")
+        self.assertEqual(json.loads(self.hook("Stop").stdout)["decision"], "block")
+
+    def test_seat_hook_fresh_missing_and_opt_out(self):
+        self.init()
+        self.env["AGENT_SCRATCHPAD"] = str(self.path)
+        self.hook("UserPromptSubmit")
+        self.cli("now", "Update during turn")
+        check = json.loads(self.hook("Stop").stdout)["scratchpad_check"]
+        self.assertEqual((check["status"], check["action"]), ("fresh", "allow"))
+        self.hook("UserPromptSubmit")
+        self.path.unlink()
+        self.assertEqual(json.loads(self.hook("Stop").stdout)["decision"], "block")
+        self.env.pop("AGENT_SCRATCHPAD")
+        self.assertEqual(json.loads(self.hook("Stop").stdout)["scratchpad_check"]["status"], "not_checked")
+
     def test_init_path_permissions_and_idempotence(self):
         self.init()
         self.assertEqual(self.cli("path").stdout.strip(), str(self.path))

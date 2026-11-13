@@ -15,7 +15,7 @@ const usage =
     \\  seat register|inspect|clear              Exact-address operator seat
     \\  inbox append|inspect|clear                    Private retained messages
     \\  ask                                          Complete typed decisions or explicit resolution
-    \\  scratch init|now|todo|done|show|path|watch  Per-pane working scratchpad
+    \\  scratch init|now|todo|done|show|path|watch|hook|hook-settings  Per-pane working scratchpad
     \\  agents launch|profiles|shell|ack|deliver|inspect|stop|present|timeline|prune
     \\         exec|exited|channel|fence-probe       Compute callbacks / local delivery / fence checks
     \\  spawn --profile NAME --profiles ABS           Managed protocol-ACK-before-brief launch

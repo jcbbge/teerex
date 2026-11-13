@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import shlex
 import stat
 import sys
 import tempfile
@@ -92,7 +93,7 @@ def scratch_read(path):
 
 
 def scratch_write(path, data):
-    data["updated"] = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+    data["updated"] = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z")
     raw = (f"# {data['name']}\nPurpose: {data['purpose']}\nIntent: {data['intent']}\nUpdated: {data['updated']}\n\n## Now\n" +
            (f"- [ ] {data['now']}\n" if data["now"] else "") + "\n## To-do\n" +
            "".join(f"- [ ] {v}\n" for v in data["todo"]) + "\n## Done\n" +
@@ -175,6 +176,95 @@ def scratch_render(data, width=40):
     return "\n".join(lines) + "\n"
 
 
+SCRATCH_REMINDER = "update your scratchpad (Now/To-do/Done) before ending the turn"
+
+
+def scratch_turn(state, event, path):
+    """The caller holds its private state lock; reading the Markdown needs no write lock."""
+    kind = event["hook_event_name"]
+    at = time.time_ns() // 1000000
+    if kind == "UserPromptSubmit":
+        state.update(turn_started_at=at, scratch_reminded=False, scratch_reminder_pending=False)
+        return dict(status="turn_started", action="allow")
+    start = state.setdefault("turn_started_at", at)
+    if not path:
+        return dict(status="not_checked", action="allow", reason="AGENT_SCRATCHPAD_absent")
+    updated = None
+    try:
+        updated = scratch_read(Path(path))["updated"]
+        parsed = datetime.datetime.fromisoformat(updated.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            raise ValueError("scratchpad_updated_requires_timezone")
+        fresh = parsed.timestamp() * 1000 >= start
+        reason = "updated_this_turn" if fresh else "updated_before_turn"
+    except (OSError, ValueError) as exc:
+        fresh, reason = False, type(exc).__name__
+    previous = bool(state.get("scratch_reminded"))
+    action = "allow" if fresh or previous or kind == "StopFailure" or (event.get("scratch_harness") == "pi" and kind == "Stop") else "block"
+    if action == "block":
+        state["scratch_reminded"] = True
+    return dict(status="fresh" if fresh else "stale", action=action, already_reminded=previous,
+                turn_started_at=start, updated=updated, reason=reason)
+
+
+def scratch_hook_settings(executable):
+    if not os.path.isabs(executable) or any(ord(c) < 32 for c in executable):
+        raise ScratchError("absolute_teerex_required")
+    command = shlex.join([executable, "scratch", "hook"])
+    return {"hooks": {kind: [{"hooks": [{"type": "command", "command": command, "timeout": 10}]}]
+                      for kind in ("UserPromptSubmit", "Stop")}}
+
+
+def scratch_seat_hook():
+    raw = sys.stdin.buffer.read(32769)
+    if len(raw) > 32768:
+        raise ScratchError("hook_event_too_large")
+    event = json.loads(raw)
+    if not isinstance(event, dict) or event.get("hook_event_name") not in ("UserPromptSubmit", "Stop"):
+        raise ScratchError("unsupported_scratch_hook_event")
+    path = os.environ.get("AGENT_SCRATCHPAD") or os.environ.get("LC_AGENT_SCRATCHPAD")
+    if not path:
+        print(json.dumps(dict(scratchpad_check=dict(status="not_checked", action="allow"))))
+        return
+    path = Path(path)
+    if not path.is_absolute():
+        raise ScratchError("absolute_scratchpad_required")
+    state_path = Path(str(path) + ".turn.json")
+    with scratch_lock(path):
+        state = {}
+        try:
+            fd = os.open(state_path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        except FileNotFoundError:
+            pass
+        else:
+            with os.fdopen(fd) as stream:
+                info = os.fstat(stream.fileno())
+                if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_nlink != 1:
+                    raise ScratchError("owned_regular_turn_state_required")
+                raw_state = stream.read(8193)
+            if len(raw_state) > 8192:
+                raise ScratchError("turn_state_too_large")
+            state = json.loads(raw_state)
+            if not isinstance(state, dict):
+                raise ScratchError("invalid_turn_state")
+        check = scratch_turn(state, event, str(path))
+        state["scratchpad_check"] = check
+        fd, stage = tempfile.mkstemp(prefix=".scratch-turn-", dir=path.parent)
+        try:
+            with os.fdopen(fd, "w") as stream:
+                json.dump(state, stream)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(stage, state_path)
+        finally:
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(stage)
+    if check["action"] == "block":
+        print(json.dumps(dict(decision="block", reason=SCRATCH_REMINDER)))
+    else:
+        print(json.dumps(dict(scratchpad_check=check)))
+
+
 def scratch_main(argv=None):
     parser = argparse.ArgumentParser(prog="teerex scratch", description="Per-pane ephemeral Markdown scratchpads; palette prepares Show scratchpad for surfaces palette install.")
     subs = parser.add_subparsers(dest="operation", required=True)
@@ -194,8 +284,17 @@ def scratch_main(argv=None):
             p.add_argument("--json", action="store_true")
         if op == "watch":
             p.add_argument("--once", action="store_true", help="render one frame and exit")
+    subs.add_parser("hook", help="Claude seat UserPromptSubmit/Stop stdin hook; stale scratchpad blocks once per turn; AGENT_SCRATCHPAD required")
+    settings = subs.add_parser("hook-settings", help="print installable Claude seat hook settings; does not modify configuration")
+    settings.add_argument("--teerex", required=True, help="absolute stable teerex executable")
     o = parser.parse_args(argv)
     try:
+        if o.operation == "hook-settings":
+            print(json.dumps(scratch_hook_settings(o.teerex)))
+            return 0
+        if o.operation == "hook":
+            scratch_seat_hook()
+            return 0
         path = scratch_path(o.session, o.block)
         if o.operation == "path":
             print(path)

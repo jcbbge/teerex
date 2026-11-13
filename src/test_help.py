@@ -23,6 +23,7 @@ class PythonHelpTest(unittest.TestCase):
             ("boards", "friction"), ("ask",),
             ("fleet", "install"), ("fleet", "rollback"),
         ]
+        commands += [("scratch", op) for op in ("init", "now", "todo", "done", "show", "path", "watch", "hook", "hook-settings")]
         commands += [("records", op) for op in (
             "init", "new", "park", "add", "attach", "set", "close", "show",
             "resume", "navigate", "list", "lint", "export", "forget", "pin",

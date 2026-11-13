@@ -562,7 +562,7 @@ def adapter_argv(argv, harness, command, root, launch_id, broker=None, tint_enab
     """Per-launch hooks only. The common adapter forwards one bounded event to stop/channel."""
     validate_adapter(harness, argv)
     if harness == "claude":
-        hook = shlex.join(command)
+        hook = shlex.join([RUNTIME, "agents", "hook", "--harness", "claude", "--command-json", json.dumps(command), "--event-file", "-"])
         settings = {"hooks": {k: [{"hooks": [{"type": "command", "command": hook, "timeout": 250}]}]
                               for k in ("Stop", "StopFailure", "UserPromptSubmit")}}
         return argv + ["--settings", json.dumps(settings)]
@@ -570,19 +570,28 @@ def adapter_argv(argv, harness, command, root, launch_id, broker=None, tint_enab
         callback = [RUNTIME, "agents", "hook", "--harness", "codex", "--command-json", json.dumps(command), "--payload"]
         # JSON arrays/strings are also TOML arrays/basic strings.
         result = argv + ["-c", "notify=" + json.dumps(callback, ensure_ascii=True)]
-        # No per-launch Codex hooks: an inline hook makes every launch stop at Codex's "Hooks need review"
-        # trust prompt before the agent can ACK. Codex's tint resets when send delivers into its pane.
+        # No per-launch Codex hooks: review can prevent protocol ACK. Use notify's guarded reminder fallback.
         return result
     # Pi's explicit -e loads even with --no-extensions. Use settled, not agent_end:
     # retries/queued continuations can follow agent_end (installed Pi extension contract).
     source = """import { spawnSync } from 'node:child_process';
 export default function(pi) {
   let outcome = 'completed';
-  pi.on('before_agent_start', async () => {
-    const args = COMMAND;
-    spawnSync(args[0], args.slice(1), {input: JSON.stringify({hook_event_name: 'UserPromptSubmit'}), encoding: 'utf8', timeout: 250000});
+  const call = (payload) => {
+    const args = HOOK;
+    const result = spawnSync(args[0], args.slice(1), {input: JSON.stringify(payload), encoding: 'utf8', timeout: 250000});
+    if (result.error || result.status !== 0) throw new Error('teerex hook failed: ' + (result.error?.message ?? result.stderr));
+    return JSON.parse(result.stdout);
+  };
+  pi.on('before_agent_start', async (event) => {
+    call({hook_event_name: 'UserPromptSubmit', prompt: event.prompt ?? ''});
   });
-  pi.on('agent_before_settle', async (event) => { outcome = event.outcome; });
+  pi.on('agent_before_settle', async (event) => {
+    outcome = event.outcome;
+    if (event.outcome !== 'completed') return;
+    const result = call({hook_event_name: 'ScratchCheck'});
+    if (result.scratchpad_check?.action === 'block') return {continue: true, entries: [...(event.entries ?? []), {type: 'custom_message', customType: 'teerex-scratchpad', content: REMINDER, display: true}]};
+  });
   pi.on('agent_settled', async (event, ctx) => {
     const messages = ctx.sessionManager.getBranch().filter(e => e.type === 'message').map(e => e.message);
     const last = [...messages].reverse().find(m => m.role === 'assistant');
@@ -590,12 +599,12 @@ export default function(pi) {
     const failed = outcome === 'error';
     const payload = {hook_event_name: failed ? 'StopFailure' : 'Stop',
       last_assistant_message: text.slice(0,1500), error: (last?.errorMessage ?? 'Pi run failed').slice(0,600)};
-    const args = COMMAND;
+    const args = HOOK;
     const result = spawnSync(args[0], args.slice(1), {input: JSON.stringify(payload), encoding: 'utf8', timeout: 250000});
     if (result.error || result.status !== 0) throw new Error('teerex stop report failed: ' + (result.error?.message ?? result.stderr));
   });
 }
-""".replace("COMMAND", json.dumps(command, ensure_ascii=True))
+""".replace("HOOK", json.dumps([RUNTIME, "agents", "hook", "--harness", "pi", "--command-json", json.dumps(command), "--event-file", "-"], ensure_ascii=True)).replace("REMINDER", json.dumps(SCRATCH_REMINDER))
     if broker is None:
         with Registry(root) as registry:
             path = registry.write_message(launch_id, "pi-stop", source, extension="ts")
@@ -615,22 +624,45 @@ def hook(o):
     require(len(raw) <= 32768, "hook_event_too_large")
     event = json.loads(raw)
     require(isinstance(event, dict), "invalid_hook_event")
-    if o.harness == "codex":
+    scratch_enabled = bool(os.environ.get("AGENT_SCRATCHPAD") or os.environ.get("LC_AGENT_SCRATCHPAD"))
+    if o.harness == "codex" and o.payload is not None:
         require(event.get("type") == "agent-turn-complete", "unsupported_codex_notification")
         last = event.get("last-assistant-message")
         if last is None:
             last = ""
         require(isinstance(last, str), "invalid_last_words")
-        event = dict(hook_event_name="Stop", last_assistant_message=last[:1500])
+        normalized = dict(hook_event_name="Stop", last_assistant_message=last[:1500])
+        if scratch_enabled:
+            inputs = event.get("input-messages", [])
+            require(isinstance(inputs, list) and all(isinstance(v, str) for v in inputs), "invalid_codex_input_messages")
+            turn_id = event.get("turn-id")
+            require(turn_id is None or isinstance(turn_id, str) and 0 < len(turn_id) <= 128, "invalid_codex_turn_id")
+            normalized.update(codex_notify=True, codex_turn_id=turn_id,
+                              scratch_reminder_turn=any(SCRATCH_REMINDER in v for v in inputs))
+        event = normalized
     else:
-        validate_hook_event(event, allow_transcript=False)
+        validate_hook_event(event)
     command = json.loads(o.command_json)
     require(isinstance(command, list) and command and all(isinstance(v, str) and "\0" not in v for v in command), "invalid_hook_command")
     absolute(command[0])
     if command[1:3] == ["agents", "channel"]:
         command += ["--request-id", secrets.token_hex(16)]
-    result = subprocess.run(command, input=json.dumps(event).encode(), timeout=250)
-    return result.returncode, None
+    if scratch_enabled:
+        event["scratch_harness"] = o.harness
+    result = subprocess.run(command, input=json.dumps(event).encode(), stdout=subprocess.PIPE, timeout=250)
+    if result.returncode:
+        sys.stdout.buffer.write(result.stdout)
+        return result.returncode, None
+    try:
+        packet = json.loads(result.stdout)
+    except ValueError:
+        raise Refusal("hook_callback_invalid_receipt")
+    require(isinstance(packet, dict), "hook_callback_invalid_receipt")
+    check = packet.get("scratchpad_check", {})
+    if o.harness == "claude" and check.get("action") == "block":
+        print(json.dumps(dict(decision="block", reason=SCRATCH_REMINDER)))
+        return 0, None
+    return 0, packet
 
 
 def tint_config(value):
@@ -1253,7 +1285,7 @@ def stop(o):
 
 def validate_hook_event(event, allow_transcript=True):
     require(isinstance(event, dict), "invalid_hook_event")
-    require(event.get("hook_event_name") in ("Stop", "StopFailure", "UserPromptSubmit"), "unsupported_hook_event")
+    require(event.get("hook_event_name") in ("Stop", "StopFailure", "UserPromptSubmit", "ScratchCheck"), "unsupported_hook_event")
     require(isinstance(event.get("last_assistant_message", "") or "", str), "invalid_last_words")
     require(len(json.dumps(event).encode()) <= 32768, "hook_event_too_large")
     require(allow_transcript or "transcript_path" not in event, "channel_transcript_path_forbidden")
@@ -1263,8 +1295,43 @@ def report_stop(root, launch_id, event_id, event, allow_transcript=True):
     validate_hook_event(event, allow_transcript)
     kind = event["hook_event_name"]
     if kind == "UserPromptSubmit":
-        state = update(root, launch_id, lambda s: s.update(last_hook=dict(kind=kind, at=now(), text="turn started")))
+        def started(s):
+            scratch_turn(s, event, s.get("scratchpad"))
+            s["last_hook"] = dict(kind=kind, at=now(), text="turn started")
+        state = update(root, launch_id, started)
         return 0, receipt(state, "turn_started")
+    check = None
+    if event.get("scratch_harness") in ("claude", "codex", "pi"):
+        def checked(s):
+            basis = "prompt_submit_or_initial_child_start"
+            if event["scratch_harness"] == "codex" and event.get("codex_notify"):
+                # Notify supplies a turn ID and inputs, but no start timestamp. Its previous
+                # notification is the available lower bound; never invent an exact prompt time.
+                continuation = s.get("scratch_reminder_pending") and event.get("scratch_reminder_turn")
+                turn = event.get("codex_turn_id")
+                if turn and turn != s.get("codex_turn_id") and not continuation:
+                    s.update(turn_started_at=s.get("codex_last_notify_at", s.get("turn_started_at", now())), scratch_reminded=False)
+                    s["scratch_reminder_pending"] = False
+                s["codex_turn_id"] = turn
+                s["codex_last_notify_at"] = now()
+                basis = "previous_notify_or_initial_child_start_actual_turn_start_unknown"
+            s["scratchpad_check"] = dict(scratch_turn(s, event, s.get("scratchpad")), basis=basis)
+            if event["scratch_harness"] == "codex" and s["scratchpad_check"]["action"] == "block":
+                s["scratch_reminder_pending"] = True
+        state = update(root, launch_id, checked)
+        check = state["scratchpad_check"]
+        if check["action"] == "block" and event["scratch_harness"] == "codex":
+            target = state["target"]
+            code, packet = invoke(["send", "--socket", state["socket"], "--session", target["session_id"],
+                                   "--block", target["block_id"], "--from", "teerex-scratchpad", "--message-file", "-"],
+                                  timeout=45, client_path=state["client_path"], rex_executable=state["rex_executable"],
+                                  input_bytes=SCRATCH_REMINDER.encode())
+            check = dict(check, action="reminded", reminder_exit=code, reminder_receipt=packet)
+            update(root, launch_id, lambda s: s.update(scratchpad_check=check))
+        elif check["action"] == "block" or kind == "ScratchCheck":
+            return 0, receipt(state, "scratchpad_blocked" if check["action"] == "block" else "scratchpad_checked", scratchpad_check=check)
+    if kind == "ScratchCheck":
+        return 0, receipt(load(root, launch_id), "scratchpad_not_checked", scratchpad_check=dict(status="not_checked", action="allow"))
     last = event.get("last_assistant_message", "") or ""
     if allow_transcript and kind == "Stop" and not last:
         try:
@@ -1277,11 +1344,16 @@ def report_stop(root, launch_id, event_id, event, allow_transcript=True):
     # Hook metadata reports a turn, never process death; only invocation IDs deduplicate.
     title = "IDLE (harness turn-stop report)" if kind == "Stop" else "ERROR (harness failure report, death not verified)"
     body = f"{title}: {state['name']}\n{details}"
+    if check and check["status"] == "stale":
+        body += "\nScratchpad: stale; " + check["action"]
     def remembered(s):
-        s["last_hook"] = dict(kind=kind, at=now(), text=details, event_id=event_id, evidence="harness_report_not_process_death")
+        s["last_hook"] = dict(kind=kind, at=now(), text=details, event_id=event_id, evidence="harness_report_not_process_death", scratchpad_check=check)
     update(root, launch_id, remembered)
-    return notify(root, launch_id, event_id, body, "harness_report_not_process_death",
-                  reported_state="idle" if kind == "Stop" else "unknown")
+    code, packet = notify(root, launch_id, event_id, body, "harness_report_not_process_death",
+                          reported_state="idle" if kind == "Stop" else "unknown")
+    if check is not None:
+        packet["scratchpad_check"] = check
+    return code, packet
 
 
 def supervise(o):
@@ -1304,6 +1376,7 @@ def supervise(o):
         require(s["immediate_child_term"] is None, "child_already_exited")
         s["supervisor_claimed"] = True
         s["supervisor_pid"] = os.getpid()
+        s.update(turn_started_at=now(), scratch_reminded=False)
     update(o.registry, o.launch_id, claim)
     env = dict(os.environ)
     for key in ("AGENT_CHANNEL", "LC_AGENT_CHANNEL"):
@@ -1325,7 +1398,7 @@ def supervise(o):
         command = [RUNTIME, "agents", "stop", "--registry", o.registry, "--launch-id", o.launch_id, "--event-file", "-"]
         if broker is not None:
             channel_command = [RUNTIME, "agents", "channel", "--handle", broker.handle, "--operation", "stop", "--event-file", "-"]
-            command = [RUNTIME, "agents", "hook", "--harness", "claude", "--command-json", json.dumps(channel_command), "--event-file", "-"]
+            command = channel_command
         argv = adapter_argv(argv, state["harness"], command, o.registry, o.launch_id, broker=broker, tint_enabled=state.get("tint") is not False)
     protocol = message(read_file(state["protocol_file"], 32768, private=True))
     if state.get("execution") is None:
@@ -1542,9 +1615,9 @@ def parser():
     q.add_argument("--event-file", help="stop only: absolute JSON file or -; <=32KiB/EOF within 2s")
     q.add_argument("--session", help="ack only: exact own session:UUID, not a destination selector")
     q.add_argument("--block", help="ack only: exact own block:UUID, not a destination selector")
-    q = sub.add_parser("hook", help="Codex notify adapter: convert one JSON argv payload into a bounded Stop report")
-    q.add_argument("--harness", required=True, choices=("claude", "codex"))
-    q.add_argument("--command-json", required=True)
+    q = sub.add_parser("hook", help="Claude/Pi turn-end enforcement and Codex post-turn reminder; start hooks record turn time; bounded callback")
+    q.add_argument("--harness", required=True, choices=("claude", "codex", "pi"))
+    q.add_argument("--command-json", required=True, help="literal callback argv JSON")
     source = q.add_mutually_exclusive_group(required=True)
     source.add_argument("--payload", help="Codex notify appends one JSON argv payload")
     source.add_argument("--event-file", help="normalized bounded Stop JSON file or stdin")

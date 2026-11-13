@@ -46,3 +46,12 @@ Managed and human launches initialize the file and export `AGENT_SCRATCHPAD` and
 Generate the native palette fragment with `teerex scratch palette --file ABS --socket ABS [--teerex ABS] [--rex ABS]`. `--rex ABS` pins the surface controller's Rex executable, including when the Rex server's PATH has no `rex`; without it the controller retains its normal PATH lookup. It adds **Show scratchpad**, opening a watch tiled beside the invoked pane. The output file must be new. Register it through the existing `teerex surfaces palette install` plan/apply workflow; generation does not change personal configuration.
 
 Verification: `TEEREX_BIN=ABS python3 items/scratch/test_scratch.py -v`; launch/display/archive coverage is in `items/agents/test_agents.py` against disposable API13 servers. The fleet board reads the same Markdown independently.
+
+
+## Turn-end enforcement and the seat
+
+`teerex scratch hook-settings --teerex /absolute/stable/teerex` prints a Claude settings fragment with UserPromptSubmit and Stop command hooks. Merge its groups through rexconfig; it does not write configuration. Both hooks invoke `teerex scratch hook`, which reads a bounded JSON event from stdin. A seat must export `AGENT_SCRATCHPAD` (or `LC_AGENT_SCRATCHPAD`); without it the hook reports not_checked and allows the stop.
+
+Prompt submit records a private turn-start time. First stale Stop returns Claude's JSON blocking decision with `update your scratchpad (Now/To-do/Done) before ending the turn`; a second Stop in that turn passes and records the stale exception. Missing or invalid Updated is stale. An update during the turn passes. Scratch writes now use microsecond ISO timestamps so an update in the same second as turn start can count.
+
+Seat enforcement state is `<scratchpad>.turn.json`, mode0600, atomically replaced under the existing scratchpad lock. It records the start time, whether the reminder has been issued, and the last check. Managed agents keep equivalent state in their existing private launch record, described in [agents](../agents/README.md#scratchpad-enforcement-at-turn-end). Neither path installs a daemon or changes project task lists.

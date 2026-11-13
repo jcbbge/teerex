@@ -58,6 +58,8 @@ if protocol:
                 result=subprocess.run(cmd,input="fenced β: quotes '\"\nlast line\n\n",capture_output=True,text=True)
                 with out.open("a") as f: f.write(json.dumps({"event":"channel-result","code":result.returncode,"stdout":result.stdout})+"\n")
             hook=json.loads(args[args.index('--settings')+1])['hooks']['Stop'][0]['hooks'][0]['command']
+            # Second stale Stop is explicitly allowed after the single blocking reminder.
+            subprocess.run(hook,shell=True,input=json.dumps({"hook_event_name":"Stop","last_assistant_message":"precheck"}),capture_output=True,text=True)
             result=subprocess.run(hook,shell=True,
                                   input=json.dumps({"hook_event_name":"Stop","last_assistant_message":"fenced turn complete β"}),
                                   capture_output=True,text=True)
@@ -75,6 +77,10 @@ if protocol:
             result=subprocess.run(shlex.split(report_line),input='remote direct reply β\n\n',capture_output=True,text=True)
             with out.open('a') as f: f.write(json.dumps({"event":"remote-reply","code":result.returncode,"stdout":result.stdout})+'\n')
 if behavior == "codex-hook":
+    pad=Path(os.environ['AGENT_SCRATCHPAD'])
+    raw=pad.read_text()
+    import datetime, re
+    pad.write_text(re.sub(r'^Updated:.*$', 'Updated: '+datetime.datetime.now(datetime.timezone.utc).isoformat(), raw, flags=re.M))
     callback=json.loads(next(a[len('notify='):] for a in args if a.startswith('notify=')))
     result=subprocess.run(callback+[json.dumps({"type":"agent-turn-complete","last-assistant-message":"Codex settled β"})],capture_output=True,text=True)
     with out.open('a') as f: f.write(json.dumps({"event":"codex-hook","code":result.returncode,"stdout":result.stdout})+'\n')
@@ -86,7 +92,12 @@ const handlers={};
 const mod=await import('data:text/javascript;base64,'+process.argv[1]);
 mod.default({on:(name,handler)=>{handlers[name]=handler;}});
 const ctx={sessionManager:{getBranch:()=>[{type:'message',message:{role:'assistant',content:[{type:'text',text:'Pi settled β'}],errorMessage:'Pi synthetic failure'}}]}};
-await handlers.agent_before_settle({outcome:'completed'});
+await handlers.before_agent_start({prompt:'check scratchpad'});
+const first=await handlers.agent_before_settle({outcome:'completed',entries:[{type:'custom',customType:'existing',data:{}}]});
+if (first?.continue !== true || first?.entries?.[1]?.content !== 'update your scratchpad (Now/To-do/Done) before ending the turn') throw new Error('scratchpad did not block settlement');
+if (first.entries[0]?.customType !== 'existing') throw new Error('scratchpad replaced another extension entry');
+const second=await handlers.agent_before_settle({outcome:'completed'});
+if (second?.continue) throw new Error('scratchpad blocked more than once');
 await handlers.agent_settled({aborted:false},ctx);
 await handlers.agent_before_settle({outcome:'error'});
 await handlers.agent_settled({aborted:false},ctx);
@@ -1800,6 +1811,69 @@ Path('/work/network-harness').touch()
         self.assertEqual([r["at"] for r in rows], sorted(r["at"] for r in rows))
         self.assertEqual([r["text"] for r in rows if r["event"] == "Stop"], ["words 0", "words 2"])
         self.assertEqual(rows[-2]["term"], {"Signal": signal.SIGTERM})
+
+    def enforcement_hook(self, launch_id, harness, event, notify=False):
+        command = [BIN, "agents", "stop", "--registry", str(self.registry), "--launch-id", launch_id, "--event-file", "-"]
+        state = self.record(launch_id)
+        env = dict(self.env, AGENT_SCRATCHPAD=state["scratchpad"])
+        source = ["--payload", json.dumps(event)] if notify else ["--event-file", "-"]
+        p = subprocess.run([BIN, "agents", "hook", "--harness", harness, "--command-json", json.dumps(command), *source],
+                           input=None if notify else json.dumps(event), text=True, capture_output=True, env=env, timeout=15)
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        return json.loads(p.stdout)
+
+    def test_claude_scratch_stop_blocks_once_fresh_turn_passes_and_no_env_skips(self):
+        p, launched = self.launch()
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        launch_id = launched["launch_id"]
+        self.enforcement_hook(launch_id, "claude", dict(hook_event_name="UserPromptSubmit"))
+        pad = Path(self.record(launch_id)["scratchpad"])
+        pad.unlink()
+        event = dict(hook_event_name="Stop", last_assistant_message="finished")
+        self.assertEqual(self.enforcement_hook(launch_id, "claude", event)["decision"], "block")
+        self.assertNotEqual(self.record(launch_id).get("last_hook", {}).get("kind"), "Stop")
+        second = self.enforcement_hook(launch_id, "claude", event)
+        self.assertEqual(second["scratchpad_check"]["status"], "stale")
+        self.assertTrue(self.record(launch_id)["last_hook"]["scratchpad_check"]["already_reminded"])
+        wait_for(lambda: any(v["event"] == "input" and "Scratchpad: stale; allow" in v["payload"] for v in events(self.starter_log)))
+        self.enforcement_hook(launch_id, "claude", dict(hook_event_name="UserPromptSubmit"))
+        self.assertEqual(subprocess.run([BIN, "scratch", "init", "--session", self.session, "--block", self.record(launch_id)["target"]["block_id"],
+                                        "--purpose", "enforcement", "--intent", "updated"], env=self.env, capture_output=True).returncode, 0)
+        fresh = self.enforcement_hook(launch_id, "claude", event)
+        self.assertEqual(fresh["scratchpad_check"]["status"], "fresh")
+        command = [BIN, "agents", "stop", "--registry", str(self.registry), "--launch-id", launch_id, "--event-file", "-"]
+        env = dict(self.env)
+        env.pop("AGENT_SCRATCHPAD", None)
+        env.pop("LC_AGENT_SCRATCHPAD", None)
+        pad.unlink()
+        result = subprocess.run([BIN, "agents", "hook", "--harness", "claude", "--command-json", json.dumps(command), "--event-file", "-"],
+                                input=json.dumps(event), env=env, text=True, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("decision", json.loads(result.stdout))
+
+    def test_codex_scratch_reminder_is_delivered_once_to_own_pane(self):
+        p, launched = self.launch()
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        launch_id = launched["launch_id"]
+        Path(self.record(launch_id)["scratchpad"]).unlink()
+        self.enforcement_hook(launch_id, "codex", dict(hook_event_name="UserPromptSubmit", prompt="real prompt"))
+        event = dict(hook_event_name="Stop", last_assistant_message="finished")
+        first = self.enforcement_hook(launch_id, "codex", dict(type="agent-turn-complete", **{"last-assistant-message": "finished", "turn-id": "original-turn", "input-messages": ["real prompt"]}), notify=True)
+        self.assertEqual(first["scratchpad_check"]["action"], "reminded")
+        reminder = "update your scratchpad (Now/To-do/Done) before ending the turn"
+        wait_for(lambda: any(v["event"] == "input" and reminder in v["payload"] for v in events(self.worker_log)))
+        second = self.enforcement_hook(launch_id, "codex", dict(type="agent-turn-complete", **{"last-assistant-message": "finished", "turn-id": "reminder-turn", "input-messages": ["FROM teerex-scratchpad: " + reminder]}), notify=True)
+        self.assertTrue(second["scratchpad_check"]["already_reminded"])
+        self.assertEqual(sum(v["event"] == "input" and reminder in v["payload"] for v in events(self.worker_log)), 1)
+        third = self.enforcement_hook(launch_id, "codex", dict(type="agent-turn-complete", **{"last-assistant-message": "finished", "turn-id": "next-real-turn", "input-messages": ["new work"]}), notify=True)
+        self.assertEqual(third["scratchpad_check"]["action"], "reminded")
+        wait_for(lambda: sum(v["event"] == "input" and reminder in v["payload"] for v in events(self.worker_log)) == 2)
+        target = self.record(launch_id)["target"]
+        updated = subprocess.run([BIN, "scratch", "init", "--session", target["session_id"], "--block", target["block_id"],
+                                  "--purpose", "updated", "--intent", "fresh"], env=self.env, capture_output=True)
+        self.assertEqual(updated.returncode, 0)
+        fresh = self.enforcement_hook(launch_id, "codex", dict(type="agent-turn-complete", **{"last-assistant-message": "finished", "turn-id": "updated-real-turn", "input-messages": ["finish work"]}), notify=True)
+        self.assertEqual(fresh["scratchpad_check"]["status"], "fresh")
 
     def test_tint_false_keeps_theme_and_uses_child_record(self):
         self.settings["profiles"]["probe"].update(harness="codex", hook_events=True, tint=False)
