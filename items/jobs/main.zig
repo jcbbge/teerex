@@ -124,9 +124,16 @@ const Registry = struct {
         var dir = try std.fs.openDirAbsolute(path, .{ .no_follow = true, .iterate = true });
         errdefer dir.close();
         try privateStat(dir.fd, true);
-        const lock = file(dir, "lock", !read_only, read_only) catch |err| switch (err) {
-            error.FileNotFound => if (read_only) null else return err,
-            else => return err,
+        // macOS can report ENOENT when several processes create the same lock file at once; retry briefly.
+        var attempts: usize = 0;
+        const lock = while (true) : (attempts += 1) {
+            break file(dir, "lock", !read_only, read_only) catch |err| switch (err) {
+                error.FileNotFound => if (read_only) null else if (attempts < 200) {
+                    std.Thread.sleep(5 * std.time.ns_per_ms);
+                    continue;
+                } else return err,
+                else => return err,
+            };
         };
         errdefer if (lock) |f| f.close();
         if (lock) |f| {

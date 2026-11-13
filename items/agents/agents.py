@@ -99,8 +99,16 @@ class Registry:
         try:
             s = os.fstat(self.fd)
             require(s.st_uid == os.getuid() and stat.S_IMODE(s.st_mode) == 0o700, "private_owned_registry_required")
-            self.lock = os.open(self.lock_name, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK,
-                                0o600, dir_fd=self.fd)
+            # macOS can report ENOENT when several processes create the same lock file at once; retry briefly.
+            for attempt in range(200):
+                try:
+                    self.lock = os.open(self.lock_name, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK,
+                                        0o600, dir_fd=self.fd)
+                    break
+                except FileNotFoundError:
+                    if attempt == 199:
+                        raise
+                    time.sleep(.005)
             s = os.fstat(self.lock)
             require(stat.S_ISREG(s.st_mode) and s.st_uid == os.getuid() and
                     stat.S_IMODE(s.st_mode) == 0o600 and s.st_nlink == 1, "private_owned_lock_required")
