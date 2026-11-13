@@ -210,6 +210,25 @@ fn less(_: void, a: Value, b: Value) bool {
     const pb = priority(b);
     return if (pa != pb) pa < pb else std.ascii.lessThanIgnoreCase(text(a, "name"), text(b, "name"));
 }
+const Counts = struct {
+    total: usize = 0,
+    working: usize = 0,
+    waiting: usize = 0,
+    blocked: usize = 0,
+    error_count: usize = 0,
+    idle: usize = 0,
+    done: usize = 0,
+    unknown: usize = 0,
+};
+fn countRows(rows: []const Value) Counts {
+    var counts: Counts = .{ .total = rows.len };
+    for (rows) |row| {
+        const state = text(row, "state");
+        if (eq(state, "working")) counts.working += 1 else if (eq(state, "waiting")) counts.waiting += 1 else if (eq(state, "blocked")) counts.blocked += 1 else if (eq(state, "error")) counts.error_count += 1 else if (eq(state, "idle")) counts.idle += 1 else if (eq(state, "done")) counts.done += 1 else counts.unknown += 1;
+    }
+    return counts;
+}
+
 const UI = struct {
     host: usize = 0,
     selected: usize = 0,
@@ -270,13 +289,12 @@ const UI = struct {
             const other = model.hosts[1 - self.host];
             if (other.vitals) |v| try add(&lines, a, try fmt(a, "{s}  cpu {d}%   memory {d}%   {s}", .{ other.name, integer(num(get(v.value, "cpu_total"))), integer(percent(get(v.value, "mem"))), if (other.reachable == false) "! unavailable" else "" }), .secondary);
         }
-        var waiting: usize = 0;
-        var errors: usize = 0;
-        var working: usize = 0;
-        for (self.rows.items) |r| {
-            if (priority(r) == 0) waiting += 1 else if (priority(r) == 1) errors += 1 else if (priority(r) == 2) working += 1;
-        }
-        try add(&lines, a, try fmt(a, "agents  {d} ► working  {d} ● waiting  {d} !", .{ working, waiting, errors }), .secondary);
+        const counts = countRows(self.rows.items);
+        const waiting = counts.waiting + counts.blocked;
+        const errors = counts.error_count;
+        try add(&lines, a, try fmt(a, "agents  {d} total  {d} ► working", .{ counts.total, counts.working }), .secondary);
+        try add(&lines, a, try fmt(a, "idle {d}  wait {d}  error {d}  done {d}", .{ counts.idle, waiting, errors, counts.done }), .secondary);
+        if (counts.unknown > 0) try add(&lines, a, try fmt(a, "unknown {d} · state unavailable", .{counts.unknown}), .secondary);
         try self.section(&lines, a, "needs you", width);
         if (waiting + errors == 0) try add(&lines, a, "All clear · nothing needs an answer", .secondary);
         const available = height -| (lines.items.len + 7);

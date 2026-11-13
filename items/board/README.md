@@ -158,3 +158,8 @@ fleet pane belong to the integrating lead.
 Latest focused local gate: board 11/11 on hive and 11/11 on the M5; feed 7/7
 on hive and 6 passes plus one Linux-only skip on the M5. Both native targets
 built with ReleaseSmall after rebasing onto origin/main; Zig formatting passed.
+
+The agent header counts the same host-filtered pane rows as the list. Idle,
+done and unknown rows remain until their live pane disappears. `wait` combines
+Rex’s `waiting` and `blocked` states; neither launch phase nor hook state
+contributes a count.
