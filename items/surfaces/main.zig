@@ -35,7 +35,7 @@ const usage =
     \\Target must match; one close attempt; hard exit after timeout+2000ms includes publication.
     \\If killed, prepared exit/output evidence remains, with block_absence unknown.
     \\       teerex surfaces palette focus --file ABS --teerex ABS --name ACTION --title TEXT
-    \\           (--label TEXT | --seat --board-store ABS --socket ABS)
+    \\           (--label TEXT [--config ABS --host NAME] | --seat --board-store ABS --socket ABS)
     \\       teerex surfaces palette agents --file ABS --teerex ABS --rex ABS [--profiles ABS]
     \\       teerex surfaces palette hosts --file ABS --teerex ABS [--config ABS]
     \\Generates native profile/workspace menus, frozen until regenerated; never changes personal config.

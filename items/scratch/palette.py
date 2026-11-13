@@ -14,11 +14,12 @@ def main():
     p.add_argument("--file", required=True)
     p.add_argument("--socket", required=True)
     p.add_argument("--teerex", default=sys.argv[1])
+    p.add_argument("--rex", help="absolute Rex executable pinned for the surface controller; otherwise uses its PATH")
     o = p.parse_args(sys.argv[2:])
-    for value in (o.file, o.socket, o.teerex):
+    for value in (o.file, o.socket, o.teerex, *([o.rex] if o.rex else [])):
         if not os.path.isabs(value) or any(ord(c) < 32 or ord(c) == 127 for c in value):
             raise ValueError("absolute_path_without_controls_required")
-    command = [o.teerex, "surfaces", "open", "--socket", o.socket, "--layout", "tiled", "--label", "Scratchpad"]
+    command = [o.teerex, *(["--rex", o.rex] if o.rex else []), "surfaces", "open", "--socket", o.socket, "--layout", "tiled", "--label", "Scratchpad"]
     body = """-- teerex-surface-action:teerex_scratch_show
 rex.action{name='teerex_scratch_show',title='Show scratchpad',category='teerex',run=function(ctx)
 if not ctx.session_id or not ctx.block_id then error('invoke from an attached pane',0) end

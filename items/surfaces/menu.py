@@ -79,19 +79,31 @@ def generate(o):
     absolute(o.file)
     binary = absolute(o.teerex)
     actions = []
+    if o.host and o.operation != "focus":
+        raise ValueError("host_requires_focus")
     if o.operation == "focus":
         if not re.fullmatch(r"[a-z0-9_]{1,64}", o.name or "") or not isinstance(o.title, str) or not 1 <= len(o.title.encode()) <= 128 or any(ord(c) < 32 for c in o.title):
             raise ValueError("focus_name_and_title_required")
         if bool(o.label) == bool(o.seat):
             raise ValueError("choose_label_or_registered_seat")
-        if o.seat:
+        if o.host:
+            if o.seat or o.socket or o.board_store:
+                raise ValueError("named_focus_requires_label_without_local_target_options")
+            if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}", o.host):
+                raise ValueError("invalid_named_host")
+            command = [binary, "--config", absolute(o.config), "--host", o.host]
+            body = "local r=invoke(" + literal(command + ["surfaces", "resolve", "--session", "any", "--pane", o.label]) + ")\n"
+            body += 'if r.outcome~="resolved" or not r.resolved then error(rex.json.encode(r),0) end\n'
+            body += 'local argv=' + literal(command + ["surfaces", "focus"]) + '\nfor _,v in ipairs({"--session",r.resolved.session_id,"--pane",r.resolved.block_id}) do argv[#argv+1]=v end\nlocal f=invoke(argv)\nif f.outcome~="focused_and_verified" then error(rex.json.encode(f),0) end\nreturn f'
+        elif o.seat:
             body = "local state=invoke(" + literal([binary, "boards", "state", "inspect", "--store", absolute(o.board_store)]) + ")\n"
             body += 'local matches={}\nfor _,s in ipairs(state.state.seats or {}) do if s.target.server==' + quote("unix://" + absolute(o.socket)) + ' then matches[#matches+1]=s.target end end\n'
             body += 'if #matches~=1 then error("registered seat absent or ambiguous",0) end\nlocal t=matches[1]\n'
             body += 'local r=surface({operation="resolve",session_id=t.session_id,block_id=t.block_id})\n'
         else:
             body = 'local r=surface({operation="resolve",session_id="any",block_id=' + quote(o.label) + '})\n'
-        body += 'if r.outcome~="resolved" then error(rex.json.encode(r),0) end\nlocal f=surface({operation="focus",session_id=r.resolved.session_id,block_id=r.resolved.block_id,focus=true})\nif f.outcome~="focused_and_verified" then error(rex.json.encode(f),0) end\nreturn f'
+        if not o.host:
+            body += 'if r.outcome~="resolved" then error(rex.json.encode(r),0) end\nlocal f=surface({operation="focus",session_id=r.resolved.session_id,block_id=r.resolved.block_id,focus=true})\nif f.outcome~="focused_and_verified" then error(rex.json.encode(f),0) end\nreturn f'
         actions.append((o.name, action(o.name, o.title, body)))
     elif o.operation == "agents":
         config = absolute(o.profiles)
@@ -158,7 +170,7 @@ return invoke(argv)'''
                 actions.append((name, action(name, host + ": " + label, body)))
     if len(actions) > 128:
         raise ValueError("menu_action_limit_128")
-    source = "".join("-- teerex-surface-action:" + n + "\n" for n, _ in actions) + CONTROLLER + (SURFACE_SOURCE if o.operation == "focus" else "") + "".join(s for _, s in actions)
+    source = "".join("-- teerex-surface-action:" + n + "\n" for n, _ in actions) + CONTROLLER + (SURFACE_SOURCE if o.operation == "focus" and not o.host else "") + "".join(s for _, s in actions)
     data = source.encode()
     if len(data) > 262144:
         raise ValueError("menu_exceeds_262144_bytes")
@@ -174,6 +186,7 @@ def main():
     p = argparse.ArgumentParser(prog='teerex surfaces palette', description=__doc__)
     p.add_argument("operation", choices=("agents", "hosts", "focus"))
     p.add_argument("--file", required=True)
+    p.add_argument("--host", help="focus a label through this named host; --config selects its config")
     p.add_argument("--name")
     p.add_argument("--title")
     p.add_argument("--label", help="existing server-wide pane label or unique ID")

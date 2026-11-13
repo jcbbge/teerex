@@ -81,6 +81,14 @@ class TargetsTest(unittest.TestCase):
         self.call("--config", str(self.config), "--host", "hive", "snapshot", "--directory", "/explicit")
         self.assertNotIn("--root", json.loads(self.output.read_text()))
 
+    def test_palette_named_focus_resolve_and_focus_route_same_host(self):
+        for operation, target in (("resolve", ["--session", "any", "--pane", "seat"]),
+                                  ("focus", ["--session", "session:fixture", "--pane", "block:fixture"])):
+            r = self.call("--config", str(self.config), "--host", "hive", "surfaces", operation, *target)
+            self.assertEqual(r.returncode, 7, r.stderr)
+            self.assertEqual(json.loads(self.output.read_text()),
+                             ["--rex", self.host["rex"], "surfaces", operation, "--socket", self.host["socket"], *target])
+
     def test_version_and_explicit_resolution(self):
         version = self.call("--version")
         self.assertEqual((version.returncode, version.stdout, version.stderr), (0, "teerex 0.1.0-alpha.6\n", ""))

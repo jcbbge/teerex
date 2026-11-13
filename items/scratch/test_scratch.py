@@ -129,6 +129,17 @@ class ScratchTest(unittest.TestCase):
         self.assertNotEqual(self.cli("todo", "no", check=False).returncode, 0)
         self.assertEqual(target.read_text(), "keep")
 
+    def test_palette_rex_pin_is_literal_and_relative_pin_refuses(self):
+        path = self.root / "pinned.lua"
+        pin = str(self.root / "rex pin α")
+        self.cli("palette", "--file", str(path), "--socket", str(self.root / "none.sock"), "--rex", pin)
+        self.assertIn("--rex", path.read_text())
+        self.assertIn(pin, path.read_text())
+        refused = self.root / "refused.lua"
+        self.assertNotEqual(self.cli("palette", "--file", str(refused), "--socket", "/tmp/none.sock",
+                                     "--rex", "relative", check=False).returncode, 0)
+        self.assertFalse(refused.exists())
+
     def test_palette_prepared_fragment_without_overwrite(self):
         path = self.root / "scratch.lua"
         p = self.cli("palette", "--file", str(path), "--socket", str(self.root / "none.sock"))

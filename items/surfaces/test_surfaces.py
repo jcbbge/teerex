@@ -749,6 +749,67 @@ class SurfacesTest(unittest.TestCase):
         ambiguous = subprocess.run(invoke, capture_output=True, text=True)
         self.assertNotEqual(ambiguous.returncode, 0)
 
+    def test_named_host_focus_palette_targets_selected_server_without_creation(self):
+        socket = self.work / "other.sock"
+        log = (self.work / "other.log").open("w")
+        other = subprocess.Popen([self.rex, "server", "run", "--listen", "unix://" + str(socket),
+                                  "--restore=false", "--config", "/dev/null", "--state-dir", str(self.work / "other-state")],
+                                 stdout=log, stderr=log)
+        def stop():
+            other.terminate()
+            try:
+                other.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                other.kill()
+                other.wait(timeout=5)
+            log.close()
+        self.addCleanup(stop)
+        base = [self.rex, "--autostart=false", "--server", "unix://" + str(socket)]
+        def rpc(method, args=None):
+            return json.loads(subprocess.check_output(base + ["api", "call", method, json.dumps(args or {})], timeout=10))
+        for _ in range(100):
+            if socket.exists():
+                break
+            self.assertIsNone(other.poll())
+            time.sleep(.03)
+        settings = self.work / "hosts.json"
+        settings.write_text(json.dumps(dict(schema_version=1, hosts=dict(destination=dict(
+            host_id="fixture", transport="local", home=str(self.work), socket=str(socket), rex=self.rex,
+            teerex=BIN, store=str(self.work / "boards"), platform="macos-arm64" if sys.platform == "darwin" else "linux-x86_64")))))
+        fragment = self.work / "named-focus.lua"
+        r, _ = self.run_json([BIN, "surfaces", "palette", "focus", "--file", str(fragment), "--teerex", BIN,
+                             "--name", "named_focus", "--title", "Focus named host", "--label", "named target",
+                             "--config", str(settings), "--host", "destination"])
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.config.write_text("dofile(" + json.dumps(str(fragment)) + ")\n")
+        self.rpc("server.config_reload", {})
+        invoke = self.base + ["do", "--session", self.session, "--block", self.anchor, "named_focus"]
+        before = rpc("session.list")
+        self.assertNotEqual(subprocess.run(invoke, capture_output=True).returncode, 0)
+        self.assertEqual(rpc("session.list"), before)
+        block = {"block": {"flavor": "com.superlogical.terminal.shell", "label": "named target",
+                           "options": {"command": ["/bin/sh", "-c", "sleep 60"]}}}
+        made = rpc("session.create", {"label": "named host destination", "initial_windows": [{"layout": block}]})
+        r = subprocess.run(invoke, capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(json.loads(r.stdout)["resolved"]["session_id"], made["session_id"])
+        rpc("session.new_window", {"session_id": made["session_id"], "layout": block})
+        before = rpc("session.view", {"session_id": made["session_id"]})
+        self.assertNotEqual(subprocess.run(invoke, capture_output=True).returncode, 0)
+        self.assertEqual(rpc("session.view", {"session_id": made["session_id"]}), before)
+
+    def test_scratch_palette_pins_rex_for_real_surface_controller(self):
+        fragment = self.work / "scratch-pinned.lua"
+        r, _ = self.run_json([BIN, "scratch", "palette", "--file", str(fragment), "--teerex", BIN,
+                             "--socket", str(self.socket), "--rex", self.rex])
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.config.write_text("dofile(" + json.dumps(str(fragment)) + ")\n")
+        self.rpc("server.config_reload", {})
+        invoke = self.base + ["do", "--session", self.session, "--block", self.anchor, "teerex_scratch_show"]
+        r = subprocess.run(invoke, capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(json.loads(r.stdout)["outcome"], "created_and_verified")
+
     def test_registered_seat_focus_palette_requires_live_registration(self):
         fragment = self.work / "seat-focus.lua"
         store = self.work / "seat-boards"
