@@ -227,6 +227,9 @@ class RecordsTest(RecordsFixture):
             path.write_bytes(raw)
             self.assertEqual(self.call("attach", "--id", "a", "--by", "worker", "--evidence", path, code=1)["failure_reason"], reason)
             self.assertEqual(self.read()["evidence"], [])
+        v = self.call("attach", "--id", "a", "--by", "worker", "--evidence", "-", stdin="{" + " " * 1048576, code=1)
+        self.assertEqual(v["failure_reason"], "evidence_oversize:0")
+        self.assertEqual(self.read()["evidence"], [])
 
     def test_R17_experiment_pairs(self):
         for a, b in (("a", "b"), ("b", "a")):

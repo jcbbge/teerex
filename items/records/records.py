@@ -107,7 +107,7 @@ def read_file(path, cap=LIMIT, store=False):
         raise Refusal("store_hazard" if store else "evidence_hazard")
 
 
-def stdin_bytes(cap):
+def stdin_bytes(cap, oversize="fields_oversize"):
     end = time.monotonic() + 10
     parts = bytearray()
     with selectors.DefaultSelector() as sel:
@@ -115,7 +115,7 @@ def stdin_bytes(cap):
             sel.register(sys.stdin.buffer, selectors.EVENT_READ)
         except PermissionError:  # regular redirected file on epoll
             raw = sys.stdin.buffer.read(cap + 1)
-            require(len(raw) <= cap, "fields_oversize")
+            require(len(raw) <= cap, oversize)
             return raw
         while True:
             wait = end - time.monotonic()
@@ -127,7 +127,7 @@ def stdin_bytes(cap):
             if not part:
                 return bytes(parts)
             parts.extend(part)
-            require(len(parts) <= cap, "fields_oversize")
+            require(len(parts) <= cap, oversize)
 
 
 class Store:
@@ -371,7 +371,11 @@ def attach_inputs(r, o, packets):
         require(not any(ord(c) < 32 for c in e["label"]), "control_character:label")
         try:
             if flag == "--evidence":
-                raw, dg, size = (lambda raw: (raw, sha(raw), len(raw)))(stdin_bytes(LIMIT)) if values[0] == "-" else evidence_file(values[0])
+                if values[0] == "-":
+                    raw = stdin_bytes(LIMIT, "evidence_oversize")
+                    dg, size = sha(raw), len(raw)
+                else:
+                    raw, dg, size = evidence_file(values[0])
                 if raw.lstrip().startswith(b"{") or values[0] == "-":
                     require(len(raw) <= LIMIT, "evidence_oversize")
                     p = loads(raw, "unsupported_packet")
