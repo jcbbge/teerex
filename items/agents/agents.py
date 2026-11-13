@@ -1329,13 +1329,30 @@ def validate_hook_event(event, allow_transcript=True):
     require(allow_transcript or "transcript_path" not in event, "channel_transcript_path_forbidden")
 
 
+def delivered_input(root, launch_id, event):
+    def started(s):
+        s["last_input_at_ns"] = event["at_ns"]
+        previous = s.get("last_hook") or {}
+        if event["at_ns"] <= previous.get("at_ns", previous.get("at", 0) * 1000000):
+            return
+        if not event.get("reminder"):
+            s.update(turn_started_at=event["at_ns"] // 1000000, scratch_reminded=False, scratch_reminder_pending=False)
+        s["last_hook"] = dict(kind="UserPromptSubmit", state="working", at=event["at_ns"] // 1000000,
+                              at_ns=event["at_ns"], text="acknowledged input delivered", evidence="send_paste_and_enter_acknowledged")
+    return update(root, launch_id, started)
+
+
 def report_stop(root, launch_id, event_id, event, allow_transcript=True):
     validate_hook_event(event, allow_transcript)
     kind = event["hook_event_name"]
+    event_at_ns = time.time_ns()
     if kind == "UserPromptSubmit":
         def started(s):
+            previous = s.get("last_hook") or {}
+            if event_at_ns < previous.get("at_ns", previous.get("at", 0) * 1000000):
+                return
             scratch_turn(s, event, s.get("scratchpad"))
-            s["last_hook"] = dict(kind=kind, at=now(), text="turn started")
+            s["last_hook"] = dict(kind=kind, state="working", at=now(), at_ns=event_at_ns, text="turn started")
         state = update(root, launch_id, started)
         return 0, receipt(state, "turn_started")
     check = None
@@ -1385,17 +1402,31 @@ def report_stop(root, launch_id, event_id, event, allow_transcript=True):
     if check and check["status"] == "stale":
         body += "\nScratchpad: stale; " + check["action"]
     delivery_rule = turn_report_rule(root, state, kind)
+    turn_state = "error" if kind == "StopFailure" else "done" if delivery_rule in ("finished_now_empty", "finished_now_done") else "idle"
     def remembered(s):
-        s["last_hook"] = dict(kind=kind, at=now(), text=details, event_id=event_id, evidence="harness_report_not_process_death", scratchpad_check=check, delivery_rule=delivery_rule)
+        previous = s.get("last_hook") or {}
+        if event_at_ns < previous.get("at_ns", previous.get("at", 0) * 1000000):
+            return
+        s["last_hook"] = dict(kind=kind, state=turn_state, at=now(), at_ns=event_at_ns, text=details, event_id=event_id, evidence="harness_report_not_process_death", scratchpad_check=check, delivery_rule=delivery_rule)
     update(root, launch_id, remembered)
     code, packet = notify(root, launch_id, event_id, body, "harness_report_not_process_death",
-                          reported_state="idle" if kind == "Stop" else "unknown", delivery_rule=delivery_rule)
+                          reported_state=("completed" if turn_state == "done" else "idle") if kind == "Stop" else "unknown", delivery_rule=delivery_rule)
     if check is not None:
         packet["scratchpad_check"] = check
+    packet["turn_state"] = turn_state
     return code, packet
 
 
 def supervise(o):
+    state = load(o.registry, o.launch_id)
+    try:
+        return supervise_child(o)
+    finally:
+        with contextlib.suppress(FileNotFoundError):
+            agent_input_path(state["socket"], os.environ["REX_SESSION"], os.environ["REX_BLOCK"]).unlink()
+
+
+def supervise_child(o):
     # This command is launched ONLY as the actual retained visible Rex terminal program.
     state = load(o.registry, o.launch_id)
     sid, bid = os.environ.get("REX_SESSION"), os.environ.get("REX_BLOCK")
@@ -1470,6 +1501,7 @@ def supervise(o):
         signal.signal(signal.SIGTERM, forward)
         signal.signal(signal.SIGINT, forward)
         last_hook = None
+        last_input_ns = 0
         channel_closed_reported = False
         while child.poll() is None:
             if broker is not None:
@@ -1479,9 +1511,13 @@ def supervise(o):
             if broker is not None and broker.closed and not channel_closed_reported:
                 update(o.registry, o.launch_id, lambda s: s.update(channel_status="revoked"))
                 channel_closed_reported = True
+            incoming = agent_input_read(state["socket"], sid, bid)
+            if incoming is not None and incoming["at_ns"] > last_input_ns:
+                delivered_input(o.registry, o.launch_id, incoming)
+                last_input_ns = incoming["at_ns"]
             current = load(o.registry, o.launch_id).get("last_hook")
             if current is not None and current != last_hook:
-                program_status(state, {"Stop": "idle", "StopFailure": "error", "UserPromptSubmit": "working"}[current["kind"]], current["text"])
+                program_status(state, current.get("state") or {"Stop": "idle", "StopFailure": "error", "UserPromptSubmit": "working"}[current["kind"]], current["text"])
                 if current["kind"] in ("Stop", "StopFailure"):
                     come_forward(state, current["kind"])
                 last_hook = current
@@ -1689,7 +1725,7 @@ def parser():
                                     "deliver": "explicitly attempt a not-yet-attempted brief after ACK",
                                     "inspect": "lifecycle metadata and freshly read placement; unavailable placement is unknown",
                                     "present": "explicit relocation beside anchor through jobs owner/generation checks",
-                                    "stop": "submit a harness Stop/StopFailure report, never death proof",
+                                    "stop": "record idle/done/error turn state and conditional report, never death proof",
                                     "supervise": "internal retained visible in-pane program; waits immediate child",
                                     "exited": "compute adapter measured-child-exit callback, distinct from SSH exit"}[op])
         q.add_argument("--registry", required=True)

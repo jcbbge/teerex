@@ -78,7 +78,7 @@ if protocol:
             with out.open('a') as f: f.write(json.dumps({"event":"remote-reply","code":result.returncode,"stdout":result.stdout})+'\n')
 if behavior == "codex-hook":
     pad=Path(os.environ['AGENT_SCRATCHPAD'])
-    raw=pad.read_text()
+    raw=pad.read_text().replace('## Now\n', '## Now\n- [ ] active work\n')
     import datetime, re
     pad.write_text(re.sub(r'^Updated:.*$', 'Updated: '+datetime.datetime.now(datetime.timezone.utc).isoformat(), raw, flags=re.M))
     callback=json.loads(next(a[len('notify='):] for a in args if a.startswith('notify=')))
@@ -1762,6 +1762,69 @@ Path('/work/network-harness').touch()
                                                                 "program_status", "{}"], timeout=5))
         return next((r["state"] for r in result.get("records", []) if r.get("app") == "teerex-agent"), None)
 
+    def test_codex_delivery_notify_and_failure_share_pane_state(self):
+        for tint in (False, None):
+            self.settings["profiles"]["probe"].update(harness="codex", hook_events=True, tint=tint)
+            p, launched = self.launch()
+            self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+            launch_id = launched["launch_id"]
+            state = self.record(launch_id)
+            block = state["target"]["block_id"]
+            started = [v for v in events(self.worker_log) if v["event"] == "started"][-1]
+            callback = json.loads(next(a[len("notify="):] for a in started["argv"] if a.startswith("notify=")))
+            env = dict(self.env, AGENT_SCRATCHPAD=state["scratchpad"])
+            def work(text):
+                changed = subprocess.run([BIN, "scratch", "now", text, "--session", self.session, "--block", block],
+                                         env=self.env, capture_output=True, text=True)
+                self.assertEqual(changed.returncode, 0, changed.stdout + changed.stderr)
+            def stop(text):
+                result = subprocess.run(callback + [json.dumps({"type":"agent-turn-complete", "last-assistant-message":text})],
+                                        env=env, capture_output=True, text=True, timeout=15)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            work("first turn")
+            stop("progress")
+            wait_for(lambda: self.program_state(block) == "idle")
+            # An input event can reach bookkeeping after its turn already stopped.
+            import importlib.util
+            spec = importlib.util.spec_from_file_location("input_events", Path(__file__).with_name("input_events.py"))
+            inputs = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(inputs)
+            marker = self.root / ".local/state/teerex/agent-input" / inputs.agent_input_path(str(self.socket), self.session, block).name
+            late_ns = self.record(launch_id)["last_hook"]["at_ns"] - 1
+            marker.write_text(json.dumps(dict(at_ns=late_ns)))
+            wait_for(lambda: self.record(launch_id).get("last_input_at_ns") == late_ns)
+            self.assertEqual(self.record(launch_id)["last_hook"]["state"], "idle")
+            self.assertEqual(self.program_state(block), "idle")
+            message = self.work / "p0-message.txt"
+            message.write_text("start the next turn")
+            send = subprocess.run([BIN, "send", "--socket", str(self.socket), "--session", self.session,
+                "--block", block, "--from", "test", "--message-file", str(message)], env=self.env, capture_output=True, text=True)
+            self.assertEqual(send.returncode, 0, send.stdout + send.stderr)
+            wait_for(lambda: self.program_state(block) == "working")
+            self.assertEqual(self.record(launch_id)["last_hook"]["state"], "working")
+            work("second turn")
+            stop("progress again")
+            wait_for(lambda: self.program_state(block) == "idle")
+            # ask uses the same acknowledged-delivery path, without changing a question to red.
+            ask = subprocess.run([BIN, "ask", "--host", "disposable", "--socket", str(self.socket), "--session", self.session,
+                "--block", block, "--from", "test", "--title", "review", "--ask", "continue?",
+                "--context", "fixture", "--option", "yes::continue::nothing", "--option", "no::stop::nothing",
+                "--recommend", "yes"], env=self.env, capture_output=True, text=True)
+            self.assertEqual(ask.returncode, 0, ask.stdout + ask.stderr)
+            wait_for(lambda: self.program_state(block) == "working")
+            finished = subprocess.run([BIN, "scratch", "done", "--session", self.session, "--block", block],
+                                      env=self.env, capture_output=True, text=True)
+            self.assertEqual(finished.returncode, 0, finished.stdout + finished.stderr)
+            stop("finished")
+            wait_for(lambda: self.program_state(block) == "done")
+            self.assertEqual(self.record(launch_id)["last_hook"]["state"], "done")
+            event = self.work / "p0-failure.json"
+            event.write_text(json.dumps(dict(hook_event_name="StopFailure", error="fixture failure")))
+            p, result = self.run_cli("stop", "--registry", str(self.registry), "--launch-id", launch_id, "--event-file", str(event))
+            self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+            wait_for(lambda: self.program_state(block) == "error")
+            self.assertEqual(result["turn_state"], "error")
+
     def test_codex_adapter_validation_conflicts_and_callback_failure_are_visible(self):
         self.env.pop("AGENT_SCRATCHPAD", None)
         self.env.pop("LC_AGENT_SCRATCHPAD", None)
@@ -1808,6 +1871,8 @@ Path('/work/network-harness').touch()
             event.write_text(json.dumps(dict(hook_event_name=kind, last_assistant_message="turn done")))
             p, _ = self.run_cli("stop", "--registry", str(self.registry), "--launch-id", launch_id, "--event-file", str(event))
             self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        progressed = subprocess.run([BIN, "scratch", "now", "active work", "--session", self.session, "--block", block], env=self.env, capture_output=True)
+        self.assertEqual(progressed.returncode, 0)
         hook("Stop")
         wait_for(lambda: self.program_state(block) == "idle")
         self.assertIn('rgb:3131/2323/4545', self.background(pid))

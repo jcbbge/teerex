@@ -393,3 +393,8 @@ CI discovers the explicit test but skips physical estate access unless enabled.
 ### Quiet progress reports
 
 Managed `agents stop` records every completed turn in the registry and timeline. A progress Stop sends no report to starter/report-to. Delivery occurs when Now is empty, Now is checked done with no To-do left, Waiting names the report-to agent (registered name or pane label) or `seat`, or the scratchpad cannot be read. StopFailure and measured process-exit alerts always deliver. The receipt and notification record carry `delivery_rule`; suppressed turns return `notification_suppressed`. Scratchpad parsing uses the shared scratch parser; Waiting also accepts the Revision 2b Markdown line.
+### Turn state is the pane's state
+
+The in-pane supervisor publishes `app=teerex-agent` program status for every managed harness: turn start is `working`, a progress turn end is `idle`, a scratchpad-finished turn is `done`, and StopFailure is `error`. `agents stop` receipts include `turn_state`; the registry's `last_hook.state` records the same transition.
+
+Codex needs no per-launch start hook. After `send` acknowledges paste and Enter (including brief, ask and queue delivery), it records a private input event keyed by canonical socket/session/block under `~/.local/state/teerex/agent-input`. The supervisor consumes that event and emits its own OSC 7501 status. Nanosecond event ordering prevents delayed input bookkeeping or an older stop callback from overwriting a newer state. Input events contain no message text and are removed when the supervisor exits. No watcher process or daemon is added.

@@ -249,7 +249,10 @@ def expire(socket, live_rows):
 
 def apply(pid, report, context):
     outcome = write_status(pid, report) if report and pid else 'tty_unavailable' if report else 'not_requested'
+    input_outcome = None
     try:
+        if context.get('agent_input'):
+            input_outcome = agent_input_write(context['socket'], context['session'], context['block'], context['input_at_ns'], reminder=context.get('sender') == 'teerex-scratchpad')
         if outcome == 'written' and context.get('state') == 'blocked' and str(context.get('id', '')).startswith('ask/'):
             register(context)
         if outcome == 'written' and context.get('state') == 'clear' and str(context.get('id', '')).startswith('ask/'):
@@ -263,8 +266,12 @@ def apply(pid, report, context):
         answered(context)
     except (OSError, ValueError, subprocess.SubprocessError):
         return 'written_tracking_unavailable' if outcome == 'written' else 'tracking_unavailable'
-    return outcome
+    return input_outcome if input_outcome and outcome == 'not_requested' else outcome
 
 
 if __name__ == '__main__':
-    print(json.dumps(apply(int(sys.argv[1]), sys.argv[2], json.loads(sys.argv[3]))))
+    context = json.loads(sys.argv[3])
+    context['agent_input'] = len(sys.argv) > 4 and sys.argv[4] == '1'
+    if context['agent_input']:
+        context['input_at_ns'] = int(sys.argv[5])
+    print(json.dumps(apply(int(sys.argv[1]), sys.argv[2], context)))
