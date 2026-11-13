@@ -210,6 +210,22 @@ class ScratchTest(unittest.TestCase):
         self.hook("UserPromptSubmit")
         self.assertEqual(json.loads(self.hook("Stop").stdout)["scratchpad_check"]["action"], "allow")
 
+    def test_hook_done_only_progress_and_missing_snapshot(self):
+        self.init()
+        self.env["AGENT_SCRATCHPAD"] = str(self.path)
+        self.hook("UserPromptSubmit")
+        self.path.write_text(self.path.read_text().replace("## Done\n", "## Done\n- [x] Completed externally\n"))
+        self.assertEqual(json.loads(self.hook("Stop").stdout)["scratchpad_check"]["action"], "allow")
+        self.hook("UserPromptSubmit")
+        self.path.write_text(self.path.read_text().replace("- [x] Completed externally\n", ""))
+        self.assertEqual(json.loads(self.hook("Stop").stdout)["decision"], "block")
+        Path(str(self.path) + ".turn.json").unlink()
+        self.cli("now", "Fresh timestamp with no baseline")
+        self.assertEqual(json.loads(self.hook("Stop").stdout)["decision"], "block")
+        Path(str(self.path) + ".turn.json").unlink()
+        self.cli("wait", "--on", "teerex", "--what", "integration")
+        self.assertEqual(json.loads(self.hook("Stop").stdout)["scratchpad_check"]["action"], "allow")
+
     def test_watch_exits_zero_when_shown_file_archived_or_removed(self):
         for archive in (True, False):
             self.init()
