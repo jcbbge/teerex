@@ -78,7 +78,7 @@ def screen(data, width, height=30):
 
 
 class Pane:
-    def __init__(self, root, width=60, fixture=FIXTURE, config=None):
+    def __init__(self, root, width=60, fixture=FIXTURE, config=None, extra_env=None):
         self.master, self.slave = pty.openpty()
         self.saved = termios.tcgetattr(self.slave)
         self.width = width
@@ -86,6 +86,7 @@ class Pane:
         env = dict(os.environ, HOME=str(root), XDG_STATE_HOME=str(root / 'state'),
                    TEEREX_CALL_LOG_DIR=str(root / 'calls'), REX_SERVER='unix:///tmp/poison-board.sock')
         env.pop('NO_COLOR', None)
+        env.update(extra_env or {})
         argv = [BIN, 'board'] + (['--replay', str(fixture)] if fixture else [])
         if config: argv += ['--config', str(config)]
         self.proc = subprocess.Popen(argv, stdin=self.slave, stdout=self.slave, stderr=self.slave, env=env)
@@ -142,6 +143,53 @@ class BoardTest(unittest.TestCase):
         p.until(lambda: b'Which sound' in p.output)
         p.settle()
         return p
+    def test_held_section_order_count_broken_colour_and_no_attention(self):
+        now=200000000
+        rows=[dict(id='new',text='ship? newer',since=now-3600000,broken=False),dict(id='old',text='ship? older',since=now-51*3600000,broken=True)]
+        path=self.root/'held.jsonl'
+        path.write_text(json.dumps(dict(v=1,t=now,host='hive',kind='held',available=True,items=rows))+'\n')
+        p=Pane(self.root,fixture=path);self.addCleanup(p.close)
+        p.until(lambda:b'ship? newer' in p.output);p.settle()
+        view=p.view()
+        self.assertIn('held work · 2',view)
+        self.assertLess(view.index('ship? older'),view.index('ship? newer'))
+        self.assertIn('51h',view)
+        self.assertNotIn(b'7501;state=blocked',p.output)
+        # Supply theme evidence so problem red is selected instead of unknown ink.
+        p.key(b'\x1b]10;rgb:ffff/ffff/ffff\x1b\\\x1b]11;rgb:0000/0000/0000\x1b\\\x1b]4;1;rgb:ffff/aaaa/aaaa\x1b\\')
+        self.assertRegex(p.output,rb'\x1b\[31m[^\x1b]*ship\? older')
+        self.assertNotRegex(p.output,rb'\x1b\[31m[^\x1b]*ship\? newer')
+        result=subprocess.run([BIN,'board','--replay',str(path),'--hosts','hive','--json'],capture_output=True,text=True,timeout=5)
+        self.assertEqual(result.returncode,0,result.stderr)
+        snapshot=json.loads(result.stdout)['hosts'][0]
+        self.assertEqual(snapshot['counts']['total'],0)
+        self.assertEqual(snapshot['held']['count'],len(snapshot['held']['rows']))
+        self.assertEqual([r['id'] for r in snapshot['held']['rows']],['old','new'])
+        # Down selects the second held row even with zero agent panes.
+        p.key(b'j');self.assertIn('► ship? newer',p.view())
+        p.key(b' ');self.assertNotIn('Scratchpad',p.view())
+
+    def test_held_unavailable_is_plain_and_json_failure(self):
+        path=self.root/'unavailable.jsonl'
+        path.write_text(json.dumps(dict(v=1,t=1,host='hive',kind='held',available=False,items=[]))+'\n')
+        p=Pane(self.root,fixture=path);self.addCleanup(p.close)
+        p.until(lambda:b'held work' in p.output);p.settle()
+        self.assertIn('held work · unavailable',p.view())
+        self.assertNotIn(b'7501;state=blocked',p.output)
+        result=subprocess.run([BIN,'board','--replay',str(path),'--hosts','hive','--json'],capture_output=True,text=True,timeout=5)
+        self.assertEqual(result.returncode,1)
+        self.assertEqual(json.loads(result.stdout)['hosts'][0]['held'],dict(available=False,rows=[],count=0))
+
+    def test_held_independent_check_detects_order_text_broken_count_and_unavailable(self):
+        spec=importlib.util.spec_from_file_location('check_held',Path(__file__).with_name('check_held_source.py'))
+        check=importlib.util.module_from_spec(spec);spec.loader.exec_module(check)
+        rows=[dict(id='old',text='ship? old',broken=False),dict(id='new',text='ship? new',broken=True)]
+        self.assertEqual(check.differences(rows,dict(available=True,rows=rows,count=2)),[])
+        changed=[dict(rows[1],text='bad',broken=False),rows[0]]
+        errors=check.differences(rows,dict(available=True,rows=changed,count=3))
+        for word in ('ids/order','text','broken','count'):self.assertTrue(any(word in e for e in errors),errors)
+        self.assertEqual(check.differences(rows,dict(available=False,rows=[],count=0)),['held work unavailable'])
+
     def test_layout_40(self): self.layout(40)
     def test_layout_60(self): self.layout(60)
     def test_layout_120(self): self.layout(120)
@@ -251,9 +299,15 @@ class BoardTest(unittest.TestCase):
             pad=self.root/'.local/state/teerex/scratch'/sid/(target+'.md')
             pad.parent.mkdir(parents=True)
             pad.write_text('# target\nPurpose: board test\nIntent: inline scratchpad\nUpdated: 2026-11-13T19:00:00Z\n\n## Now\n- [ ] Complete board test\n\n## To-do\n- [ ] Check complete scratchpad\n\n## Done\n- [x] Started private Rex\n')
+        held_rows=[dict(id='held-old',project='fixture',title='Archive',waits='ship',text='ship? Archive',on='',since=1,broken=True,broken_why='fixture')]
+        held_source=self.root/'held-source.json';held_source.write_text(json.dumps(dict(schema=1,generated_at=1,items=held_rows)))
+        hosts['hive']['held_command']=['/bin/cat',str(held_source)]
+        hosts['hive']['held_open']=['/bin/echo','opened','{id}']
         config=self.root/'hosts.json';config.write_text(json.dumps(dict(schema_version=1,hosts=hosts)))
+        events.append(dict(v=1,t=200000000,host='hive',kind='held',available=True,items=held_rows))
         path=self.root/'jump.jsonl';path.write_text('\n'.join(map(json.dumps,events)))
-        p=self.pane(fixture=path,config=config)
+        _,board_sid,board_anchor,_=targets['hive']
+        p=self.pane(fixture=path,config=config,extra_env=dict(REX_SESSION=board_sid,REX_BLOCK=board_anchor,REX_SERVER='unix://'+hosts['hive']['socket']))
         # Switch away first so Enter must change the server's active window.
         p.key(b'm')
         p.key(b'\r')
@@ -265,6 +319,28 @@ class BoardTest(unittest.TestCase):
         p.key(b' ')
         self.assertIn('Check complete scratchpad',p.view())
         self.assertIn('Started private Rex',p.view())
+        # Held Enter creates a readable adjacent pane on the board's server;
+        # its command is routed to the configured source host.
+        p.key(b'm');p.key(b'j');p.key(b'j');p.key(b'\r')
+        p.until(lambda:b'Opened held work' in p.output)
+        rpc,board_sid,_,_=targets['hive']
+        def held_panes():
+            listed=json.loads(subprocess.check_output([rex,'--autostart=false','--server','unix://'+hosts['hive']['socket'],'block','ls','--session',board_sid,'--json'],timeout=5))
+            return [pane for pane in listed['blocks'] if pane.get('label')=='Held work']
+        panes=held_panes()
+        self.assertEqual(len(panes),1)
+        held_block=panes[0]['block_id']
+        try:
+            end=time.monotonic()+5
+            while True:
+                observed=subprocess.run([BIN,'observe','--socket',hosts['hive']['socket'],'--session',board_sid,'--block',held_block,'--tail'],capture_output=True,text=True,timeout=5)
+                content=json.loads(observed.stdout)['capture']['content']
+                if 'Press Enter to close' in content:break
+                if time.monotonic()>end:self.fail(content)
+                time.sleep(.05)
+            self.assertIn('opened held-old',content)
+        finally:
+            subprocess.run([BIN,'surfaces','close','--socket',hosts['hive']['socket'],'--session',board_sid,'--pane',held_block],capture_output=True,timeout=5,check=True)
         # Finite live JSON and the independent kept check use these disposable
         # servers and a private launch registry, never the operator's state.
         registry=self.root/'.local/state/teerex-agents';registry.mkdir(parents=True)
@@ -279,6 +355,12 @@ class BoardTest(unittest.TestCase):
             self.assertEqual(host['rows'][0]['block'],targets[host['host']][2])
             self.assertEqual(host['counts']['total'],1)
             self.assertEqual(host['counts']['unknown'],1)
+        held_check=Path(__file__).with_name('check_held_source.py')
+        result=subprocess.run(['python3',str(held_check),'--config',str(config),'--teerex',BIN],env=private_env,capture_output=True,text=True,timeout=30)
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+        self.assertIn('0 differences',result.stdout)
+        self.assertEqual(data['hosts'][0]['held']['rows'],held_rows)
+        self.assertIsNone(data['hosts'][1]['held'])
         check=Path(__file__).with_name('check_one_source.py')
         result=subprocess.run(['python3',str(check),'--config',str(config),'--teerex',BIN],env=private_env,capture_output=True,text=True,timeout=30)
         self.assertEqual(result.returncode,0,result.stdout+result.stderr)

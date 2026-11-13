@@ -189,3 +189,29 @@ printed, with its rerun count; settled discrepancies are always retained. Host
 read failures are differences, never empty inventories accepted as success.
 The disposable two-host test checks live JSON and injects an incorrect header
 total to prove the check fails and names the difference.
+
+## Held work section
+
+Hosts declaring [`held_command` and `held_open`](../boardfeed/README.md#held-work)
+get a compact held-work section. Its oldest-first rows show source text and age;
+only broken rows use ANSI red; other held ink uses default foreground. Held rows never flash, make sounds or
+change the board's attention status. Arrows/j/k and mouse select them; Enter
+opens the item beside the board, using its source host's literal argv template.
+Agent Enter and agent header counts retain their existing source and behavior.
+
+Each host in `board --json` has `held: null` when no section is configured, or
+`held: {available, rows, count}`. The count comes from the section's row list,
+including rows available by scrolling. Unavailable sections have no active rows;
+a finite snapshot exits nonzero when a held source fails.
+
+The independent read-only check runs each configured source command on its host
+and compares IDs/order, text, broken flags and row-derived count:
+
+```sh
+python3 items/board/check_held_source.py --config "$HOME/.config/teerex/hosts.json" --teerex "$PWD/zig-out/bin/teerex"
+```
+
+It prints differences and exits zero only when none remain. Source failures are
+reported as differences. The disposable-server board integration exercises both
+this check and held Enter; fixture tests cover ordering, colour, availability,
+counts and independent mismatch detection.

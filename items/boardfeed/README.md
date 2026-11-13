@@ -48,3 +48,36 @@ panes. State comes only from OSC 7501 `program_status`; `blocked` remains
 `--once` reads one finite inventory/status/scratchpad snapshot and exits without
 starting vitals or the event subscription. With named hosts it forwards the
 same finite option to each configured worker. This powers `board --json`.
+
+## Held work
+
+A named-host entry may supply `held_command`, a nonempty literal argv list. The
+selected worker runs it on that host, once at startup and then 30 seconds after
+each completed read. Runs never overlap. Each read has a five-second deadline
+and a 256 KiB JSON limit; failure, invalid schema or timeout emits unavailable,
+not an empty success. Only changes to availability or projected rows emit events;
+`generated_at` alone does not. No event source, service or permanent timer is
+installed. Quitting the board reaps its active command along with the feed.
+
+The command returns schema 1 with integer millisecond `generated_at` and `items`.
+Each item has string `id`, `project`, `title`, `waits`, `text`; nullable string
+`on`, `broken_why`; integer millisecond `since`; and boolean `broken`. `waits` is
+`promote`, `ship`, `item`, `block` or `hold`. At most 256 unique items are accepted,
+ordered by `since` oldest first. IDs start with an ASCII letter or digit and
+contain only letters, digits, `_`, `.`, `:` or `-` (at most 256 characters).
+
+`held_open` is an optional literal argv template containing exactly one `{id}`
+placeholder, outside the executable argument. Enter routes that command to the
+same named host through `targets exec`, in a tiled pane beside the board. The
+pane keeps its output until Enter closes it. Commands and IDs never pass through
+a shell. Missing/invalid `held_open` leaves the section readable and reports the
+open action as unavailable. Hosts without `held_command` have no held section.
+
+Example additions to an existing hive entry (retain its transport/path fields):
+
+```json
+{
+  "held_command": ["/home/jrg/.local/bin/rv", "waiting", "--json"],
+  "held_open": ["/home/jrg/.local/bin/rv", "show", "{id}"]
+}
+```

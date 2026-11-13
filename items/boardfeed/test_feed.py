@@ -13,6 +13,8 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest import mock
+from types import SimpleNamespace
 
 SOURCE=Path(__file__).with_name('feed.py')
 spec=importlib.util.spec_from_file_location('feed',SOURCE)
@@ -20,6 +22,82 @@ feed=importlib.util.module_from_spec(spec);spec.loader.exec_module(feed)
 REX=os.environ.get('REX_BIN') or shutil.which('rex')
 
 class FeedTests(unittest.TestCase):
+    def held_row(self, identifier='item-1', since=1, broken=False):
+        return dict(id=identifier,project='fixture',title='Example',waits='ship',text='ship? Example',on='',since=since,broken=broken,broken_why='broken' if broken else '')
+
+    def test_held_changed_unchanged_and_failure(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path=Path(tmp)/'held.json'
+            packet=dict(schema=1,generated_at=1,items=[self.held_row('new',2),self.held_row('old',1,True)])
+            path.write_text(json.dumps(packet))
+            held=feed.Held('fixture',['cat',str(path)])
+            output=io.StringIO()
+            with contextlib.redirect_stdout(output):
+                held.poll();held.poll()
+                packet['generated_at']=2;path.write_text(json.dumps(packet));held.poll()
+                packet['items'][0]['text']='ship? Changed';path.write_text(json.dumps(packet));held.poll()
+                path.write_text('bad json');held.poll();held.poll()
+                path.write_text(json.dumps(dict(schema=1,generated_at=3,items=[])));held.poll()
+            events=[json.loads(line) for line in output.getvalue().splitlines()]
+            self.assertEqual(len(events),4)
+            self.assertEqual([r['id'] for r in events[0]['items']],['old','new'])
+            self.assertTrue(events[0]['items'][0]['broken'])
+            self.assertEqual(events[1]['items'][1]['text'],'ship? Changed')
+            self.assertFalse(events[2]['available'])
+            self.assertTrue(events[3]['available']);self.assertEqual(events[3]['items'],[])
+
+    def test_held_nonzero_missing_and_timeout_are_unavailable(self):
+        for command in (['/not-found'],[sys.executable,'-c','raise SystemExit(1)']):
+            with self.subTest(command=command), mock.patch.object(feed,'emit') as emit:
+                feed.Held('fixture',command).poll()
+                emit.assert_called_once_with('fixture','held',available=False,items=[])
+        child=mock.Mock();child.wait.side_effect=[subprocess.TimeoutExpired('fixture',5),0];child.poll.return_value=None
+        with mock.patch.object(feed.subprocess,'Popen',return_value=child),mock.patch.object(feed,'emit') as emit:
+            feed.Held('fixture',['fixture']).poll()
+            child.kill.assert_called_once();self.assertEqual(child.wait.call_count,2)
+            emit.assert_called_once_with('fixture','held',available=False,items=[])
+        self.assertNotIn(child,feed.CHILDREN)
+
+    def test_held_schema_and_ids_and_open_template(self):
+        for identifier in ('-option','x; touch /tmp/no','../bad','x\n','',None):
+            with self.subTest(identifier=identifier),self.assertRaises(ValueError):feed.held_id(identifier)
+        for argv in ([], 'command', ['command','\n'], ['{id}'], ['command'], ['command','{id}','{id}'], ['command','{other}']):
+            with self.subTest(argv=argv),self.assertRaises(ValueError):feed.held_argv(argv,template=True)
+        self.assertEqual(feed.held_argv(['/bin/show','{id}'],template=True),['/bin/show','{id}'])
+        packet=dict(schema=1,generated_at=1,items=[dict(self.held_row(),on=None,broken_why=None)])
+        self.assertIsNone(feed.held_items(packet)[0]['on'])
+        self.assertIsNone(feed.held_items(packet)[0]['broken_why'])
+        for field,value in [('broken','true'),('since',False),('waits','other'),('text',None)]:
+            bad=dict(packet,items=[dict(packet['items'][0],**{field:value})])
+            with self.subTest(field=field),self.assertRaises(ValueError):feed.held_items(bad)
+        with self.assertRaises(ValueError):feed.held_items(dict(packet,items=packet['items']*2))
+        a=SimpleNamespace(held_id='safe:123',held_open_json=json.dumps(['/bin/show','--id={id}']))
+        with mock.patch.object(feed.os,'execvp') as execute:
+            feed.open_held(a)
+            execute.assert_called_once_with('/bin/show',['/bin/show','--id=safe:123'])
+        a.held_id='-bad'
+        with mock.patch.object(feed.os,'execvp') as execute,self.assertRaises(ValueError):feed.open_held(a)
+        execute.assert_not_called()
+
+    def test_held_enter_routes_host_and_opens_tiled_beside_board(self):
+        a=SimpleNamespace(held_id='item-1',held_open_json=None,held_pane=False,executable='/teerex',config='/hosts.json',host='remote')
+        source=dict(held_open=['/show','{id}'])
+        with mock.patch.object(feed,'selected_host',return_value=source),mock.patch.dict(os.environ,REX_SESSION='session:test',REX_BLOCK='block:test'),mock.patch.object(feed.subprocess,'run',return_value=SimpleNamespace(returncode=0)) as run:
+            feed.open_held(a)
+            argv=run.call_args.args[0]
+            self.assertEqual(argv[:4],['/teerex','surfaces','open','--session'])
+            self.assertEqual(argv[argv.index('--anchor')+1],'block:test')
+            self.assertEqual(argv[argv.index('--direction')+1],'right')
+            self.assertEqual(argv[argv.index('--layout')+1],'tiled')
+            self.assertIn('--held-pane',argv)
+            self.assertEqual(argv[argv.index('--host-name')+1],'remote')
+        a.held_pane=True
+        with mock.patch.object(feed,'selected_host',return_value=source),mock.patch('builtins.input'),mock.patch.object(feed.subprocess,'run') as run:
+            feed.open_held(a)
+            argv=run.call_args.args[0]
+            self.assertEqual(argv[:8],['/teerex','targets','exec','--config','/hosts.json','--host','remote','--'])
+            self.assertEqual(argv[-2:],['--held-id','item-1'])
+
     def test_native_watcher_existing_and_new_directories(self):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp);w=feed.Watcher([root/'new'])

@@ -12,6 +12,7 @@ import stat
 import subprocess
 import sys
 import threading
+import tempfile
 import time
 
 LOCK = threading.Lock()
@@ -415,18 +416,104 @@ def rex_events(a,state):
     except OSError:emit(a.host,'host',reachable=False,error='Cannot start Rex event subscription')
 
 
+# IDs are passed as literal argv, never as options or shell fragments.
+def held_id(value):
+    if not isinstance(value, str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.:-]{0,255}', value):
+        raise ValueError('invalid held item id')
+    return value
+
+
+def held_argv(value, template=False):
+    if not isinstance(value, list) or not value or len(value)>128 or any(not isinstance(v,str) or not v or len(v)>4096 or any(ord(c)<32 or ord(c)==127 for c in v) for v in value):
+        raise ValueError('held command must be a nonempty argv list without controls')
+    if template and (value[0].find('{')>=0 or sum(v.count('{id}') for v in value)!=1 or any('{' in v.replace('{id}','') or '}' in v.replace('{id}','') for v in value)):
+        raise ValueError('held_open requires exactly one {id} argument placeholder')
+    return value
+
+
+def held_items(data):
+    if not isinstance(data,dict) or type(data.get('schema')) is not int or data['schema']!=1 or type(data.get('generated_at')) is not int or not isinstance(data.get('items'),list) or len(data['items'])>256:
+        raise ValueError('invalid held snapshot')
+    seen=set();rows=[]
+    for item in data['items']:
+        if not isinstance(item,dict) or any(k not in item for k in ('id','project','title','waits','text','on','since','broken','broken_why')):raise ValueError('invalid held row')
+        held_id(item.get('id'))
+        if item['id'] in seen:raise ValueError('duplicate held id')
+        seen.add(item['id'])
+        if any(not isinstance(item.get(k),str) or len(item[k])>8192 for k in ('project','title','waits','text')) or any(item.get(k) is not None and (not isinstance(item[k],str) or len(item[k])>8192) for k in ('on','broken_why')) or item['waits'] not in ('promote','ship','item','block','hold') or type(item.get('since')) is not int or item['since']<0 or type(item.get('broken')) is not bool:
+            raise ValueError('invalid held row fields')
+        rows.append({k:item[k] for k in ('id','project','title','waits','text','on','since','broken','broken_why')})
+    return sorted(rows,key=lambda r:r['since'])
+
+
+class Held:
+    def __init__(self, host, command):
+        self.host=host;self.command=held_argv(command);self.previous=None
+
+    def poll(self):
+        try:
+            with tempfile.TemporaryFile() as output:
+                child=subprocess.Popen(self.command,stdin=subprocess.DEVNULL,stdout=output,stderr=subprocess.DEVNULL)
+                CHILDREN.append(child)
+                try:
+                    code=child.wait(timeout=5)
+                    output.seek(0);raw=output.read(262145)
+                    if code or len(raw)>262144:raise ValueError('held command failed')
+                    snapshot=dict(available=True,items=held_items(json.loads(raw)))
+                finally:
+                    if child.poll() is None:child.kill();child.wait()
+                    CHILDREN.remove(child)
+        except (OSError,ValueError,TypeError,UnicodeError,subprocess.SubprocessError):
+            snapshot=dict(available=False,items=[])
+        # generated_at is deliberately excluded: a new sample is not a change.
+        if snapshot!=self.previous:
+            emit(self.host,'held',**snapshot)
+            self.previous=snapshot
+
+
+def selected_host(a):
+    result=subprocess.run([a.executable,'targets','resolve','--config',a.config,'--host',a.host],capture_output=True,timeout=15)
+    if result.returncode:raise ValueError('held host unavailable')
+    return json.loads(result.stdout)['host']
+
+
+def open_held(a):
+    identifier=held_id(a.held_id)
+    if a.held_open_json is not None:
+        argv=held_argv(json.loads(a.held_open_json),template=True)
+        return os.execvp(argv[0],[v.replace('{id}',identifier) for v in argv])
+    host=selected_host(a)
+    template=held_argv(host.get('held_open'),template=True)
+    if a.held_pane:
+        subprocess.run([a.executable,'targets','exec','--config',a.config,'--host',a.host,'--',
+                        'board','feed','--held-open-json',json.dumps(template),'--held-id',identifier],check=False)
+        # Keep even short output on screen; no shell or environment pager command.
+        input('\nPress Enter to close')
+    else:
+        session=os.environ.get('REX_SESSION') or os.environ.get('LC_REX_SESSION')
+        block=os.environ.get('REX_BLOCK') or os.environ.get('LC_REX_BLOCK')
+        if not session or not block:raise ValueError('board pane address unavailable')
+        result=subprocess.run([a.executable,'surfaces','open','--session',session,'--layout','tiled','--anchor',block,'--direction','right','--label','Held work','--',
+                               a.executable,'board','feed','--held-pane','--config',a.config,'--host-name',a.host,'--held-id',identifier],stdout=subprocess.DEVNULL,timeout=15)
+        if result.returncode:raise ValueError('held pane unavailable')
+
+
 def local(a):
     state=State(a)
+    held=Held(a.host,json.loads(a.held_command_json)) if a.held_command_json else None
     if a.once:
+        if held:held.poll()
         state.scan()
         return
     watcher=Watcher([a.agents_registry,a.jobs_registry,a.scratch,a.calls])
     sample=LinuxVitals() if sys.platform=='linux' else MacVitals()
     thread=threading.Thread(target=rex_events,args=(a,state),daemon=True);thread.start()
-    state.scan();deadline=time.monotonic()
+    state.scan();deadline=time.monotonic();held_deadline=0
     try:
         while not STOP.is_set():
             now=time.monotonic()
+            if held and now>=held_deadline:
+                held.poll();held_deadline=time.monotonic()+30
             if now>=deadline:
                 try:
                     with state.lock: roots=dict(state.roots)
@@ -441,20 +528,36 @@ def local(a):
 def merge(a):
     threads=[]
     def host_feed(host):
+        configured=False;last_held=None
         command=[a.executable,'targets','exec','--config',a.config,'--host',host,'--','board','feed','--local','--host-name',host]+(['--once'] if a.once else [])
         try:
+            selected=subprocess.run([a.executable,'targets','resolve','--config',a.config,'--host',host],capture_output=True,timeout=15)
+            if selected.returncode:raise ValueError('host unavailable')
+            source=json.loads(selected.stdout)['host']
+            configured='held_command' in source
+            if configured:
+                try:
+                    held_argv(source['held_command'])
+                    command+=['--held-command-json',json.dumps(source['held_command'])]
+                except ValueError:
+                    emit(host,'held',available=False,items=[]);last_held=False
             p=subprocess.Popen(command,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,text=True);CHILDREN.append(p)
             for line in p.stdout:
                 if STOP.is_set():break
                 try:
                     event=json.loads(line)
-                    if event.get('v')!=1 or event.get('kind') not in ('host','agent','stream','vitals'):continue
+                    if event.get('v')!=1 or event.get('kind') not in ('host','agent','stream','vitals','held'):continue
                     event['host']=host
+                    if event['kind']=='held':last_held=event.get('available')
                     with LOCK: print(json.dumps(event,separators=(',',':')),flush=True)
                 except (ValueError,TypeError):continue
             code=p.wait()
+            if not STOP.is_set() and configured and (last_held is None or (not a.once or code) and last_held is not False):
+                emit(host,'held',available=False,items=[])
             if not STOP.is_set() and (not a.once or code):emit(host,'host',reachable=False,error='Host feed disconnected')
-        except OSError:emit(host,'host',reachable=False,error='Host feed unavailable')
+        except (OSError,ValueError,KeyError,subprocess.SubprocessError):
+            if configured and last_held is not False:emit(host,'held',available=False,items=[])
+            emit(host,'host',reachable=False,error='Host feed unavailable')
     for host in a.hosts.split(','):
         t=threading.Thread(target=host_feed,args=(host,),daemon=True);t.start();threads.append(t)
     while any(t.is_alive() for t in threads) and not STOP.wait(.2):pass
@@ -464,6 +567,11 @@ def main(argv=None):
     parser=argparse.ArgumentParser(prog='teerex board feed',description=__doc__)
     parser.add_argument('--config',default=os.path.expanduser('~/.config/teerex/hosts.json'),help='absolute named-host configuration')
     parser.add_argument('--hosts',default='hive,m5',help='comma-separated configured hosts; both by default')
+    parser.add_argument('--held-command-json',help=argparse.SUPPRESS)
+    parser.add_argument('--held-open-json',help=argparse.SUPPRESS)
+    parser.add_argument('--held-id',help=argparse.SUPPRESS)
+    parser.add_argument('--open-held',action='store_true',help=argparse.SUPPRESS)
+    parser.add_argument('--held-pane',action='store_true',help=argparse.SUPPRESS)
     parser.add_argument('--once',action='store_true',help='finite pane snapshot, then exit (no vitals or event subscription)')
     parser.add_argument('--local',action='store_true',help='read this host only (transport worker)')
     parser.add_argument('--host-name',dest='host',default=platform.node().split('.')[0])
@@ -478,6 +586,12 @@ def main(argv=None):
         parser.error('absolute --config and valid host names required')
     for path in (args.agents_registry,args.jobs_registry,args.scratch,args.calls):
         if not path.is_absolute():parser.error('source paths must be absolute')
+    if args.open_held or args.held_pane or args.held_open_json is not None:
+        try:open_held(args)
+        except (OSError,ValueError,KeyError,EOFError,subprocess.SubprocessError):
+            print('Held work unavailable',file=sys.stderr)
+            raise SystemExit(1)
+        return
     def stop(signum,frame):
         STOP.set()
         for p in CHILDREN:

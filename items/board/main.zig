@@ -62,11 +62,12 @@ fn amount(a: A, n: f64) ![]const u8 {
 }
 
 const Role = enum { words, secondary, accent, problem, pass, lines, marks };
-const Line = struct { value: []const u8, role: Role = .words, selected: bool = false };
+const Line = struct { value: []const u8, role: Role = .words, selected: bool = false, held_broken: ?bool = null };
 const Host = struct {
     name: []const u8,
     vitals: ?Parsed = null,
     reachable: ?bool = null,
+    held: ?Parsed = null,
     history: [48]f64 = @splat(0),
     count: usize = 0,
 };
@@ -82,6 +83,7 @@ const Model = struct {
     attention: [2]bool = @splat(false),
     fn deinit(self: *Model) void {
         for (&self.hosts) |*h| if (h.vitals) |*v| v.deinit();
+        for (&self.hosts) |*h| if (h.held) |*v| v.deinit();
         for (self.agents.items) |*v| v.deinit();
         for (self.stream.items) |*v| v.deinit();
         self.agents.deinit(self.allocator);
@@ -117,6 +119,20 @@ const Model = struct {
         } else if (eq(kind, "host")) {
             const reachable = get(v, "reachable");
             self.hosts[host].reachable = if (reachable == .bool) reachable.bool else null;
+        } else if (eq(kind, "held")) {
+            if (get(v, "available") != .bool or get(v, "items") != .array or arr(get(v, "items")).len > 256) {
+                self.invalid += 1;
+                return false;
+            }
+            for (arr(get(v, "items"))) |item| {
+                if (text(item, "id").len == 0 or get(item, "text") != .string or get(item, "since") != .integer or get(item, "broken") != .bool) {
+                    self.invalid += 1;
+                    return false;
+                }
+            }
+            if (self.hosts[host].held) |*old| old.deinit();
+            self.hosts[host].held = parsed;
+            retained = true;
         } else if (eq(kind, "agent")) {
             const id = text(v, "id");
             if (id.len == 0 or id.len > 256) return false;
@@ -230,6 +246,9 @@ fn countRows(rows: []const Value) Counts {
     return counts;
 }
 
+fn heldLess(_: void, a: Value, b: Value) bool {
+    return num(get(a, "since")) < num(get(b, "since"));
+}
 const UI = struct {
     host: usize = 0,
     selected: usize = 0,
@@ -247,6 +266,7 @@ const UI = struct {
     stream_offset: usize = 0,
     status: []const u8 = "",
     rows: std.ArrayList(Value) = .empty,
+    held_rows: std.ArrayList(Value) = .empty,
     hit: [256]?usize = @splat(null),
     flash: bool = false,
     fn visible(self: *UI, model: *Model) !void {
@@ -255,17 +275,24 @@ const UI = struct {
             try self.rows.append(model.allocator, entry.value);
         };
         std.mem.sort(Value, self.rows.items, {}, less);
+        self.held_rows.clearRetainingCapacity();
+        if (model.hosts[self.host].held) |held| {
+            if (get(held.value, "available") == .bool and get(held.value, "available").bool and model.hosts[self.host].reachable != false) {
+                try self.held_rows.appendSlice(model.allocator, arr(get(held.value, "items")));
+                std.mem.sort(Value, self.held_rows.items, {}, heldLess);
+            }
+        }
         if (self.selected == self.last_selected and self.host == self.selected_host and self.selected_len > 0) {
             for (self.rows.items, 0..) |row, i| if (eq(text(row, "id"), self.selected_id[0..self.selected_len])) {
                 self.selected = i;
                 break;
             };
         }
-        self.selected = @min(self.selected, self.rows.items.len -| 1);
+        self.selected = @min(self.selected, (self.rows.items.len + self.held_rows.items.len) -| 1);
         self.last_selected = self.selected;
         self.selected_host = self.host;
         self.selected_len = 0;
-        if (self.rows.items.len > 0) {
+        if (self.selected < self.rows.items.len) {
             const id = text(self.rows.items[self.selected], "id");
             self.selected_len = @min(id.len, self.selected_id.len);
             @memcpy(self.selected_id[0..self.selected_len], id[0..self.selected_len]);
@@ -296,11 +323,34 @@ const UI = struct {
         try add(&lines, a, try fmt(a, "agents  {d} total  {d} ► working", .{ counts.total, counts.working }), .secondary);
         try add(&lines, a, try fmt(a, "idle {d}  wait {d}  error {d}  done {d}", .{ counts.idle, waiting, errors, counts.done }), .secondary);
         if (counts.unknown > 0) try add(&lines, a, try fmt(a, "unknown {d} · state unavailable", .{counts.unknown}), .secondary);
+        if (host.held) |held| {
+            const available_held = get(held.value, "available").bool and host.reachable != false;
+            try self.section(&lines, a, if (available_held) try fmt(a, "held work · {d}", .{self.held_rows.items.len}) else "held work · unavailable", width);
+            lines.items[lines.items.len - 1].held_broken = false;
+            if (available_held) {
+                const held_limit = @max(1, height / 5);
+                const held_selected = self.selected -| self.rows.items.len;
+                const held_first = (held_selected + 1) -| held_limit;
+                for (self.held_rows.items, 0..) |item, i| {
+                    if (i < held_first or i >= held_first + held_limit) continue;
+                    const index = self.rows.items.len + i;
+                    const age = @max(0, model.timestamp - @as(i64, @intFromFloat(@min(1e15, @max(0, num(get(item, "since")))))));
+                    if (lines.items.len < self.hit.len) self.hit[lines.items.len] = index;
+                    try add(&lines, a, try fmt(a, "{s} {s} · {d}{s}", .{ if (index == self.selected) "►" else "·", text(item, "text"), @divTrunc(age, if (age >= 3600000) @as(i64, 3600000) else 60000), if (age >= 3600000) "h" else "m" }), if (get(item, "broken").bool) .problem else .words);
+                    lines.items[lines.items.len - 1].held_broken = get(item, "broken").bool;
+                }
+                if (self.held_rows.items.len > held_limit) {
+                    try add(&lines, a, try fmt(a, "{d} more · arrows to browse", .{self.held_rows.items.len - held_limit}), .secondary);
+                    lines.items[lines.items.len - 1].held_broken = false;
+                }
+            }
+        }
         try self.section(&lines, a, "needs you", width);
         if (waiting + errors == 0) try add(&lines, a, "All clear · nothing needs an answer", .secondary);
         const available = height -| (lines.items.len + 7);
         const limit = @max(1, available / 2);
-        const first = if (self.selected < limit) 0 else self.selected - limit + 1;
+        const agent_selected = @min(self.selected, self.rows.items.len -| 1);
+        const first = if (agent_selected < limit) 0 else agent_selected - limit + 1;
         for (self.rows.items, 0..) |r, i| {
             if (priority(r) > 1 or (i < first or i >= first + limit)) continue;
             const question = if (text(r, "question").len > 0) text(r, "question") else if (priority(r) == 1) "Needs a look" else "Waiting for your answer";
@@ -315,7 +365,7 @@ const UI = struct {
         }
         if (shown == 0) try add(&lines, a, "No agents working here", .secondary);
         if (self.rows.items.len > limit) try add(&lines, a, try fmt(a, "{d} more · arrows to browse", .{self.rows.items.len - limit}), .secondary);
-        if (self.inline_pad and self.rows.items.len > 0) {
+        if (self.inline_pad and self.selected < self.rows.items.len) {
             const r = self.rows.items[self.selected];
             try add(&lines, a, try fmt(a, "Scratchpad · {s}", .{text(r, "name")}), .accent);
             // Complete Now line is wrapped, never treated as executable text.
@@ -491,7 +541,9 @@ const Renderer = struct {
             const is_frame = std.mem.startsWith(u8, line.value, "╭") or std.mem.startsWith(u8, line.value, "├") or std.mem.startsWith(u8, line.value, "╰");
             const value = try clip(a, line.value, if (is_frame) width -| 1 else width -| 7);
             const content = if (is_frame) value else try fmt(a, "│  {s}{s}  │", .{ value, try repeat(a, " ", (width -| 7) -| cells(value)) });
-            const styled = try fmt(a, "{s}{s}{s}{s}", .{ try theme.sgr(a, line.role), if (line.selected and theme.color) ESC ++ "[7m" else "", content, ESC ++ "[0m" });
+            // Held colour has one meaning: ANSI red is broken, all other held ink is default.
+            const ink = if (line.held_broken) |broken| if (!theme.color) "" else if (broken) ESC ++ "[31m" else ESC ++ "[39m" else try theme.sgr(a, line.role);
+            const styled = try fmt(a, "{s}{s}{s}{s}", .{ ink, if (line.selected and theme.color) ESC ++ "[7m" else "", content, ESC ++ "[0m" });
             if (!full and row < self.previous.items.len and eq(styled, self.previous.items[row])) continue;
             try output.appendSlice(a, try fmt(a, ESC ++ "[{d};1H{s}" ++ ESC ++ "[K", .{ row + 1, styled }));
             if (row < self.previous.items.len) {
@@ -570,6 +622,16 @@ fn jump(allocator: A, self: []const u8, config: []const u8, row: Value) !bool {
     return result.term == .Exited and result.term.Exited == 0;
 }
 
+fn activate(allocator: A, self: []const u8, config: []const u8, model: *Model, ui: *UI) ![]const u8 {
+    if (ui.selected < ui.rows.items.len) return if (try jump(allocator, self, config, ui.rows.items[ui.selected])) "Jumped to pane" else "Jump unavailable · check host connection";
+    const index = ui.selected - ui.rows.items.len;
+    if (index >= ui.held_rows.items.len) return "Held work unavailable";
+    const result = try std.process.Child.run(.{ .allocator = allocator, .argv = &.{ self, "board", "feed", "--open-held", "--config", config, "--host-name", model.hosts[ui.host].name, "--held-id", text(ui.held_rows.items[index], "id") }, .max_output_bytes = 65536 });
+    defer allocator.free(result.stdout);
+    defer allocator.free(result.stderr);
+    return if (result.term == .Exited and result.term.Exited == 0) "Opened held work" else "Held work unavailable";
+}
+
 fn scratch(allocator: A, self: []const u8, config: []const u8, row: Value) !?Parsed {
     const result = try std.process.Child.run(.{ .allocator = allocator, .argv = &.{ self, "--config", config, "--host", text(row, "host"), "scratch", "show", "--session", text(row, "session"), "--block", text(row, "block"), "--json" }, .max_output_bytes = 262144 });
     defer allocator.free(result.stdout);
@@ -606,6 +668,7 @@ pub fn run(allocator: A, args: []const []const u8) !u8 {
     defer model.deinit();
     var ui: UI = .{};
     defer ui.rows.deinit(allocator);
+    defer ui.held_rows.deinit(allocator);
     defer if (ui.pad) |*pad| pad.deinit();
     var theme: Theme = .{ .color = !std.process.hasEnvVarConstant("NO_COLOR") };
     if (opts.once or opts.json) {
@@ -624,10 +687,14 @@ pub fn run(allocator: A, args: []const []const u8) !u8 {
             _ = try model.ingest(line);
         };
         if (opts.json) {
-            const Snapshot = struct { host: []const u8, rows: []const Value, counts: Counts, reachable: ?bool };
+            const HeldSnapshot = struct { available: bool, rows: []const Value, count: usize };
+            const Snapshot = struct { host: []const u8, rows: []const Value, counts: Counts, reachable: ?bool, held: ?HeldSnapshot };
             var snapshots: std.ArrayList(Snapshot) = .empty;
             defer {
-                for (snapshots.items) |snapshot| allocator.free(snapshot.rows);
+                for (snapshots.items) |snapshot| {
+                    allocator.free(snapshot.rows);
+                    if (snapshot.held) |held| allocator.free(held.rows);
+                }
                 snapshots.deinit(allocator);
             }
             var selected = std.mem.splitScalar(u8, opts.hosts, ',');
@@ -636,7 +703,10 @@ pub fn run(allocator: A, args: []const []const u8) !u8 {
                 try ui.visible(&model);
                 const reachable = model.hosts[ui.host].reachable;
                 if (reachable != true and opts.replay == null) feed_failed = true;
-                try snapshots.append(allocator, .{ .host = name, .rows = try allocator.dupe(Value, ui.rows.items), .counts = countRows(ui.rows.items), .reachable = reachable });
+                try snapshots.append(allocator, .{ .host = name, .rows = try allocator.dupe(Value, ui.rows.items), .counts = countRows(ui.rows.items), .reachable = reachable, .held = if (model.hosts[ui.host].held) |held| .{ .available = get(held.value, "available").bool and reachable != false, .rows = try allocator.dupe(Value, ui.held_rows.items), .count = ui.held_rows.items.len } else null });
+                if (model.hosts[ui.host].held) |held| {
+                    if (!get(held.value, "available").bool) feed_failed = true;
+                }
             }
             const output = try std.json.Stringify.valueAlloc(allocator, .{ .hosts = snapshots.items, .invalid = model.invalid }, .{});
             defer allocator.free(output);
@@ -852,8 +922,8 @@ pub fn run(allocator: A, args: []const []const u8) !u8 {
                             if (key == 'M' and button == 0 and row > 0 and row <= ui.hit.len) {
                                 if (ui.hit[row - 1]) |idx| {
                                     ui.selected = idx;
-                                    if (idx == last_click_index and now - last_click < 400 and idx < ui.rows.items.len) {
-                                        ui.status = if (try jump(allocator, self, opts.config, ui.rows.items[idx])) "Jumped to pane" else "Jump unavailable · check host connection";
+                                    if (idx == last_click_index and now - last_click < 400 and idx < ui.rows.items.len + ui.held_rows.items.len) {
+                                        ui.status = try activate(allocator, self, opts.config, &model, &ui);
                                     }
                                     last_click = now;
                                     last_click_index = idx;
@@ -894,7 +964,7 @@ pub fn run(allocator: A, args: []const []const u8) !u8 {
                     },
                     ' ' => {
                         ui.inline_pad = !ui.inline_pad;
-                        if (ui.inline_pad and ui.rows.items.len > 0) {
+                        if (ui.inline_pad and ui.selected < ui.rows.items.len) {
                             if (ui.pad) |*old| old.deinit();
                             ui.pad = scratch(allocator, self, opts.config, ui.rows.items[ui.selected]) catch null;
                             const id = text(ui.rows.items[ui.selected], "id");
@@ -908,8 +978,8 @@ pub fn run(allocator: A, args: []const []const u8) !u8 {
                         ui.help = !ui.help;
                         dirty = true;
                     },
-                    '\r', '\n' => if (ui.rows.items.len > 0) {
-                        ui.status = if (try jump(allocator, self, opts.config, ui.rows.items[ui.selected])) "Jumped to pane" else "Jump unavailable · check host connection";
+                    '\r', '\n' => if (ui.rows.items.len + ui.held_rows.items.len > 0) {
+                        ui.status = try activate(allocator, self, opts.config, &model, &ui);
                         dirty = true;
                     },
                     else => {},
