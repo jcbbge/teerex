@@ -907,6 +907,98 @@ class AgentsTest(unittest.TestCase):
             command += ["--ro-bind", str(scratch / "protect.json"), "/work/protect.json"]
         return command
 
+    def probe_evidence(self, argv, **kwargs):
+        evidence = self.work / ("evidence-" + str(time.monotonic_ns()))
+        fd = os.open(evidence, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        try:
+            offset = argv.index("--then") if "--then" in argv else len(argv)
+            command = argv[:offset] + ["--evidence-fd", str(fd)] + argv[offset:]
+            command = [str(fd) if arg == "EVIDENCE_FD" else arg for arg in command]
+            result = subprocess.run(command, pass_fds=(fd,), capture_output=True, text=True, timeout=10, **kwargs)
+        finally:
+            os.close(fd)
+        return result, json.loads(evidence.read_text())
+
+    def test_fence_probe_evidence_private_then_output_refusal_and_call_log(self):
+        self.env["TEEREX_CALL_LOG_DIR"] = str(self.work / "calls")
+        secret = self.work / "PROTECTED_PATH_MUST_NOT_APPEAR"
+        protected = self.probe_record(dict(absent_paths=[str(secret)]))
+        harness = """import errno,json,os,sys
+fd=int(sys.argv[1])
+try:os.fstat(fd)
+except OSError as exc:assert exc.errno==errno.EBADF
+else:raise AssertionError('evidence descriptor survived exec')
+if sys.platform=='linux':
+ assert not os.path.exists('/proc/self/fd/'+str(fd))
+print('HARNESS ONLY')
+"""
+        args = [BIN, "agents", "fence-probe", "--protect-file", str(protected), "--then", "--",
+                sys.executable, "-c", harness, "EVIDENCE_FD"]
+        passed, evidence = self.probe_evidence(args, env=self.env)
+        self.assertEqual(passed.returncode, 0, passed.stdout + passed.stderr)
+        self.assertEqual(passed.stdout, "HARNESS ONLY\n")
+        self.assertEqual(passed.stderr, "")
+        self.assertTrue(evidence["passed"])
+        self.assertEqual(evidence["exec"], "started")
+        self.assertEqual(evidence["checks"][0]["target"], str(secret))
+        secret.touch()
+        failed, evidence = self.probe_evidence(args, env=self.env)
+        self.assertEqual(failed.returncode, 1)
+        self.assertEqual(failed.stdout, "")
+        self.assertEqual(failed.stderr, "teerex agents fence-probe: refused: absent_path\n")
+        self.assertFalse(evidence["passed"])
+        self.assertEqual(evidence["exec"], "not_started")
+        self.assertEqual(evidence["checks"][0]["target"], str(secret))
+        diagnostic, evidence = self.probe_evidence(args[:5], env=self.env)
+        self.assertEqual(diagnostic.returncode, 1)
+        self.assertEqual(json.loads(diagnostic.stdout), evidence)
+        # The native logger writes selected flag names/canonical IDs only; the probe
+        # intentionally bypasses the Python call-log wrapper inside the fence.
+        logs = list((self.work / "calls").glob("*.jsonl"))
+        self.assertTrue(logs)
+        logged = "".join(path.read_text() for path in logs)
+        for private in (str(secret), str(protected), "PROTECTED_PATH_MUST_NOT_APPEAR", "st_ino", "HARNESS ONLY"):
+            self.assertNotIn(private, logged)
+
+    def test_fence_probe_bad_evidence_fd_precedes_checks_and_errors_are_path_free(self):
+        missing = self.work / "PRIVATE_MISSING_PROTECT_FILE"
+        base = [BIN, "agents", "fence-probe", "--protect-file", str(missing)]
+        pipe_r, pipe_w = os.pipe()
+        readonly = os.open(self.brief, os.O_RDONLY)
+        directory = os.open(self.work, os.O_RDONLY)
+        with socket.socket() as sock:
+            try:
+                for fd in (-1, 1, 999999, readonly, directory, pipe_w, sock.fileno()):
+                    with self.subTest(fd=fd):
+                        inherited = (fd,) if fd in (readonly, directory, pipe_w, sock.fileno()) else ()
+                        result = subprocess.run(base + ["--evidence-fd", str(fd), "--then", "--", "/bin/echo", "UNEXPECTED"],
+                                                pass_fds=inherited, env=self.env, capture_output=True, text=True)
+                        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                        self.assertEqual(result.stdout, "")
+                        self.assertEqual(result.stderr, "teerex agents fence-probe: refused: invalid_evidence_fd\n")
+            finally:
+                for fd in (pipe_r, pipe_w, readonly, directory):os.close(fd)
+        invalid, evidence = self.probe_evidence(base + ["--then", "--", "/bin/echo", "UNEXPECTED"], env=self.env)
+        self.assertEqual(invalid.returncode, 3)
+        self.assertEqual(invalid.stdout, "")
+        self.assertEqual(invalid.stderr, "teerex agents fence-probe: refused: invalid_protect_file\n")
+        self.assertIn(str(missing), evidence["failure_reason"])
+        protected = self.probe_record({})
+        failed, evidence = self.probe_evidence([BIN, "agents", "fence-probe", "--protect-file", str(protected),
+                                               "--then", "--", str(missing)], env=self.env)
+        self.assertEqual(failed.returncode, 1)
+        self.assertEqual(failed.stdout, "")
+        self.assertEqual(failed.stderr, "teerex agents fence-probe: refused: exec_failed\n")
+        malformed = json.loads(protected.read_text())
+        malformed["required_paths"] = ["/PRIVATE_" + chr(0xd800)]
+        protected.write_text(json.dumps(malformed))
+        failed, evidence = self.probe_evidence([BIN, "agents", "fence-probe", "--protect-file", str(protected),
+                                               "--then", "--", "/bin/echo", "UNEXPECTED"], env=self.env)
+        self.assertEqual(failed.returncode, 1)
+        self.assertEqual(failed.stdout, "")
+        self.assertEqual(failed.stderr, "teerex agents fence-probe: refused: check_failed\n")
+        self.assertEqual(evidence["exec"], "not_started")
+
     @unittest.skipUnless(os.environ.get("TEEREX_AGENTS_FENCE") == "1", "explicit real Linux bubblewrap acceptance gate")
     def test_fence_probe_private_schema_and_recording_fail_closed(self):
         template = self.work / "template.json"
@@ -964,6 +1056,10 @@ class AgentsTest(unittest.TestCase):
             listener.accept()[0].close()
             marker = scratch / "marker"
             harness = ("import errno,os,json,socket\nfrom pathlib import Path\n" +
+                       "for descriptor in Path('/proc/self/fd').iterdir():\n" +
+                       " try:link=os.readlink(descriptor)\n" +
+                       " except FileNotFoundError:continue\n" +
+                       " assert 'evidence-' not in link,'evidence file survived exec'\n" +
                        f"for path in {[str(self.socket), outside_proc]!r}:\n" +
                        " assert not Path(path).is_socket()\n" +
                        " with socket.socket(socket.AF_UNIX) as connection:\n" +
@@ -974,16 +1070,18 @@ class AgentsTest(unittest.TestCase):
             base = self.probe_fence(scratch) + ["--ro-bind", str(channel), str(channel)]
             args = [BIN, "agents", "fence-probe", "--protect-file", "/work/protect.json", "--then", "--", sys.executable, "-c", harness]
             # A11 counterexample: deliberately expose the host identity, even read-only.
-            bad = subprocess.run(base + ["--ro-bind", str(credential), str(credential), "--", *args], capture_output=True, text=True, timeout=10)
+            bad, evidence = self.probe_evidence(base + ["--ro-bind", str(credential), str(credential), "--", *args])
             self.assertEqual(bad.returncode, 1, bad.stdout + bad.stderr)
             self.assertTrue(bad.stderr.startswith("teerex agents fence-probe: refused:"))
-            self.assertEqual(json.loads(bad.stdout)["exec"], "not_started")
+            self.assertEqual(bad.stdout, "")
+            self.assertNotIn(str(credential), bad.stderr)
+            self.assertEqual(evidence["exec"], "not_started")
             self.assertFalse(marker.exists())
             listener.accept()[0].close()
             # A writable per-call copy is explicitly allowed, despite occupying the protected path.
-            good = subprocess.run(base + ["--bind", str(copy), str(credential), "--", *args], capture_output=True, text=True, timeout=10)
+            good, probe = self.probe_evidence(base + ["--bind", str(copy), str(credential), "--", *args])
             self.assertEqual(good.returncode, 0, good.stdout + good.stderr)
-            probe, harness_result = map(json.loads, good.stdout.splitlines())
+            harness_result = json.loads(good.stdout)
             self.assertTrue(probe["passed"])
             self.assertEqual(probe["exec"], "started")
             self.assertTrue(any(c.get("state") == "shadowed" and c["target"] == str(credential) for c in probe["checks"]))
@@ -1018,7 +1116,7 @@ print(json.dumps(dict(outside_signal=outside_signal)))
         args = [BIN, "agents", "fence-probe", "--protect-file", "/work/protect.json", "--then", "--", sys.executable, "-c", harness]
         result = subprocess.run(self.probe_fence(scratch) + ["--", *args], capture_output=True, text=True, timeout=10)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertFalse(json.loads(result.stdout.splitlines()[1])["outside_signal"])
+        self.assertFalse(json.loads(result.stdout)["outside_signal"])
         namespace = (scratch / "descendant-namespace").read_text()
         def tagged():
             found = []
@@ -1116,7 +1214,8 @@ except OSError as e:print(json.dumps(dict(kernel_errno=e.errno)))
                                     "from pathlib import Path;Path('/work/network-harness').touch()"], capture_output=True, text=True, timeout=10)
             self.assertEqual(refused.returncode, 1, refused.stdout + refused.stderr)
             self.assertFalse(marker.exists())
-            self.assertEqual(json.loads(refused.stdout)["checks"][0]["result"], "fail")
+            self.assertEqual(refused.stdout, "")
+            self.assertEqual(refused.stderr.strip(), "teerex agents fence-probe: refused: closed_tcp")
             resolver = scratch / "resolv.conf"
             resolver.write_text("nameserver 10.0.2.3\n")
             harness = """import json,socket,ssl
@@ -1156,9 +1255,7 @@ Path('/work/network-harness').touch()
                 os.write(block_w, b"1")
                 stdout, stderr = process.communicate(timeout=35)
                 self.assertEqual(process.returncode, 0, stdout + stderr)
-                result, https = map(json.loads, stdout.splitlines())
-                self.assertTrue(result["passed"])
-                self.assertEqual(result["checks"][0]["check"], "closed_tcp")
+                https = json.loads(stdout)
                 self.assertTrue(marker.exists())
                 self.assertTrue(https["public_https"].startswith("HTTP/1.1 "))
             finally:

@@ -1,6 +1,7 @@
 """One-shot, fail-closed fence checks. No Rex connection and no worker code before exec."""
 import argparse
 import errno
+import fcntl
 import ipaddress
 import json
 import os
@@ -136,6 +137,30 @@ def probe_checks(config):
     return checks
 
 
+def probe_evidence_fd(descriptor):
+    # Standard streams are worker-visible, so they cannot be an evidence channel.
+    probe_require(descriptor >= 3, "invalid_evidence_fd")
+    info = os.fstat(descriptor)
+    flags = fcntl.fcntl(descriptor, fcntl.F_GETFL)
+    probe_require(stat.S_ISREG(info.st_mode) and (flags & os.O_ACCMODE) in (os.O_WRONLY, os.O_RDWR),
+                  "invalid_evidence_fd")
+    os.set_inheritable(descriptor, False)
+
+
+def probe_publish(result, options):
+    raw = json.dumps(result).encode() + b"\n"
+    if options.evidence_fd is not None:
+        # fdopen owns and closes the inherited descriptor, including on write failure.
+        descriptor, options.evidence_fd = options.evidence_fd, None
+        with os.fdopen(descriptor, "wb") as evidence:
+            evidence.write(raw)
+            evidence.flush()
+            os.fsync(evidence.fileno())
+    if not options.then:
+        sys.stdout.buffer.write(raw)
+        sys.stdout.buffer.flush()
+
+
 def probe_main():
     parser = argparse.ArgumentParser(prog="teerex agents fence-probe", description=(
         "Check caller-declared protected resources inside a fence; no Rex access or worker code. "
@@ -145,7 +170,8 @@ def probe_main():
     parser.add_argument("--protect-file", required=True, help="absolute owned regular0600 schema1 JSON, <=64KiB, <=64 entries/list")
     parser.add_argument("--record-identities", action="store_true", help="outside the fence: record current host path/PID namespace identities into --out")
     parser.add_argument("--out", help="recording only: NEW absolute output file, exclusive no-follow0600; mount it read-only inside fence")
-    parser.add_argument("--then", action="store_true", help="only after all checks pass, flush JSON and exec literal argv in the same PID")
+    parser.add_argument("--evidence-fd", type=int, help="inherited writable regular file descriptor >=3; write full JSON, close before exec; caller keeps private0600 file outside fence")
+    parser.add_argument("--then", action="store_true", help="only after all checks pass, exec literal argv in the same PID; silent stdout, path-free refusal stderr")
     parser.add_argument("argv", nargs=argparse.REMAINDER)
     o = parser.parse_args(sys.argv[3:])
     if o.record_identities and (o.out is None or o.then or o.argv) or not o.record_identities and o.out is not None:
@@ -153,6 +179,13 @@ def probe_main():
     if o.then != bool(o.argv) or o.argv and (o.argv[0] != "--" or len(o.argv) < 2 or not o.argv[1]):
         parser.error("exec requires --then -- and nonempty literal argv")
     result = dict(kind="fence_probe_result", schema_version=1, passed=False, checks=[], exec="not_started")
+    if o.evidence_fd is not None:
+        try:
+            probe_evidence_fd(o.evidence_fd)
+        except (OSError, ValueError, OverflowError):
+            print("teerex agents fence-probe: refused: invalid_evidence_fd", file=sys.stderr)
+            return 1
+    code, reason = 0, None
     try:
         config = probe_config(o.protect_file, o.record_identities)
         if o.record_identities:
@@ -173,26 +206,34 @@ def probe_main():
                 f.flush()
                 os.fsync(f.fileno())
             result.update(passed=True, recorded_protect_file=o.out)
-            print(json.dumps(result), flush=True)
-            return 0
     except (OSError, ValueError, TypeError, RecursionError) as exc:
         result["failure_reason"] = str(exc)
-        print(json.dumps(result), flush=True)
-        print("teerex agents fence-probe: refused: invalid protect file: " + str(exc), file=sys.stderr)
-        return 3
-    result["checks"] = probe_checks(config)
-    failed = next((check for check in result["checks"] if check["result"] == "fail"), None)
-    result["passed"] = failed is None
-    result["exec"] = "started" if o.then and result["passed"] else "not_started"
-    print(json.dumps(result), flush=True)
-    if failed:
-        print("teerex agents fence-probe: refused: " + failed["check"] + " " + failed["target"], file=sys.stderr)
+        code, reason = 3, "invalid_protect_file"
+    if code == 0 and not o.record_identities:
+        try:
+            result["checks"] = probe_checks(config)
+        except (OSError, ValueError, TypeError) as exc:
+            result["failure_reason"] = str(exc)
+            code, reason = 1, "check_failed"
+        else:
+            failed = next((check for check in result["checks"] if check["result"] == "fail"), None)
+            result["passed"] = failed is None
+            result["exec"] = "started" if o.then and result["passed"] else "not_started"
+            if failed:
+                code, reason = 1, failed["check"]
+    try:
+        probe_publish(result, o)
+    except OSError:
+        print("teerex agents fence-probe: refused: evidence_write_failed", file=sys.stderr)
         return 1
+    if code:
+        print("teerex agents fence-probe: refused: " + reason, file=sys.stderr)
+        return code
     if o.then:
         try:
             os.execvp(o.argv[1], o.argv[1:])
-        except OSError as exc:
-            print("teerex agents fence-probe: refused: exec failed: " + str(exc), file=sys.stderr)
+        except OSError:
+            print("teerex agents fence-probe: refused: exec_failed", file=sys.stderr)
             return 1
     return 0
 
