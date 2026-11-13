@@ -136,6 +136,13 @@ local function surface(a, emit)
             end
         end
     end
+    if a.operation=="close" then
+        local listed=rex.call("session.list_blocks",{session_id=a.session_id})
+        if type(listed)~="table" or type(listed.blocks)~="table" then return fail("block_list_unavailable") end
+        for _,b in ipairs(listed.blocks) do
+            if b.creator_name=="com.superlogical.terminal" and b.placement=="detached" then panes[#panes+1]=b end
+        end
+    end
     for _,field in ipairs({"block_id","anchor","window_id"}) do
         if a[field] then
             local key=field=="window_id" and "window_id" or "block_id"
@@ -282,6 +289,13 @@ local function surface(a, emit)
     end
     if a.operation == "focus" or a.operation == "close" then
         local previous=locate(before,a.block_id)
+        if not previous and a.operation == "close" then
+            for _,b in ipairs(panes) do
+                if b.block_id==a.block_id and b.placement=="detached" then
+                    previous={block_id=b.block_id,placement="detached",attached=false}
+                end
+            end
+        end
         if not previous then return fail("pane_not_attached_terminal") end
         if a.operation == "focus" and previous.layer_state ~= "normal" then return fail("pane_layer_not_normal") end
         result.previous=previous

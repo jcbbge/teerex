@@ -80,7 +80,7 @@ if behavior == "codex-hook":
     pad=Path(os.environ['AGENT_SCRATCHPAD'])
     raw=pad.read_text()
     import datetime, re
-    pad.write_text(re.sub(r'^Updated:.*$', 'Updated: '+datetime.datetime.now(datetime.timezone.utc).isoformat(), raw, flags=re.M))
+    pad.write_text(raw + '\nWaiting: seat · synthetic result · since 2026-11-13T00:00:00Z\n')
     callback=json.loads(next(a[len('notify='):] for a in args if a.startswith('notify=')))
     result=subprocess.run(callback+[json.dumps({"type":"agent-turn-complete","last-assistant-message":"Codex settled β"})],capture_output=True,text=True)
     with out.open('a') as f: f.write(json.dumps({"event":"codex-hook","code":result.returncode,"stdout":result.stdout})+'\n')
@@ -94,7 +94,7 @@ mod.default({on:(name,handler)=>{handlers[name]=handler;}});
 const ctx={sessionManager:{getBranch:()=>[{type:'message',message:{role:'assistant',content:[{type:'text',text:'Pi settled β'}],errorMessage:'Pi synthetic failure'}}]}};
 await handlers.before_agent_start({prompt:'check scratchpad'});
 const first=await handlers.agent_before_settle({outcome:'completed',entries:[{type:'custom',customType:'existing',data:{}}]});
-if (first?.continue !== true || first?.entries?.[1]?.content !== 'update your scratchpad (Now/To-do/Done) before ending the turn') throw new Error('scratchpad did not block settlement');
+if (first?.continue !== true || first?.entries?.[1]?.content !== 'say what you are waiting on: teerex scratch wait --on … --what …') throw new Error('scratchpad did not block settlement');
 if (first.entries[0]?.customType !== 'existing') throw new Error('scratchpad replaced another extension entry');
 const second=await handlers.agent_before_settle({outcome:'completed'});
 if (second?.continue) throw new Error('scratchpad blocked more than once');
@@ -241,12 +241,33 @@ class AgentsTest(unittest.TestCase):
 
     @classmethod
     def stop_server(cls):
+        supervisors = set()
+        for path in cls.root.rglob("agents-*.json"):
+            try:
+                pid = json.loads(path.read_text()).get("supervisor_pid")
+                if pid:
+                    supervisors.add(pid)
+            except (OSError, ValueError):
+                pass
+        # Closing the private server now runs each supervisor's hangup cleanup.
+        # Wait for those writers before TemporaryDirectory removes their HOME.
         cls.server.terminate()
         try:
             cls.server.wait(timeout=5)
         except subprocess.TimeoutExpired:
             cls.server.kill()
             cls.server.wait(timeout=5)
+        deadline = time.monotonic() + 15
+        while supervisors:
+            result = subprocess.run(["ps", "-p", ",".join(map(str, supervisors)), "-o", "pid=,stat="],
+                                    capture_output=True, text=True, timeout=5)
+            supervisors = {int(row.split()[0]) for row in result.stdout.splitlines()
+                           if row.split() and not row.split()[1].startswith("Z")}
+            if not supervisors:
+                break
+            if time.monotonic() >= deadline:
+                raise RuntimeError("disposable supervisors still writing after server shutdown: " + str(sorted(supervisors)))
+            time.sleep(.05)
 
     @classmethod
     def rpc(cls, method, args):
@@ -513,6 +534,118 @@ class AgentsTest(unittest.TestCase):
         stops = [e for e in timeline["events"] if e["event"] in ("Stop", "StopFailure")]
         self.assertEqual(len(stops), len(cases))
         self.assertEqual(stops[0]["delivery_rule"], "progress_turn_suppressed")
+    def test_turn_end_notifies_waiters_and_wakes_done_then_report_once(self):
+        p, launched = self.launch()
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        launch_id = launched["launch_id"]
+        state = self.record(launch_id)
+        pad = Path(state["scratchpad"])
+        # A progress turn is quiet for its parent but still speaks to a waiter.
+        pad.write_text("# worker\n\n## Now\n- [ ] implement\n\n## To-do\n- [ ] validate\n\n## Done\n")
+        args = ["--session", self.session, "--block", self.starter]
+        init = subprocess.run([BIN, "scratch", "init", *args, "--name", "waiter", "--purpose", "test", "--intent", "await worker"],
+                              env=self.env, capture_output=True, text=True)
+        self.assertEqual(init.returncode, 0, init.stdout + init.stderr)
+        waiter_pad = Path(init.stdout.strip())
+        for index, until in enumerate(("done", "report")):
+            waiting = subprocess.Popen([BIN, "scratch", "wait", *args, "--on", state["name"], "--what", "worker result",
+                                       "--until", until, "--timeout-ms", "15000"], env=self.env,
+                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            try:
+                wait_for(lambda: Path(str(waiter_pad) + ".wait.fifo").exists())
+                if until == "report":
+                    pad.write_text("# worker\n\n## Now\n\n## To-do\n\n## Done\n- [x] implemented\n")
+                event = self.work / "notify-event.json"
+                event.write_text(json.dumps(dict(hook_event_name="Stop", last_assistant_message="result first line\nprivate later line")))
+                event_id = "%032x" % (index + 101)
+                p, result = self.run_cli("stop", "--registry", str(self.registry), "--launch-id", launch_id,
+                                        "--event-id", event_id, "--event-file", str(event))
+                self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+                out, err = waiting.communicate(timeout=10)
+                self.assertEqual(waiting.returncode, 0, out + err)
+                self.assertEqual(json.loads(out), dict(outcome="notified", event=until))
+                notice = self.record(launch_id)["notifications"][event_id]
+                self.assertEqual(len(notice["waiters"]["results"]), 1)
+                self.assertTrue(notice["waiters"]["results"][0]["wake"])
+                self.assertEqual(notice["waiters"]["results"][0]["outcome"], "transport_acknowledged")
+                expected = index + 1
+                wait_for(lambda: len([v for v in events(self.starter_log) if v["event"] == "input" and
+                                     "FROM teerex: " in v["payload"]]) == expected)
+                messages = [v["payload"] for v in events(self.starter_log) if v["event"] == "input" and "FROM teerex: " in v["payload"]]
+                self.assertIn(state["name"] + " finished its turn: result first line", messages[-1])
+                self.assertNotIn("private later line", messages[-1])
+                p, duplicate = self.run_cli("stop", "--registry", str(self.registry), "--launch-id", launch_id,
+                                           "--event-id", event_id, "--event-file", str(event))
+                self.assertEqual(p.returncode, 1, p.stdout + p.stderr)
+                self.assertIn("notification_already_attempted", duplicate["failure_reason"])
+            finally:
+                if waiting.poll() is None:
+                    waiting.terminate()
+                waiting.communicate(timeout=5)
+        self.assertFalse(Path(str(waiter_pad) + ".wait.fifo").exists())
+        cleared = subprocess.run([BIN, "scratch", "wait", *args, "--clear"], env=self.env, capture_output=True, text=True)
+        self.assertEqual(cleared.returncode, 0, cleared.stdout + cleared.stderr)
+
+    def blocks(self):
+        return {b["block_id"] for b in self.rpc("session.list_blocks", dict(session_id=self.session))["blocks"]}
+
+    def test_agent_exit_closes_only_recorded_scratch_viewer(self):
+        launch_id = self.launch("exit7")[1]["launch_id"]
+        state = self.record(launch_id)
+        side = state["scratch_pane_receipt"]["created"]["block_id"]
+        wait_for(lambda: side not in self.blocks())
+        self.assertFalse(Path(state["scratchpad"]).exists())
+        self.assertIn(self.starter, self.blocks())
+
+    def test_human_close_and_surfaces_close_archive_scratch_and_close_viewer(self):
+        for method in ("human", "surfaces"):
+            launch_id = self.launch("ack")[1]["launch_id"]
+            state = self.record(launch_id)
+            side = state["scratch_pane_receipt"]["created"]["block_id"]
+            block = state["target"]["block_id"]
+            if method == "human":
+                self.rpc("block.close", dict(session_id=self.session, block_id=block, keep_last=False))
+            else:
+                p = subprocess.run([BIN, "surfaces", "close", "--socket", str(self.socket),
+                    "--session", self.session, "--pane", block], env=self.env, capture_output=True, text=True)
+                self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+            wait_for(lambda: side not in self.blocks())
+            self.assertFalse(Path(state["scratchpad"]).exists())
+            self.assertIn(self.starter, self.blocks())
+
+    def test_prune_closes_proven_archived_viewer_without_matching_by_label(self):
+        launch_id = self.launch("ack")[1]["launch_id"]
+        state = self.record(launch_id)
+        side = state["scratch_pane_receipt"]["created"]["block_id"]
+        self.backdate(launch_id, immediate_child_term={"Exited": 0})
+        p, packet = self.run_cli("prune", "--registry", str(self.registry), "--apply")
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertNotIn(side, self.blocks())
+        self.assertIn(state["target"]["block_id"], self.blocks())
+        self.assertIn(self.starter, self.blocks())
+
+    def test_prune_closes_viewer_from_prior_retired_record_only(self):
+        launch_id = self.launch("ack")[1]["launch_id"]
+        state = self.record(launch_id)
+        side = state["scratch_pane_receipt"]["created"]["block_id"]
+        unrelated = self.rpc("session.new_block", dict(session_id=self.session,
+            flavor="com.superlogical.terminal.shell", label=state["name"] + " scratchpad",
+            options=dict(shell="none", command=["/bin/sh", "-c", "sleep 60"], exit=dict(on_completion=False))))["block_id"]
+        # Simulate history written by an older release that left its viewer behind.
+        archive = self.registry / "archive" / launch_id
+        archive.mkdir(parents=True)
+        record = self.registry / ("agents-" + launch_id + ".json")
+        record.rename(archive / "retired.json")
+        self.rpc("block.close", dict(session_id=self.session, block_id=state["target"]["block_id"], keep_last=False))
+        self.assertIn(side, self.blocks())
+        p, plan = self.run_cli("prune", "--registry", str(self.registry))
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertIn(side, self.blocks())
+        p, result = self.run_cli("prune", "--registry", str(self.registry), "--apply")
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertNotIn(side, self.blocks())
+        self.assertIn(unrelated, self.blocks())
+        self.assertFalse(Path(state["scratchpad"]).exists())
 
     def test_agent_keeps_three_step_scratchpad_visible(self):
         p, packet = self.launch("scratch-three")
@@ -714,8 +847,7 @@ class AgentsTest(unittest.TestCase):
         p, done = self.run_cli("prune", "--registry", str(self.registry), "--apply", timeout=60)
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
         self.assertEqual(done["live_after"], 2)
-        scratch_archive = next(v["scratchpad_archive"] for v in done["retired"] if v["launch_id"] == gone)
-        self.assertTrue(Path(scratch_archive).is_file())
+        self.assertTrue(list((self.root / ".local/state/teerex/scratch/archive" / self.session).glob(gone_block + "*.md")))
         self.assertFalse(Path(self.root / ".local/state/teerex/scratch" / self.session / (gone_block + ".md")).exists())
         for launch_id, reason in reasons.items():
             archived = self.registry / "archive" / launch_id
@@ -728,23 +860,23 @@ class AgentsTest(unittest.TestCase):
         jobs = json.loads(subprocess.check_output([BIN, "jobs", "list", "--registry", str(self.registry)], env=self.env))
         self.assertNotIn(gone_block, [e["block_id"] for e in jobs["entries"]], "a gone pane's jobs registration is forgotten")
         self.assertIn(self.record(alive)["target"]["block_id"], [e["block_id"] for e in jobs["entries"]])
-        # The exited record is already archived, but its still-open pane owns the list.
+        # Process exit archives its pad even while the retained agent pane remains.
         exited_history = json.loads((self.registry / "archive" / exited / "retired.json").read_text())
         exited_pad = Path(exited_history["scratchpad"])
-        self.assertTrue(exited_pad.exists())
+        self.assertFalse(exited_pad.exists())
         closed = subprocess.run([BIN, "surfaces", "close", "--socket", str(self.socket), "--session", self.session,
                                  "--pane", exited_history["target"]["block_id"]], capture_output=True, text=True, env=self.env)
         self.assertEqual(closed.returncode, 0, closed.stdout + closed.stderr)
         p, later = self.run_cli("prune", "--registry", str(self.registry), "--apply", timeout=60)
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
         self.assertFalse(exited_pad.exists())
-        self.assertEqual(len(later["archived_scratchpads"]), 1)
+        self.assertEqual(len(later["archived_scratchpads"]), 0)
 
         # Fill to the auto-prune threshold with old exited records; the next launch archives them itself.
         template = self.record(alive)
         for i in range(24):
             fake = dict(template, launch_id="%032x" % (i + 1), created_at=template["created_at"] - 600000,
-                        immediate_child_term={"Exited": 0})
+                        immediate_child_term={"Exited": 0}, scratchpad=None, scratch_pane_receipt=None)
             path = self.registry / ("agents-" + fake["launch_id"] + ".json")
             path.write_text(json.dumps(fake))
             path.chmod(0o600)
@@ -1887,6 +2019,9 @@ Path('/work/network-harness').touch()
         self.enforcement_hook(launch_id, "claude", dict(hook_event_name="UserPromptSubmit"))
         self.assertEqual(subprocess.run([BIN, "scratch", "init", "--session", self.session, "--block", self.record(launch_id)["target"]["block_id"],
                                         "--purpose", "enforcement", "--intent", "updated"], env=self.env, capture_output=True).returncode, 0)
+        progressed = subprocess.run([BIN, "scratch", "wait", "--session", self.session, "--block", self.record(launch_id)["target"]["block_id"],
+                                     "--on", "dependency", "--what", "test result"], env=self.env, capture_output=True)
+        self.assertEqual(progressed.returncode, 0, progressed.stderr)
         fresh = self.enforcement_hook(launch_id, "claude", event)
         self.assertEqual(fresh["scratchpad_check"]["status"], "fresh")
         command = [BIN, "agents", "stop", "--registry", str(self.registry), "--launch-id", launch_id, "--event-file", "-"]
@@ -1899,6 +2034,31 @@ Path('/work/network-harness').touch()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertNotIn("decision", json.loads(result.stdout))
 
+    def test_codex_progress_snapshot_refreshes_after_completion_not_reminder(self):
+        p, launched = self.launch()
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        launch_id = launched["launch_id"]
+        state = self.record(launch_id)
+        initial = state["scratch_start"]
+        self.assertIsInstance(initial, dict)
+        def notify(turn, inputs):
+            return self.enforcement_hook(launch_id, "codex", dict(type="agent-turn-complete", **{
+                "last-assistant-message": "progress", "turn-id": turn, "input-messages": inputs}), notify=True)
+        first = notify("original", ["work"])
+        self.assertEqual(first["scratchpad_check"]["action"], "reminded")
+        self.assertEqual(self.record(launch_id)["scratch_start"], initial)
+        command = [BIN, "scratch", "now", "changed step", "--session", self.session, "--block", state["target"]["block_id"]]
+        updated = subprocess.run(command, env=self.env, capture_output=True, text=True)
+        self.assertEqual(updated.returncode, 0, updated.stdout + updated.stderr)
+        continuation = notify("continuation", ["FROM teerex-scratchpad: say what you are waiting on: teerex scratch wait --on … --what …"])
+        self.assertEqual(continuation["scratchpad_check"]["status"], "fresh")
+        self.assertEqual(self.record(launch_id)["scratch_start"], initial)
+        completed = notify("next-real", ["do work"])
+        self.assertEqual(completed["scratchpad_check"]["status"], "fresh")
+        self.assertNotEqual(self.record(launch_id)["scratch_start"], initial)
+        stale = notify("unchanged", ["new turn"])
+        self.assertEqual(stale["scratchpad_check"]["action"], "reminded")
+
     def test_codex_scratch_reminder_is_delivered_once_to_own_pane(self):
         p, launched = self.launch()
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
@@ -1908,7 +2068,7 @@ Path('/work/network-harness').touch()
         event = dict(hook_event_name="Stop", last_assistant_message="finished")
         first = self.enforcement_hook(launch_id, "codex", dict(type="agent-turn-complete", **{"last-assistant-message": "finished", "turn-id": "original-turn", "input-messages": ["real prompt"]}), notify=True)
         self.assertEqual(first["scratchpad_check"]["action"], "reminded")
-        reminder = "update your scratchpad (Now/To-do/Done) before ending the turn"
+        reminder = "say what you are waiting on: teerex scratch wait --on … --what …"
         wait_for(lambda: any(v["event"] == "input" and reminder in v["payload"] for v in events(self.worker_log)))
         second = self.enforcement_hook(launch_id, "codex", dict(type="agent-turn-complete", **{"last-assistant-message": "finished", "turn-id": "reminder-turn", "input-messages": ["FROM teerex-scratchpad: " + reminder]}), notify=True)
         self.assertTrue(second["scratchpad_check"]["already_reminded"])
@@ -1920,6 +2080,9 @@ Path('/work/network-harness').touch()
         updated = subprocess.run([BIN, "scratch", "init", "--session", target["session_id"], "--block", target["block_id"],
                                   "--purpose", "updated", "--intent", "fresh"], env=self.env, capture_output=True)
         self.assertEqual(updated.returncode, 0)
+        progressed = subprocess.run([BIN, "scratch", "wait", "--session", target["session_id"], "--block", target["block_id"],
+                                     "--on", "dependency", "--what", "test result"], env=self.env, capture_output=True)
+        self.assertEqual(progressed.returncode, 0, progressed.stderr)
         fresh = self.enforcement_hook(launch_id, "codex", dict(type="agent-turn-complete", **{"last-assistant-message": "finished", "turn-id": "updated-real-turn", "input-messages": ["finish work"]}), notify=True)
         self.assertEqual(fresh["scratchpad_check"]["status"], "fresh")
 

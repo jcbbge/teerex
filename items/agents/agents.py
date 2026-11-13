@@ -343,6 +343,28 @@ def forget_job(root, state):
     return packet.get("outcome", "uncertain") if isinstance(packet, dict) else "uncertain"
 
 
+def close_scratch(state):
+    """Only the viewer identified by this launch's creation receipt may be closed."""
+    pad = state.get("scratchpad")
+    target = state.get("target") or {}
+    if not target.get("block_id"):
+        return dict(archive=None, outcome="no_recorded_agent_pane")
+    archived = scratch_archive(pad, target["session_id"], target["block_id"]) if pad and Path(pad).exists() else None
+    side = state.get("scratch_pane_receipt") or {}
+    created = side.get("created") or {}
+    block = created.get("block_id")
+    if not block or side.get("outcome") != "created_and_verified":
+        return dict(archive=archived, outcome="no_recorded_viewer")
+    address_id(block, "block")
+    # A viewer may have exited already after its scratch file was archived.
+    viewer = dict(state, target=dict(target, block_id=block))
+    if pane_absent(viewer) is True:
+        return dict(archive=archived, outcome="already_absent")
+    code, packet = invoke(["surfaces", "close", "--socket", state["socket"], "--session", target["session_id"], "--pane", block],
+                          client_path=state["client_path"], rex_executable=state["rex_executable"])
+    return dict(archive=archived, client_exit=code, receipt=packet)
+
+
 def prune_records(root, apply, at_least=0):
     """Move retired launch records (and their message files) to ROOT/archive/<launch_id>/; history is kept, never deleted."""
     with Registry(root) as registry:
@@ -367,9 +389,8 @@ def prune_records(root, apply, at_least=0):
         if apply:
             if reason == "pane_gone":
                 item["jobs"] = forget_job(root, state)
-            if state.get("scratchpad") and (reason == "pane_gone" or pane_absent(state) is True):
-                target = state["target"]
-                item["scratchpad_archive"] = scratch_archive(state["scratchpad"], target["session_id"], target["block_id"])
+            item["scratch_cleanup"] = close_scratch(state)
+            item["scratchpad_archive"] = item["scratch_cleanup"]["archive"]
             with Registry(root) as registry:
                 fd = archive_dir(registry)
                 try:
@@ -423,10 +444,14 @@ def prune_records(root, apply, at_least=0):
                 old = json.loads(read_file(str(entry / "retired.json"), private=True))
                 pad = old.get("scratchpad")
                 target = old.get("target") or {}
-                if not pad or not Path(pad).exists() or pane_absent(old) is not True:
+                if not pad:
                     continue
-                archived = scratch_archive(pad, target["session_id"], target["block_id"]) if apply else pad
-                result["archived_scratchpads"].append(archived)
+                if apply:
+                    cleanup = close_scratch(old)
+                    if cleanup["archive"] or cleanup.get("client_exit") is not None:
+                        result["archived_scratchpads"].append(cleanup)
+                elif Path(pad).exists() or (old.get("scratch_pane_receipt") or {}).get("created"):
+                    result["archived_scratchpads"].append(pad)
             except (Refusal, OSError, ValueError, KeyError):
                 result["unknown"] += 1
     result["live_after"] = result["live_before"] - (len(result["retired"]) if apply else 0)
@@ -438,7 +463,7 @@ def prune(o):
     with Registry(root, lock_name="launch.lock", wait_ms=o.launch_wait_ms):
         result = prune_records(root, o.apply)
     return 0, dict(schema_version=1, kind="agents_result", outcome="pruned" if o.apply else "prune_plan", **result,
-                   archive=str(Path(root) / "archive"), process_lifetime="unchanged_not_verified", panes_closed=False)
+                   archive=str(Path(root) / "archive"), process_lifetime="unchanged_not_verified", scratch_viewers_only=True)
 
 
 def receipt(state, outcome, **extra):
@@ -1094,6 +1119,9 @@ def launch(o):
                                             "--", RUNTIME, "scratch", "watch", "--session", session, "--block", block])
             state = update(root, launch_id, lambda s: s.update(scratch_pane_receipt=side_packet,
                             scratch_pane_opened=succeeded(side_code, side_packet, "created_and_verified")))
+        # Close can race viewer creation before the supervisor sees its receipt.
+        if pane_absent(state) is True:
+            close_scratch(state)
         code, packet = invoke(["jobs", "track", "--registry", root, "--socket", socket, "--session", session, "--block", block,
                                "--owner", owner, "--kind", "agent", "--purpose", purpose,
                                "--deadline-unix-ms", str(review), "--cleanup", "manual"])
@@ -1250,7 +1278,34 @@ def turn_report_rule(root, state, kind):
         return "scratchpad_unreadable"
 
 
+def notify_waiters(state, body, event):
+    code, packet = invoke(["scratch", "waiters", "--on", state["name"], "--json"])
+    if code or not isinstance(packet, list):
+        return dict(outcome="waiters_unavailable", client_exit=code, receipt=packet)
+    results = []
+    first = (state.get("last_hook") or {}).get("text") or body
+    first = first.splitlines()[0] if first.splitlines() else "(no report supplied)"
+    for waiter in packet:
+        destination = dict(session_id=waiter.get("session", waiter.get("session_id")),
+                           block_id=waiter.get("block", waiter.get("block_id")))
+        address_id(destination["session_id"], "session")
+        address_id(destination["block_id"], "block")
+        if destination == {k: state["target"][k] for k in ("session_id", "block_id")}:
+            continue
+        path = scratch_path(destination["session_id"], destination["block_id"])
+        woke = scratch_wake(path, event=event)
+        code, receipt_packet = invoke(["send", "--socket", state["socket"], "--session", destination["session_id"],
+                                       "--block", destination["block_id"], "--from", "teerex", "--message-file", "-", *send_options(state)],
+                                      input_bytes=f"{state['name']} finished its turn: {first}".encode(),
+                                      client_path=state["client_path"], rex_executable=state["rex_executable"])
+        results.append(dict(target=destination, wake=woke, client_exit=code, receipt=receipt_packet,
+                            outcome="transport_acknowledged" if transport_ack(code, receipt_packet) else "uncertain"))
+    return dict(outcome="transport_acknowledged" if all(r["outcome"] == "transport_acknowledged" for r in results) else "uncertain", results=results)
+
+
 def notify(root, launch_id, event_id, body, evidence, reported_state="unknown", delivery_rule=None):
+    if delivery_rule is None and evidence == "waited_immediate_child":
+        delivery_rule = "process_exited"
     with Registry(root) as registry:
         state = registry.read(launch_id)
         require(event_id not in state["notifications"], "notification_already_attempted")
@@ -1268,14 +1323,16 @@ def notify(root, launch_id, event_id, body, evidence, reported_state="unknown", 
         code, packet = send(root, state, destination, body, "notice-" + event_id + "-" + str(i))
         results.append(dict(target=destination, client_exit=code, receipt=packet,
                             outcome="transport_acknowledged" if transport_ack(code, packet) else "uncertain"))
+    waiters = notify_waiters(state, body, "done" if delivery_rule == "progress_turn_suppressed" else "report")
     def reported(s):
+        s["notifications"][event_id]["waiters"] = waiters
         s["notifications"][event_id]["results"] = results
         s["notifications"][event_id]["outcome"] = ("suppressed" if delivery_rule == "progress_turn_suppressed" else "transport_acknowledged" if all(r["outcome"] == "transport_acknowledged"
                                                                                    for r in results) else "uncertain")
     state = update(root, launch_id, reported)
     fleet_code = publish_fleet(root, state, event_id, reported_state, body.replace("\n", " "))
-    ok = state["notifications"][event_id]["outcome"] in ("transport_acknowledged", "suppressed") and fleet_code == 0
-    return (0 if ok else 1), receipt(state, "notification_suppressed" if delivery_rule == "progress_turn_suppressed" else "notification_acknowledged" if ok else "notification_uncertain", delivery_rule=delivery_rule)
+    ok = state["notifications"][event_id]["outcome"] in ("transport_acknowledged", "suppressed") and fleet_code == 0 and waiters["outcome"] == "transport_acknowledged"
+    return (0 if ok else 1), receipt(state, "notification_uncertain" if not ok else "notification_suppressed" if delivery_rule == "progress_turn_suppressed" else "notification_acknowledged", delivery_rule=delivery_rule, waiter_outcome=waiters["outcome"])
 
 
 def transcript_last_text(path):
@@ -1327,6 +1384,13 @@ def validate_hook_event(event, allow_transcript=True):
     require(isinstance(event.get("last_assistant_message", "") or "", str), "invalid_last_words")
     require(len(json.dumps(event).encode()) <= 32768, "hook_event_too_large")
     require(allow_transcript or "transcript_path" not in event, "channel_transcript_path_forbidden")
+
+
+def scratch_baseline(state):
+    try:
+        state["scratch_start"] = scratch_progress(scratch_read(Path(state["scratchpad"])))
+    except (OSError, ValueError, KeyError):
+        state["scratch_start"] = None
 
 
 def report_stop(root, launch_id, event_id, event, allow_transcript=True):
@@ -1392,10 +1456,23 @@ def report_stop(root, launch_id, event_id, event, allow_transcript=True):
                           reported_state="idle" if kind == "Stop" else "unknown", delivery_rule=delivery_rule)
     if check is not None:
         packet["scratchpad_check"] = check
+    if kind == "Stop" and not event.get("scratch_reminder_turn") and (check or {}).get("action") != "reminded":
+        update(root, launch_id, scratch_baseline)
     return code, packet
 
 
 def supervise(o):
+    o.scratch_cleanup_attempted = False
+    signal.signal(signal.SIGHUP, terminate)
+    try:
+        return supervise_child(o)
+    finally:
+        if not o.scratch_cleanup_attempted:
+            o.scratch_cleanup_attempted = True
+            close_scratch(load(o.registry, o.launch_id))
+
+
+def supervise_child(o):
     # This command is launched ONLY as the actual retained visible Rex terminal program.
     state = load(o.registry, o.launch_id)
     sid, bid = os.environ.get("REX_SESSION"), os.environ.get("REX_BLOCK")
@@ -1416,6 +1493,7 @@ def supervise(o):
         s["supervisor_claimed"] = True
         s["supervisor_pid"] = os.getpid()
         s.update(turn_started_at=now(), scratch_reminded=False)
+        scratch_baseline(s)
     update(o.registry, o.launch_id, claim)
     env = dict(os.environ)
     for key in ("AGENT_CHANNEL", "LC_AGENT_CHANNEL"):
@@ -1469,6 +1547,10 @@ def supervise(o):
                 child.send_signal(sig)
         signal.signal(signal.SIGTERM, forward)
         signal.signal(signal.SIGINT, forward)
+        def hangup(sig, unused):
+            forward(sig, unused)
+            raise Cancelled(sig)
+        signal.signal(signal.SIGHUP, hangup)
         last_hook = None
         channel_closed_reported = False
         while child.poll() is None:
@@ -1496,6 +1578,8 @@ def supervise(o):
             update(o.registry, o.launch_id, lambda s: s.update(channel_status="revoked"))
         if term is not None:
             update(o.registry, o.launch_id, lambda s: s.update(immediate_child_term=term, immediate_child_ended_at=now()))
+        o.scratch_cleanup_attempted = True
+        close_scratch(load(o.registry, o.launch_id))
     program_status(state, "done" if term == {"Exited": 0} else "error", "immediate child terminated; descendants not verified")
     come_forward(state, "exit")
     state = load(o.registry, o.launch_id)
@@ -1680,7 +1764,7 @@ def parser():
     q.add_argument("--name", help="exact agent name")
     q.add_argument("--since", help="inclusive ISO timestamp with timezone or Unix milliseconds")
     q.add_argument("--json", action="store_true", help="structured events and legacy-history limitations")
-    q = sub.add_parser("prune", help="archive records whose agent exited, never started, or whose pane is gone; plan unless --apply")
+    q = sub.add_parser("prune", help="archive retired agents and close their recorded scratchpad viewers; plan unless --apply")
     q.add_argument("--registry", required=True)
     q.add_argument("--apply", action="store_true", help="move retired records to REGISTRY/archive/<launch_id>/ (never deleted)")
     q.add_argument("--launch-wait-ms", type=bounded_int(0, 60000), default=60000, metavar="0..60000")

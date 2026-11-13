@@ -30,7 +30,7 @@ const usage =
     \\Move preserves the same attached terminal; no creation. NEW pane share; focus defaults no and refuses
     \\a focused source because Rex moves its focus too. Explicit yes permits that and verifies focus.
     \\Focus explicitly selects the pane/window. Close explicitly ends that block, including the last pane;
-    \\close verifies absence from view/list, not death of all descendant/remote processes.
+    \\close accepts attached or detached terminals; verifies absence from view/list, not death of all descendant/remote processes.
     \\close --publish-receipt-file ABS atomically completes a private prepared run-visible receipt.json.
     \\Target must match; one close attempt; hard exit after timeout+2000ms includes publication.
     \\If killed, prepared exit/output evidence remains, with block_absence unknown.

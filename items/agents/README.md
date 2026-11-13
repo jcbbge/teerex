@@ -393,3 +393,9 @@ CI discovers the explicit test but skips physical estate access unless enabled.
 ### Quiet progress reports
 
 Managed `agents stop` records every completed turn in the registry and timeline. A progress Stop sends no report to starter/report-to. Delivery occurs when Now is empty, Now is checked done with no To-do left, Waiting names the report-to agent (registered name or pane label) or `seat`, or the scratchpad cannot be read. StopFailure and measured process-exit alerts always deliver. The receipt and notification record carry `delivery_rule`; suppressed turns return `notification_suppressed`. Scratchpad parsing uses the shared scratch parser; Waiting also accepts the Revision 2b Markdown line.
+
+### Scratchpad viewer lifetime and waiter notification
+
+The in-pane supervisor archives its scratchpad on exit or hangup and closes only the viewer block recorded in `scratch_pane_receipt`. Manual tab/pane close and `surfaces close` trigger the same cleanup. `agents prune --apply` also closes recorded viewers for retired launches, including prior archives; it never searches by label. The plan reports candidates without closing or archiving anything.
+
+A managed Stop/StopFailure/process-exit notification queries `scratch waiters --on NAME --json`. Each waiter receives guarded `FROM teerex: NAME finished its turn: FIRST REPORT LINE`; `scratch_wake(path, event="done")` wakes quiet progress-turn waits; delivered reports use `event="report"`, which wakes both report and turn-end waits. Attempts and wake receipts are retained under the notification's `waiters` field; failures are never retried. Progress suppression applies to starter/report-to reports, while explicitly waiting agents still receive their notification.

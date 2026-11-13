@@ -1,4 +1,4 @@
-"""Explicit cross-host attention navigation; foreground, no retries or daemon."""
+"""Cross-host navigation for registered agents only; excludes seats and utility panes."""
 import argparse
 import datetime
 import fcntl
@@ -69,6 +69,39 @@ def command(host, script, args=None):
     return json.loads(result.stdout)
 
 
+# Read on the selected host, alongside its Rex scan. Missing registries mean no
+# managed agents; malformed/unreadable evidence fails the host scan closed.
+MANAGED = r'''
+import json, sys
+from pathlib import Path
+home, socket, store = sys.argv[1:]
+root=Path(home)/'.local/state/teerex-agents'
+rows=[]
+for path in sorted(root.glob('agents-*.json')):
+    if len(rows)>=1024: raise ValueError('agent registry limit 1024')
+    if path.is_symlink() or path.stat().st_size>262144: raise ValueError('invalid agent record')
+    state=json.loads(path.read_text())
+    if state.get('socket')==socket and state.get('tracked') and not state.get('retired'):
+        rows.append(dict(target=state['target'],name=state.get('name')))
+seats=[]
+path=Path(store)/'state.json'
+if path.exists():
+    if path.is_symlink() or path.stat().st_size>1048576: raise ValueError('invalid board state')
+    seats=[s['target'] for s in json.loads(path.read_text()).get('seats',[])]
+print(json.dumps(dict(agents=rows,seats=seats)))
+'''
+
+
+def managed(host):
+    argv = ['python3', '-I', '-c', MANAGED, host['home'], host['socket'], host['store']]
+    if host['transport'] == 'ssh':
+        argv = [*targets.ssh_argv(host), shlex.join(argv)]
+    result = subprocess.run(argv, capture_output=True, text=True, timeout=30)
+    if result.returncode:
+        raise ValueError(result.stderr[-2048:] or 'agent registry read failed')
+    return json.loads(result.stdout)
+
+
 def timestamp(value):
     match = re.fullmatch(r'(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)(?:\.(\d{1,9}))?(Z|[+-]\d\d:\d\d)', value)
     if not match:
@@ -79,11 +112,22 @@ def timestamp(value):
 
 
 def scan(hosts, visited, here):
-    rows, sources = [], []
+    rows, sources, eligible = [], [], set()
     for name, host in hosts.items():
         try:
+            registered = managed(host)
+            agents = {(r['target']['session_id'], r['target']['block_id']) for r in registered['agents']
+                      if r.get('name') != 'seat'}
+            seats = {(r['session_id'], r['block_id']) for r in registered['seats']
+                     if r['server'] == 'unix://' + host['socket']}
             sample = command(host, SCAN)
             for pane in sample['rows'] or []:
+                label = (pane.get('label') or '').lower()
+                address = (pane['session_id'], pane['block_id'])
+                if (address not in agents or address in seats or label in ('seat', 'board', 'teerex board')
+                        or label.endswith((' scratchpad', ' receipt'))):
+                    continue
+                eligible.add((name, pane['session_id'], pane['block_id']))
                 if (name, pane['block_id']) == here:
                     continue
                 records = pane.pop('records')
@@ -99,7 +143,7 @@ def scan(hosts, visited, here):
             sources.append(dict(host=name, ok=True, remote_api=sample['remote_api'], servers_api=sample['servers_api']))
         except (OSError, ValueError, KeyError, subprocess.TimeoutExpired) as exc:
             sources.append(dict(host=name, ok=False, error=str(exc)))
-    return sorted(rows, key=lambda p: (p['rank'], p['at'], p['host'], p['block_id'])), sources
+    return sorted(rows, key=lambda p: (p['rank'], p['at'], p['host'], p['block_id'])), sources, eligible
 
 
 def main(argv=None):
@@ -146,21 +190,23 @@ def main(argv=None):
         os.chmod(lock.name, 0o600)
         fcntl.flock(lock, fcntl.LOCK_EX)
         state = json.loads(state_path.read_text()) if state_path.exists() else dict(visited={}, trail=[])
-        rows, sources = scan(hosts, state['visited'], (a.here_host, a.here_block))
+        rows, sources, eligible = scan(hosts, state['visited'], (a.here_host, a.here_block))
         complete = all(s['ok'] for s in sources)
         result = dict(kind='waiting_result', complete=complete, sources=sources, waiting=rows, moved=False)
         # A partial scan never chooses a winner; its unseen host could be more urgent.
         if complete and a.operation != 'list':
-            winner = (state['trail'][-1] if state['trail'] else None) if a.operation == 'back' else next(iter(rows), None)
+            winner = (next((entry for entry in reversed(state['trail'])
+                            if (entry['host'], entry['session_id'], entry['block_id']) in eligible), None)
+                      if a.operation == 'back' else next(iter(rows), None))
             result['winner'] = winner
             if winner and a.focus:
                 command(hosts[winner['host']], SHOW, winner)
                 result['moved'] = True
                 if a.operation == 'back':
-                    state['trail'].pop()
+                    state['trail'] = state['trail'][:state['trail'].index(winner)]
                 else:
                     state['visited'][winner['host'] + '/' + winner['block_id']] = winner['at']
-                    if a.here_host in hosts and a.here_session and a.here_block:
+                    if (a.here_host, a.here_session, a.here_block) in eligible:
                         state['trail'].append(dict(host=a.here_host, session_id=a.here_session, block_id=a.here_block))
                 temporary = state_path.with_name(state_path.name + '.tmp')
                 with open(temporary, 'w') as stream:

@@ -558,6 +558,19 @@ class SurfacesTest(unittest.TestCase):
             if process is not None and process.poll() is None:
                 process.kill();process.communicate(timeout=5)
 
+    def test_close_detached_terminal_verifies_absence(self):
+        made = self.rpc("session.new_block", dict(session_id=self.session,
+            flavor="com.superlogical.terminal.shell", options=dict(shell="none",
+            command=["/bin/sh", "-c", "sleep 60"], exit=dict(on_completion=False))))
+        block = made["block_id"]
+        r, packet = self.run_json([BIN, "surfaces", "close", "--socket", str(self.socket),
+            "--session", self.session, "--pane", block])
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(packet["previous"]["placement"], "detached")
+        self.assertTrue(packet["block_absence_verified"])
+        self.assertNotIn(block, [b["block_id"] for b in self.rpc("session.list_blocks", dict(session_id=self.session))["blocks"]])
+        self.assertEqual(self.inspect(self.anchor)["block_id"], self.anchor)
+
     def test_explicit_focus_and_close_verify_only_the_requested_pane(self):
         tab = self.open("tab")["actual"]
         self.assertNotEqual(self.view()["active_window_id"], tab["window_id"])

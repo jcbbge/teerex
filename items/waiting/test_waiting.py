@@ -51,7 +51,7 @@ class WaitingTest(unittest.TestCase):
     def rpc(self, host, method, **args):
         return self.rex(host, 'api', 'call', method, json.dumps(args))
 
-    def pane(self, host, status=None, session=None):
+    def pane(self, host, status=None, session=None, registered=True):
         script = "import time; "
         if status:
             script += "print('\\x1b]7501;state=" + status + ":app=fixture\\x1b\\\\',flush=True); "
@@ -60,9 +60,21 @@ class WaitingTest(unittest.TestCase):
         if session:
             made = self.rpc(host, 'session.new_block', session_id=session, flavor='com.superlogical.terminal.shell',
                 options=dict(shell='none', command=argv, exit=dict(on_completion=False)))
-            return session, made['block_id']
-        made = self.rex(host, 'new', '--json', '--shell=none', '--', *argv)
-        return made['session_id'], made['initial_windows'][0]['block_ids'][0]
+            block = made['block_id']
+        else:
+            made = self.rex(host, 'new', '--json', '--shell=none', '--', *argv)
+            session, block = made['session_id'], made['initial_windows'][0]['block_ids'][0]
+        if registered:
+            self.register(host, session, block)
+        return session, block
+
+    def register(self, host, session, block, name='worker'):
+        root = self.root / '.local/state/teerex-agents'
+        root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        import uuid
+        (root / ('agents-' + uuid.uuid4().hex + '.json')).write_text(json.dumps(dict(
+            tracked=True, socket=self.hosts[host]['socket'], name=name,
+            target=dict(session_id=session, block_id=block))))
 
     def invoke(self, operation='list', **flags):
         argv = [BIN, 'waiting', operation, '--config', str(self.config), '--state', str(self.state)]
@@ -116,6 +128,29 @@ class WaitingTest(unittest.TestCase):
         result, _ = self.invoke('put-away', here_host='hive', here_session=hs, here_block=hb)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('last pane', result.stderr)
+
+    def test_excludes_unregistered_and_protected_registered_panes(self):
+        self.pane('hive', 'error', registered=False)
+        sid, block = self.pane('hive', 'error', registered=False)
+        self.register('hive', sid, block, name='seat')
+        for label in ('seat', 'board', 'worker scratchpad', 'worker receipt'):
+            sid, bid = self.pane('hive', 'done')
+            self.rpc('hive', 'session.set_block_label', session_id=sid, block_id=bid, label=label)
+        sid, bid = self.pane('hive', 'blocked')
+        store = self.root / 'store'
+        store.mkdir()
+        (store / 'state.json').write_text(json.dumps(dict(seats=[dict(target=dict(
+            server='unix://' + self.hosts['hive']['socket'], session_id=sid, block_id=bid))])))
+        sid, expected = self.pane('hive', 'done')
+        self.assertEqual([r['block_id'] for r in self.wait_rows(1)['waiting']], [expected])
+
+    def test_back_does_not_offer_old_seat_or_unregistered_history(self):
+        sid, block = self.pane('hive', 'done', registered=False)
+        self.state.write_text(json.dumps(dict(visited={}, trail=[dict(host='hive', session_id=sid, block_id=block)])))
+        result, value = self.invoke('back', focus=True)
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertIsNone(value['winner'])
+        self.assertFalse(value['moved'])
 
     def test_partial_scan_refuses_to_focus(self):
         self.pane('hive', 'blocked')
