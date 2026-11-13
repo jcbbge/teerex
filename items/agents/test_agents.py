@@ -76,18 +76,19 @@ if protocol:
             report_line=protocol.split('Supply report bytes on stdin then EOF using:\n',1)[1].split('\n',1)[0]
             result=subprocess.run(shlex.split(report_line),input='remote direct reply β\n\n',capture_output=True,text=True)
             with out.open('a') as f: f.write(json.dumps({"event":"remote-reply","code":result.returncode,"stdout":result.stdout})+'\n')
-if behavior == "codex-hook":
-    pad=Path(os.environ['AGENT_SCRATCHPAD'])
-    raw=pad.read_text().replace('## Now\n', '## Now\n- [ ] active work\n')
-    import datetime, re
-    pad.write_text(re.sub(r'^Updated:.*$', 'Updated: '+datetime.datetime.now(datetime.timezone.utc).isoformat(), raw, flags=re.M))
-    callback=json.loads(next(a[len('notify='):] for a in args if a.startswith('notify=')))
-    result=subprocess.run(callback+[json.dumps({"type":"agent-turn-complete","last-assistant-message":"Codex settled β"})],capture_output=True,text=True)
-    with out.open('a') as f: f.write(json.dumps({"event":"codex-hook","code":result.returncode,"stdout":result.stdout})+'\n')
-if behavior == "pi-hook":
-    import base64
-    extension=Path(args[args.index('--extension')+1])
-    script="""
+def harness_hooks():
+    if behavior == "codex-hook":
+        pad=Path(os.environ['AGENT_SCRATCHPAD'])
+        raw=pad.read_text().replace('## Now\n', '## Now\n- [ ] active work\n')
+        import datetime, re
+        pad.write_text(re.sub(r'^Updated:.*$', 'Updated: '+datetime.datetime.now(datetime.timezone.utc).isoformat(), raw, flags=re.M))
+        callback=json.loads(next(a[len('notify='):] for a in args if a.startswith('notify=')))
+        result=subprocess.run(callback+[json.dumps({"type":"agent-turn-complete","last-assistant-message":"Codex settled β"})],capture_output=True,text=True)
+        with out.open('a') as f: f.write(json.dumps({"event":"codex-hook","code":result.returncode,"stdout":result.stdout})+'\n')
+    if behavior == "pi-hook":
+        import base64
+        extension=Path(args[args.index('--extension')+1])
+        script="""
 const handlers={};
 const mod=await import('data:text/javascript;base64,'+process.argv[1]);
 mod.default({on:(name,handler)=>{handlers[name]=handler;}});
@@ -102,8 +103,8 @@ await handlers.agent_settled({aborted:false},ctx);
 await handlers.agent_before_settle({outcome:'error'});
 await handlers.agent_settled({aborted:false},ctx);
 """
-    result=subprocess.run(['node','--input-type=module','-e',script,base64.b64encode(extension.read_bytes()).decode()],capture_output=True,text=True)
-    with out.open('a') as f: f.write(json.dumps({"event":"pi-hook","code":result.returncode,"stderr":result.stderr})+'\n')
+        result=subprocess.run(['node','--input-type=module','-e',script,base64.b64encode(extension.read_bytes()).decode()],capture_output=True,text=True)
+        with out.open('a') as f: f.write(json.dumps({"event":"pi-hook","code":result.returncode,"stderr":result.stderr})+'\n')
 if behavior == "human-exit":
     sys.exit(0)
 buf=b""
@@ -120,12 +121,16 @@ while True:
         raw,buf=buf.split(b"\x1b[201~\r",1)
         payload=raw.removeprefix(b"\x1b[200~").decode()
         with out.open("a") as f: f.write(json.dumps({"event":"input","payload":payload})+"\n")
+        if "TASK β asymmetric" in payload and behavior in ("codex-hook", "pi-hook"):
+            harness_hooks()
         if "TASK β asymmetric" in payload and behavior == "scratch-three":
             binary=shlex.split(protocol.split("Acknowledge this protocol now by running:\n",1)[1].split("\n",1)[0])[0]
             for task in ("Read contracts", "Build feature", "Run gates"):
                 subprocess.run([binary,"scratch","now",task],check=True)
                 subprocess.run([binary,"scratch","done"],check=True)
             with out.open("a") as f: f.write(json.dumps({"event":"scratch-complete"})+"\n")
+        if "TEST EXIT " in payload:
+            sys.exit(int(payload[-1]))
         if "TASK β asymmetric" in payload and behavior in ("exit7", "remote-exit7"):
             sys.exit(7)
 '''
@@ -1762,6 +1767,31 @@ Path('/work/network-harness').touch()
                                                                 "program_status", "{}"], timeout=5))
         return next((r["state"] for r in result.get("records", []) if r.get("app") == "teerex-agent"), None)
 
+    def test_all_harness_exits_and_crashes_replace_working_status(self):
+        for harness in ("claude", "codex", "pi"):
+            for ending in ("exit0", "exit7", "signal", "hangup"):
+                with self.subTest(harness=harness, ending=ending):
+                    self.settings["profiles"]["probe"].update(harness=harness, hook_events=True)
+                    p, launched = self.launch()
+                    self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+                    launch_id = launched["launch_id"]
+                    block = self.record(launch_id)["target"]["block_id"]
+                    wait_for(lambda: self.program_state(block) == "working")
+                    if ending in ("signal", "hangup"):
+                        child = [v for v in events(self.worker_log) if v["event"] == "started"][-1]["pid"]
+                        os.kill(child, signal.SIGHUP if ending == "hangup" else signal.SIGKILL)
+                        expected = {"Signal": signal.SIGHUP if ending == "hangup" else signal.SIGKILL}
+                    else:
+                        message = self.work / "exit.txt"
+                        message.write_text("TEST EXIT " + ending[-1])
+                        sent = subprocess.run([BIN, "send", "--socket", str(self.socket), "--session", self.session,
+                            "--block", block, "--from", "test", "--message-file", str(message)], env=self.env, capture_output=True, text=True)
+                        self.assertEqual(sent.returncode, 0, sent.stdout + sent.stderr)
+                        expected = {"Exited": int(ending[-1])}
+                    wait_for(lambda: self.record(launch_id).get("immediate_child_term") is not None)
+                    self.assertEqual(self.record(launch_id)["immediate_child_term"], expected)
+                    wait_for(lambda: self.program_state(block) == ("done" if ending == "exit0" else "error"))
+
     def test_scratch_waiting_blocks_with_text_and_clears_for_all_harnesses(self):
         for harness in ("claude", "codex", "pi"):
             self.settings["profiles"]["probe"].update(harness=harness, hook_events=True)
@@ -1787,6 +1817,12 @@ Path('/work/network-harness').touch()
             wait_for(lambda: self.program_state(block) == "blocked")
             pad.write_text(pad.read_text().replace("Waiting: external result", ""))
             wait_for(lambda: self.program_state(block) == "working")
+            waiting("old dependency")
+            wait_for(lambda: self.program_state(block) == "blocked")
+            p, result = self.run_cli("stop", "--registry", str(self.registry), "--launch-id", launched["launch_id"],
+                "--event-file", "-", input=json.dumps(dict(hook_event_name="StopFailure", error="run failed")))
+            self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+            wait_for(lambda: self.program_state(block) == "error")
 
     def test_codex_delivery_notify_and_failure_share_pane_state(self):
         for tint in (False, None):
@@ -2042,7 +2078,7 @@ Path('/work/network-harness').touch()
         self.assertIsNone(state["immediate_child_term"])
         block = state["target"]["block_id"]
         wait_for(lambda: self.program_state(block) == "idle")
-        self.assertEqual(len([v for v in events(self.starter_log) if v["event"] == "input" and "Codex settled" in v["payload"]]), 1)
+        self.assertEqual(len([v for v in events(self.starter_log) if v["event"] == "input" and "Codex settled" in v["payload"]]), 0)
         os.kill(next(v["pid"] for v in events(self.worker_log) if v["event"] == "started"), signal.SIGTERM)
         wait_for(lambda: self.record(launch_id).get("immediate_child_term") is not None)
         wait_for(lambda: self.program_state(block) == "error")

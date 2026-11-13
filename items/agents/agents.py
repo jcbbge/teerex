@@ -1521,7 +1521,7 @@ def supervise_child(o):
                 waiting = scratch_read(Path(state["scratchpad"])).get("waiting", "")
             except (OSError, ValueError):
                 waiting = ""
-            status = ("blocked", waiting[:300]) if waiting else (
+            status = ("blocked", waiting[:300]) if waiting and (current or {}).get("state") != "error" else (
                 (current.get("state") or {"Stop": "idle", "StopFailure": "error", "UserPromptSubmit": "working"}[current["kind"]], current["text"])
                 if current else ("working", "visible agent process starting; readiness not assessed"))
             if status != last_status:
@@ -1542,7 +1542,9 @@ def supervise_child(o):
             update(o.registry, o.launch_id, lambda s: s.update(channel_status="revoked"))
         if term is not None:
             update(o.registry, o.launch_id, lambda s: s.update(immediate_child_term=term, immediate_child_ended_at=now()))
-    program_status(state, "done" if term == {"Exited": 0} else "error", "immediate child terminated; descendants not verified")
+        program_status(state, "done" if term == {"Exited": 0} else "error",
+                       "immediate child terminated; descendants not verified" if term is not None else
+                       "supervision failed; immediate child termination unknown")
     come_forward(state, "exit")
     state = load(o.registry, o.launch_id)
     last = state.get("last_hook", {}).get("text", "(no harness last words supplied)")
