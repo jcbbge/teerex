@@ -208,7 +208,7 @@ class Store:
         # Refuse structural values rather than silently changing evidence identities.
         redact_record(r)
         for data in packets.values():
-            require(not CREDENTIAL.search(data.decode("utf-8", "replace")), "secret_in_evidence")
+            require(not credential_present(loads(data)), "secret_in_evidence")
         raw = encoded(r)
         require(len(raw) <= LIMIT, "record_oversize")
         p = self.path / "records" / r["id"]
@@ -867,6 +867,17 @@ SECRET = re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----|(?i:\b(api[_-]?key|secr
 
 # Deliberately excludes generic long strings: hashes and identity pins must remain exact.
 CREDENTIAL = re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)|(?i:\b(?:api[_-]?key|secret|token|passwd|password)\b\s*[:=]\s*[^\s\"',}]{8,}|\bbearer\s+[A-Za-z0-9._~-]{8,})|\bgh[pousr]_[A-Za-z0-9]{20,}|\bgithub_pat_[A-Za-z0-9_]{20,}|\bsk-[A-Za-z0-9_-]{20,}|\bxox[abprs]-[A-Za-z0-9-]{10,}|\b(?:AKIA|ASIA)[0-9A-Z]{16}\b|\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+")
+
+
+def credential_present(value):
+    # Inspect parsed JSON too: Unicode escapes must not hide a copied credential.
+    if isinstance(value, str):
+        return CREDENTIAL.search(value) is not None
+    if isinstance(value, dict):
+        return any(credential_present(k) or credential_present(v) for k, v in value.items())
+    if isinstance(value, list):
+        return any(credential_present(v) for v in value)
+    return False
 
 
 def redact_record(value):

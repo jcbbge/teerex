@@ -91,6 +91,8 @@ class RecordsTest(RecordsFixture):
         packet = self.packet(extra=token)
         before = raw
         self.attach(packet, code=1)
+        packet.write_text(packet.read_text().replace("sk-", "\\u0073k-"))
+        self.attach(packet, code=1)
         self.assertEqual((self.store / "records/a/record.json").read_text(), before)
         self.assertEqual(list((self.store / "records/a/evidence").iterdir()), [])
         result = self.call("new", "--id", "b", "--kind", "investigation", "--writer", token, fields=self.fields, code=1)
