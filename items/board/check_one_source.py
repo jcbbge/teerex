@@ -46,12 +46,23 @@ rows=[]
 priority={'error':5,'blocked':4,'waiting':4,'working':3,'done':2,'idle':1}
 for session in call('api','call','session.list','{}').get('sessions',[]):
     sid=session['session_id']
-    panes=call('block','ls','--session',sid,'--json')
-    for pane in panes.get('blocks',[]) if isinstance(panes,dict) else panes:
-        block=pane['block_id']
-        reports=call('block','call','--session',sid,'--block',block,'program_status','{}').get('records',[])
+    def blocks():
+        panes=call('block','ls','--session',sid,'--json')
+        return [p['block_id'] for p in (panes.get('blocks',[]) if isinstance(panes,dict) else panes)]
+    try:listed=blocks()
+    except subprocess.CalledProcessError:
+        # A session closed mid-read is absent, not a read failure.
+        if sid in {s['session_id'] for s in call('api','call','session.list','{}').get('sessions',[])}:raise
+        continue
+    for block in listed:
+        try:
+            reports=call('block','call','--session',sid,'--block',block,'program_status','{}').get('records',[])
+            process=call('block','call','--session',sid,'--block',block,'process','{}')
+        except subprocess.CalledProcessError:
+            # A pane closed mid-read is absent; the bracketing reads mark it in flux.
+            if block in blocks():raise
+            continue
         managed=[r for r in reports if r.get('app')=='teerex-agent']
-        process=call('block','call','--session',sid,'--block',block,'process','{}')
         matched=any(canonical((process.get(role) or {}).get(field)) in executables
                     for role in ('child','foreground') for field in ('argv0','path'))
         if block not in launches and not managed and not matched:continue

@@ -16,6 +16,7 @@ import subprocess
 import sys
 import tempfile
 import termios
+import textwrap
 import time
 import unicodedata
 import unittest
@@ -509,6 +510,31 @@ class BoardTest(unittest.TestCase):
         line=next(l for l in p.view().splitlines() if 'hand-started' in l)
         self.assertIn('—',line)
         self.assertNotRegex(line,r'\d{5,}m')
+
+    def test_check_probe_skips_pane_closed_mid_read(self):
+        spec=importlib.util.spec_from_file_location('check_one_source',Path(__file__).with_name('check_one_source.py'))
+        check=importlib.util.module_from_spec(spec);spec.loader.exec_module(check)
+        sid='session:00000000-0000-0000-0000-000000000001'
+        kept,gone='block:00000000-0000-0000-0000-00000000000a','block:00000000-0000-0000-0000-00000000000b'
+        fake=self.root/'fake-rex'
+        # Lists both panes once, then only the kept one; reading the closed pane fails.
+        fake.write_text('#!'+sys.executable+'\n'+textwrap.dedent(f'''
+            import json, pathlib, sys
+            a=sys.argv[1:]; mark=pathlib.Path({str(self.root/'listed')!r})
+            if 'session.list' in a: print(json.dumps(dict(sessions=[dict(session_id={sid!r})]))); sys.exit()
+            if 'ls' in a and '--block' not in a:
+                first=not mark.exists(); mark.touch()
+                print(json.dumps([dict(block_id=b) for b in ([{kept!r},{gone!r}] if first else [{kept!r}])])); sys.exit()
+            block=a[a.index('--block')+1]
+            if block=={gone!r}: sys.exit(1)
+            if 'program_status' in a: print(json.dumps(dict(records=[dict(app='teerex-agent',state='working')]))); sys.exit()
+            print(json.dumps(dict()))
+        '''))
+        fake.chmod(0o755)
+        out=subprocess.run([sys.executable,'-c',check.PROBE,str(fake),'/nonexistent.sock',str(self.root/'no-profiles.json')],
+                           env=dict(os.environ,HOME=str(self.root)),capture_output=True,text=True,timeout=30)
+        self.assertEqual(out.returncode,0,out.stderr)
+        self.assertEqual([r['block'] for r in json.loads(out.stdout)],[kept])
 
     def test_gone_removes_rows(self):
         events=[json.loads(line) for line in FIXTURE.read_text().splitlines()]
