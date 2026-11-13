@@ -1,5 +1,6 @@
 """Public lifecycle tests in disposable HOME; never invoke Rex or personal state."""
 import signal
+import selectors
 import fcntl
 import time
 import hashlib
@@ -379,19 +380,48 @@ class Lifecycle(unittest.TestCase):
     def test_sigint_during_apply_returns_json_and_previous_selection(self):
         self.package("alpha")
         self.install("alpha")
-        path = self.package("alpha", "2.0.0")
-        payload = path / "launch"
-        payload.write_bytes(b"#!/bin/sh\n" + b"#" * (60 * 1024 * 1024))
-        self.update_manifest(path, lambda m: m["files"][0].update(sha256=sha(payload)))
-        command = PREFIX + ["--root", str(self.root), "install", "alpha", "--catalog", str(self.catalog), "--apply"]
-        process = subprocess.Popen(command, env=self.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.package("alpha", "2.0.0")
+        # A disposable interpreter fixture pauses after the real stage copy.
+        # The core still execs its actual embedded source; the direct path uses
+        # the same fixture. No product hook or copy-speed assumption is needed.
+        interpreter = self.home / "python3"
+        interpreter.write_text("#!" + sys.executable + " -I\n" + r'''import os
+from pathlib import Path
+import shutil
+import sys
+
+args = sys.argv[1:]
+if args[:1] == ["-I"]:
+    args = args[1:]
+if args[0] == "-c":
+    source = args[1]
+    sys.argv = ["-c"] + args[2:]
+else:
+    source = Path(args[0]).read_text()
+    sys.argv = args
+copytree = shutil.copytree
+
+def pause_after_copy(*args, **kwargs):
+    copytree(*args, **kwargs)
+    print("stage copied; waiting for SIGINT", flush=True)
+    os.read(0, 1)  # Parent keeps stdin open until it sends SIGINT.
+    raise AssertionError("test pause unexpectedly released")
+
+shutil.copytree = pause_after_copy
+exec(compile(source, sys.argv[0], "exec"), {"__name__": "__main__"})
+''')
+        interpreter.chmod(0o700)
+        prefix = [sys.executable, "-I", str(interpreter), str(CLI)] if PREFIX == [sys.executable, str(CLI)] else PREFIX
+        command = prefix + ["--root", str(self.root), "install", "alpha", "--catalog", str(self.catalog), "--apply"]
+        env = dict(self.env, PATH=str(self.home) + os.pathsep + self.env.get("PATH", ""))
+        process = subprocess.Popen(command, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         try:
-            deadline = time.monotonic() + 10
-            while process.poll() is None and time.monotonic() < deadline:
-                if list((self.root / "packages/alpha").glob(".stage-*")):
-                    process.send_signal(signal.SIGINT)
-                    break
-                time.sleep(0.001)
+            with selectors.DefaultSelector() as ready:
+                ready.register(process.stdout, selectors.EVENT_READ)
+                self.assertTrue(ready.select(timeout=10), "manager did not reach the staged-copy pause")
+            self.assertEqual(process.stdout.readline(), "stage copied; waiting for SIGINT\n")
+            self.assertTrue(list((self.root / "packages/alpha").glob(".stage-*")))
+            process.send_signal(signal.SIGINT)
             out, error = process.communicate(timeout=10)
             self.assertEqual(process.returncode, 130, out + error)
             self.assertTrue(json.loads(error)["error"].startswith("interrupted"))
