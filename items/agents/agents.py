@@ -6,6 +6,7 @@ implicit endpoint, hidden fallback, creation retry or notification retry exists.
 import argparse
 import base64
 import contextlib
+import datetime
 import json
 import os
 from pathlib import Path
@@ -87,6 +88,29 @@ def read_file(path, limit=LIMIT, private=False):
     return data
 
 
+def lifecycle_events(state):
+    """Only timestamped evidence; legacy records cannot reconstruct overwritten turns."""
+    rows = []
+    def add(at, event, **details):
+        if type(at) is int and at > 0:
+            rows.append(dict(at=at, event=event, **details))
+    add(state.get("created_at"), "launched", evidence="launch_intent_not_creation_proof")
+    add(state.get("protocol_ack_at"), "protocol_ack")
+    if state.get("brief_attempted"):
+        add(state.get("brief_attempt_at") or (state.get("brief_receipt") or {}).get("started_at_unix_ms"), "brief_attempted")
+    hook = state.get("last_hook") or {}
+    if hook.get("kind") in ("Stop", "StopFailure"):
+        first = (hook.get("text") or "").splitlines()
+        # Terminal output is data: never allow a report to inject terminal controls.
+        line = "".join(c for c in (first[0] if first else "") if ord(c) >= 32 and not 127 <= ord(c) <= 159)[:180]
+        add(hook.get("at"), hook["kind"], text=line, event_id=hook.get("event_id"))
+    if state.get("immediate_child_term") is not None:
+        add(state.get("immediate_child_ended_at"), "child_exit", term=state["immediate_child_term"])
+    retired = state.get("retired") or {}
+    add(retired.get("at"), "pruned", reason=retired.get("reason"))
+    return rows
+
+
 class Registry:
     """Stable advisory lock and per-launch durable intent, on a trusted local filesystem."""
     def __init__(self, root, lock_name="agents.lock", wait_ms=2000):
@@ -146,6 +170,11 @@ class Registry:
             require(len([n for n in os.listdir(self.fd) if re.fullmatch(r"agents-[0-9a-f]{32}\.json", n)]) < 32,
                     "registry_full")
             require(not os.path.lexists(str(Path(self.root) / name)), "launch_already_exists")
+        previous = {} if new else self.read(state["launch_id"])
+        old_events = lifecycle_events(previous)
+        state["timeline_partial"] = not new and ("timeline" not in previous or previous.get("timeline_partial", False))
+        state["timeline"] = list(previous.get("timeline", old_events))
+        state["timeline"].extend(event for event in lifecycle_events(state) if event not in old_events)
         raw = json.dumps(state, ensure_ascii=False, sort_keys=True).encode()
         require(len(raw) <= LIMIT, "record_too_large")
         stage = name + ".next"
@@ -1046,6 +1075,7 @@ def deliver(root, launch_id):
             registry.save(state)
             return 0, receipt(state, "protocol_acknowledged_no_brief")
         state["brief_attempted"] = True
+        state["brief_attempt_at"] = now()
         state["brief_outcome"] = "uncertain"
         state["phase"] = "brief_attempt_uncertain"
         registry.save(state)
@@ -1175,7 +1205,7 @@ def report_stop(root, launch_id, event_id, event, allow_transcript=True):
     title = "IDLE (harness turn-stop report)" if kind == "Stop" else "ERROR (harness failure report, death not verified)"
     body = f"{title}: {state['name']}\n{details}"
     def remembered(s):
-        s["last_hook"] = dict(kind=kind, at=now(), text=details, evidence="harness_report_not_process_death")
+        s["last_hook"] = dict(kind=kind, at=now(), text=details, event_id=event_id, evidence="harness_report_not_process_death")
     update(root, launch_id, remembered)
     return notify(root, launch_id, event_id, body, "harness_report_not_process_death",
                   reported_state="idle" if kind == "Stop" else "unknown")
@@ -1317,6 +1347,75 @@ def present(o):
                          presentation=state["presentations"][event_id])
 
 
+def since_timestamp(value):
+    if value is None:
+        return 0
+    if value.isdecimal():
+        return int(value)
+    try:
+        parsed = datetime.datetime.fromisoformat(value.replace("Z", "+00:00"))
+        require(parsed.tzinfo is not None, "since_requires_timezone")
+        return int(parsed.timestamp() * 1000)
+    except (ValueError, OverflowError):
+        raise Refusal("since_requires_ISO_with_timezone_or_unix_ms")
+
+
+def timeline(o):
+    root = Path(absolute(o.registry))
+    require(root.is_dir() and not root.is_symlink(), "invalid_registry_directory")
+    since = since_timestamp(o.since)
+    states = {}
+    # No Registry lock: this is a read-only snapshot of atomically replaced files.
+    for path in sorted(root.iterdir()):
+        match = RECORD.fullmatch(path.name)
+        if match:
+            state = json.loads(read_file(str(path), private=True))
+            require(state.get("launch_id") == match.group(1), "invalid_lifecycle_record")
+            states[state["launch_id"]] = state
+    archive = root / "archive"
+    if archive.is_dir() and not archive.is_symlink():
+        for directory in sorted(archive.iterdir()):
+            if not re.fullmatch(r"[0-9a-f]{32}", directory.name) or directory.is_symlink() or not directory.is_dir():
+                continue
+            path = directory / "retired.json"
+            if not path.exists():
+                path = directory / ("agents-" + directory.name + ".json")
+            state = json.loads(read_file(str(path), private=True))
+            require(state.get("launch_id") == directory.name, "invalid_lifecycle_record")
+            states[state["launch_id"]] = state
+    rows = []
+    legacy = []
+    for launch_id, state in states.items():
+        if o.name is not None and state.get("name") != o.name:
+            continue
+        if "timeline" not in state or state.get("timeline_partial"):
+            legacy.append(launch_id)
+        history = list(state.get("timeline", lifecycle_events(state)))
+        # prune writes retired.json directly, preserving the last live state.
+        for event in lifecycle_events(state):
+            if event not in history:
+                history.append(event)
+        for event in history:
+            if event["at"] >= since:
+                rows.append(dict(event, name=state["name"], launch_id=launch_id, pane=state.get("target")))
+    rows.sort(key=lambda e: (e["at"], e["launch_id"]))
+    result = dict(schema_version=1, kind="agents_timeline", events=rows,
+                  legacy_partial_launches=sorted(legacy), snapshot="read_only_not_live_liveness")
+    if o.json:
+        return 0, result
+    for row in rows:
+        at = datetime.datetime.fromtimestamp(row["at"] / 1000, datetime.timezone.utc).isoformat(timespec="milliseconds")
+        pane = row.get("pane") or {}
+        detail = row.get("text", "")
+        if "term" in row:
+            detail = json.dumps(row["term"], sort_keys=True)
+        print("%s %s %s %s %s %s %s" % (at, row["name"], row["launch_id"], row["event"],
+                                        pane.get("session_id", "unknown"), pane.get("block_id", "unknown"), detail))
+    if legacy:
+        print("Legacy history is partial for %d launch(es); overwritten hooks and missing timestamps cannot be recovered." % len(legacy), file=sys.stderr)
+    return 0, None
+
+
 def profiles(o):
     cfg = config(o.config)
     return 0, dict(schema_version=1, kind="agent_profiles", profiles=cfg["profiles"], defaults=cfg.get("defaults", {}),
@@ -1386,6 +1485,11 @@ def parser():
                                   help="human interactive launch: visible tracked pane, standing flags, no starter/brief/ACK")
     human_parser.set_defaults(operation="human")
     human_parser.add_argument("--routed", action="store_true", help=argparse.SUPPRESS)
+    q = sub.add_parser("timeline", help="read timestamped launch/ACK/brief/Stop/StopFailure/exit/prune events, including archives; oldest first")
+    q.add_argument("--registry", required=True)
+    q.add_argument("--name", help="exact agent name")
+    q.add_argument("--since", help="inclusive ISO timestamp with timezone or Unix milliseconds")
+    q.add_argument("--json", action="store_true", help="structured events and legacy-history limitations")
     q = sub.add_parser("prune", help="archive records whose agent exited, never started, or whose pane is gone; plan unless --apply")
     q.add_argument("--registry", required=True)
     q.add_argument("--apply", action="store_true", help="move retired records to REGISTRY/archive/<launch_id>/ (never deleted)")

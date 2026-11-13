@@ -16,7 +16,7 @@ const usage =
     \\  inbox append|inspect|clear                    Private retained messages
     \\  ask                                          Complete typed decisions or explicit resolution
     \\  scratch init|now|todo|done|show|path|watch  Per-pane working scratchpad
-    \\  agents launch|profiles|shell|ack|deliver|inspect|stop|present
+    \\  agents launch|profiles|shell|ack|deliver|inspect|stop|present|timeline|prune
     \\         exec|exited|channel|fence-probe       Compute callbacks / local delivery / fence checks
     \\  spawn --profile NAME --profiles ABS           Managed protocol-ACK-before-brief launch
     \\  records init|new|park|add|attach|set|close|show|resume|navigate|list|lint|export|forget  Private evidence and reasoning

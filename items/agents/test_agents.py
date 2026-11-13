@@ -163,6 +163,50 @@ class HelpRangesTest(unittest.TestCase):
                         self.assertLess(len(refused.stderr.encode()), 8192)
 
 
+class TimelineTest(unittest.TestCase):
+    def test_legacy_archive_filters_order_and_read_only(self):
+        with tempfile.TemporaryDirectory(prefix="tagents-timeline-") as tmp:
+            root = Path(tmp)
+            registry = root / "registry"
+            registry.mkdir(mode=0o700)
+            env = dict(os.environ, TEEREX_CALL_LOG_DIR=str(root / "calls"))
+            first, second = "1" * 32, "2" * 32
+            def state(launch, name, at):
+                return dict(schema_version=1, launch_id=launch, name=name, created_at=at, protocol_ack_at=at+10,
+                            target=dict(session_id="session:fixture", block_id="block:fixture"),
+                            last_hook=dict(kind="Stop", at=at+20, text="done\nprivate second line"))
+            live = registry / ("agents-" + first + ".json")
+            live.write_text(json.dumps(state(first, "alpha", 1000)))
+            live.chmod(0o600)
+            archive = registry / "archive" / second
+            archive.mkdir(parents=True, mode=0o700)
+            old = state(second, "beta", 500)
+            old["retired"] = dict(at=2000, reason="child_exited")
+            path = archive / "retired.json"
+            path.write_text(json.dumps(old))
+            path.chmod(0o600)
+            before = {str(p): (p.stat().st_mtime_ns, p.read_bytes()) for p in registry.rglob("*") if p.is_file()}
+            def command(*args):
+                return subprocess.run([BIN, "agents", "timeline", "--registry", str(registry), *args], env=env, capture_output=True, text=True)
+            p = command("--json")
+            self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+            packet = json.loads(p.stdout)
+            self.assertEqual([e["at"] for e in packet["events"]], [500, 510, 520, 1000, 1010, 1020, 2000])
+            self.assertEqual(packet["events"][-1]["event"], "pruned")
+            self.assertEqual(packet["legacy_partial_launches"], [first, second])
+            self.assertNotIn("private second line", p.stdout)
+            p = command("--name", "alpha", "--since", "1970-01-01T00:00:01.010Z", "--json")
+            self.assertEqual([e["event"] for e in json.loads(p.stdout)["events"]], ["protocol_ack", "Stop"])
+            self.assertEqual(command("--since", "1020", "--json").returncode, 0)
+            self.assertNotEqual(command("--since", "yesterday").returncode, 0)
+            self.assertNotEqual(command("--since", "2026-01-01").returncode, 0)
+            p = command("--name", "alpha")
+            self.assertEqual(len(p.stdout.splitlines()), 3)
+            self.assertIn("partial", p.stderr)
+            after = {str(p): (p.stat().st_mtime_ns, p.read_bytes()) for p in registry.rglob("*") if p.is_file()}
+            self.assertEqual(before, after)
+
+
 class AgentsTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -1653,6 +1697,36 @@ Path('/work/network-harness').touch()
         started = next(v for v in events(self.worker_log) if v["event"] == "started")
         injected = json.loads(started["argv"][started["argv"].index("--settings")+1])
         self.assertIn("UserPromptSubmit", injected["hooks"])
+
+    def test_timeline_retains_each_hook_and_archived_exit(self):
+        p, launched = self.launch()
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        launch_id = launched["launch_id"]
+        event = self.work / "event.json"
+        for index, kind in enumerate(("Stop", "StopFailure", "Stop")):
+            event.write_text(json.dumps(dict(hook_event_name=kind, last_assistant_message="words %d\nsecond line" % index, error="failed")))
+            p, _ = self.run_cli("stop", "--registry", str(self.registry), "--launch-id", launch_id, "--event-file", str(event))
+            self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        pid = next(v["pid"] for v in events(self.worker_log) if v["event"] == "started")
+        os.kill(pid, signal.SIGTERM)
+        wait_for(lambda: self.record(launch_id).get("immediate_child_term") is not None)
+        wait_for(lambda: self.record(launch_id).get("notifications", {}).get("child-exit", {}).get("outcome") not in (None, "uncertain"))
+        # Age only this disposable fixture past the existing prune settle window.
+        state = self.record(launch_id)
+        state["created_at"] -= 180000
+        state["timeline"][0]["at"] -= 180000
+        (self.registry / ("agents-" + launch_id + ".json")).write_text(json.dumps(state))
+        p, result = self.run_cli("prune", "--registry", str(self.registry), "--apply")
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertTrue(any(r["launch_id"] == launch_id for r in result["retired"]))
+        p, result = self.run_cli("timeline", "--registry", str(self.registry), "--json")
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertFalse(result["legacy_partial_launches"])
+        rows = [r for r in result["events"] if r["launch_id"] == launch_id]
+        self.assertEqual([r["event"] for r in rows], ["launched", "protocol_ack", "brief_attempted", "Stop", "StopFailure", "Stop", "child_exit", "pruned"])
+        self.assertEqual([r["at"] for r in rows], sorted(r["at"] for r in rows))
+        self.assertEqual([r["text"] for r in rows if r["event"] == "Stop"], ["words 0", "words 2"])
+        self.assertEqual(rows[-2]["term"], {"Signal": signal.SIGTERM})
 
     def test_tint_false_keeps_theme_and_uses_child_record(self):
         self.settings["profiles"]["probe"].update(harness="codex", hook_events=True, tint=False)
