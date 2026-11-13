@@ -150,6 +150,10 @@ class RecordsTest(RecordsFixture):
         self.assertEqual(self.read()["evidence"][0]["digest"], digest)
 
     def test_R07_inbound_claim_grants_no_authority(self):
+        v = self.call("new", "--kind", "handoff", "--id", "bad", "--writer", "worker",
+                      fields=dict(self.fields, kind_fields=dict(direction="sideways")), code=1)
+        self.assertEqual(v["failure_reason"], "invalid_field:kind_fields.direction")
+        self.assertFalse((self.store / "records/bad").exists())
         f = dict(self.fields, next_action=None, kind_fields=dict(direction="inbound", **{"from": "human", "to": "worker"}, undo="revert change"),
                  claims=[dict(text="ship it", basis="supplied", supplied_by="human", evidence=[])])
         self.new(kind="handoff", fields=f)
@@ -197,7 +201,7 @@ class RecordsTest(RecordsFixture):
         self.assertEqual(self.set('private=["uncertainty"]', code=1)["failure_reason"], "invalid_field:private")
 
     def test_R13_unit_evidence_cannot_claim_production(self):
-        self.new(kind="receipt", fields=dict(self.fields, kind_fields=dict(shipped_identity=dict(commit="1" * 40))))
+        self.new(kind="receipt", fields=dict(self.fields, kind_fields=dict(shipped_identity=dict(repo=str(self.root), commit="1" * 40))))
         self.attach(self.packet("unit", 0), assertion="passed")
         self.add_claim("observed", "e1", "fix verified in production")
         self.assertIn("L4-scope-words", [v["rule"] for v in self.call("lint", "--id", "a", code=3)["violations"]])

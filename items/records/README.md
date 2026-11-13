@@ -57,7 +57,7 @@ Every verb accepts `--store`. `--help` lists flags. Supported operations:
 | `export --id ID [--format json\|md] [--out NEW_ABS]` | Lint, project private fields away, preserve caveats and scan exported strings before writing. Never overwrite. `--include` cannot override privacy. |
 | `forget --id ID --expect-generation N --reason TEXT` | Explicit deletion of that record and its copies only. |
 
-All record writes accept `--expect-generation`; `set` and `forget` require it. Write receipts contain IDs, generation, byte counts and digests, never reasoning content. `new` accepts incomplete drafts; park/close/export enforce the applicable lint rules. Closed or superseded records cannot be appended to.
+All record writes accept `--expect-generation`; `set` and `forget` require it. Write receipts contain IDs, generation, byte counts and digests, never reasoning content. Kind-specific fields and evidence references are schema-checked on write. `new` accepts incomplete drafts; park/close/export enforce the applicable lint rules. Closed or superseded records cannot be appended to.
 
 ### Evidence
 

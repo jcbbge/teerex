@@ -520,6 +520,27 @@ def validate(r):
     allowed_kind = {"investigation": set(), "experiment": {"change_made", "pair_with", "cost"}, "receipt": {"shipped_identity", "human_caveat"},
                     "handoff": {"direction", "from", "to", "changes", "risks", "undo", "reply_to"}}[r["kind"]]
     require(set(r["kind_fields"]) <= allowed_kind, "invalid_field:kind_fields")
+    kind = r["kind_fields"]
+    for field in ("change_made", "pair_with", "direction", "from", "to", "undo", "reply_to"):
+        if field in kind:
+            require(kind[field] is None or isinstance(kind[field], str), "invalid_field:kind_fields." + field)
+    if kind.get("direction") is not None:
+        require(kind["direction"] in ("inbound", "outbound"), "invalid_field:kind_fields.direction")
+    for field in ("changes", "risks"):
+        if kind.get(field) is not None:
+            require(isinstance(kind[field], list) and all(isinstance(v, str) for v in kind[field]), "invalid_field:kind_fields." + field)
+    if kind.get("changes") is not None:
+        require(all(e in {v["id"] for v in r["evidence"]} for e in kind["changes"]), "invalid_field:kind_fields.changes")
+    identity = kind.get("shipped_identity")
+    if identity is not None:
+        require(isinstance(identity, dict) and set(identity) <= {"repo", "commit", "tag", "artifact_digest"}, "invalid_field:kind_fields.shipped_identity")
+        require(all(v is None or isinstance(v, str) for v in identity.values()), "invalid_field:kind_fields.shipped_identity")
+        if identity.get("commit") is not None:
+            require(re.fullmatch(r"[0-9a-f]{40}", identity["commit"]), "invalid_field:kind_fields.shipped_identity.commit")
+    caveat = kind.get("human_caveat")
+    if caveat is not None:
+        require(isinstance(caveat, dict) and set(caveat) == {"text", "basis", "supplied_by"} and caveat["basis"] == "supplied"
+                and isinstance(caveat["text"], str) and isinstance(caveat["supplied_by"], str), "invalid_field:kind_fields.human_caveat")
     for field, allowed, needed, cap in (
         ("claims", {"id", "text", "basis", "evidence", "supplied_by", "scope"}, {"text", "basis"}, 128),
         ("checks", {"id", "command", "ran", "process_exit", "assertion", "establishes", "does_not_establish", "evidence"}, {"command", "ran", "process_exit", "assertion", "establishes", "does_not_establish"}, 128),
@@ -745,7 +766,7 @@ def lint(r, folder, packets=None):
         if r["cleanup"]["status"] == "done" and t.get("storage_dir_retained") is True and t.get("storage_dir") and os.path.exists(t["storage_dir"]):
             bad("L7-cleanup-retained", "cleanup.status", "retained storage still exists")
     k = r["kind_fields"]
-    if (r["kind"] in ("experiment", "receipt") and not r["checks"] or r["kind"] == "receipt" and not k.get("shipped_identity")
+    if (r["kind"] in ("experiment", "receipt") and not r["checks"] or r["kind"] == "receipt" and (not k.get("shipped_identity") or any(not k["shipped_identity"].get(x) for x in ("repo", "commit")))
         or r["kind"] == "handoff" and any(not k.get(x) for x in ("direction", "from", "to", "undo")) or r["state"] == "parked" and (not r["target"] or not r["target_at_park"])):
         bad("L6-kind-required", "kind_fields", "kind requirements incomplete")
     if r["kind"] == "handoff" and k.get("direction") == "inbound" and any(c["basis"] == "supplied" and not c["evidence"] for c in r["claims"]) and nxt is None:
