@@ -21,7 +21,7 @@ Josh's overnight ruling selected every roadmap item. This table records where ea
 | H05 pause/redirect/takeover | Rivet's half | [spec](planning/workloads/authority-task-runtime.md) |
 | U03, C04, C05, C07, C16, C17, Q13 (guarded input, human clutch) | Host-blocked; cooperative `clutch` built | upstream R1, R4, R6 |
 | C18/U04 learned maneuver execution | Host-blocked | upstream R5 |
-| U08 signed distribution, Q09 notarization | Needs Josh's decision: requires signing credentials | — |
+| U08 signed distribution, Q09 notarization | Not needed (Josh, 13 Nov 2026): teerex runs only on his own M5 and hive; ad-hoc signing is enough there | — |
 | Q05 first-use observation | Needs Josh's decision: a human participant, or approved paid model runs | — |
 | Q06 actual API11 | Untestable: no legitimate pinned API11 build is available | — |
 | Q07 extra API/build pairs, Q08 OS/arch floor | Not pursued: hive and the M5 are both API13; CI covers Mac API10/12/13 and Linux API13 | — |
