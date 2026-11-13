@@ -19,6 +19,9 @@
       "within_ms": 10000
     },
     {
+      "sleep_ms": 500
+    },
+    {
       "key": {
         "key": "enter",
         "mods": "",

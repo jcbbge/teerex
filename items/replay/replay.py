@@ -162,7 +162,7 @@ def fixture_write(destination, args, stream, version, end):
             application=dict(name=Path(args.argv[0]).name, version="unknown", version_basis="unknown"),
             terminal=dict(start="blank_verified", initial=dict(columns=args.columns, rows=args.rows)),
             stream=dict(bytes=len(stream.data), sha256=digest(stream.data), snapshot_sha256=digest(snapshot),
-                        complete=end in {"child_exited", "deadline", "cancelled"}, end=end),
+                        complete=end in {"child_exited", "deadline", "cancelled"} and not stream.pending, end=end),
             chunks=stream.chunks, events=stream.events, checkpoints=checkpoints,
             omissions=[dict(what="theme", why="not replayed in v1")])
         save(root / "stream.bin", bytes(stream.data))
@@ -200,7 +200,7 @@ def fixture_load(root):
         raise Refused("fixture_chunks_invalid")
     previous = 0
     for event in value["events"]:
-        if type(event.get("offset")) is not int or not previous <= event["offset"] <= len(data):
+        if type(event.get("offset")) is not int or not previous <= event["offset"] <= len(data) or type(event.get("t_ms")) is not int or event["t_ms"] < 0:
             raise Refused("fixture_event_invalid")
         previous = event["offset"]
         if event.get("type") == "resize" and any(type(event.get(k)) is not int or not 1 <= event[k] <= 65535 for k in ("columns", "rows")):
