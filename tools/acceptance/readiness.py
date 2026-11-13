@@ -64,9 +64,11 @@ def suite_outcomes(binary, server, combined):
                 self.outcomes[self.name(test)] = "fail"
     result = Result()
     old = dict(os.environ)
+    suite_home = server.root / "suite-home"
+    suite_home.mkdir(mode=0o700)
     try:
         os.environ.clear()
-        os.environ.update(server.env, TEEREX_BIN=str(binary))
+        os.environ.update(server.env, HOME=str(suite_home), TEEREX_BIN=str(binary))
         # Raw assertion/capture details never enter the public readiness record.
         with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
             suite.run(result)
