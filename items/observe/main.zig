@@ -235,17 +235,19 @@ const WatchCollector = struct {
         if (self.last_after_id) |id| std.heap.page_allocator.free(id);
         self.last_after_id = after_id;
         comparison.after_observation_id = after_id;
+        self.last_comparison = comparison;
         if (self.view_rules) |rules| {
+            self.last_view = null;
             _ = self.view_arena.reset(.free_all);
             self.last_view = try presentation.computeView(self.view_arena.allocator(), rules, self.baseline, after, comparison);
             if (!self.last_view.?.wake) {
                 self.cosmetic_only_comparisons += 1;
+                self.last_cosmetic_spans = null;
                 _ = self.cosmetic_arena.reset(.free_all);
                 const v = try presentation.computeView(self.cosmetic_arena.allocator(), rules, self.baseline, after, comparison);
                 self.last_cosmetic_spans = v.spans;
             }
         }
-        self.last_comparison = comparison;
         self.last_compared_at = compared_at;
         self.compared += 1;
         self.changed_fields.clearRetainingCapacity();

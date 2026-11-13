@@ -311,6 +311,26 @@ class CompareTest(unittest.TestCase):
         self.assertEqual(json.loads(r.stdout)['id'], 'progress-v1')
 
 
+    def test_view_rules_hash_canonical_and_literals_do_not_collide(self):
+        rules = {'schema_version': 1, 'kind': 'rex_presentation_view', 'id': 'custom', 'note': 'NOTE_CONTENT_NOT_ECHOED', 'rules': [{'id': 'elapsed', 'position': 'anywhere', 'pattern': 'elapsed {number}s'}]}
+        path = self.root / 'view.json'
+        digests = []
+        self.before['capture']['content'] = 'elapsed 12.5s'
+        self.after['capture']['content'] = 'elapsed 13.1s'
+        for sort_keys in (False, True):
+            path.write_text(json.dumps(rules, sort_keys=sort_keys, indent=2 if sort_keys else None))
+            result = compare_packets(self.root, self.before, self.after, ['--view-rules', str(path)])
+            self.assertEqual(result.returncode, 0, result.stderr)
+            view = json.loads(result.stdout)['view']
+            self.assertEqual(view['captured_text'], 'cosmetic_only')
+            self.assertNotIn('NOTE_CONTENT_NOT_ECHOED', result.stdout)
+            digests.append(view['rules_sha256'])
+        self.assertEqual(*digests)
+        self.before['capture']['content'] = 'elapsed 12s'
+        self.after['capture']['content'] = '\ufffc0;'
+        result = compare_packets(self.root, self.before, self.after, ['--view-rules', str(path)])
+        self.assertEqual(json.loads(result.stdout)['view']['captured_text'], 'changed')
+
     def test_view_V_C24_documentation_makes_no_state_claim(self):
         root = Path(__file__).resolve().parents[2]
         for name, marker in (('items/observe/README.md', '## Declared presentation views'), ('items/filter/README.md', '## Opt-in presentation view')):
