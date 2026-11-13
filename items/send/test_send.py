@@ -78,7 +78,7 @@ class SendTest(unittest.TestCase):
         self.work.mkdir()
         (self.work / "inbox").mkdir()
         # Exact same TMPDIR lock namespace as agent-send; no test lock in /tmp root.
-        self.env = dict(os.environ, TEEREX_CLUTCH_DIR=str(self.work / "clutch"), TMPDIR=str(self.work), AGENT_INBOX_DIR=str(self.work / "inbox"),
+        self.env = dict(os.environ, TEEREX_ASK_STATE_DIR=str(self.work / "asks"), TEEREX_CLUTCH_DIR=str(self.work / "clutch"), TMPDIR=str(self.work), AGENT_INBOX_DIR=str(self.work / "inbox"),
                         REX_SERVER="unix:///tmp/never-this-server.sock", REX_BLOCK="block:wrong",
                         REX_SESSION="session:wrong", REX_CLIENT="client:wrong",
                         PATH=str(Path(self.rex).parent) + os.pathsep + os.environ.get("PATH", ""))
@@ -148,22 +148,55 @@ class SendTest(unittest.TestCase):
                         "args": {"format": "text", "max_bytes": 65536}})["content"]
 
     def test_status_failure_does_not_fail_or_repeat_delivered_message(self):
-        target, raw = self.fixture(redirect_stdout=sys.platform == "linux")
-        if sys.platform != "linux":
-            # ps reports the controlling tty even after stdout redirection on macOS.
-            # Force only the optional status helper to fail; Rex/input remain live.
-            helpers = self.work / "helpers"
-            helpers.mkdir()
-            helper = helpers / "python3"
-            helper.write_text("#!/bin/sh\nexit 44\n")
-            helper.chmod(0o700)
-            self.env["PATH"] = str(helpers) + os.pathsep + self.env["PATH"]
+        target, raw = self.fixture()
+        helpers = self.work / 'helpers'
+        helpers.mkdir()
+        helper = helpers / 'python3'
+        helper.write_text('#!/bin/sh\nexit 44\n')
+        helper.chmod(0o700)
+        self.env['PATH'] = str(helpers) + os.pathsep + self.env['PATH']
         subprocess.check_call(self.base + ["block", "rename", "-s", target[0], target[1], "seat"])
         r, packet = self.send(target)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertEqual(packet["outcome"], "events_acknowledged")
-        self.assertEqual(packet["status_record"], "tty_unavailable" if sys.platform == "linux" else "failed")
+        self.assertEqual(packet["status_record"], "failed")
         self.received(raw, self.pasted(b"hello"))
+
+    def test_status_uses_input_fd_or_controlling_tty_when_stdout_redirected(self):
+        target, raw = self.fixture(redirect_stdout=True)
+        self.rpc('session.set_block_label', dict(session_id=target[0], block_id=target[1], label='seat'))
+        result, packet = self.send(target)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(packet['status_record'], 'written')
+        self.received(raw, self.pasted(b'hello'))
+        status = self.rpc('com.superlogical.terminal.program_status', dict(session_id=target[0], block_id=target[1], args={}))
+        self.assertTrue(any(r.get('id') == 'msg/worker' for r in status['records']))
+        # Keep the slave open so Rex's PTY reader stays live after stdio redirection.
+        code = "import os,time; print('REDIRECT_READY',flush=True); keep=os.dup(0); fd=os.open('/dev/null',os.O_RDWR); [os.dup2(fd,n) for n in (0,1,2)]; time.sleep(120)"
+        made = self.rex_json('new', '--json', '--keep-open', '--shell=none', '--', sys.executable, '-c', code)
+        redirected = made['session_id'], made['initial_windows'][0]['block_ids'][0]
+        self.rpc('session.set_block_label', dict(session_id=redirected[0], block_id=redirected[1], label='seat'))
+        for _ in range(100):
+            if 'REDIRECT_READY' in self.prompt_text(redirected):
+                break
+            time.sleep(.02)
+        result, packet = self.send(redirected)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(packet['status_record'], 'written')
+        process = self.rpc('com.superlogical.terminal.process', dict(session_id=redirected[0], block_id=redirected[1], args={}))
+        pid = process['child']['pid']
+        import importlib.util
+        spec = importlib.util.spec_from_file_location('seat_status_tty', Path(__file__).parents[1] / 'boards/seat_status.py')
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        self.assertEqual(module.write_status(pid, 'TTY_CONTROL_PROBE'), 'written')
+        for _ in range(100):
+            if 'TTY_CONTROL_PROBE' in self.prompt_text(redirected):
+                break
+            time.sleep(.02)
+        self.assertIn('TTY_CONTROL_PROBE', self.prompt_text(redirected))
+        records = self.rpc('com.superlogical.terminal.program_status', dict(session_id=redirected[0], block_id=redirected[1], args={}))['records']
+        self.assertTrue(any(r.get('id') == 'msg/worker' for r in records), records)
 
     def test_seat_status_message_and_decision_resolution(self):
         target, raw = self.fixture()
@@ -196,6 +229,69 @@ class SendTest(unittest.TestCase):
         subprocess.check_call(self.base + ["block", "rename", "-s", target[0], target[1], "worker"])
         r, packet = self.send(target)
         self.assertEqual(packet["status_record"], "not_requested")
+
+    def test_ask_resolve_reply_paths_never_paste_into_resolver(self):
+        seat, seat_raw = self.fixture()
+        asker, asker_raw = self.fixture()
+        for target, label in ((seat, 'seat'), (asker, 'asker')):
+            self.rpc('session.set_block_label', dict(session_id=target[0], block_id=target[1], label=label))
+        seat_env = dict(self.env, REX_SESSION=seat[0], REX_BLOCK=seat[1])
+        asker_env = dict(self.env, REX_SESSION=asker[0], REX_BLOCK=asker[1])
+        common = [BIN, 'ask', '--socket', str(self.socket), '--host', 'test', '--session', seat[0], '--block', seat[1], '--from', 'asker', '--draft', 'ignore']
+        def records():
+            return self.rpc('com.superlogical.terminal.program_status', dict(session_id=seat[0], block_id=seat[1], args={}))['records']
+        def run(command, env):
+            result = subprocess.run(command, env=env, capture_output=True, text=True, timeout=10)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            return json.loads(result.stdout)
+        for index, route in enumerate(('resolve', 'self_resolve', 'send', 'answer', 'clear_only')):
+            card_id = 'reply-' + str(index)
+            path = self.work / (card_id + '.json')
+            path.write_text(json.dumps(dict(id=card_id, title='Choose', ask='Proceed?', context='fixture',
+                options=[dict(label='Yes', gain='Go', lose='Time'), dict(label='No', gain='Wait', lose='Delay')], recommend='Yes')))
+            run(common + ['--card-file', str(path)], asker_env)
+            self.assertTrue(any(r.get('id') == 'ask/' + card_id for r in records()))
+            before_seat, before_asker = seat_raw.read_bytes(), asker_raw.read_bytes()
+            if route in ('resolve', 'self_resolve', 'clear_only'):
+                command = common + ['--resolve', card_id]
+                if route != 'clear_only':
+                    command += ['--answer', 'Yes']
+                packet = run(command, asker_env if route == 'self_resolve' else seat_env)
+                self.assertEqual(packet['terminal_input_attempted'], route == 'resolve')
+            elif route == 'send':
+                command = self.command(asker, b'Yes', sender='seat')
+                run(command, seat_env)
+            else:
+                command = [BIN, 'ask', '--socket', str(self.socket), '--host', 'test', '--session', asker[0], '--block', asker[1],
+                           '--from', 'seat', '--answer', 'Yes', '--draft', 'ignore']
+                run(command, seat_env)
+            self.assertFalse(any(r.get('id') == 'ask/' + card_id for r in records()), route)
+            self.assertEqual(seat_raw.read_bytes(), before_seat, 'resolution must never paste into the seat resolver')
+            if route in ('self_resolve', 'clear_only'):
+                self.assertEqual(asker_raw.read_bytes(), before_asker, 'resolver must never type into itself')
+            else:
+                self.assertIn(b'Yes', asker_raw.read_bytes()[len(before_asker):])
+
+    def test_ask_fallback_expiry_clears_only_old_question_records(self):
+        import importlib.util
+        from unittest.mock import patch
+        seat, raw = self.fixture()
+        self.rpc('session.set_block_label', dict(session_id=seat[0], block_id=seat[1], label='seat'))
+        command = self.command(seat, b'Question', sender='worker') + ['--status-id', 'ask/expire', '--status-state', 'blocked']
+        sent = subprocess.run(command, env=self.env, capture_output=True, text=True)
+        self.assertEqual(sent.returncode, 0, sent.stdout + sent.stderr)
+        records = self.rpc('com.superlogical.terminal.program_status', dict(session_id=seat[0], block_id=seat[1], args={}))
+        spec = importlib.util.spec_from_file_location('seat_status', Path(__file__).parents[1] / 'boards/seat_status.py')
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        real_now = time.time()
+        rows = [dict(session=seat[0], block=seat[1], program_status=records)]
+        with patch.dict(os.environ, dict(TEEREX_INTERNAL_REX=self.rex, TEEREX_ASK_STATE_DIR=self.env['TEEREX_ASK_STATE_DIR'])):
+            self.assertEqual(module.expire(str(self.socket), rows), 0)
+            with patch.object(module.time, 'time', return_value=real_now + 1801):
+                self.assertEqual(module.expire(str(self.socket), rows), 1, rows)
+        current = self.rpc('com.superlogical.terminal.program_status', dict(session_id=seat[0], block_id=seat[1], args={}))['records']
+        self.assertFalse(any(r.get('id') == 'ask/expire' for r in current))
 
     def test_draft_guard_reference_parser_fixtures(self):
         fixtures = [("│ ❯ │", ""), ("│ ❯ \x1b[2msuggest\x1b[0m │", ""),

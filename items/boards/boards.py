@@ -481,10 +481,46 @@ def _deliver_ask(a):
     selected(a)
     text(a.sender, 128, False)
     check(a.teerex and os.path.isabs(a.teerex), "absolute_native_teerex_required")
+    answer_only = a.resolve is None and not any((a.card_file, a.title, a.ask, a.context, a.option, a.recommend, a.id)) and a.answer is not None
     if a.resolve is not None:
-        check(not any((a.title, a.ask, a.context, a.option, a.recommend, a.id)), "resolution_conflicts_with_card_fields")
-        text(a.resolve, 128)
-        body = "DECISION RESOLVED [" + a.resolve + "]\nAnswer: " + text(a.answer)
+        import teerex_seat_status
+        record_id = 'ask/' + text(a.resolve, 128)
+        if a.answer is not None:
+            text(a.answer)
+        check(not any((a.title, a.ask, a.context, a.option, a.recommend, a.id)), 'resolution_conflicts_with_card_fields')
+        if a.store:
+            with contextlib.closing(Store(a.store)) as store:
+                seat = seat_for(store, selected(a))
+                check(seat is not None and any(r['body']['id'] == a.resolve for r in folded(seat)[0]), 'open_decision_not_found')
+        row = teerex_seat_status.lookup(a.socket, dict(session=a.session, block=a.block), record_id)
+        source = teerex_seat_status.origin()
+        asker = (row or {}).get('asker')
+        delivered = False
+        if a.answer is not None and asker and re.fullmatch(r'session:[0-9a-f-]{36}', source.get('session') or '') and re.fullmatch(r'block:[0-9a-f-]{36}', source.get('block') or '') and asker != source:
+            command = [a.teerex, 'send', '--socket', a.socket, '--session', asker['session'], '--block', asker['block'],
+                       '--from', a.sender, '--message-file', '-', '--draft', a.draft, '--draft-wait-ms', str(a.draft_wait_ms)]
+            a.delivery_attempted = True
+            sent = subprocess.run(command, input=('DECISION RESOLVED [' + a.resolve + ']\nAnswer: ' + text(a.answer)).encode(), stdout=subprocess.PIPE)
+            if sent.returncode:
+                sys.stdout.buffer.write(sent.stdout)
+                return sent.returncode
+            delivered = True
+        cleared = False
+        try:
+            teerex_seat_status.resolve(a.socket, dict(session=a.session, block=a.block), record_id)
+            cleared = True
+        except (OSError, ValueError, subprocess.SubprocessError):
+            check(a.store is not None, 'status_clear_unavailable')
+        if a.store:
+            a.answer = a.answer or 'Status cleared without an answer'
+            with contextlib.redirect_stdout(__import__('io').StringIO()):
+                mutate(a)
+        result(kind='ask_result', outcome='resolved', decision_id=a.resolve, terminal_input_attempted=delivered,
+               status_record='cleared' if cleared else 'unknown', answer_delivered=delivered, history='recorded' if a.store else 'not_requested')
+        return 0
+    elif answer_only:
+        body = 'Answer: ' + text(a.answer)
+        value = None
     else:
         reply = text(a.answer) if a.answer is not None else None
         a.answer = None
@@ -507,7 +543,7 @@ def _deliver_ask(a):
         a.card_file = None
     check(len(body.encode("utf-8")) <= 65536, "rendered_card_too_large")
     # Validate optional history before delivery, but never hold its lock while typing.
-    if a.store:
+    if a.store and not answer_only:
         with contextlib.closing(Store(a.store)) as store:
             seat = seat_for(store, selected(a))
             check(seat is not None, "history_seat_not_registered")
@@ -517,7 +553,8 @@ def _deliver_ask(a):
                 check(not any(r["kind"] == "decision" and r["body"]["id"] == value["id"] for r in seat["records"]), "decision_id_already_used")
     argv = [a.teerex, "send", "--socket", a.socket, "--session", a.session, "--block", a.block,
             "--from", a.sender, "--message-file", "-", "--draft", a.draft, "--draft-wait-ms", str(a.draft_wait_ms)]
-    argv += ["--status-id", "ask/" + (a.resolve if a.resolve is not None else value["id"]),
+    if not answer_only:
+        argv += ["--status-id", "ask/" + (a.resolve if a.resolve is not None else value["id"]),
              "--status-state", "clear" if a.resolve is not None else "blocked",
              "--status-message", "" if a.resolve is not None else value["ask"]]
     # No store/host selectors: native send must type even into a registered seat.
@@ -536,7 +573,7 @@ def _deliver_ask(a):
     if proc.returncode:
         sys.stdout.buffer.write(output)
         return proc.returncode if proc.returncode > 0 else 128 - proc.returncode
-    if a.store:
+    if a.store and not answer_only:
         try:
             with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8") as f:
                 if a.resolve is None:
@@ -551,7 +588,7 @@ def _deliver_ask(a):
                    retry_safe=False, reason=str(e)[:512], recovery="do_not_resend_inspect_history")
             return 1
     receipt = json_load(output.decode())
-    receipt["decision_id"] = a.resolve if a.resolve is not None else value["id"]
+    receipt["decision_id"] = value["id"] if value else None
     receipt["history"] = "recorded" if a.store else "not_requested"
     print(json.dumps(receipt), flush=True)
     return 0
@@ -635,12 +672,20 @@ io.write('{"version":',rex.json.encode(version),',"identity":',
 '''
 
 
-def probe(socket, jobs_registry=None, teerex=None, dashboard=False, agents_registry=None):
+def probe(socket, jobs_registry=None, teerex=None, dashboard=False, agents_registry=None, expire_asks=False):
     check(os.path.isabs(socket), "absolute_socket_required")
+    if dashboard:
+        jobs_registry = jobs_registry or os.path.expanduser('~/.local/state/teerex-agents')
+        agents_registry = agents_registry or os.path.expanduser('~/.local/state/teerex-agents')
     registrations = None
     if jobs_registry is not None:
         check(os.path.isabs(jobs_registry) and teerex is not None and os.path.isabs(teerex), "absolute_registry_and_teerex_required")
-        registrations = bounded_command([teerex, "jobs", "list", "--registry", jobs_registry])
+        try:
+            os.lstat(jobs_registry)
+        except FileNotFoundError:
+            registrations = dict(kind='jobs_list', entries=[])
+        else:
+            registrations = bounded_command([teerex, "jobs", "list", "--registry", jobs_registry])
         check(registrations.get("kind") == "jobs_list", "invalid_jobs_list")
     live = bounded_command([os.environ.get("TEEREX_INTERNAL_REX") or "rex", "--autostart=false", "--server", "unix://" + socket,
                             "--timeout", "3s", "--color", "never", "do", "-e", READ_LUA, "--args", json.dumps(dict(include_status=jobs_registry is not None or dashboard))])
@@ -649,7 +694,11 @@ def probe(socket, jobs_registry=None, teerex=None, dashboard=False, agents_regis
     if dashboard:
         import teerex_dashboard
         live["dashboard"] = teerex_dashboard.metadata(agents_registry, globals())
+        managed = {(r['target']['session_id'], r['target']['block_id']) for r in live['dashboard']['lifecycles']}
+        registered = {(r['session_id'], r['block_id']) for r in (registrations or {}).get('entries', []) if r['kind'] == 'agent'}
         for row in live['rows']:
+            if (row['session'], row['block']) not in managed & registered:
+                continue
             row['scratchpad'] = teerex_dashboard.scratchpad(row['session'], row['block'])
             if teerex:
                 try:
@@ -657,6 +706,12 @@ def probe(socket, jobs_registry=None, teerex=None, dashboard=False, agents_regis
                         '--session', row['session'], '--block', row['block'], '--timeout-ms', '1000'], timeout=2)
                 except (OSError, ValueError, Refused, subprocess.TimeoutExpired):
                     row['agent_state'] = dict(state='unknown')
+    if dashboard and expire_asks:
+        import teerex_seat_status
+        try:
+            teerex_seat_status.expire(socket, live['rows'])
+        except (OSError, ValueError, subprocess.SubprocessError):
+            live['dashboard']['errors'].append('ask_expiry_unavailable')
     check(len(json.dumps(live).encode()) <= MAX_BYTES, "probe_response_exceeds_bound")
     return live
 
@@ -741,12 +796,26 @@ def fleet_snapshot(a, state):
                 check(a.teerex is not None and os.path.isabs(a.teerex), "explicit_teerex_executable_required")
                 resolved = bounded_command([a.teerex, "targets", "resolve", "--config", a.config, "--host", item["name"]])["host"]
                 cfg = dict(host=resolved["host_id"], server="unix://" + resolved["socket"])
+                def on_host(path, selections):
+                    if path is None:
+                        return os.path.join(resolved['home'], '.local/state/teerex-agents') if dashboard else None
+                    generic = any(selection.startswith('/') for selection in selections)
+                    local_home = os.path.expanduser('~')
+                    if generic and path.startswith(local_home + '/'):
+                        return os.path.join(resolved['home'], os.path.relpath(path, local_home))
+                    return path
+                registry = on_host(registry, a.jobs_registry)
+                agents_registry = on_host(agents_registry, a.agents_registry)
                 live = bounded_command([a.teerex, "--config", a.config, "--host", item["name"], "boards", "probe"]
                                        + (["--jobs-registry", registry] if registry else [])
                                        + (["--dashboard"] if dashboard else [])
+                                       + (["--expire-asks"] if dashboard and not a.once else [])
                                        + (["--agents-registry", agents_registry] if agents_registry else []), timeout=8)
             else:
-                live = probe(cfg["server"][7:], registry, a.teerex, dashboard, agents_registry)
+                if dashboard:
+                    registry = registry or os.path.expanduser('~/.local/state/teerex-agents')
+                    agents_registry = agents_registry or os.path.expanduser('~/.local/state/teerex-agents')
+                live = probe(cfg["server"][7:], registry, a.teerex, dashboard, agents_registry, dashboard and not a.once)
             check(live["version"]["api_revision"] == 13 and isinstance(live["rows"], list)
                   and len(live["rows"]) <= MAX_FLEET, "invalid_live_response")
             text(live["identity"]["instance_id"], 128, False)
@@ -1057,6 +1126,7 @@ def parser():
     q = commands.add_parser("probe", help="one bounded read-only API13 fleet sample; root named-host routing supplies socket")
     q.add_argument("--socket", required=True)
     q.add_argument("--jobs-registry", help="absolute read-only jobs registry on this command host; max 32 entries/256 KiB")
+    q.add_argument("--expire-asks", action="store_true", help="with --dashboard, clear teerex ask statuses older than 30 minutes; used by live fleet refresh")
     q.add_argument("--dashboard", action="store_true", help="read live OSC, bounded call history and optional lifecycle metadata")
     q.add_argument("--agents-registry", help="dashboard-only private lifecycle registry; 32 records, 256 KiB each; no token/body projection")
     q.add_argument("--teerex", help="absolute current CLI; native bridge supplies self path")
@@ -1110,7 +1180,7 @@ def parser():
     q.add_argument("--draft-wait-ms", type=bounded_int(0, 55000), default=30000, metavar="0..55000")
     q.set_defaults(operation="ask")
     q.add_argument("--from", dest="sender", required=True)
-    group = q.add_mutually_exclusive_group(required=True)
+    group = q.add_mutually_exclusive_group(required=False)
     group.add_argument("--card-file", help="absolute JSON file or -; id/title/ask/context/options/recommend required; prepared required with --deliver paste")
     group.add_argument("--resolve")
     group.add_argument("--title", help="inline card title; requires --ask, --context, two --option entries and --recommend")
@@ -1119,7 +1189,7 @@ def parser():
     q.add_argument("--option", action="append", default=[], help="Label :: gain :: loss (repeat 2..8 times)")
     q.add_argument("--recommend")
     q.add_argument("--id", help="inline decision id; default random hex")
-    q.add_argument("--answer", help="resolution answer, or optional Reply hint on a new card")
+    q.add_argument("--answer", help="standalone answer delivery to selected asker, resolution answer, or optional Reply hint on a new card")
     c = commands.add_parser("boards", help="run in a visible Rex terminal; Ctrl+C stops; never starts a hidden watcher")
     views = c.add_subparsers(dest="view", required=True)
     friction = views.add_parser("friction", help="opt-in call shapes and read-only repeated-sequence report", description="Explicit private consent for 1..30 days; no argv or values. Shape data rotates at 4 MiB once (8 MiB maximum). Collection failure never changes a command. No scripts or automatic action.")
@@ -1154,7 +1224,7 @@ def parser():
     q.add_argument("--hosts", help="comma-separated command hosts, max 16; unavailable hosts visible")
     q.add_argument("--teerex", help="absolute native CLI; supplied by compiled bridge")
     for v in ("inbox", "fleet"):
-        q = views.add_parser(v, description="Live fleet: current work and progress; Space scratchpad; a all history; i inspect; --detail legacy table. Keys: arrows/j/k select; Enter focuses; p jobs-present+focus beside this dashboard (same server/session); o leaf-opens a recorded report/brief beside its agent; r refresh; / filter; q quit. Actions show native receipts; no auto-focus or close. --once --json stays compatible; --once --detail retains the previous text." if v == "fleet" else None)
+        q = views.add_parser(v, description="Live fleet: current work and progress; managed agents only; home-relative registries map per host; questions expire after 30 minutes on refresh. Space scratchpad; a all history; i inspect; --detail legacy table. Keys: arrows/j/k select; Enter focuses; p jobs-present+focus beside this dashboard (same server/session); o leaf-opens a recorded report/brief beside its agent; r refresh; / filter; q quit. Actions show native receipts; no auto-focus or close. --once --json stays compatible; --once --detail retains the previous text." if v == "fleet" else None)
         common(q, v == "inbox")
         q.add_argument("--once", action="store_true", help="one bounded snapshot, including non-TTY capture")
         q.add_argument("--json", action="store_true")
@@ -1191,7 +1261,7 @@ def main(argv=None):
         a.input_deadline = time.monotonic() + a.timeout_ms / 1000
     if a.command == "probe":
         check(options.count("--jobs-registry") <= 1 and options.count("--agents-registry") <= 1, "duplicate_option")
-        print(json.dumps(socket_receipt(probe(a.socket, a.jobs_registry, a.teerex, a.dashboard, a.agents_registry))), flush=True)
+        print(json.dumps(socket_receipt(probe(a.socket, a.jobs_registry, a.teerex, a.dashboard, a.agents_registry, a.expire_asks))), flush=True)
         return 0
     if a.command == "ask":
         return deliver_ask(a)

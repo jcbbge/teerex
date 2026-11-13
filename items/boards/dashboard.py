@@ -17,7 +17,10 @@ import tty
 def lifecycles(path, api):
     check, private = api['check'], api['private']
     check(os.path.isabs(path), 'absolute_agents_registry_required')
-    directory = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        directory = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    except FileNotFoundError:
+        return []
     lock = None
     try:
         private(directory, True)
@@ -208,7 +211,8 @@ def summary(row, now):
 
 
 def fleet_rows(snapshot, now, history=False):
-    rows = snapshot['rows']
+    rows = [r for r in snapshot['rows'] if (r.get('registration') or {}).get('kind') == 'agent'
+            and r.get('registration_matches_presence') is True and (r.get('dashboard') or {}).get('lifecycle')]
     if not history:
         rows = [r for r in rows if r['observation'].get('present') is True
                 and summary(r, now)['state'] != 'done']

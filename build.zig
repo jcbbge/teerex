@@ -118,6 +118,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     exe.root_module.addImport("rex_boards", boards);
+    send.addImport("rex_boards", boards);
     surfaces.addImport("rex_boards", boards);
     rex_run.addImport("rex_boards", boards);
     const recovery = b.createModule(.{

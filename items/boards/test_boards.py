@@ -44,7 +44,7 @@ class BoardsTest(unittest.TestCase):
         self.store = self.root / "store"
         self.store.mkdir(mode=0o700)
         self.target = dict(host="hive", socket=str(self.root / "rex.sock"), session="session:" + ZERO, block="block:" + ZERO)
-        self.env = dict(os.environ, TEEREX_CLUTCH_DIR=str(self.root / "clutch"))
+        self.env = dict(os.environ, TEEREX_ASK_STATE_DIR=str(self.root / "asks"), TEEREX_CLUTCH_DIR=str(self.root / "clutch"))
         self.message = self.root / "message"
         self.message.write_text("first line\noperator input stays untouched · α")
         self.card = self.root / "card.json"
@@ -431,6 +431,27 @@ Recommendation: Leave and notify owner; it is not ours to remove.""")
                     self.assertEqual(json.loads(out)["outcome"], "cancelled")
             self.assertEqual(self.inspect()["seats"][0]["records"], [])
 
+    def test_named_fleet_maps_generic_home_registries_per_server(self):
+        config = self.root / 'hosts.json'
+        config.write_text('{}')
+        transport = self.root / 'mapped-host-fixture'
+        transport.write_text('#!' + sys.executable + '\n' + """import json,sys,os
+args=sys.argv[1:]
+name=args[args.index('--host')+1]
+home='/Users/operator' if name=='m5' else '/home/operator'
+if args[0]=='targets':
+ print(json.dumps({'host':{'host_id':name,'socket':'/tmp/'+name+'.sock','home':home}}))
+else:
+ assert args[args.index('--jobs-registry')+1]==home+'/.local/state/teerex-agents', args
+ print(json.dumps({'version':{'api_revision':13},'identity':{'host_id':name,'instance_id':name},'rows':[], 'registrations':[]}))
+""")
+        transport.chmod(0o700)
+        command = self.argv('fleet', target=False, config=config, hosts='hive,m5', teerex=transport, once=True, json=True)
+        command += ['--jobs-registry', str(Path.home() / '.local/state/teerex-agents')]
+        result = subprocess.run(command, env=self.env, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual([s['outcome'] for s in json.loads(result.stdout)['sources']], ['observed', 'observed'])
+
     def test_named_host_partial_failures_never_omit_rows(self):
         config = self.root / "hosts.json"
         config.write_text("{}")
@@ -468,7 +489,7 @@ class CallsTest(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
         self.log = self.root / "calls"
-        self.env = dict(os.environ, TEEREX_CLUTCH_DIR=str(self.root / "clutch"), TEEREX_CALL_LOG_DIR=str(self.log))
+        self.env = dict(os.environ, TEEREX_ASK_STATE_DIR=str(self.root / "asks"), TEEREX_CLUTCH_DIR=str(self.root / "clutch"), TEEREX_CALL_LOG_DIR=str(self.log))
 
     def call(self, *args, **kw):
         return subprocess.run([BIN, *args], env=self.env, capture_output=True, text=True, timeout=15, **kw)
@@ -650,6 +671,7 @@ class CompactFleetTest(unittest.TestCase):
         spec.loader.exec_module(module)
         def row(state, present=True):
             return dict(target=dict(block_id=state, host="hive"), observation=dict(present=present, label=state),
+                        registration=dict(kind='agent'), registration_matches_presence=True, dashboard=dict(lifecycle=dict(name=state)),
                         program_status=dict(records=[dict(state=state, age_ms=0)]))
         rows = [row('idle'), row('working'), row('error'), row('blocked'), row('done'), row('idle', False)]
         snapshot = dict(rows=rows)
@@ -789,7 +811,7 @@ class RexBoardsTest(unittest.TestCase):
         root.mkdir()
         for directory in ("store", "jobs", "agents", "bin"):
             (root / directory).mkdir(mode=0o700)
-        env = dict(os.environ, TEEREX_CLUTCH_DIR=str(root / "clutch"), PATH=str(root / "bin") + os.pathsep + str(Path(self.rex).parent) + os.pathsep + os.environ["PATH"],
+        env = dict(os.environ, TEEREX_ASK_STATE_DIR=str(root / "asks"), TEEREX_CLUTCH_DIR=str(root / "clutch"), PATH=str(root / "bin") + os.pathsep + str(Path(self.rex).parent) + os.pathsep + os.environ["PATH"],
                    TEEREX_CALL_LOG_DIR=str(root / "calls"), REX_SERVER="unix:///poison.sock", REX_SESSION="session:poison", REX_BLOCK="block:poison")
         def invoke(*args):
             result = subprocess.run([BIN, *args], env=env, capture_output=True, text=True, timeout=20)
@@ -921,6 +943,34 @@ class RexBoardsTest(unittest.TestCase):
         os.write(master, b'q')
         self.finish_dashboard(process, master, slave, saved, output)
 
+    def test_missing_remote_style_registries_are_empty_inventory_not_unavailable(self):
+        root, env, args, session, anchor, alpha, beta, view = self.dashboard_fixture()
+        missing = str(root / 'no-agents-yet')
+        result = subprocess.run([BIN, 'boards', 'probe', '--socket', str(self.socket), '--dashboard',
+            '--jobs-registry', missing, '--agents-registry', missing], env=env, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        packet = json.loads(result.stdout)
+        self.assertEqual(packet['registrations'], [])
+        self.assertEqual(packet['dashboard']['lifecycles'], [])
+        self.assertEqual(packet['dashboard']['errors'], [])
+
+    def test_compact_fleet_only_managed_agents_not_viewers_or_receipts(self):
+        root, env, args, session, anchor, alpha, beta, view = self.dashboard_fixture()
+        args.remove('--detail')
+        junk = ('codex-cmdj scratchpad', 'fleet', 'restore receipt', 'snapshot receipt', 'board-probe-hive', 'q05 fixture')
+        for label in junk:
+            made = subprocess.run([BIN, 'surfaces', 'open', '--socket', str(self.socket), '--session', session,
+                '--layout', 'tab', '--label', label, '--', '/bin/sleep', '120'], env=env, capture_output=True, text=True)
+            self.assertEqual(made.returncode, 0, made.stdout + made.stderr)
+        process, master, slave, saved, output, wait_for = self.keyboard_dashboard(args, env, 120)
+        screen = wait_for('dash-agent-alpha')
+        self.assertIn('dash-agent-beta', screen)
+        for label in junk:
+            self.assertNotIn(label, screen)
+        self.assertNotIn('dashboard-anchor', screen)
+        os.write(master, b'q')
+        self.finish_dashboard(process, master, slave, saved, output)
+
     def test_compact_fleet_wrap_scratchpad_history_and_inspect(self):
         for width in (60, 120):
             root, env, args, session, anchor, alpha, beta, view = self.dashboard_fixture()
@@ -950,7 +1000,8 @@ class RexBoardsTest(unittest.TestCase):
             wait_for('session:')
             os.write(master, b'i/a\r')
             os.write(master, b'/\ra')
-            wait_for('history-agent')
+            screen = wait_for('dash-agent-alpha')
+            self.assertNotIn('history-agent', screen)
             os.write(master, b'q')
             self.finish_dashboard(process, master, slave, saved, output)
 

@@ -114,7 +114,7 @@ teerex boards ask --store "$STORE" --host "$HOST_ID" \
   --from operator --resolve release-7 --answer 'Wait until sessions finish.'
 ```
 
-When `--store` is supplied, a decision pins in the historical board until its exact ID is resolved. Unknown/already-resolved IDs refuse; a resolution retains the reported answer and clears only that card. The resolution is typed into the selected pane; it does not execute an option. Select the original agent pane explicitly to send an answer there without history. Timestamp and sender are reports supplied by this command, not verified human identity. Seat clear refuses while any records remain; inbox clear refuses while a decision remains open.
+When `--store` is supplied, a decision pins in the historical board until its exact ID is resolved. Unknown/already-resolved IDs refuse; a resolution retains the reported answer and clears only that card. Resolution clears the selected seat record. An optional answer goes only to its recorded asker, never the invoking pane; it does not execute an option. Select the original agent pane explicitly to send an answer there without history. Timestamp and sender are reports supplied by this command, not verified human identity. Seat clear refuses while any records remain; inbox clear refuses while a decision remains open.
 
 ### Prepared questions (`ask --deliver paste`)
 
@@ -384,3 +384,38 @@ friction collection for such caller/agent metadata, preventing a second retained
 copy. Argument values and bodies remain absent from the call shape. The Python
 append boundary applies the same provider-prefix floor. This does not rewrite old
 segments or promise detection of arbitrary secrets.
+
+## Managed fleet and per-host paths
+
+The compact fleet shows live panes present in both the agents lifecycle registry
+and the jobs registry with `kind: agent`. Scratchpad viewers, receipts, boards and
+unregistered fixtures are excluded. JSON and `--detail` retain raw inventory for
+inspection. Dashboard probes read the selected host's default agents registry;
+a host without a registry has an empty managed inventory, not an unavailable
+server. Corrupt or unreadable registries remain errors.
+
+A generic absolute registry path beneath the invoking user's home is mapped to
+that same relative path beneath each configured host's `home`. Use `HOST=ABS` to
+keep an explicit host-specific path literal. This avoids sending hive's
+`/home/...` path to a Mac whose home is `/Users/...`.
+
+## Answer and clear a question
+
+`ask --resolve ID` clears the selected seat's question without typing anything.
+With `--answer TEXT`, it sends the resolution only to the recorded asker, and only
+when the invoking pane is known and is different from that destination. It never
+pastes a resolution into the resolver. If the asker is
+unknown, the receipt says `answer_delivered: false`; clearing does not invent an
+answer. Optional stored history is resolved separately and reports unavailable
+terminal status as `unknown`.
+
+`ask --answer TEXT --session ASKER_SESSION --block ASKER_BLOCK --from seat` sends
+an answer without creating a new card. Any acknowledged native `send` from a
+seat-labelled pane to a recorded asker also clears that seat's pending questions
+from the same asker. An optional Reply hint alongside a new card remains supported.
+
+A private, bounded ask ledger stores only card IDs, pane addresses, sender labels
+and expiry times. Questions expire after **30 minutes** on the next running fleet
+refresh or successful send; one-shot probes remain read-only, and `probe --dashboard --expire-asks` explicitly enables expiry; this includes legacy `ask/` records seen by the board.
+Without either activity, no background timer runs. Expiry clears the status, not
+stored history, and does not claim that an answer was delivered.

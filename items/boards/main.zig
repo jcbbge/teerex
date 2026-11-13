@@ -59,6 +59,8 @@ pub fn tryRoute(allocator: std.mem.Allocator, args: []const []const u8) !?u8 {
     return if (sig != 0) 128 + sig else if (term == .Exited) term.Exited else if (term == .Signal) @intCast(@min(255, 128 + term.Signal)) else 1;
 }
 
+pub const seat_status_source = @embedFile("seat_status.py");
+
 pub const call_log = @import("calls.zig");
 
 /// Foreground Python3.9+ stdlib implementation. exec preserves the visible pane,
@@ -88,7 +90,7 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
     const allowed_flags = try std.json.Stringify.valueAlloc(allocator, @import("flagnames.zig").names, .{});
     const script = try std.fmt.allocPrint(allocator, "import types,sys\n_dashboard=types.ModuleType('teerex_dashboard')\nexec({s}, _dashboard.__dict__)\nsys.modules['teerex_dashboard']=_dashboard\n_friction=types.ModuleType('teerex_friction')\nexec({s},_friction.__dict__)\n_friction.FLAGS=set({s}.split())\nsys.modules['teerex_friction']=_friction\n{s}", .{ dashboard_source, friction_source, allowed_flags, @embedFile("boards.py") });
     // Keep the source outside the quoted logging wrapper: Linux bounds each argv string to 128 KiB.
-    try argv.appendSlice(allocator, &.{ "python3", "-I", "-c", try call_log.python(allocator, "import sys\nexec(compile(sys.argv.pop(1), '<boards>', 'exec'))"), script });
+    try argv.appendSlice(allocator, &.{ "python3", "-I", "-c", try call_log.python(allocator, "import sys,types\n_seat=types.ModuleType('teerex_seat_status')\nexec(sys.argv.pop(1),_seat.__dict__)\nsys.modules['teerex_seat_status']=_seat\nexec(compile(sys.argv.pop(1), '<boards>', 'exec'))"), seat_status_source, script });
     const render = args.len > 0 and (std.mem.eql(u8, args[0], "inbox") or std.mem.eql(u8, args[0], "fleet") or std.mem.eql(u8, args[0], "calls")) and
         (args.len == 1 or std.mem.startsWith(u8, args[1], "--"));
     if (render or (args.len > 0 and std.mem.eql(u8, args[0], "friction"))) try argv.append(allocator, "boards");

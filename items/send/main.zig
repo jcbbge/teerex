@@ -23,7 +23,8 @@ const usage =
     \\Restore polls100ms up to1500ms; unverified/failed restore warns without failing acknowledged send.
     \\Stale locks are never stolen.
     \\JSON reports attempts/acknowledgements, NOT application consumption, atomic delivery, or an input lease.
-    \\Seat-labelled terminal deliveries add best-effort child OSC7501 status (receipt status_record); Python3 required for status only.
+    \\Seat-labelled deliveries add best-effort OSC7501 status; replies from the seat clear matching ask cards.
+    \\Status uses fd0/fd1/fd2 or controlling tty, including redirected stdout; Python3 required for status only.
     \\--status-id ID --status-state done|blocked|clear --status-message TEXT customize the seat record (ask uses these).
     \\Exit: 0 both ACKs, 1 refusal/error/uncertain, 2 usage, 124 deadline, 130 SIGINT, 143 SIGTERM.
     \\
@@ -256,6 +257,7 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
     var timer = try std.time.Timer.start();
     const started_at = std.time.milliTimestamp();
     var env = try std.process.getEnvMap(allocator);
+    const status_context = try std.json.Stringify.valueAlloc(allocator, .{ .socket = path, .session = sid, .block = bid, .sender = sender, .id = status_id, .state = state, .origin = .{ .session = env.get("REX_SESSION") orelse env.get("LC_REX_SESSION"), .block = env.get("REX_BLOCK") orelse env.get("LC_REX_BLOCK") } }, .{});
     for ([_][]const u8{ "REX_SERVER", "REX_SESSION", "REX_BLOCK", "REX_CLIENT" }) |key| env.remove(key);
     var clutch_failure: ?[]const u8 = null;
     var clutch = clutch_state.Store.openRead(allocator, &env, path, sid, bid) catch |err| blk: {
@@ -380,7 +382,7 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
         locked = false;
     }
     const success = std.mem.eql(u8, outcome, "events_acknowledged") and failure == null;
-    const status_outcome = if (success and (collector.seat or collector.tinted_agent)) statusReport(allocator, &env, collector.status_pid, sender, message, status_id, state, status_message, collector.seat, collector.tinted_agent) catch "failed" else "not_requested";
+    const status_outcome = if (success) statusReport(allocator, &env, collector.status_pid, sender, message, status_id, state, status_message, collector.seat, collector.tinted_agent, status_context) catch "failed" else "not_requested";
     const output = try std.json.Stringify.valueAlloc(allocator, .{
         .schema_version = 1,
         .status_record = status_outcome,
@@ -431,8 +433,8 @@ fn b64(allocator: std.mem.Allocator, bytes: []const u8) ![]const u8 {
     return std.base64.standard.Encoder.encode(out, bytes);
 }
 
-fn statusReport(allocator: std.mem.Allocator, env: *std.process.EnvMap, pid: ?i32, sender: []const u8, message: []const u8, id: ?[]const u8, state: []const u8, detail: ?[]const u8, seat: bool, reset_tint: bool) ![]const u8 {
-    const child = pid orelse return "tty_unavailable";
+fn statusReport(allocator: std.mem.Allocator, env: *std.process.EnvMap, pid: ?i32, sender: []const u8, message: []const u8, id: ?[]const u8, state: []const u8, detail: ?[]const u8, seat: bool, reset_tint: bool, context: []const u8) ![]const u8 {
+    const child = pid orelse 0;
     // Encode the sender in the record key too: colon/equal/non-ASCII cannot alter OSC fields.
     const raw_key = id orelse try std.fmt.allocPrint(allocator, "msg/{s}", .{sender});
     var key: std.ArrayList(u8) = .empty;
@@ -457,9 +459,9 @@ fn statusReport(allocator: std.mem.Allocator, env: *std.process.EnvMap, pid: ?i3
     }
     const report = try std.fmt.allocPrint(allocator, "\x1b]7501;state={s}:id={s}:app=teerex{s}:title={s}:msg={s}\x1b\\", .{ state, key.items, if (std.mem.eql(u8, state, "blocked")) ":kind=question" else "", try b64(allocator, try std.fmt.allocPrint(allocator, "FROM {s}", .{sender})), try b64(allocator, clean.items) });
     const bytes = try std.fmt.allocPrint(allocator, "{s}{s}", .{ if (reset_tint) "\x1b]111\x1b\\" else "", if (seat) report else "" });
-    const argv = [_][]const u8{ "python3", "-I", "-c", @embedFile("status.py"), try std.fmt.allocPrint(allocator, "{d}", .{child}), bytes };
+    const argv = [_][]const u8{ "python3", "-I", "-c", @import("rex_boards").seat_status_source, try std.fmt.allocPrint(allocator, "{d}", .{child}), bytes, context };
     var collector = StatusCollector{ .allocator = allocator };
-    const result = try supervised.collect(allocator, &argv, env, 250, &collector);
+    const result = try supervised.collect(allocator, &argv, env, 2500, &collector);
     if (result.deadline_exceeded) return "deadline_exceeded";
     const parsed = std.json.parseFromSlice([]const u8, allocator, collector.bytes.items, .{ .allocate = .alloc_always }) catch return "failed";
     return parsed.value;
