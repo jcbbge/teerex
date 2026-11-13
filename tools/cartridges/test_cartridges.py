@@ -38,7 +38,12 @@ class Lifecycle(unittest.TestCase):
         self.entries = []
         # macOS system Python otherwise writes framework bytecode into HOME,
         # which is unrelated to the manager and breaks exact read-only controls.
-        self.env = dict(os.environ, HOME=str(self.home), PYTHONDONTWRITEBYTECODE="1")
+        # Call logging is expected even for read-only commands; keep it outside
+        # the exact HOME snapshot, independently of the caller's environment.
+        logs = tempfile.TemporaryDirectory(prefix="teerex-cartridges-call-log-")
+        self.addCleanup(logs.cleanup)
+        self.env = dict(os.environ, HOME=str(self.home), PYTHONDONTWRITEBYTECODE="1",
+                        TEEREX_CALL_LOG_DIR=logs.name)
         self.sentinels = []
         for name in (".zshrc", ".config/rex/init.lua", ".local/opt/teerex/current"):
             p = self.home / name

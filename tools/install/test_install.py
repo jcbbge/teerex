@@ -86,7 +86,11 @@ class Lifecycle(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.home = Path(self.temp.name).resolve()
         self.prefix = self.home / "space in path" / "teerex"
-        self.env = dict(os.environ, HOME=str(self.home))
+        # Public binaries may log read-only calls; keep logs outside the HOME
+        # snapshot instead of relying on CI's global call-log override.
+        logs = tempfile.TemporaryDirectory(prefix="teerex-installer-call-log-")
+        self.addCleanup(logs.cleanup)
+        self.env = dict(os.environ, HOME=str(self.home), TEEREX_CALL_LOG_DIR=logs.name)
         self.sentinels = {}
         for name in (".zshrc", ".zprofile", ".config/rex/init.lua", ".local/bin/teerex"):
             path = self.home / name

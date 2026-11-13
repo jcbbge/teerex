@@ -156,8 +156,8 @@ jobs:
       - name: Run cartridge lifecycle and native installed-payload contracts
         if: runner.os == 'Linux' || matrix.rex-api == 13
         run: |
-          python3 -m unittest discover -s tools/cartridges -p test_cartridges.py -v
-          python3 tools/cartridges/test_root_entry.py -v
+          env -u TEEREX_CALL_LOG_DIR python3 -m unittest discover -s tools/cartridges -p test_cartridges.py -v
+          env -u TEEREX_CALL_LOG_DIR python3 tools/cartridges/test_root_entry.py -v
           platform=x86_64-linux
           if [[ "$RUNNER_OS" == macOS ]]; then platform=aarch64-macos; fi
           python3 tools/cartridges/package.py --platform "$platform" \
@@ -166,7 +166,7 @@ jobs:
 
       - name: Run installer lifecycle and public release controls
         if: runner.os == 'Linux' || matrix.rex-api == 13
-        run: python3 tools/install/test_install.py --public -v
+        run: env -u TEEREX_CALL_LOG_DIR python3 tools/install/test_install.py --public -v
 
       - name: Cross-build Apple-silicon CLI
         if: runner.os == 'Linux'
