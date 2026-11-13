@@ -1,0 +1,1110 @@
+{
+  "schema_version": 1,
+  "kind": "presentation_view_measurement",
+  "source_revision": "06c5061a81b9ca96323231bd17b5e0317b5d1c80",
+  "binary_sha256": "6db1c7957323b6baa7a8b9b27b306d27f3a77bd69834082200d67ed1f1332308",
+  "driver_sha256": "cb84449ac9861d805ae5a61028ffbfe0534b890e700b1acf3270c30a44095256",
+  "rex": {
+    "rex_version": "0.0.1794460237-g348d75",
+    "platform": "linux_amd64",
+    "commit": "348d751870eae7162873898d361b58eae4ce1984",
+    "built_at": "2026-11-12T05:10:37Z",
+    "dirty": false,
+    "api_revision": 13
+  },
+  "workload": {
+    "warm_runs": 20,
+    "duration": 20,
+    "delay_range": [
+      5,
+      15
+    ],
+    "concurrent_workers": 18,
+    "tick_ms": 100
+  },
+  "measurements": {
+    "view": {
+      "A0": {
+        "E1": {
+          "calls": 671,
+          "rex_client_launches": 671,
+          "stdout_bytes": 999454,
+          "stderr_bytes": 64416,
+          "cpu_ms": 41460.01400000002,
+          "false_wakes": 629,
+          "false_suppression": 0,
+          "hidden_tail_unknown": 0,
+          "bytes_to_detect": 999454,
+          "runs": 21,
+          "maxrss_kib": 42968.0,
+          "wall_ms": {
+            "cold": 4529.02006189106,
+            "warm_median": 3360.2321367070545,
+            "warm_p95": 4639.90310014924
+          },
+          "excluded": [
+            "server/fixture setup and teardown",
+            "resident Rex server CPU/RSS",
+            "caller Python CPU/RSS"
+          ],
+          "detection_latency_ms": [
+            186.29227601923048,
+            347.90694300318137,
+            13.514855992980301,
+            235.34510500030592,
+            95.12608003569767,
+            18.333319982048124,
+            202.27081998018548,
+            101.98899399256334,
+            366.72521400032565,
+            84.6729229670018,
+            105.68039101781324,
+            84.75531998556107,
+            121.45440501626581,
+            178.91164199681953,
+            127.27073096903041,
+            102.95821505133063,
+            47.04869503621012,
+            187.43873399216682,
+            134.3693130183965,
+            121.82677298551425,
+            290.7440380076878
+          ]
+        },
+        "E2": {
+          "calls": 605,
+          "rex_client_launches": 605,
+          "stdout_bytes": 901208,
+          "stderr_bytes": 58080,
+          "cpu_ms": 37306.03499999999,
+          "false_wakes": 563,
+          "false_suppression": 0,
+          "hidden_tail_unknown": 0,
+          "bytes_to_detect": 901208,
+          "runs": 21,
+          "maxrss_kib": 42916.0,
+          "wall_ms": {
+            "cold": 2319.2430951748975,
+            "warm_median": 2951.3125178345945,
+            "warm_p95": 4276.389758975711
+          },
+          "excluded": [
+            "server/fixture setup and teardown",
+            "resident Rex server CPU/RSS",
+            "caller Python CPU/RSS"
+          ],
+          "detection_latency_ms": [
+            64.38649503979832,
+            140.11968596605584,
+            52.78834601631388,
+            186.84008595300838,
+            239.0885570202954,
+            311.98495405260473,
+            160.1895120111294,
+            26.3100890442729,
+            509.03313502203673,
+            204.67299898155034,
+            362.2041970374994,
+            27.36239496152848,
+            287.43300202768296,
+            279.32286297436804,
+            152.15964399976656,
+            253.26301896711811,
+            224.22028298024088,
+            186.36975600384176,
+            84.70720000332221,
+            238.600714947097,
+            59.46360499365255
+          ]
+        },
+        "E3": {
+          "calls": 663,
+          "rex_client_launches": 663,
+          "stdout_bytes": 984232,
+          "stderr_bytes": 63648,
+          "cpu_ms": 40826.52800000001,
+          "false_wakes": 621,
+          "false_suppression": 0,
+          "hidden_tail_unknown": 0,
+          "bytes_to_detect": 984232,
+          "runs": 21,
+          "maxrss_kib": 42992.0,
+          "wall_ms": {
+            "cold": 4387.181499332655,
+            "warm_median": 3410.4129239858594,
+            "warm_p95": 4164.368042896967
+          },
+          "excluded": [
+            "server/fixture setup and teardown",
+            "resident Rex server CPU/RSS",
+            "caller Python CPU/RSS"
+          ],
+          "detection_latency_ms": [
+            382.90909596253186,
+            65.53009600611404,
+            144.27050098311156,
+            225.0588129973039,
+            147.07878098124638,
+            150.6803070078604,
+            307.44020896963775,
+            153.87358597945422,
+            20.657943037804216,
+            78.87591299368069,
+            197.3515250138007,
+            115.21392205031589,
+            220.76704096980393,
+            135.54749795002863,
+            405.4946200340055,
+            334.6827700152062,
+            179.3842390179634,
+            358.2739299745299,
+            34.34359404491261,
+            120.06302399095148,
+            77.19180796993896
+          ]
+        },
+        "E4": {
+          "calls": 588,
+          "rex_client_launches": 588,
+          "stdout_bytes": 884308,
+          "stderr_bytes": 56448,
+          "cpu_ms": 36221.940999999984,
+          "false_wakes": 546,
+          "false_suppression": 0,
+          "hidden_tail_unknown": 0,
+          "bytes_to_detect": 884308,
+          "runs": 21,
+          "maxrss_kib": 42992.0,
+          "wall_ms": {
+            "cold": 3519.0207118866965,
+            "warm_median": 2704.7773084195796,
+            "warm_p95": 3966.8764279340394
+          },
+          "excluded": [
+            "server/fixture setup and teardown",
+            "resident Rex server CPU/RSS",
+            "caller Python CPU/RSS"
+          ],
+          "detection_latency_ms": [
+            55.32806599512696,
+            143.99326703278348,
+            203.45888403244317,
+            266.6126799886115,
+            164.31433899560943,
+            146.39545499812812,
+            104.79093197500333,
+            231.16908996598795,
+            336.0478989779949,
+            152.2369800368324,
+            49.528781964909285,
+            175.88969599455595,
+            146.6201709699817,
+            200.44387300731614,
+            125.32553100027144,
+            94.14660296170041,
+            166.64905101060867,
+            234.30106497835368,
+            31.50248300516978,
+            61.89403700409457,
+            71.45859696902335
+          ]
+        },
+        "E5": {
+          "calls": 571,
+          "rex_client_launches": 571,
+          "stdout_bytes": 850571,
+          "stderr_bytes": 54816,
+          "cpu_ms": 35790.18100000001,
+          "false_wakes": 529,
+          "false_suppression": 0,
+          "hidden_tail_unknown": 0,
+          "bytes_to_detect": 850571,
+          "runs": 21,
+          "maxrss_kib": 42884.0,
+          "wall_ms": {
+            "cold": 2589.093068090733,
+            "warm_median": 2638.4328230051324,
+            "warm_p95": 4545.497829152737
+          },
+          "excluded": [
+            "server/fixture setup and teardown",
+            "resident Rex server CPU/RSS",
+            "caller Python CPU/RSS"
+          ],
+          "detection_latency_ms": [
+            129.93837299291044,
+            308.7943990249187,
+            337.56285096751526,
+            80.54702501976863,
+            124.19780000345781,
+            106.33137496188283,
+            173.81669202586636,
+            301.2959199841134,
+            344.7561340290122,
+            385.15524996910244,
+            393.53836997179314,
+            318.38565197540447,
+            202.29071902576834,
+            414.2423099838197,
+            203.80182599183172,
+            117.15667805401608,
+            44.0633490215987,
+            199.09121800446883,
+            200.45682898489758,
+            321.2535959901288,
+            159.4695679959841
+          ]
+        },
+        "hidden": {
+          "calls": 1241,
+          "rex_client_launches": 1241,
+          "stdout_bytes": 2140725,
+          "stderr_bytes": 119136,
+          "cpu_ms": 76862.468,
+          "false_wakes": 0,
+          "false_suppression": 0,
+          "hidden_tail_unknown": 21,
+          "bytes_to_detect": 2140725,
+          "runs": 21,
+          "maxrss_kib": 42992.0,
+          "wall_ms": {
+            "cold": 6474.016050226055,
+            "warm_median": 5814.248668204527,
+            "warm_p95": 6602.265489869751
+          },
+          "excluded": [
+            "server/fixture setup and teardown",
+            "resident Rex server CPU/RSS",
+            "caller Python CPU/RSS"
+          ],
+          "detection_latency_ms": []
+        }
+      },
+      "A1": {
+        "E1": {
+          "calls": 1697,
+          "rex_client_launches": 1697,
+          "stdout_bytes": 4068047,
+          "stderr_bytes": 162912,
+          "cpu_ms": 103969.87400000003,
+          "false_wakes": 817,
+          "false_suppression": 0,
+          "hidden_tail_unknown": 0,
+          "bytes_to_detect": 4068047,
+          "runs": 21,
+          "maxrss_kib": 43088.0,
+          "wall_ms": {
+            "cold": 12755.588236032054,
+            "warm_median": 8835.04291443387,
+            "warm_p95": 14248.15566506004
+          },
+          "excluded": [
+            "server/fixture setup and teardown",
+            "resident Rex server CPU/RSS",
+            "caller Python CPU/RSS"
+          ],
+          "detection_latency_ms": [
+            228.9078169851564,
+            198.64470802713186,
+            143.99386598961428,
+            16.74296398414299,
+            119.12928195670247,
+            111.9329949724488,
+            185.63872703816742,
+            54.331533960066736,
+            58.79166902741417,
+            123.81381198065355,
+            75.95423801103607,
+            7.791827025357634,
+            155.6463610031642,
+            76.88407396199182,
+            77.6352189714089,
+            62.89107899647206,
+            172.55782498978078,
+            335.4467390454374,
+            133.75770300626755,
+            170.10269599268213,
+            189.38605999574065
+          ]
+        },
+        "E2": {
+          "calls": 1827,
+          "rex_client_launches": 1827,
+          "stdout_bytes": 4381215,
+          "stderr_bytes": 175392,
+          "cpu_ms": 111684.698,
+          "false_wakes": 882,
+          "false_suppression": 0,
+          "hidden_tail_unknown": 0,
+          "bytes_to_detect": 4381215,
+          "runs": 21,
+          "maxrss_kib": 43060.0,
+          "wall_ms": {
+            "cold": 10442.059094610158,
+            "warm_median": 12411.431760818232,
+            "warm_p95": 14191.680474032182
+          },
+          "excluded": [
+            "server/fixture setup and teardown",
+            "resident Rex server CPU/RSS",
+            "caller Python CPU/RSS"
+          ],
+          "detection_latency_ms": [
+            414.35343702323735,
+            220.66721000010148,
+            114.07598195364699,
+            212.99233502941206,
+            157.13343198876828,
+            169.43460801849142,
+            174.8468080186285,
+            97.67699096119031,
+            48.755092022474855,
+            50.541392993181944,
+            38.48195797763765,
+            289.6437380113639,
+            39.49406696483493,
+            141.8191510019824,
+            144.18455999111757,
+            128.1325769959949,
+            170.459381013643,
+            116.98922095820308,
+            220.31311003956944,
+            268.1766520254314,
+            89.07880500191823
+          ]
+        },
+        "E3": {
+          "calls": 1717,
+          "rex_client_launches": 1717,
+          "stdout_bytes": 4113631,
+          "stderr_bytes": 164832,
+          "cpu_ms": 105675.915,
+          "false_wakes": 827,
+          "false_suppression": 0,
+          "hidden_tail_unknown": 0,
+          "bytes_to_detect": 4113631,
+          "runs": 21,
+          "maxrss_kib": 43060.0,
+          "wall_ms": {
+            "cold": 8094.917187350802,
+            "warm_median": 9403.192814497743,
+            "warm_p95": 13570.5725280568
+          },
+          "excluded": [
+            "server/fixture setup and teardown",
+            "resident Rex server CPU/RSS",
+            "caller Python CPU/RSS"
+          ],
+          "detection_latency_ms": [
+            161.3606329774484,
+            53.67293598828837,
+            19.627988047432154,
+            276.0695770266466,
+            17.428474966436625,
+            15.46408497961238,
+            193.24844697257504,
+            43.5044170008041,
+            322.5187049829401,
+            92.99503802321851,
+            224.74311495898291,
+            248.2456259895116,
+            12.740087986458093,
+            18.499416997656226,
+            105.6037949747406,
+            29.520913027226925,
+            75.58167300885543,
+            145.2493509859778,
+            317.6931379712187,
+            162.56835701642558,
+            84.24949197797105
+          ]
+        },
+        "E4": {
+          "calls": 1953,
+          "rex_client_launches": 1953,
+          "stdout_bytes": 4693031,
+          "stderr_bytes": 187488,
+          "cpu_ms": 119086.99900000003,
+          "false_wakes": 945,
+          "false_suppression": 0,
+          "hidden_tail_unknown": 0,
+          "bytes_to_detect": 4693031,
+          "runs": 21,
+          "maxrss_kib": 42992.0,
+          "wall_ms": {
+            "cold": 14258.386454021093,
+            "warm_median": 11383.984855143353,
+            "warm_p95": 14070.863581204321
+          },
+          "excluded": [
+            "server/fixture setup and teardown",
+            "resident Rex server CPU/RSS",
+            "caller Python CPU/RSS"
+          ],
+          "detection_latency_ms": [
+            207.93695194879547,
+            47.643703990615904,
+            64.93076001061127,
+            115.25387596338987,
+            26.10790601465851,
+            170.1271909987554,
+            144.76360799744725,
+            155.73674195911735,
+            194.9822079623118,
+            98.90189702855423,
+            216.71187604079023,
+            296.7296250280924,
+            50.81229697680101,
+            263.05528200464323,
+            252.7417599922046,
+            82.8860139590688,
+            111.34749394841492,
+            115.2320770197548,
+            192.83625803655013,
+            130.0903030205518,
+            148.19561201147735
+          ]
+        },
+        "E5": {
+          "calls": 1839,
+          "rex_client_launches": 1839,
+          "stdout_bytes": 4410095,
+          "stderr_bytes": 176544,
+          "cpu_ms": 113539.179,
+          "false_wakes": 888,
+          "false_suppression": 0,
+          "hidden_tail_unknown": 0,
+          "bytes_to_detect": 4410095,
+          "runs": 21,
+          "maxrss_kib": 43060.0,
+          "wall_ms": {
+            "cold": 12485.613585915416,
+            "warm_median": 9834.094323538011,
+            "warm_p95": 14737.959526944906
+          },
+          "excluded": [
+            "server/fixture setup and teardown",
+            "resident Rex server CPU/RSS",
+            "caller Python CPU/RSS"
+          ],
+          "detection_latency_ms": [
+            40.13984400080517,
+            50.38577795494348,
+            186.26290099928156,
+            12.487747997511178,
+            42.32621204573661,
+            257.47977901482955,
+            137.50639598583803,
+            38.18454302381724,
+            22.09408796625212,
+            69.57393104676157,
+            72.67120794858783,
+            55.11488200863823,
+            246.03748699883,
+            84.85276502324268,
+            93.87088002404198,
+            45.8541180123575,
+            76.36559999082237,
+            291.44041903782636,
+            139.0334649477154,
+            66.44912203773856,
+            193.45829798839986
+          ]
+        },
+        "hidden": {
+          "calls": 42,
+          "rex_client_launches": 42,
+          "stdout_bytes": 105580,
+          "stderr_bytes": 4032,
+          "cpu_ms": 4717.412999999998,
+          "false_wakes": 0,
+          "false_suppression": 0,
+          "hidden_tail_unknown": 21,
+          "bytes_to_detect": 105580,
+          "runs": 21,
+          "maxrss_kib": 43436.0,
+          "wall_ms": {
+            "cold": 20154.65199504979,
+            "warm_median": 20136.437219480285,
+            "warm_p95": 20239.55575301079
+          },
+          "excluded": [
+            "server/fixture setup and teardown",
+            "resident Rex server CPU/RSS",
+            "caller Python CPU/RSS"
+          ],
+          "detection_latency_ms": []
+        }
+      },
+      "A2": {
+        "E1": {
+          "calls": 63,
+          "rex_client_launches": 63,
+          "stdout_bytes": 150715,
+          "stderr_bytes": 6048,
+          "cpu_ms": 4946.570999999985,
+          "false_wakes": 0,
+          "false_suppression": 0,
+          "hidden_tail_unknown": 0,
+          "bytes_to_detect": 150715,
+          "runs": 21,
+          "maxrss_kib": 42992.0,
+          "wall_ms": {
+            "cold": 9321.237262978684,
+            "warm_median": 9837.97269500792,
+            "warm_p95": 14284.813795995433
+          },
+          "excluded": [
+            "server/fixture setup and teardown",
+            "resident Rex server CPU/RSS",
+            "caller Python CPU/RSS"
+          ],
+          "detection_latency_ms": [
+            164.07242900459096,
+            133.84154002415016,
+            439.1398850129917,
+            103.22647303109989,
+            265.00671298708767,
+            253.78331501269713,
+            218.36996101774275,
+            172.14979900745675,
+            344.70022801542655,
+            321.70096202753484,
+            294.94762199465185,
+            203.21372000034899,
+            284.77221401408315,
+            203.4887810004875,
+            257.90100102312863,
+            278.8931280374527,
+            235.53006700240076,
+            181.83451797813177,
+            118.87604201911017,
+            326.5928500331938,
+            309.6487829461694
+          ]
+        },
+        "E2": {
+          "calls": 63,
+          "rex_client_launches": 63,
+          "stdout_bytes": 150517,
+          "stderr_bytes": 6048,
+          "cpu_ms": 5211.757000000007,
+          "false_wakes": 0,
+          "false_suppression": 0,
+          "hidden_tail_unknown": 0,
+          "bytes_to_detect": 150517,
+          "runs": 21,
+          "maxrss_kib": 42968.0,
+          "wall_ms": {
+            "cold": 9390.454386011697,
+            "warm_median": 11367.551951989299,
+            "warm_p95": 14979.865724046249
+          },
+          "excluded": [
+            "server/fixture setup and teardown",
+            "resident Rex server CPU/RSS",
+            "caller Python CPU/RSS"
+          ],
+          "detection_latency_ms": [
+            348.60624896828085,
+            150.11125500313938,
+            309.05183602590114,
+            262.501198973041,
+            222.90683904429898,
+            376.15042098332196,
+            179.5194640289992,
+            157.8366979956627,
+            265.201021975372,
+            301.35054397396743,
+            369.296544988174,
+            209.9451840040274,
+            75.47796599101275,
+            307.1096540079452,
+            261.3539239973761,
+            292.8216300206259,
+            310.93974300893024,
+            220.58968601049855,
+            246.74337700707838,
+            213.88054301496595,
+            169.930097006727
+          ]
+        },
+        "E3": {
+          "calls": 63,
+          "rex_client_launches": 63,
+          "stdout_bytes": 149823,
+          "stderr_bytes": 6048,
+          "cpu_ms": 4970.132999999997,
+          "false_wakes": 0,
+          "false_suppression": 0,
+          "hidden_tail_unknown": 0,
+          "bytes_to_detect": 149823,
+          "runs": 21,
+          "maxrss_kib": 42992.0,
+          "wall_ms": {
+            "cold": 10071.790976042394,
+            "warm_median": 10450.526712986175,
+            "warm_p95": 14329.510673007462
+          },
+          "excluded": [
+            "server/fixture setup and teardown",
+            "resident Rex server CPU/RSS",
+            "caller Python CPU/RSS"
+          ],
+          "detection_latency_ms": [
+            331.66468801209703,
+            279.20268097659573,
+            147.47018500929698,
+            231.21967498445883,
+            221.6447060345672,
+            244.35253895353526,
+            350.6155619979836,
+            146.1239589843899,
+            343.40015100315213,
+            239.25277101807296,
+            371.5122790308669,
+            195.88211696827784,
+            128.57541802804917,
+            347.76495600817725,
+            371.9848780310713,
+            324.2758199921809,
+            390.2650480158627,
+            280.9142839978449,
+            172.63068299507722,
+            203.0896859942004,
+            279.6893789782189
+          ]
+        },
+        "E4": {
+          "calls": 63,
+          "rex_client_launches": 63,
+          "stdout_bytes": 160583,
+          "stderr_bytes": 6048,
+          "cpu_ms": 4871.731000000013,
+          "false_wakes": 0,
+          "false_suppression": 0,
+          "hidden_tail_unknown": 0,
+          "bytes_to_detect": 160583,
+          "runs": 21,
+          "maxrss_kib": 43088.0,
+          "wall_ms": {
+            "cold": 10167.21285704989,
+            "warm_median": 9248.039959493326,
+            "warm_p95": 13656.528226914816
+          },
+          "excluded": [
+            "server/fixture setup and teardown",
+            "resident Rex server CPU/RSS",
+            "caller Python CPU/RSS"
+          ],
+          "detection_latency_ms": [
+            222.31672902125865,
+            107.84198204055429,
+            127.4883639998734,
+            248.91063797986135,
+            308.6779590230435,
+            314.40323404967785,
+            127.3690180387348,
+            244.3478790228255,
+            303.34288405720145,
+            243.9075239817612,
+            302.5468839914538,
+            146.49568602908403,
+            143.63537705503404,
+            366.6549439658411,
+            137.75567000266165,
+            247.62722401646897,
+            211.20789099950343,
+            219.76579201873392,
+            242.8058850346133,
+            165.54717102553695,
+            112.2748350026086
+          ]
+        },
+        "E5": {
+          "calls": 63,
+          "rex_client_launches": 63,
+          "stdout_bytes": 150797,
+          "stderr_bytes": 6048,
+          "cpu_ms": 4952.8789999999935,
+          "false_wakes": 0,
+          "false_suppression": 0,
+          "hidden_tail_unknown": 0,
+          "bytes_to_detect": 150797,
+          "runs": 21,
+          "maxrss_kib": 43060.0,
+          "wall_ms": {
+            "cold": 11518.320640025195,
+            "warm_median": 9120.430597453378,
+            "warm_p95": 13262.628863973077
+          },
+          "excluded": [
+            "server/fixture setup and teardown",
+            "resident Rex server CPU/RSS",
+            "caller Python CPU/RSS"
+          ],
+          "detection_latency_ms": [
+            349.2443099967204,
+            215.81503096967936,
+            307.6124549843371,
+            221.65922296699136,
+            183.15900000743568,
+            227.29650099063292,
+            204.06896102940664,
+            371.58144102431834,
+            259.06044902512804,
+            271.30049804691225,
+            255.68146898876876,
+            217.7619480062276,
+            255.55033900309354,
+            437.25248595001176,
+            349.0399339934811,
+            126.84787000762299,
+            219.94481998262927,
+            221.88191796885803,
+            220.01964400988072,
+            241.18567199911922,
+            180.30881398590282
+          ]
+        },
+        "hidden": {
+          "calls": 42,
+          "rex_client_launches": 42,
+          "stdout_bytes": 114988,
+          "stderr_bytes": 4032,
+          "cpu_ms": 5383.815000000017,
+          "false_wakes": 0,
+          "false_suppression": 0,
+          "hidden_tail_unknown": 21,
+          "bytes_to_detect": 114988,
+          "runs": 21,
+          "maxrss_kib": 43088.0,
+          "wall_ms": {
+            "cold": 20287.08183899289,
+            "warm_median": 20136.57294449513,
+            "warm_p95": 20173.216065042652
+          },
+          "excluded": [
+            "server/fixture setup and teardown",
+            "resident Rex server CPU/RSS",
+            "caller Python CPU/RSS"
+          ],
+          "detection_latency_ms": []
+        }
+      },
+      "F0": {
+        "E1": {
+          "calls": 21,
+          "rex_client_launches": 0,
+          "stdout_bytes": 1683345,
+          "stderr_bytes": 0,
+          "cpu_ms": 76.58700000000928,
+          "false_wakes": 0,
+          "false_suppression": 0,
+          "hidden_tail_unknown": 0,
+          "bytes_to_detect": 0,
+          "runs": 21,
+          "maxrss_kib": 42968.0,
+          "wall_ms": {
+            "cold": 43.849001987837255,
+            "warm_median": 7.211525517050177,
+            "warm_p95": 27.67447696533054
+          },
+          "excluded": [
+            "server/fixture setup and teardown",
+            "resident Rex server CPU/RSS",
+            "caller Python CPU/RSS"
+          ],
+          "detection_latency_ms": [],
+          "filter_payload_ratio": 0.7683789192017653
+        },
+        "E2": {
+          "calls": 21,
+          "rex_client_launches": 0,
+          "stdout_bytes": 1516129,
+          "stderr_bytes": 0,
+          "cpu_ms": 65.01699999998345,
+          "false_wakes": 0,
+          "false_suppression": 0,
+          "hidden_tail_unknown": 0,
+          "bytes_to_detect": 0,
+          "runs": 21,
+          "maxrss_kib": 42916.0,
+          "wall_ms": {
+            "cold": 5.969929043203592,
+            "warm_median": 5.958782974630594,
+            "warm_p95": 18.19515903480351
+          },
+          "excluded": [
+            "server/fixture setup and teardown",
+            "resident Rex server CPU/RSS",
+            "caller Python CPU/RSS"
+          ],
+          "detection_latency_ms": [],
+          "filter_payload_ratio": 0.7683969204851501
+        },
+        "E3": {
+          "calls": 21,
+          "rex_client_launches": 0,
+          "stdout_bytes": 1660886,
+          "stderr_bytes": 0,
+          "cpu_ms": 70.94299999995224,
+          "false_wakes": 0,
+          "false_suppression": 0,
+          "hidden_tail_unknown": 0,
+          "bytes_to_detect": 0,
+          "runs": 21,
+          "maxrss_kib": 42992.0,
+          "wall_ms": {
+            "cold": 6.646252004429698,
+            "warm_median": 5.93697652220726,
+            "warm_p95": 27.297933993395418
+          },
+          "excluded": [
+            "server/fixture setup and teardown",
+            "resident Rex server CPU/RSS",
+            "caller Python CPU/RSS"
+          ],
+          "detection_latency_ms": [],
+          "filter_payload_ratio": 0.7688582870217189
+        },
+        "E4": {
+          "calls": 21,
+          "rex_client_launches": 0,
+          "stdout_bytes": 1477583,
+          "stderr_bytes": 0,
+          "cpu_ms": 64.67000000000223,
+          "false_wakes": 0,
+          "false_suppression": 0,
+          "hidden_tail_unknown": 0,
+          "bytes_to_detect": 0,
+          "runs": 21,
+          "maxrss_kib": 42992.0,
+          "wall_ms": {
+            "cold": 6.260140042286366,
+            "warm_median": 6.72533200122416,
+            "warm_p95": 14.345894975122064
+          },
+          "excluded": [
+            "server/fixture setup and teardown",
+            "resident Rex server CPU/RSS",
+            "caller Python CPU/RSS"
+          ],
+          "detection_latency_ms": [],
+          "filter_payload_ratio": 0.7660293384946414
+        },
+        "E5": {
+          "calls": 21,
+          "rex_client_launches": 0,
+          "stdout_bytes": 1429962,
+          "stderr_bytes": 0,
+          "cpu_ms": 68.62800000001035,
+          "false_wakes": 0,
+          "false_suppression": 0,
+          "hidden_tail_unknown": 0,
+          "bytes_to_detect": 0,
+          "runs": 21,
+          "maxrss_kib": 42884.0,
+          "wall_ms": {
+            "cold": 4.718783951830119,
+            "warm_median": 8.143985498463735,
+            "warm_p95": 21.674282965250313
+          },
+          "excluded": [
+            "server/fixture setup and teardown",
+            "resident Rex server CPU/RSS",
+            "caller Python CPU/RSS"
+          ],
+          "detection_latency_ms": [],
+          "filter_payload_ratio": 0.7683981047662015
+        },
+        "hidden": {
+          "calls": 21,
+          "rex_client_launches": 0,
+          "stdout_bytes": 1905965,
+          "stderr_bytes": 0,
+          "cpu_ms": 105.20399999999563,
+          "false_wakes": 0,
+          "false_suppression": 0,
+          "hidden_tail_unknown": 0,
+          "bytes_to_detect": 0,
+          "runs": 21,
+          "maxrss_kib": 42992.0,
+          "wall_ms": {
+            "cold": 9.2288629966788,
+            "warm_median": 10.355272010201588,
+            "warm_p95": 24.95067799463868
+          },
+          "excluded": [
+            "server/fixture setup and teardown",
+            "resident Rex server CPU/RSS",
+            "caller Python CPU/RSS"
+          ],
+          "detection_latency_ms": [],
+          "filter_payload_ratio": 0.027130397911626265
+        }
+      },
+      "F1": {
+        "E1": {
+          "calls": 21,
+          "rex_client_launches": 0,
+          "stdout_bytes": 1444899,
+          "stderr_bytes": 0,
+          "cpu_ms": 64.800999999989,
+          "false_wakes": 0,
+          "false_suppression": 0,
+          "hidden_tail_unknown": 0,
+          "bytes_to_detect": 0,
+          "runs": 21,
+          "maxrss_kib": 42968.0,
+          "wall_ms": {
+            "cold": 26.61068900488317,
+            "warm_median": 8.412469498580322,
+            "warm_p95": 24.55664100125432
+          },
+          "excluded": [
+            "server/fixture setup and teardown",
+            "resident Rex server CPU/RSS",
+            "caller Python CPU/RSS"
+          ],
+          "detection_latency_ms": [],
+          "filter_payload_ratio": 0.05338993059482741
+        },
+        "E2": {
+          "calls": 21,
+          "rex_client_launches": 0,
+          "stdout_bytes": 1301873,
+          "stderr_bytes": 0,
+          "cpu_ms": 61.135000000012155,
+          "false_wakes": 0,
+          "false_suppression": 0,
+          "hidden_tail_unknown": 0,
+          "bytes_to_detect": 0,
+          "runs": 21,
+          "maxrss_kib": 42916.0,
+          "wall_ms": {
+            "cold": 12.581434973981231,
+            "warm_median": 5.560622492339462,
+            "warm_p95": 11.953664012253284
+          },
+          "excluded": [
+            "server/fixture setup and teardown",
+            "resident Rex server CPU/RSS",
+            "caller Python CPU/RSS"
+          ],
+          "detection_latency_ms": [],
+          "filter_payload_ratio": 0.05989445431685203
+        },
+        "E3": {
+          "calls": 21,
+          "rex_client_launches": 0,
+          "stdout_bytes": 1422192,
+          "stderr_bytes": 0,
+          "cpu_ms": 64.18800000004232,
+          "false_wakes": 0,
+          "false_suppression": 0,
+          "hidden_tail_unknown": 0,
+          "bytes_to_detect": 0,
+          "runs": 21,
+          "maxrss_kib": 42992.0,
+          "wall_ms": {
+            "cold": 8.20566201582551,
+            "warm_median": 4.8134244862012565,
+            "warm_p95": 13.122542994096875
+          },
+          "excluded": [
+            "server/fixture setup and teardown",
+            "resident Rex server CPU/RSS",
+            "caller Python CPU/RSS"
+          ],
+          "detection_latency_ms": [],
+          "filter_payload_ratio": 0.05254535853240814
+        },
+        "E4": {
+          "calls": 21,
+          "rex_client_launches": 0,
+          "stdout_bytes": 1270410,
+          "stderr_bytes": 0,
+          "cpu_ms": 59.14599999999126,
+          "false_wakes": 0,
+          "false_suppression": 0,
+          "hidden_tail_unknown": 0,
+          "bytes_to_detect": 0,
+          "runs": 21,
+          "maxrss_kib": 42992.0,
+          "wall_ms": {
+            "cold": 23.756281996611506,
+            "warm_median": 6.413941009668633,
+            "warm_p95": 18.453559023328125
+          },
+          "excluded": [
+            "server/fixture setup and teardown",
+            "resident Rex server CPU/RSS",
+            "caller Python CPU/RSS"
+          ],
+          "detection_latency_ms": [],
+          "filter_payload_ratio": 0.0655320543787704
+        },
+        "E5": {
+          "calls": 21,
+          "rex_client_launches": 0,
+          "stdout_bytes": 1229193,
+          "stderr_bytes": 0,
+          "cpu_ms": 61.3969999999886,
+          "false_wakes": 0,
+          "false_suppression": 0,
+          "hidden_tail_unknown": 0,
+          "bytes_to_detect": 0,
+          "runs": 21,
+          "maxrss_kib": 42884.0,
+          "wall_ms": {
+            "cold": 5.520106002222747,
+            "warm_median": 6.202219985425472,
+            "warm_p95": 20.50602500094101
+          },
+          "excluded": [
+            "server/fixture setup and teardown",
+            "resident Rex server CPU/RSS",
+            "caller Python CPU/RSS"
+          ],
+          "detection_latency_ms": [],
+          "filter_payload_ratio": 0.06066783598073266
+        },
+        "hidden": {
+          "calls": 21,
+          "rex_client_launches": 0,
+          "stdout_bytes": 3808365,
+          "stderr_bytes": 0,
+          "cpu_ms": 303.2490000000045,
+          "false_wakes": 0,
+          "false_suppression": 0,
+          "hidden_tail_unknown": 0,
+          "bytes_to_detect": 0,
+          "runs": 21,
+          "maxrss_kib": 42992.0,
+          "wall_ms": {
+            "cold": 17.015210003592074,
+            "warm_median": 19.916285993531346,
+            "warm_p95": 30.698737013153732
+          },
+          "excluded": [
+            "server/fixture setup and teardown",
+            "resident Rex server CPU/RSS",
+            "caller Python CPU/RSS"
+          ],
+          "detection_latency_ms": [],
+          "filter_payload_ratio": 0.8
+        }
+      }
+    }
+  },
+  "exclusions": [
+    "A3 requires externally owned latest-view capture",
+    "optional paid-harness arm not run",
+    "server/fixture costs excluded consistently in every arm",
+    "CPU/RSS use per-worker child rusage; maxrss is a worker lifetime maximum",
+    "delay draws deterministic seed 0; independent fixtures per arm"
+  ],
+  "aggregation_driver_sha256": "c0444d694d6f6ffd607bd4776c76fd8beba73d46bd73b8fe465781011cc0c054",
+  "aggregation_note": "Reaggregated from runs.jsonl with nearest-rank warm p95 and the exact 2*250ms+500ms event-latency bound; collection binary/driver digests remain unchanged."
+}

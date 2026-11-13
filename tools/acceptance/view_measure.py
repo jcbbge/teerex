@@ -102,7 +102,7 @@ def task(args):
                     detected = True
                     stamp = json.loads(marker.read_text())['at']
                     stats['detection_latency_ms'] = (time.monotonic() - stamp) * 1000
-                    stats['false_suppression'] = int(stats['detection_latency_ms'] > 1500)
+                    stats['false_suppression'] = int(stats['detection_latency_ms'] > 1000)
                     break
                 if packet['capture']['content'] != before['capture']['content']:
                     stats['false_wakes'] += 1
@@ -143,7 +143,7 @@ def aggregate(runs):
     first, warm = runs[0], runs[1:]
     times = sorted(r['wall_ms'] for r in warm)
     out = {key: sum(r[key] for r in runs) for key in ('calls', 'rex_client_launches', 'stdout_bytes', 'stderr_bytes', 'cpu_ms', 'false_wakes', 'false_suppression', 'hidden_tail_unknown', 'bytes_to_detect')}
-    out.update(runs=len(runs), maxrss_kib=max(r['maxrss_kib'] for r in runs), wall_ms=dict(cold=first['wall_ms'], warm_median=statistics.median(times) if times else None, warm_p95=times[min(len(times) - 1, int(len(times) * .95))] if times else None), excluded=first['excluded'], detection_latency_ms=[r['detection_latency_ms'] for r in runs if r['detection_latency_ms'] is not None])
+    out.update(runs=len(runs), maxrss_kib=max(r['maxrss_kib'] for r in runs), wall_ms=dict(cold=first['wall_ms'], warm_median=statistics.median(times) if times else None, warm_p95=times[max(0, (95 * len(times) + 99) // 100 - 1)] if times else None), excluded=first['excluded'], detection_latency_ms=[r['detection_latency_ms'] for r in runs if r['detection_latency_ms'] is not None])
     if 'filter_payload_ratio' in first:
         out['filter_payload_ratio'] = statistics.mean(r['filter_payload_ratio'] for r in runs)
     return out

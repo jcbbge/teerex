@@ -1261,6 +1261,7 @@ class ObserveTest(unittest.TestCase):
         command = self.watch_command(target, baseline, timeout=1800, interval=100)
         raw = subprocess.run(command, capture_output=True, text=True, timeout=5)
         self.assertEqual(raw.returncode, 0, raw.stderr)
+        self.assertLess(json.loads(raw.stdout)['elapsed_ms'], 600)
         result = subprocess.run(command + ['--view', 'progress-v1'], capture_output=True, text=True, timeout=5)
         self.assertEqual(result.returncode, 124, result.stderr + result.stdout)
         packet = json.loads(result.stdout)
@@ -1283,7 +1284,7 @@ class ObserveTest(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
                 packet = json.loads(result.stdout)
                 self.assertTrue(packet['view']['wake'])
-                self.assertLess(packet['elapsed_ms'], 2500)
+                self.assertLess(packet['elapsed_ms'], 2200)
 
     def test_view_V_W3_hidden_tail_remains_unknown(self):
         target = self.progress_fixture("print('\\nError: hidden')", hidden=True)
