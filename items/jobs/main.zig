@@ -13,6 +13,7 @@ const usage =
     \\A focused source requires --focus yes for relocation; no silent focus transfer, retry or recreation.
     \\forget: --owner LABEL --generation N --reason TEXT (local record only; never closes a block)
     \\Live operations optionally take --timeout-ms N (100..60000, default 5000).
+    \\Exclusive registry lock waits up to10000ms before any mutation; registry_busy is retry-safe.
     \\List opens existing files read-only and creates no files, including no lock file.
     \\Registry must already be an absolute, private 0700 owned directory. Max 32 records/256 KiB.
     \\API13 Mac-arm64/Linux-amd64 only; no autostart, agents, daemon, automatic close or enforced deadlines.
@@ -128,7 +129,24 @@ const Registry = struct {
             else => return err,
         };
         errdefer if (lock) |f| f.close();
-        if (lock) |f| try std.posix.flock(f.handle, (if (read_only) @as(i32, std.posix.LOCK.SH) else std.posix.LOCK.EX) | std.posix.LOCK.NB);
+        if (lock) |f| {
+            if (read_only) {
+                try std.posix.flock(f.handle, std.posix.LOCK.SH | std.posix.LOCK.NB);
+            } else {
+                var timer = try std.time.Timer.start();
+                while (true) {
+                    if (supervised.requestedSignal() != 0) return error.RegistryWaitCancelled;
+                    std.posix.flock(f.handle, std.posix.LOCK.EX | std.posix.LOCK.NB) catch |err| {
+                        if (err != error.WouldBlock) return err;
+                        const elapsed = timer.read() / std.time.ns_per_ms;
+                        if (elapsed >= 10000) return error.RegistryBusy;
+                        std.Thread.sleep(@as(u64, @min(10, 10000 - elapsed)) * std.time.ns_per_ms);
+                        continue;
+                    };
+                    break;
+                }
+            }
+        }
         var state: State = .{ .schema_version = 1, .next_generation = 1, .entries = &.{} };
         const saved = file(dir, "state.json", false, read_only) catch |err| switch (err) {
             error.FileNotFound => null,
@@ -353,9 +371,13 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
         return 0;
     }
     const o = parse(args) catch return usageError();
+    const signals = supervised.Signals.init();
+    defer signals.deinit();
     return execute(allocator, o) catch |err| {
-        try output(allocator, .{ .schema_version = 1, .kind = "jobs_result", .operation = o.operation, .outcome = "error", .failure_reason = @errorName(err), .remote_effect = "not_established_check_target_and_registry_before_retry" });
-        return 1;
+        const busy = err == error.RegistryBusy;
+        const cancelled = err == error.RegistryWaitCancelled;
+        try output(allocator, .{ .schema_version = 1, .kind = "jobs_result", .operation = o.operation, .outcome = if (cancelled) "cancel_requested" else "error", .failure_reason = if (busy) "registry_busy" else @errorName(err), .retry_safe = busy, .remote_effect = if (busy or cancelled) "not_attempted" else "not_established_check_target_and_registry_before_retry" });
+        return if (cancelled) 128 + supervised.requestedSignal() else 1;
     };
 }
 fn execute(allocator: std.mem.Allocator, o: Options) !u8 {
@@ -392,8 +414,6 @@ fn execute(allocator: std.mem.Allocator, o: Options) !u8 {
         try output(allocator, .{ .schema_version = 1, .kind = "jobs_result", .operation = "forget", .outcome = "record_forgotten", .entry = e, .reason = o.reason, .resource_closed = false, .process_lifetime = "unchanged_not_verified" });
         return 0;
     }
-    const signals = supervised.Signals.init();
-    defer signals.deinit();
     if (eq(o.operation, "present")) {
         // Persist intent before any remote dispatch. A crash/lost ACK never becomes a false success.
         entry.?.generation = try registry.generation();

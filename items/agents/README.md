@@ -11,6 +11,14 @@
 - **Why:** a visible creation ACK is not readiness; terminal input immediately after creation races shell/harness startup. The initial protocol is therefore an explicitly supported **final prompt argv argument**, never a startup-delay guess or a screen-scraped readiness heuristic. Only the agent's explicit ACK opens the brief gate.
 - **How:** configure explicit profiles/default targets once, inspect them, then use one managed launch command. Opt-in shell functions can make the profile's name the launch command without editing global shell/security settings.
 
+## Concurrent launch queue (source follow-on)
+
+`agents launch --launch-wait-ms N` waits **0..60000 ms**, default **60000**, for the selected registry's dedicated `launch.lock` before saving launch intent or creating a pane. The existing private0700 directory and owned, single-link, no-follow0600 lock checks apply. The lock serializes spawn, native jobs tracking, fleet reporting and protocol preparation. It is released **before waiting for the agent's ACK** or delivering the brief. This is cooperative serialization on that local registry, not FIFO fairness, an input lease or a distributed queue. Existing `agents.lock` still protects short state updates with its2s wait; it is not held across network calls or the ACK wait.
+
+Queue timeout returns exit1, `outcome/failure_reason:launch_queue_busy`, `retry_safe:true`, `creation_attempted:false`, `created:null`; no lifecycle record or pane has been created by that invocation. Zero wait tries once. The stable lock file remains and is never stolen/deleted; a crashed holder releases its OS lock. Every pane creation remains a **single attempt**. Unexpected errors after creation retain the existing uncertain receipt/known target rather than retrying or automatically closing it.
+
+Native jobs exclusive operations now wait up to10s before reading or mutating state; their registry-busy result is retry-safe only because no live operation or record mutation began. Agents jobs-call subprocess budgets cover that wait plus the live query/cleanup budget. The in-pane supervisor allows60s for verified tracking/protocol preparation (and stops early on explicit tracking failure), separately from the caller-selected ACK deadline. Default relative review deadlines are calculated after queue acquisition. The queue does not keep a daemon running or retry work on its own.
+
 ## Configure deliberately
 
 Create an operator-selected private directory (`0700`) on a trusted local filesystem. This item does not create the directory or select a personal endpoint. Configuration uses schema1, an object of profiles, and optional explicit defaults:

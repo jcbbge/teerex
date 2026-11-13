@@ -84,7 +84,7 @@ class JobsTest(unittest.TestCase):
         return args
 
     def invoke(self, operation, **options):
-        r = subprocess.run(self.command(operation, **options), capture_output=True, text=True, env=self.env, timeout=10)
+        r = subprocess.run(self.command(operation, **options), capture_output=True, text=True, env=self.env, timeout=20)
         return r, json.loads(r.stdout) if r.stdout else None
 
     def track(self, **options):
@@ -427,6 +427,66 @@ class JobsTest(unittest.TestCase):
         self.assertEqual(after["active_window_id"], before["active_window_id"])
         self.assertEqual([w["focused_block_id"] for w in after["windows"]], [w["focused_block_id"] for w in before["windows"]])
         self.assertEqual(self.rpc("session.describe_block", session_id=self.session, block_id=self.block)["block"]["window_id"], destination["window_id"])
+
+    def test_concurrent_tracks_wait_for_one_registry_and_both_verify(self):
+        other = self.rpc("session.new_window", session_id=self.session, focus=False,
+                         layout=dict(block=dict(flavor="com.superlogical.terminal.shell", options=dict(command=["/bin/sleep", "120"]))))["block_ids"][0]
+        lock_path = self.registry / "lock"
+        lock_path.touch(mode=0o600)
+        processes = []
+        try:
+            with lock_path.open("r+") as lock:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                for block in (self.anchor, other):
+                    command = self.command("track", block=block, owner="operator", kind="command", purpose="concurrent track",
+                                           deadline_unix_ms=int(time.time() * 1000) + 60000, cleanup="manual")
+                    processes.append(subprocess.Popen(command, env=self.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True))
+                time.sleep(.25)
+                self.assertTrue(all(p.poll() is None for p in processes), "tracks must wait for the held lock")
+            generations = set()
+            for process in processes:
+                stdout, stderr = process.communicate(timeout=20)
+                self.assertEqual(process.returncode, 0, stdout + stderr)
+                receipt = json.loads(stdout)
+                self.assertEqual(receipt["outcome"], "verified")
+                generations.add(receipt["entry"]["generation"])
+            self.assertEqual(len(generations), 2)
+            entries = self.invoke("list")[1]["entries"]
+            self.assertEqual({e["block_id"] for e in entries}, {self.anchor, other})
+        finally:
+            for process in processes:
+                if process.poll() is None:
+                    process.terminate()
+                    process.communicate(timeout=5)
+
+    def test_held_jobs_lock_times_out_retry_safe_without_mutation(self):
+        entry = self.track()["entry"]
+        before = (self.registry / "state.json").read_bytes()
+        view = self.view()
+        command = self.command("forget", owner=entry["owner"], generation=entry["generation"], reason="held lock timeout")
+        with (self.registry / "lock").open("r+") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            started = time.monotonic()
+            result = subprocess.run(command, env=self.env, capture_output=True, text=True, timeout=15)
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            receipt = json.loads(result.stdout)
+            self.assertEqual(receipt["failure_reason"], "registry_busy")
+            self.assertTrue(receipt["retry_safe"])
+            self.assertEqual(receipt["remote_effect"], "not_attempted")
+            self.assertGreaterEqual(time.monotonic() - started, 9.9)
+            process = subprocess.Popen(command, env=self.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            try:
+                time.sleep(.15)
+                process.terminate()
+                stdout, stderr = process.communicate(timeout=5)
+                self.assertEqual(process.returncode, 143, stdout + stderr)
+                self.assertEqual(json.loads(stdout)["remote_effect"], "not_attempted")
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                    process.communicate()
+        self.assertEqual((self.registry / "state.json").read_bytes(), before)
+        self.assertEqual(self.view(), view)
 
     def test_registry_lock_and_private_regular_files_fail_closed(self):
         self.track()

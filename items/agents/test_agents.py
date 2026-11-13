@@ -3,6 +3,8 @@
 TEEREX_BIN must dispatch agents/spawn/jobs/send. REX_BIN selects the fixture's exact executable.
 """
 import errno
+import fcntl
+from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 from pathlib import Path
@@ -210,6 +212,71 @@ class AgentsTest(unittest.TestCase):
         self.assertGreater(result["draft"]["waited_ms"], 10000)
         self.assertTrue(result["draft"]["restore_verified"])
         self.assertNotIn(text, process.stdout + process.stderr)
+
+    def test_four_concurrent_launches_are_all_tracked_and_delivered(self):
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            futures = [pool.submit(self.run_cli, "launch", "--config", str(self.config), "--profile", "probe",
+                                   "--name", "concurrent-" + str(index), "--brief-file", str(self.brief),
+                                   "--ack-timeout-ms", "4000", timeout=30) for index in range(4)]
+            launches = [future.result() for future in futures]
+        blocks = set()
+        for process, receipt in launches:
+            self.assertEqual(process.returncode, 0, process.stdout + process.stderr)
+            self.assertEqual(receipt["outcome"], "brief_submitted")
+            self.assertTrue(receipt["tracked"] and receipt["protocol_acknowledged"])
+            state = self.record(receipt["launch_id"])
+            self.assertEqual(state["protocol_outcome"], "argument_supplied")
+            self.assertEqual(state["brief_outcome"], "events_acknowledged")
+            blocks.add(state["target"]["block_id"])
+        self.assertEqual(len(blocks), 4)
+        jobs = json.loads(subprocess.check_output([BIN, "jobs", "list", "--registry", str(self.registry)], env=self.env))
+        self.assertEqual({e["block_id"] for e in jobs["entries"]}, blocks)
+        self.assertEqual(len(self.rpc("session.view", dict(session_id=self.session))["windows"]), 5)
+
+    def test_launch_queue_timeout_creates_no_panes_or_launch_records(self):
+        lock_path = self.registry / "launch.lock"
+        lock_path.touch(mode=0o600)
+        before = self.rpc("session.view", dict(session_id=self.session))
+        with lock_path.open("r+") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            with ThreadPoolExecutor(max_workers=4) as pool:
+                futures = [pool.submit(self.run_cli, "launch", "--config", str(self.config), "--profile", "probe",
+                                       "--launch-wait-ms", "20") for _ in range(4)]
+                for future in futures:
+                    process, receipt = future.result()
+                    self.assertEqual(process.returncode, 1, process.stdout + process.stderr)
+                    self.assertEqual(receipt["failure_reason"], "launch_queue_busy")
+                    self.assertTrue(receipt["retry_safe"])
+                    self.assertFalse(receipt["creation_attempted"])
+                    self.assertIsNone(receipt["created"])
+        self.assertEqual(self.rpc("session.view", dict(session_id=self.session)), before)
+        self.assertEqual(list(self.registry.glob("agents-*.json")), [])
+        self.assertFalse(self.worker_log.exists())
+
+    def test_launch_queue_is_released_before_waiting_for_ack(self):
+        quiet = dict(self.settings["profiles"]["probe"])
+        quiet["argv"] = [sys.executable, str(self.fixture), str(self.worker_log), "noack"]
+        self.settings["profiles"]["quiet"] = quiet
+        self.config.write_text(json.dumps(self.settings))
+        process = subprocess.Popen([BIN, "agents", "launch", "--config", str(self.config), "--profile", "quiet",
+                                    "--ack-timeout-ms", "10000"], env=self.env,
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            def waiting():
+                for path in self.registry.glob("agents-*.json"):
+                    state = json.loads(path.read_text())
+                    if state["phase"] == "awaiting_protocol_ack" and state.get("protocol_outcome") == "argument_supplied":
+                        return state
+            wait_for(waiting)
+            result, receipt = self.run_cli("launch", "--config", str(self.config), "--profile", "probe",
+                                           "--brief-file", str(self.brief), "--launch-wait-ms", "0", "--ack-timeout-ms", "4000")
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertTrue(receipt["tracked"])
+            self.assertIsNone(process.poll(), "the first launch must still be waiting for its ACK")
+        finally:
+            if process.poll() is None:
+                process.terminate()
+            process.communicate(timeout=5)
 
     def test_protocol_before_brief_exact_metadata_and_jobs(self):
         self.settings["profiles"]["probe"]["standing_flags"] *= 2

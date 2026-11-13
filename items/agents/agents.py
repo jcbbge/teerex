@@ -89,8 +89,9 @@ def read_file(path, limit=LIMIT, private=False):
 
 class Registry:
     """Stable advisory lock and per-launch durable intent, on a trusted local filesystem."""
-    def __init__(self, root):
+    def __init__(self, root, lock_name="agents.lock", wait_ms=2000):
         self.root = absolute(root)
+        self.lock_name, self.wait_ms = lock_name, wait_ms
 
     def __enter__(self):
         import fcntl
@@ -98,18 +99,18 @@ class Registry:
         try:
             s = os.fstat(self.fd)
             require(s.st_uid == os.getuid() and stat.S_IMODE(s.st_mode) == 0o700, "private_owned_registry_required")
-            self.lock = os.open("agents.lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK,
+            self.lock = os.open(self.lock_name, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK,
                                 0o600, dir_fd=self.fd)
             s = os.fstat(self.lock)
             require(stat.S_ISREG(s.st_mode) and s.st_uid == os.getuid() and
                     stat.S_IMODE(s.st_mode) == 0o600 and s.st_nlink == 1, "private_owned_lock_required")
-            end = time.monotonic() + 2
+            end = time.monotonic() + self.wait_ms / 1000
             while True:
                 try:
                     fcntl.flock(self.lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
                     break
                 except BlockingIOError:
-                    require(time.monotonic() < end, "registry_busy_after_2s_lock_wait")
+                    require(time.monotonic() < end, "launch_queue_busy" if self.lock_name == "launch.lock" else "registry_busy_after_2s_lock_wait")
                     time.sleep(.005)
         except BaseException:
             if hasattr(self, "lock"):
@@ -197,6 +198,9 @@ def invoke(arguments, timeout=10, client_path=None, rex_executable=None, input_b
     if arguments and arguments[0] == "send":
         # Native send can spend 55s guarding a draft plus a 60s transport budget.
         timeout = max(timeout, 120)
+    if arguments and arguments[0] == "jobs":
+        execution_ms = int(arguments[arguments.index("--timeout-ms") + 1]) if "--timeout-ms" in arguments else 5000
+        timeout = max(timeout, 15 + execution_ms / 1000)  # 10s lock wait + live budget and cleanup.
     # Output sinks are private regular files, not pipes that a failed descendant can hold open.
     with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err, tempfile.TemporaryFile() as source:
         environment = dict(os.environ)
@@ -680,77 +684,78 @@ def launch(o):
     name, owner, purpose = text(o.name or o.profile), text(o.owner), text(o.purpose, 256)
     host = text(o.host)
     cwd = absolute(o.cwd)
-    review = o.review_at or now() + cfg.get("defaults", {}).get("review_after_ms", 3600000)
-    require(type(review) is int and now() < review <= now() + 30 * 86400000, "invalid_review_at")
-    brief = message(read_file(o.brief_file, 32768)) if o.brief_file else None
-    launch_id, token = secrets.token_hex(16), secrets.token_hex(32)
-    target = dict(host=host, server="unix://" + socket, session_id=session, block_id=None)
-    starter = dict(host=host, server="unix://" + socket, session_id=ss, block_id=sb)
-    report_to = dict(host=host, server="unix://" + socket, session_id=rs, block_id=rb)
-    state = dict(schema_version=1, launch_id=launch_id, token=token, name=name, owner=owner, purpose=purpose,
-                 review_at=review, target=target, starter=starter, report_to=report_to, profile=o.profile, argv=argv,
-                 cwd=cwd, harness=text(profile.get("harness", o.profile)), resume_session_id=profile.get("resume_session_id"),
-                 store=o.store, created_at=now(), socket=socket, registry=root, phase="creation_uncertain", tracked=False,
-                 protocol_acknowledged=False, protocol_outcome=None, brief_attempted=False, brief_outcome=None,
-                 immediate_child_term=None, notifications={}, brief_file=None, protocol_file=None,
-                 hook_events=profile.get("hook_events", False), client_path=os.environ.get("PATH", os.defpath),
-                 rex_executable=os.environ.get("TEEREX_INTERNAL_REX"), delivery=delivery, execution=execution,
-                 callbacks=callbacks, remote_child_term=None)
-    with Registry(root) as registry:
-        if brief is not None:
-            state["brief_file"] = registry.write_message(launch_id, "brief", brief)
-        registry.save(state, new=True)
-    command = [RUNTIME, "agents", "supervise", "--registry", root, "--launch-id", launch_id]
-    code, packet = invoke(["spawn", "--socket", socket, "--session", session, "--name", name, "--cwd", cwd,
-                           "--report-to-session", rs, "--report-to-block", rb, "--", *command])
-    def created(s):
-        s["spawn_receipt"] = packet
-        if isinstance(packet, dict) and packet.get("created"):
-            s["target"]["block_id"] = address_id(packet["created"]["block_id"], "block")
-    state = update(root, launch_id, created)
-    if not succeeded(code, packet, "created_and_attached"):
-        return 1, receipt(state, "creation_uncertain", client_exit=code)
-    block = state["target"]["block_id"]
-    code, packet = invoke(["jobs", "track", "--registry", root, "--socket", socket, "--session", session, "--block", block,
-                           "--owner", owner, "--kind", "agent", "--purpose", purpose,
-                           "--deadline-unix-ms", str(review), "--cleanup", "manual"])
-    def tracked(s):
-        s["track_receipt"] = packet
-        s["tracked"] = succeeded(code, packet, "verified")
-        s["phase"] = "protocol_pending" if s["tracked"] else "tracking_uncertain"
-    state = update(root, launch_id, tracked)
-    if not state["tracked"]:
-        return 1, receipt(state, "tracking_uncertain", client_exit=code)
-    if publish_fleet(root, state, "launch", "unknown", "Visible agent registered; protocol not acknowledged; readiness not assessed"):
-        return 1, receipt(load(root, launch_id), "fleet_report_uncertain")
-    # The first harness prompt is an explicit profile-supported argv argument. Sending terminal input
-    # immediately after creation would race shell/harness startup and silently lose the protocol.
-    ack_command = [RUNTIME, "agents", "ack", "--registry", root, "--launch-id", launch_id,
-                   "--token", token, "--session", session, "--block", block]
-    if delivery is not None:
-        ack_command = [RUNTIME, "agents", "channel", "--handle", str(Path(delivery["directory"]) / launch_id / "handle.json"),
-                       "--request-id", secrets.token_hex(16), "--operation", "ack", "--session", session, "--block", block]
-    report_command = [RUNTIME, "send", "--socket", socket, "--session", rs, "--block", rb, "--from", name,
-                      "--message-file", "-", *send_options(state)]
-    if delivery is not None:
-        report_command = [RUNTIME, "agents", "channel", "--handle", str(Path(delivery["directory"]) / launch_id / "handle.json"),
-                          "--request-id", "NEW_HEX32", "--operation", "send", "--to", "report-to", "--message-file", "-"]
-    protocol = ("Messaging protocol (not a task brief):\n"
-                f"Your name is {name}; your pane is {session} {block}.\n"
-                f"Your starter is {ss} {sb}; report-to is {rs} {rb}.\n"
-                "Report stops, results, blockers and questions directly to report-to; never type into a registered human seat.\n"
-                "A finished turn is idle, not process death. Supply report bytes on stdin then EOF using:\n" +
-                shlex.join(report_command) + "\n" +
-                ("Replace NEW_HEX32 with a fresh 32-lowercase-hex request id for each NEW message; never retry uncertain input.\n"
-                 if delivery is not None else "Never retry uncertain input.\n") +
-                "Do not begin a task or launch another agent before the brief. Acknowledge this protocol now by running:\n" +
-                shlex.join(ack_command) +
-                "\nThis ACK records protocol acknowledgment only, not readiness, authorization or exclusive input control.")
-    with Registry(root) as registry:
-        state = registry.read(launch_id)
-        state["protocol_file"] = registry.write_message(launch_id, "protocol", protocol)
-        state["phase"] = "awaiting_protocol_ack"
-        registry.save(state)
+    with Registry(root, lock_name="launch.lock", wait_ms=o.launch_wait_ms):
+        review = o.review_at or now() + cfg.get("defaults", {}).get("review_after_ms", 3600000)
+        require(type(review) is int and now() < review <= now() + 30 * 86400000, "invalid_review_at")
+        brief = message(read_file(o.brief_file, 32768)) if o.brief_file else None
+        launch_id, token = secrets.token_hex(16), secrets.token_hex(32)
+        target = dict(host=host, server="unix://" + socket, session_id=session, block_id=None)
+        starter = dict(host=host, server="unix://" + socket, session_id=ss, block_id=sb)
+        report_to = dict(host=host, server="unix://" + socket, session_id=rs, block_id=rb)
+        state = dict(schema_version=1, launch_id=launch_id, token=token, name=name, owner=owner, purpose=purpose,
+                     review_at=review, target=target, starter=starter, report_to=report_to, profile=o.profile, argv=argv,
+                     cwd=cwd, harness=text(profile.get("harness", o.profile)), resume_session_id=profile.get("resume_session_id"),
+                     store=o.store, created_at=now(), socket=socket, registry=root, phase="creation_uncertain", tracked=False,
+                     protocol_acknowledged=False, protocol_outcome=None, brief_attempted=False, brief_outcome=None,
+                     immediate_child_term=None, notifications={}, brief_file=None, protocol_file=None,
+                     hook_events=profile.get("hook_events", False), client_path=os.environ.get("PATH", os.defpath),
+                     rex_executable=os.environ.get("TEEREX_INTERNAL_REX"), delivery=delivery, execution=execution,
+                     callbacks=callbacks, remote_child_term=None)
+        with Registry(root) as registry:
+            if brief is not None:
+                state["brief_file"] = registry.write_message(launch_id, "brief", brief)
+            registry.save(state, new=True)
+        command = [RUNTIME, "agents", "supervise", "--registry", root, "--launch-id", launch_id]
+        code, packet = invoke(["spawn", "--socket", socket, "--session", session, "--name", name, "--cwd", cwd,
+                               "--report-to-session", rs, "--report-to-block", rb, "--", *command])
+        def created(s):
+            s["spawn_receipt"] = packet
+            if isinstance(packet, dict) and packet.get("created"):
+                s["target"]["block_id"] = address_id(packet["created"]["block_id"], "block")
+        state = update(root, launch_id, created)
+        if not succeeded(code, packet, "created_and_attached"):
+            return 1, receipt(state, "creation_uncertain", client_exit=code)
+        block = state["target"]["block_id"]
+        code, packet = invoke(["jobs", "track", "--registry", root, "--socket", socket, "--session", session, "--block", block,
+                               "--owner", owner, "--kind", "agent", "--purpose", purpose,
+                               "--deadline-unix-ms", str(review), "--cleanup", "manual"])
+        def tracked(s):
+            s["track_receipt"] = packet
+            s["tracked"] = succeeded(code, packet, "verified")
+            s["phase"] = "protocol_pending" if s["tracked"] else "tracking_uncertain"
+        state = update(root, launch_id, tracked)
+        if not state["tracked"]:
+            return 1, receipt(state, "tracking_uncertain", client_exit=code)
+        if publish_fleet(root, state, "launch", "unknown", "Visible agent registered; protocol not acknowledged; readiness not assessed"):
+            return 1, receipt(load(root, launch_id), "fleet_report_uncertain")
+        # The first harness prompt is an explicit profile-supported argv argument. Sending terminal input
+        # immediately after creation would race shell/harness startup and silently lose the protocol.
+        ack_command = [RUNTIME, "agents", "ack", "--registry", root, "--launch-id", launch_id,
+                       "--token", token, "--session", session, "--block", block]
+        if delivery is not None:
+            ack_command = [RUNTIME, "agents", "channel", "--handle", str(Path(delivery["directory"]) / launch_id / "handle.json"),
+                           "--request-id", secrets.token_hex(16), "--operation", "ack", "--session", session, "--block", block]
+        report_command = [RUNTIME, "send", "--socket", socket, "--session", rs, "--block", rb, "--from", name,
+                          "--message-file", "-", *send_options(state)]
+        if delivery is not None:
+            report_command = [RUNTIME, "agents", "channel", "--handle", str(Path(delivery["directory"]) / launch_id / "handle.json"),
+                              "--request-id", "NEW_HEX32", "--operation", "send", "--to", "report-to", "--message-file", "-"]
+        protocol = ("Messaging protocol (not a task brief):\n"
+                    f"Your name is {name}; your pane is {session} {block}.\n"
+                    f"Your starter is {ss} {sb}; report-to is {rs} {rb}.\n"
+                    "Report stops, results, blockers and questions directly to report-to; never type into a registered human seat.\n"
+                    "A finished turn is idle, not process death. Supply report bytes on stdin then EOF using:\n" +
+                    shlex.join(report_command) + "\n" +
+                    ("Replace NEW_HEX32 with a fresh 32-lowercase-hex request id for each NEW message; never retry uncertain input.\n"
+                     if delivery is not None else "Never retry uncertain input.\n") +
+                    "Do not begin a task or launch another agent before the brief. Acknowledge this protocol now by running:\n" +
+                    shlex.join(ack_command) +
+                    "\nThis ACK records protocol acknowledgment only, not readiness, authorization or exclusive input control.")
+        with Registry(root) as registry:
+            state = registry.read(launch_id)
+            state["protocol_file"] = registry.write_message(launch_id, "protocol", protocol)
+            state["phase"] = "awaiting_protocol_ack"
+            registry.save(state)
     end = time.monotonic() + o.ack_timeout_ms / 1000
     while time.monotonic() < end:
         state = load(root, launch_id)
@@ -927,10 +932,12 @@ def supervise(o):
     address_id(sid, "session")
     address_id(bid, "block")
     require(sid == state["target"]["session_id"], "supervisor_session_mismatch")
-    end = time.monotonic() + 12
+    end = time.monotonic() + 60  # Includes jobs lock wait, live validation and fleet reporting.
     while (not state["tracked"] or not state["protocol_file"]) and time.monotonic() < end:
         time.sleep(.05)
         state = load(o.registry, o.launch_id)
+        if state["phase"] == "tracking_uncertain":
+            break
     require(state["tracked"] and state["protocol_file"] and state["target"]["block_id"] == bid,
             "supervisor_requires_verified_tracked_pane_and_protocol")
     def claim(s):
@@ -1098,6 +1105,8 @@ def parser():
                 "report-to-block", "host", "owner", "purpose", "store", "brief-file"):
         q.add_argument("--" + key)
     q.add_argument("--review-at", type=int, help="absolute future Unix milliseconds, <=30 days; default config review_after_ms")
+    q.add_argument("--launch-wait-ms", type=int, default=60000, choices=range(60001), metavar="0..60000",
+                   help="pre-creation launch queue wait, default60000ms; busy refuses retry-safe before pane creation; released before ACK wait")
     q.add_argument("--ack-timeout-ms", type=int, default=10000, choices=range(100, 60001), metavar="100..60000")
     for op in ("ack", "deliver", "inspect", "present", "stop", "supervise", "exited"):
         q = sub.add_parser(op, help={"ack": "record agent protocol ACK; token plus exact pane required",
@@ -1148,8 +1157,12 @@ def main():
         print(json.dumps(dict(schema_version=1, kind="agents_result", outcome="cancelled_uncertain", retry_safe=False)))
         return 128 + sig
     except (Refusal, OSError, ValueError, KeyError, TypeError, RecursionError, subprocess.SubprocessError) as exc:
-        print(json.dumps(dict(schema_version=1, kind="agents_result", outcome="refused_or_uncertain", failure_reason=str(exc),
-                              retry_safe=False, agent_readiness="not_assessed", all_processes_verified_gone=False)))
+        queue_busy = o.operation == "launch" and isinstance(exc, Refusal) and str(exc) == "launch_queue_busy"
+        result = dict(schema_version=1, kind="agents_result", outcome="launch_queue_busy" if queue_busy else "refused_or_uncertain",
+                      failure_reason=str(exc), retry_safe=queue_busy, agent_readiness="not_assessed", all_processes_verified_gone=False)
+        if queue_busy:
+            result.update(creation_attempted=False, created=None)
+        print(json.dumps(result))
         return 1
 
 
