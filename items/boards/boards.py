@@ -648,6 +648,12 @@ def probe(socket, jobs_registry=None, teerex=None, dashboard=False, agents_regis
         live["dashboard"] = teerex_dashboard.metadata(agents_registry, globals())
         for row in live['rows']:
             row['scratchpad'] = teerex_dashboard.scratchpad(row['session'], row['block'])
+            if teerex:
+                try:
+                    row['agent_state'] = bounded_command([teerex, 'observe', '--state', '--socket', socket,
+                        '--session', row['session'], '--block', row['block'], '--timeout-ms', '1000'], timeout=2)
+                except (OSError, ValueError, Refused, subprocess.TimeoutExpired):
+                    row['agent_state'] = dict(state='unknown')
     check(len(json.dumps(live).encode()) <= MAX_BYTES, "probe_response_exceeds_bound")
     return live
 
@@ -808,6 +814,7 @@ def fleet_snapshot(a, state):
                     row["program_status"] = status_evidence(raw_status) if raw_status is not None else None
                     raw_row = next((b for b in live['rows'] if b['session'] == row['target']['session_id'] and b['block'] == row['target']['block_id']), {})
                     row['scratchpad'] = raw_row.get('scratchpad', {})
+                    row['agent_state'] = raw_row.get('agent_state', {})
                     name = next((r['name'] for r in metadata.get('lifecycles', []) if r['target'] == row['target']), row['observation'].get('label'))
                     questions = [r for seat in state['seats'] for r in folded(seat)[0] if r['from'] == name]
                     row['question'] = max(questions, key=lambda r: r['at'])['body']['ask'] if questions else None

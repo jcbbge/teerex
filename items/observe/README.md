@@ -311,3 +311,8 @@ Fixtures draw Claude and Codex styled prompts, busy/permission/error states, and
 
 A read-only hive API-13 check on 13 November 2026 found the real Codex replay pane idle with a dim placeholder and no draft. The lead Claude pane rendered `· Gesticulating… (3h 31m 1s · ↓ 200.2k tokens)` above its input; that observed elapsed/token spinner shape is covered alongside its Esc-to-interrupt shape. No live Pi process was exercised; Pi coverage is installed-source-derived fixtures. Mac behavior remains for the Mac CI lane to establish.
 Cartridge readiness covers observe, compare and watch together. The [readiness runner and contract map](../../tools/acceptance/README.md) record actual whole-contract evidence per platform; build success alone leaves the item experimental.
+
+Claude busy detection also recognizes short gerund timers (`✽ Galloping… (10s)`),
+`● Running 1 shell command…`, `esc to interrupt`, and its greyed input marker.
+The shared send parser still determines draft presence, including human text
+following that greyed marker.

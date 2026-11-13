@@ -98,6 +98,19 @@ class StateTest(fixtures.ObserveTest):
                 self.assertTrue(result["draft_present"])
                 self.assertNotIn("PRIVATE_DRAFT", json.dumps(result))
 
+    def test_busy_claude_short_timers_shell_commands_interrupt_and_grey_marker(self):
+        for text in ('✽ Galloping… (10s)', '● Running 1 shell command…', 'esc to interrupt',
+                     '\x1b[38;2;153;153;153m❯\u00a0\x1b[0mPRIVATE_DRAFT'):
+            with self.subTest(text=text):
+                screen = 'Claude Code\n' + text
+                if '❯' not in text:
+                    screen += '\n❯\u00a0'
+                target = self.fixture(screen + '\n', marker='Claude Code')
+                result = self.state(target)
+                self.assertEqual(result['state'], 'working', result)
+                self.assertEqual(result['draft_present'], 'PRIVATE_DRAFT' in text)
+                self.assertNotIn('PRIVATE_DRAFT', json.dumps(result))
+
     def test_drawn_working_menus_questions_and_errors(self):
         for text, state in (("· Gesticulating… (3h 31m 1s · ↓ 200.2k tokens)\n❯\u00a0", "working"),
                             ("Claude Code\n✻ Thinking… (Esc to interrupt)\n❯\u00a0", "working"),

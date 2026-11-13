@@ -638,12 +638,18 @@ class CompactFleetTest(unittest.TestCase):
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         def row(state, present=True):
-            return dict(target=dict(block_id=state), observation=dict(present=present, label=state),
+            return dict(target=dict(block_id=state, host="hive"), observation=dict(present=present, label=state),
                         program_status=dict(records=[dict(state=state, age_ms=0)]))
         rows = [row('idle'), row('working'), row('error'), row('blocked'), row('done'), row('idle', False)]
         snapshot = dict(rows=rows)
         self.assertEqual([module.summary(r, 0)['state'] for r in module.fleet_rows(snapshot, 0)], ['blocked', 'error', 'working', 'idle'])
         self.assertEqual(len(module.fleet_rows(snapshot, 0, True)), 6)
+        busy = row('idle')
+        busy['agent_state'] = dict(state='working')
+        self.assertEqual(module.summary(busy, 0)['state'], 'working')
+        self.assertIn('working [screen]', module.cells(busy, 0))
+        busy['report'] = dict(state='completed', at=1)
+        self.assertEqual(module.fleet_rows(dict(rows=[busy]), 0), [busy])
 
 
 class StatusTest(unittest.TestCase):
@@ -767,7 +773,7 @@ class RexBoardsTest(unittest.TestCase):
         closed = cli("surfaces", "close", "--socket", str(self.socket), "--session", sid, "--pane", bid)
         self.assertEqual(closed["outcome"], "closed_and_absent")
 
-    def dashboard_fixture(self, named=False):
+    def dashboard_fixture(self, named=False, busy=False):
         root = self.root / ("dashboard-" + str(time.monotonic_ns()))
         root.mkdir()
         for directory in ("store", "jobs", "agents", "bin"):
@@ -782,6 +788,8 @@ class RexBoardsTest(unittest.TestCase):
         self.addCleanup(lambda: subprocess.run(self.base + ["api", "call", "session.destroy", json.dumps(dict(session_id=session))], capture_output=True))
         def pane(label, osc=False):
             script = ("print('\\x1b]7501;state=working:app=fixture\\x1b\\\\',flush=True); " if osc else "") + "import time; time.sleep(120)"
+            if busy and label == 'dash-agent-alpha':
+                script = "print('Claude Code\\n● Running 1 shell command…\\n✽ Galloping… (10s)\\n\\x1b[38;2;153;153;153m❯\\xa0\\x1b[0m',flush=True); " + script
             return invoke("surfaces", "open", "--socket", str(self.socket), "--session", session,
                           "--layout", "tab", "--label", label, "--", sys.executable, "-c", script)["actual"]["block_id"]
         anchor, alpha, beta = pane("dashboard-anchor"), pane("dash-agent-alpha"), pane("dash-agent-beta", True)
@@ -866,6 +874,16 @@ class RexBoardsTest(unittest.TestCase):
         saved = list(saved)
         saved[3] &= ~pending
         self.assertEqual(restored, saved)
+
+    def test_compact_fleet_busy_claude_without_scratchpad_is_working(self):
+        root, env, args, session, anchor, alpha, beta, view = self.dashboard_fixture(busy=True)
+        args.remove('--detail')
+        process, master, slave, saved, output, wait_for = self.keyboard_dashboard(args, env, 60)
+        wait_for('2 agents working')
+        os.write(master, b'/dash-agent-alpha\ri')
+        wait_for('"working", "draft_present"')
+        os.write(master, b'q')
+        self.finish_dashboard(process, master, slave, saved, output)
 
     def test_compact_fleet_wrap_scratchpad_history_and_inspect(self):
         for width in (60, 120):

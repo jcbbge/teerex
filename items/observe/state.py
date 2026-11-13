@@ -11,7 +11,7 @@ import time
 
 CSI = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 PROMPT = re.compile(r"^[│┃|]?\s*([❯›>])(?:\s|$)")
-SPINNER = r"[✻✽✶✳✢✷✸✹✺✼⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏•●*]"
+SPINNER = r"[·✻✽✶✳✢✷✸✹✺✼⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏•●*]"
 
 
 def plain(value):
@@ -84,13 +84,20 @@ def classify(packet):
                 working = next(((n, line) for n, line in ui if (
                     re.match(r"^(?:" + SPINNER + r"\s*)?Working\s*\(.*esc.*interrupt", line, re.I)
                     or (re.match(r"^" + SPINNER, line) and re.search(r"\besc.*interrupt\b", line, re.I))
-                    or (harness == "claude" and re.match(r"^[·✻✽✶✳✢✷✸✹✺✼]\s+[^\n]{1,80}…\s*\(\d+(?:h|m|s)\b.*\btokens\)", line))
+                    or (harness == "claude" and re.match(r"^" + SPINNER + r"\s+[^\n]{1,80}ing(?:…|\.\.\.)\s*\(\d+(?:h|m|s)\b", line, re.I))
+                    or (harness == "claude" and re.match(r"^(?:●\s+)?Running \d+ shell commands?\b", line, re.I))
+                    or (harness == "claude" and re.search(r"\besc to interrupt\b", line, re.I))
                     or (harness == "pi" and re.match(r"^──\s*" + SPINNER + r"\s*(?:Working|Retrying|Compacting|Auto-compacting)\b", line))
                 )), None)
                 error = next(((n, line) for n, line in ui if re.match(r"^(?:■\s*|API Error:|Authentication error:|Error:)", line)), None)
-                if working:
+                grey_marker = harness == "claude" and bool(re.search(
+                    r"\x1b\[(?:38;2;153;153;153|38;5;246|90)m❯", "\n".join(capture["content"].split("\n")[max(0, (last_prompt or 1) - 1):])))
+                if working or grey_marker:
                     result.update(state="working", state_basis="screen_heuristic", reason="active_interrupt_or_pi_working_indicator")
-                    add("screen", working[1], working[0])
+                    if working:
+                        add("screen", working[1], working[0])
+                    else:
+                        add("screen", "greyed busy prompt marker")
                 elif error and (not last_prompt or error[0] >= last_prompt - 2):
                     result.update(state="error", state_basis="screen_heuristic", reason="nearby_harness_error_line")
                     add("screen", error[1], error[0])

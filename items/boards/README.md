@@ -367,3 +367,8 @@ and document actions. `--once` uses the compact view; `--once --detail` gives th
 previous text snapshot. `--once --json` retains its existing schema and rows.
 Scratchpads are optional and bounded to 64 KiB; missing or unreadable files leave
 current work and progress blank. No scratchpad writes are performed by the board.
+
+The interactive fleet probe also reads `observe --state` for each present pane.
+Working screen evidence overrides an idle saved or terminal status; unavailable
+screen evidence leaves activity unknown rather than asserting idle. Each read
+has a one-second collection budget and a two-second outer bound.

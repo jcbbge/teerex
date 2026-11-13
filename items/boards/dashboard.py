@@ -124,6 +124,8 @@ def cells(row, now):
     if records:
         record = min(records, key=lambda r: r['age_ms'] if r['age_ms'] is not None else float('inf'))
         status, provenance, delta = record['state'], 'OSC', record['age_ms']
+    if (row.get('agent_state') or {}).get('state') == 'working' and status != 'working':
+        status, provenance = 'working', 'screen'
     def seconds(value):
         return str(value // 1000) + 's' if value is not None and value >= 0 else '?'
     called = data.get('last_call')
@@ -175,6 +177,15 @@ def summary(row, now):
     records = (row.get('program_status') or {}).get('records', [])
     record = min(records, key=lambda r: r.get('age_ms') if r.get('age_ms') is not None else float('inf')) if records else {}
     state = record.get('state') or report.get('state') or 'idle'
+    observed = (row.get('agent_state') or {}).get('state')
+    if observed == 'working':
+        state = 'working'
+    elif observed in ('awaiting_choice', 'awaiting_text'):
+        state = 'blocked'
+    elif observed == 'error':
+        state = 'error'
+    elif observed == 'unknown' and state == 'idle' and not pad.get('now'):
+        state = 'unknown'
     state = {'waiting_on_operator': 'blocked', 'completed': 'done', 'dead': 'done', 'unknown': 'idle'}.get(state, state)
     if pad.get('now') and state == 'idle':
         state = 'working'
@@ -192,7 +203,7 @@ def summary(row, now):
     done = len(pad.get('done', []))
     total = done + len(pad.get('todo', [])) + bool(pad.get('now'))
     question = row.get('question') or record.get('title') or 'Needs your answer'
-    message = 'waiting on you  “' + question + '”' if state == 'blocked' else pad.get('now') or '—'
+    message = 'waiting on you  “' + question + '”' if state == 'blocked' else pad.get('now') or ('Checking activity' if state == 'unknown' else '—')
     return dict(name=clean(name), state=state, message=clean(message), progress=str(done) + '/' + str(total) if total else '', age=age)
 
 
@@ -200,7 +211,6 @@ def fleet_rows(snapshot, now, history=False):
     rows = snapshot['rows']
     if not history:
         rows = [r for r in rows if r['observation'].get('present') is True
-                and (r.get('report') or {}).get('state') not in ('dead', 'completed')
                 and summary(r, now)['state'] != 'done']
     order = {'blocked': 0, 'error': 1, 'working': 2, 'idle': 3, 'done': 4}
     return sorted(rows, key=lambda r: (order.get(summary(r, now)['state'], 3), summary(r, now)['name'].casefold()))
