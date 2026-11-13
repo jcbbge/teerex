@@ -11,9 +11,7 @@
   "evidenced_api_revisions": [
     13
   ],
-  "failed_rows": [
-    "R12"
-  ],
+  "failed_rows": [],
   "id": "observe",
   "kind": "cartridge_readiness",
   "payload_sha256": "af9369915b1aec11bbcaa1e4fae87f6f8a5eed73c949bab19a4bafb3a24cee99",
@@ -23,9 +21,9 @@
   "runs": [
     {
       "arch": "arm64",
-      "executor": "local:m5:codex-replay",
-      "finished_at": "2026-11-13T12:48:38.573387+00:00",
-      "independent_executor": false,
+      "executor": "local:m5:teerex",
+      "finished_at": "2026-11-13T13:30:41.697665+00:00",
+      "independent_executor": true,
       "os": "Darwin 25.6.0",
       "rex": {
         "api_revision": 13,
@@ -75,18 +73,18 @@
           "pass": true
         },
         "R9": {
-          "detail": "quiet_wait=60000ms;rss_growth_kib=0",
+          "detail": "quiet_wait=60000ms;rss_growth_kib=32",
           "pass": true
         }
       },
-      "server_instance_sha256": "61b7059b16b2d99c5992ccb73764f3690de4d9d4c01d6f3bfc5327a92fa02bca",
-      "started_at": "2026-11-13T12:46:59.902130+00:00"
+      "server_instance_sha256": "a921c86b8de43843a364df383dee48b4bd81de88805528b10bfb72aad947829b",
+      "started_at": "2026-11-13T13:29:01.956703+00:00"
     },
     {
       "arch": "arm64",
-      "executor": "local:m5:codex-replay",
-      "finished_at": "2026-11-13T12:49:16.178036+00:00",
-      "independent_executor": false,
+      "executor": "local:m5:teerex",
+      "finished_at": "2026-11-13T13:31:20.063547+00:00",
+      "independent_executor": true,
       "os": "Darwin 25.6.0",
       "rex": {
         "api_revision": 13,
@@ -140,14 +138,14 @@
           "pass": true
         }
       },
-      "server_instance_sha256": "88dbfb8ea7e70e996ab141a132ce3f92b8177e4e813c222495d981dfb536d6d3",
-      "started_at": "2026-11-13T12:48:38.584168+00:00"
+      "server_instance_sha256": "befaa8c58bd10efca297381ca7d502ecd1f256b2e8f144c4c23e54bb46ad6591",
+      "started_at": "2026-11-13T13:30:41.708728+00:00"
     },
     {
       "arch": "arm64",
-      "executor": "local:m5:codex-replay",
-      "finished_at": "2026-11-13T12:49:54.323081+00:00",
-      "independent_executor": false,
+      "executor": "local:m5:teerex",
+      "finished_at": "2026-11-13T13:31:58.721074+00:00",
+      "independent_executor": true,
       "os": "Darwin 25.6.0",
       "rex": {
         "api_revision": 13,
@@ -201,12 +199,12 @@
           "pass": true
         }
       },
-      "server_instance_sha256": "861960d3b7251c4602a35af221f4a4bf4fc738ab453ab26a26a78e58a59121d3",
-      "started_at": "2026-11-13T12:49:16.188716+00:00"
+      "server_instance_sha256": "778e08571329a96dad2fc42db2a0cfe589d87a4663811e865402d239af2f68d6",
+      "started_at": "2026-11-13T13:31:20.074645+00:00"
     }
   ],
   "schema_version": 1,
-  "source_commit": "2b6801374a71798b94a65fcfa2b98f1e98d980fb",
+  "source_commit": "1e68adb92bd224c6a7b043a78644c82da782ae0e",
   "source_tree_dirty": false,
-  "verdict": "not_ready"
+  "verdict": "ready"
 }

@@ -11,9 +11,7 @@
   "evidenced_api_revisions": [
     13
   ],
-  "failed_rows": [
-    "R12"
-  ],
+  "failed_rows": [],
   "id": "observe",
   "kind": "cartridge_readiness",
   "payload_sha256": "b0e2acdf8b0587ac3bb2321962ba15b2da2ceb159d113fd52b492d2d85064a83",
@@ -23,9 +21,9 @@
   "runs": [
     {
       "arch": "x86_64",
-      "executor": "local:hive:codex-replay",
-      "finished_at": "2026-11-13T12:48:36.270228+00:00",
-      "independent_executor": false,
+      "executor": "local:hive:teerex",
+      "finished_at": "2026-11-13T13:27:40.426020+00:00",
+      "independent_executor": true,
       "os": "Linux 5.15.0-202-generic",
       "rex": {
         "api_revision": 13,
@@ -79,14 +77,14 @@
           "pass": true
         }
       },
-      "server_instance_sha256": "5e13eeb8fb9d51b5749d1419f47e88b7a1c3796876e720cf046d123d9ca7536d",
-      "started_at": "2026-11-13T12:46:56.777894+00:00"
+      "server_instance_sha256": "1bbd0f88d8b4affe190a878630a3d328bc65f6a087ef0082cdd4406bdb416ba0",
+      "started_at": "2026-11-13T13:25:59.649845+00:00"
     },
     {
       "arch": "x86_64",
-      "executor": "local:hive:codex-replay",
-      "finished_at": "2026-11-13T12:49:15.631145+00:00",
-      "independent_executor": false,
+      "executor": "local:hive:teerex",
+      "finished_at": "2026-11-13T13:28:20.554531+00:00",
+      "independent_executor": true,
       "os": "Linux 5.15.0-202-generic",
       "rex": {
         "api_revision": 13,
@@ -140,14 +138,14 @@
           "pass": true
         }
       },
-      "server_instance_sha256": "7f79d0fbb08897ac7a102f730b25e3e538a2ea70684086600a51527008b839f2",
-      "started_at": "2026-11-13T12:48:36.281795+00:00"
+      "server_instance_sha256": "7cda472f09def919eedb836ac585dd6b0e408b25788728e102223d1baaef5a56",
+      "started_at": "2026-11-13T13:27:40.447416+00:00"
     },
     {
       "arch": "x86_64",
-      "executor": "local:hive:codex-replay",
-      "finished_at": "2026-11-13T12:49:55.712842+00:00",
-      "independent_executor": false,
+      "executor": "local:hive:teerex",
+      "finished_at": "2026-11-13T13:29:01.758440+00:00",
+      "independent_executor": true,
       "os": "Linux 5.15.0-202-generic",
       "rex": {
         "api_revision": 13,
@@ -201,12 +199,12 @@
           "pass": true
         }
       },
-      "server_instance_sha256": "0f657dfd7b40d140bbb4f4c35185a39821190685ec2fd2be8d205cb739f1e9f0",
-      "started_at": "2026-11-13T12:49:15.651321+00:00"
+      "server_instance_sha256": "701809bb2620b6be6c64f64df55d41985b2a67dbc328d776b7d1eb1a8a4dd085",
+      "started_at": "2026-11-13T13:28:20.574798+00:00"
     }
   ],
   "schema_version": 1,
-  "source_commit": "2b6801374a71798b94a65fcfa2b98f1e98d980fb",
+  "source_commit": "1e68adb92bd224c6a7b043a78644c82da782ae0e",
   "source_tree_dirty": false,
-  "verdict": "not_ready"
+  "verdict": "ready"
 }

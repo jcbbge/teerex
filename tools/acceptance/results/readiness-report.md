@@ -1,6 +1,6 @@
 # Readiness acceptance outcome
 
-Observe remains experimental on both platforms. The committed author-run records each contain three fresh API13 runs with R1–R11 passing; R12 remains unproven until the lead executes the supplied commands independently. Other cartridges have no readiness record and remain experimental. Ready-only installation currently selects zero items; no personal installation or ready promotion was performed. API10/12 CI results are unproven, and API11 is uncertified.
+Observe is ready on x86_64-linux and aarch64-macos for evidenced Rex API13. The lead independently executed three fresh runs per platform at source `1e68adb92bd224c6a7b043a78644c82da782ae0e`; every R1–R12 passed. The [hive record](observe-independent-hive.json) and [Mac record](observe-independent-m5.json) are preserved unchanged with [SHA-256 hashes](observe-independent.sha256), and are the canonical cartridge readiness records. Ready-only installation selects observe on both platforms. Other cartridges remain experimental. No personal installation was performed. API10/12 CI results are unproven, and API11 is uncertified.
 
 - [Linux record](../../cartridges/readiness/observe-x86_64-linux.json)
 - [Mac record](../../cartridges/readiness/observe-aarch64-macos.json)
@@ -22,13 +22,13 @@ Verification on the reviewed source:
 - `python3 -m unittest discover -s tools/cartridges -p test_cartridges.py -v`: 25/25 on both machines.
 - `python3 src/test_targets.py -v`: 15/15 on hive.
 - Fresh-catalog `test_payloads.py --with-rex`: Linux 171 tests, 2 explicit skips; Mac 182 tests, 3 explicit skips. All applicable tests passed. Select the test Rex through PATH/REX_BIN; the first Mac invocation without that selection failed setup and was corrected.
-- Three fresh `readiness.py --runs 3 --long` runs per platform: all 59 observation/state public tests pass per run (three explicitly root-only control methods use the combined CLI), exact N1–N6 equality, and zero peak sampled RSS growth after warmup in the 60-second wait. Both commands exit 1 with `failed_rows=["R12"]`, as required for author-run evidence.
+- Three fresh `readiness.py --runs 3 --long` runs per platform: all 59 observation/state public tests pass per run (three explicitly root-only control methods use the combined CLI), exact N1–N6 equality, and zero peak sampled RSS growth after warmup in the 60-second wait. The earlier author-run commands exited 1 with `failed_rows=["R12"]`; the matching-source independent commands now exit 0 with `verdict="ready"` and no failed rows.
 
 Resolutions for planning:
 
 - X1 retains compare's same-pane refusal. A separate same-pane equal-prefix/changed-tail fixture proves captured equality leaves full text unknown. Private evidence also keeps F1/F4 raw prefixes and true exits side by side.
 - R6 pre-seeds manager lease/data/retired paths and warms the intentional missing-server route, whose Mac Rex client retains a start lock. Exact equality is retained. Nested public suites own separate private HOME directories; Python bytecode writes are disabled.
-- R12 requires an independent lead execution before promotion. Executor labels attribute runs; they do not authenticate a caller.
+- R12 was satisfied by independent lead executions, `local:hive:teerex` and `local:m5:teerex`, at the same source identity. Executor labels attribute runs; they do not authenticate a caller.
 - Phase B uses the explicitly approved, labelled, inert notification sink beside the visible agent tab. Task panes stay on private servers. The harness starts at the exact trusted workspace parent; fixture files/commands use an owned scratch child that is removed. No trust prompts are answered by the delivered runner. The personal trust-config checksum stayed unchanged during the final runs.
 - Codex login shells reset PATH. Tasks therefore name the absolute counting wrappers; correct answers with zero counted calls fail acceptance. The preliminary zero-count probe is excluded from published measurements.
 
