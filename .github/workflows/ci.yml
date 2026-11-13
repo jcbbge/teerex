@@ -330,6 +330,14 @@ jobs:
           python3 items/recovery/test_recovery.py -v
           python3 tools/fleet-install/test_fleet_install.py -v
 
+      - name: Run board replay PTY and named-host jump contracts
+        env:
+          TEEREX_BIN: ${{ github.workspace }}/zig-out/bin/teerex
+          REX_BIN: ${{ runner.temp }}/rex-bin/rex
+        run: |
+          python3 items/board/test_board.py -v
+          python3 items/boardfeed/test_feed.py -v
+
       - name: Run private records offline and disposable Rex contracts
         if: matrix.rex-api == 13
         env:

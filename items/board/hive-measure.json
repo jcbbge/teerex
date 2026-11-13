@@ -1,0 +1,21 @@
+{
+  "frames": 10000,
+  "width": 60,
+  "height": 30,
+  "ns_per_frame": 99749,
+  "bytes": 1192805,
+  "machine": "Linux",
+  "architecture": "x86_64",
+  "binary_bytes": 1546064,
+  "binary_sha256": "fa2eb9f307a0dadb5208a8116a0ed5aec0e04c15b798c970940b8096b5ce4273",
+  "idle_seconds": 3.000465935037937,
+  "idle_cpu_seconds": 0.0,
+  "idle_cpu_percent": 0.0,
+  "idle_cpu_resolution_seconds": 0.01,
+  "idle_output_bytes": 0,
+  "event_to_pty_ms_median": 0.2623775,
+  "event_to_pty_ms_p95": 0.534194,
+  "clear_screen_sequences": 0,
+  "sync_begins": 104,
+  "sync_ends": 104
+}

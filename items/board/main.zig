@@ -78,6 +78,7 @@ const Model = struct {
     replay: bool = false,
     ended: bool = false,
     invalid: usize = 0,
+    attention: [2]bool = @splat(false),
     fn deinit(self: *Model) void {
         for (&self.hosts) |*h| if (h.vitals) |*v| v.deinit();
         for (self.agents.items) |*v| v.deinit();
@@ -102,7 +103,7 @@ const Model = struct {
             self.invalid += 1;
             return false;
         }
-        self.timestamp = @intFromFloat(@min(1e15, num(get(v, "t"))));
+        self.timestamp = @max(self.timestamp, @as(i64, @intFromFloat(@min(1e15, num(get(v, "t"))))));
         const kind = text(v, "kind");
         if (eq(kind, "vitals")) {
             const h = &self.hosts[host];
@@ -121,6 +122,7 @@ const Model = struct {
             const state = text(v, "state");
             for (self.agents.items, 0..) |*old, i| {
                 if (eq(text(old.value, "id"), id) and eq(text(old.value, "host"), name)) {
+                    if (priority(v) < 2 and (priority(old.value) >= 2 or !eq(text(v, "question"), text(old.value, "question")))) self.attention[host] = true;
                     old.deinit();
                     if (eq(state, "gone") or eq(state, "done")) {
                         _ = self.agents.orderedRemove(i);
@@ -133,6 +135,7 @@ const Model = struct {
             }
             if (!eq(state, "gone") and !eq(state, "done") and self.agents.items.len < 256) {
                 try self.agents.append(self.allocator, parsed);
+                if (priority(v) < 2) self.attention[host] = true;
                 retained = true;
             }
         } else if (eq(kind, "stream")) {
@@ -154,7 +157,7 @@ const Model = struct {
 // preserving combining marks and reserving two cells for CJK/emoji codepoints.
 fn cellWidth(cp: u21) usize {
     if ((cp >= 0x300 and cp <= 0x36f) or (cp >= 0xfe00 and cp <= 0xfe0f) or (cp >= 0x1ab0 and cp <= 0x1aff)) return 0;
-    if ((cp >= 0x1100 and cp <= 0x115f) or (cp >= 0x2e80 and cp <= 0xa4cf) or (cp >= 0xac00 and cp <= 0xd7a3) or (cp >= 0xf900 and cp <= 0xfaff) or (cp >= 0xfe10 and cp <= 0xfe6f) or (cp >= 0xff01 and cp <= 0xff60) or (cp >= 0x1f300 and cp <= 0x1faff) or cp >= 0x20000) return 2;
+    if (@import("width.zig").isWide(cp)) return 2;
     return 1;
 }
 fn clip(a: A, input: []const u8, width: usize) ![]const u8 {
@@ -162,7 +165,7 @@ fn clip(a: A, input: []const u8, width: usize) ![]const u8 {
     var it = (std.unicode.Utf8View.init(input) catch return "?").iterator();
     var used: usize = 0;
     while (it.nextCodepoint()) |cp| {
-        if (cp < 32 or (cp >= 127 and cp <= 159) or (cp >= 0x202a and cp <= 0x202e) or (cp >= 0x2066 and cp <= 0x2069)) continue;
+        if (cp == 0xfe0f or cp < 32 or (cp >= 127 and cp <= 159) or (cp >= 0x202a and cp <= 0x202e) or (cp >= 0x2066 and cp <= 0x2069)) continue;
         const size = cellWidth(cp);
         if (used + size > width) break;
         var buf: [4]u8 = undefined;
@@ -210,7 +213,15 @@ fn less(_: void, a: Value, b: Value) bool {
 const UI = struct {
     host: usize = 0,
     selected: usize = 0,
+    selected_id: [256]u8 = @splat(0),
+    selected_len: usize = 0,
+    last_selected: usize = 0,
+    selected_host: usize = 0,
     inline_pad: bool = false,
+    pad: ?Parsed = null,
+    pad_id: [256]u8 = @splat(0),
+    pad_len: usize = 0,
+    pad_host: usize = 0,
     help: bool = false,
     stream_focus: bool = false,
     stream_offset: usize = 0,
@@ -224,7 +235,21 @@ const UI = struct {
             try self.rows.append(model.allocator, entry.value);
         };
         std.mem.sort(Value, self.rows.items, {}, less);
+        if (self.selected == self.last_selected and self.host == self.selected_host and self.selected_len > 0) {
+            for (self.rows.items, 0..) |row, i| if (eq(text(row, "id"), self.selected_id[0..self.selected_len])) {
+                self.selected = i;
+                break;
+            };
+        }
         self.selected = @min(self.selected, self.rows.items.len -| 1);
+        self.last_selected = self.selected;
+        self.selected_host = self.host;
+        self.selected_len = 0;
+        if (self.rows.items.len > 0) {
+            const id = text(self.rows.items[self.selected], "id");
+            self.selected_len = @min(id.len, self.selected_id.len);
+            @memcpy(self.selected_id[0..self.selected_len], id[0..self.selected_len]);
+        }
     }
     fn add(lines: *std.ArrayList(Line), a: A, value: []const u8, role: Role) !void {
         try lines.append(a, .{ .value = value, .role = role });
@@ -275,7 +300,8 @@ const UI = struct {
             const r = self.rows.items[self.selected];
             try add(&lines, a, try fmt(a, "Scratchpad · {s}", .{text(r, "name")}), .accent);
             // Complete Now line is wrapped, never treated as executable text.
-            const now = try clip(a, text(r, "now"), 8192);
+            const pad = if (self.pad != null and self.pad_host == self.host and eq(self.pad_id[0..self.pad_len], text(r, "id"))) self.pad.?.value else .null;
+            const now = try clip(a, if (pad == .object) text(pad, "now") else text(r, "now"), 8192);
             var it = (try std.unicode.Utf8View.init(now)).iterator();
             var part: std.ArrayList(u8) = .empty;
             var count: usize = 0;
@@ -290,6 +316,13 @@ const UI = struct {
                 count += cw;
             }
             if (part.items.len > 0) try add(&lines, a, try a.dupe(u8, part.items), .words);
+            if (pad == .object) {
+                for ([_][]const u8{ "todo", "done" }, [_][]const u8{ "□", "ok" }) |key, glyph| {
+                    for (arr(get(pad, key))) |item| {
+                        try add(&lines, a, try fmt(a, "{s} {s}", .{ glyph, str(item) }), .secondary);
+                    }
+                }
+            }
             try add(&lines, a, try fmt(a, "{d}/{d} steps done", .{ integer(num(get(r, "done"))), integer(num(get(r, "total"))) }), .secondary);
         }
         try self.section(&lines, a, if (self.stream_focus) "stream  ◄" else "stream", width);
@@ -340,7 +373,7 @@ const UI = struct {
         const name = try clip(a, text(r, "name"), @max(6, @min(20, width -| (cells(progress) + 10))));
         const header = try fmt(a, "{s} {s}  {s}  {d}{s}{s}", .{ if (selected) "►" else if (priority(r) == 0) "●" else if (priority(r) == 1) "!" else "·", name, progress, @divTrunc(ago, if (ago >= 60000) @as(i64, 60000) else 1000), if (ago >= 60000) "m" else "s", if (eq(text(r, "placement"), "detached")) " detached" else "" });
         if (lines.items.len < 256) self.hit[lines.items.len] = index;
-        try lines.append(a, .{ .value = header, .role = role, .selected = selected and self.flash });
+        try lines.append(a, .{ .value = header, .role = role, .selected = priority(r) < 2 and self.flash });
         if (lines.items.len < 256) self.hit[lines.items.len] = index;
         try add(lines, a, try fmt(a, "  {s}", .{now}), role);
     }
@@ -393,7 +426,7 @@ const Theme = struct {
         for (desired, 0..) |slot, role| {
             self.slots[role] = slot;
             const bg = self.colors[17] orelse {
-                self.slots[role] = 16;
+                self.slots[role] = if (role == @intFromEnum(Role.marks)) 6 else 16;
                 continue;
             };
             const threshold: f64 = if (role == @intFromEnum(Role.lines)) 1.5 else if (role == @intFromEnum(Role.marks)) 3 else 4.5;
@@ -477,8 +510,10 @@ const Renderer = struct {
 
 var resized = false;
 var stopping = false;
+var signal_fd: p.fd_t = -1;
 fn signal(sig: i32) callconv(.c) void {
     if (sig == p.SIG.WINCH) resized = true else stopping = true;
+    if (signal_fd >= 0) _ = p.write(signal_fd, "s") catch 0;
 }
 fn dimensions() p.winsize {
     var size: p.winsize = .{ .row = 30, .col = 60, .xpixel = 0, .ypixel = 0 };
@@ -501,7 +536,7 @@ fn query() !void {
 
 // Graphics use exactly the queried ANSI role colour; transparent pixels leave
 // the live terminal background intact. No independent RGB palette is invented.
-fn graphic(a: A, host: Host, rgb: RGB, column: usize) ![]const u8 {
+fn graphic(a: A, host: Host, rgb: RGB, row: usize, column: usize) ![]const u8 {
     const width: usize = 96;
     const height: usize = 16;
     var pixels: [width * height * 4]u8 = @splat(0);
@@ -519,7 +554,7 @@ fn graphic(a: A, host: Host, rgb: RGB, column: usize) ![]const u8 {
     // Payloads <=4096 bytes per chunk, suppress all acknowledgements; replace a
     // private image id in one synchronized transaction.
     var out: std.ArrayList(u8) = .empty;
-    try out.appendSlice(a, try fmt(a, ESC ++ "[2;{d}H" ++ ESC ++ "_Ga=T,f=32,s=96,v=16,i=197845,c=24,r=1,C=1,q=2,m=1;{s}" ++ ESC ++ "\\", .{ column, encoded[0..4096] }));
+    try out.appendSlice(a, try fmt(a, ESC ++ "[{d};{d}H" ++ ESC ++ "_Ga=T,f=32,s=96,v=16,i=197845,c=24,r=1,C=1,q=2,m=1;{s}" ++ ESC ++ "\\", .{ row, column, encoded[0..4096] }));
     try out.appendSlice(a, try fmt(a, ESC ++ "_Gm=0;{s}" ++ ESC ++ "\\", .{encoded[4096..]}));
     return out.toOwnedSlice(a);
 }
@@ -532,6 +567,14 @@ fn jump(allocator: A, self: []const u8, config: []const u8, row: Value) !bool {
     defer allocator.free(result.stdout);
     defer allocator.free(result.stderr);
     return result.term == .Exited and result.term.Exited == 0;
+}
+
+fn scratch(allocator: A, self: []const u8, config: []const u8, row: Value) !?Parsed {
+    const result = try std.process.Child.run(.{ .allocator = allocator, .argv = &.{ self, "--config", config, "--host", text(row, "host"), "scratch", "show", "--session", text(row, "session"), "--block", text(row, "block"), "--json" }, .max_output_bytes = 262144 });
+    defer allocator.free(result.stdout);
+    defer allocator.free(result.stderr);
+    if (result.term != .Exited or result.term.Exited != 0) return null;
+    return std.json.parseFromSlice(Value, allocator, result.stdout, .{ .allocate = .alloc_always }) catch null;
 }
 
 const Options = struct { config: []const u8, hosts: []const u8 = "hive,m5", replay: ?[]const u8 = null, once: bool = false, graphics: bool = true, benchmark: usize = 0 };
@@ -562,6 +605,7 @@ pub fn run(allocator: A, args: []const []const u8) !u8 {
     defer model.deinit();
     var ui: UI = .{};
     defer ui.rows.deinit(allocator);
+    defer if (ui.pad) |*pad| pad.deinit();
     var theme: Theme = .{ .color = !std.process.hasEnvVarConstant("NO_COLOR") };
     if (opts.once) {
         const bytes = try std.fs.cwd().readFileAlloc(allocator, opts.replay.?, 16 * 1024 * 1024);
@@ -592,6 +636,13 @@ pub fn run(allocator: A, args: []const []const u8) !u8 {
     raw.cc[@intFromEnum(p.V.TIME)] = 0;
     try p.tcsetattr(0, .NOW, raw);
     defer p.tcsetattr(0, .NOW, saved) catch {};
+    const signal_pipe = try p.pipe2(.{ .NONBLOCK = true, .CLOEXEC = true });
+    defer {
+        p.close(signal_pipe[0]);
+        p.close(signal_pipe[1]);
+        signal_fd = -1;
+    }
+    signal_fd = signal_pipe[1];
     const handler: p.Sigaction = .{ .handler = .{ .handler = signal }, .mask = p.sigemptyset(), .flags = 0 };
     var old_winch: p.Sigaction = undefined;
     var old_term: p.Sigaction = undefined;
@@ -607,7 +658,7 @@ pub fn run(allocator: A, args: []const []const u8) !u8 {
     resized = false;
     stopping = false;
     try std.fs.File.stdout().writeAll(ESC ++ "[?1049h" ++ ESC ++ "[?25l" ++ ESC ++ "[?1000h" ++ ESC ++ "[?1006h" ++ ESC ++ "[?1004h");
-    defer std.fs.File.stdout().writeAll(ESC ++ "[?2026l" ++ ESC ++ "_Ga=d,d=I,i=197845,q=2" ++ ESC ++ "\\" ++ ESC ++ "[0m" ++ ESC ++ "[?1000l" ++ ESC ++ "[?1006l" ++ ESC ++ "[?1004l" ++ ESC ++ "[?25h" ++ ESC ++ "[?1049l" ++ ESC ++ "]7501;state=idle:app=teerex-board" ++ ESC ++ "\\") catch {};
+    defer std.fs.File.stdout().writeAll(ESC ++ "[?2026l" ++ ESC ++ "_Ga=d,d=I,i=197845,q=2" ++ ESC ++ "\\" ++ ESC ++ "[0m" ++ ESC ++ "[?1000l" ++ ESC ++ "[?1006l" ++ ESC ++ "[?1004l" ++ ESC ++ "[?25h" ++ ESC ++ "[?1049l" ++ ESC ++ "]7501;state=clear:id=teerex/board:app=teerex-board" ++ ESC ++ "\\") catch {};
     const self = try std.fs.selfExePathAlloc(allocator);
     var child: ?std.process.Child = null;
     var replay: ?std.fs.File = null;
@@ -664,12 +715,18 @@ pub fn run(allocator: A, args: []const []const u8) !u8 {
                 };
                 break :blk n;
             };
-            if (count > waiting_count) {
+            if (model.attention[ui.host] and count > 0) {
                 ui.flash = true;
                 flash_until = now + 180;
-                try std.fs.File.stdout().writeAll(ESC ++ "]7501;state=waiting_on_operator:app=teerex-board" ++ ESC ++ "\\");
-            } else if (count == 0 and waiting_count > 0) try std.fs.File.stdout().writeAll(ESC ++ "]7501;state=working:app=teerex-board" ++ ESC ++ "\\");
-            waiting_count = count;
+            }
+            model.attention[ui.host] = false;
+            var total_waiting: usize = 0;
+            for (model.agents.items) |entry| if (priority(entry.value) < 2) {
+                total_waiting += 1;
+            };
+            if (total_waiting > 0 and waiting_count == 0) try std.fs.File.stdout().writeAll(ESC ++ "]7501;state=blocked:id=teerex/board:app=teerex-board" ++ ESC ++ "\\");
+            if (total_waiting == 0 and waiting_count > 0) try std.fs.File.stdout().writeAll(ESC ++ "]7501;state=working:id=teerex/board:app=teerex-board" ++ ESC ++ "\\");
+            waiting_count = total_waiting;
             var arena = std.heap.ArenaAllocator.init(allocator);
             defer arena.deinit();
             const a = arena.allocator();
@@ -678,13 +735,19 @@ pub fn run(allocator: A, args: []const []const u8) !u8 {
             try std.fs.File.stdout().writeAll(ESC ++ "[?2026h");
             try std.fs.File.stdout().writeAll(try renderer.frame(a, lines, theme, size.col, false));
             const color = theme.colors[theme.slots[@intFromEnum(Role.marks)]];
-            if (kitty and opts.graphics and theme.color and color != null and model.hosts[ui.host].count > 0 and size.col >= 55) try std.fs.File.stdout().writeAll(try graphic(a, model.hosts[ui.host], color.?, 8));
+            if (kitty and opts.graphics and theme.color and color != null and model.hosts[ui.host].count > 0 and size.col >= 55) {
+                try std.fs.File.stdout().writeAll(try graphic(a, model.hosts[ui.host], color.?, if (model.hosts[ui.host].reachable == false) 3 else 2, 8));
+            } else if (kitty) try std.fs.File.stdout().writeAll(ESC ++ "_Ga=d,d=I,i=197845,q=2" ++ ESC ++ "\\");
             try std.fs.File.stdout().writeAll(ESC ++ "[?2026l");
             dirty = false;
         }
-        var fds = [_]p.pollfd{ .{ .fd = 0, .events = p.POLL.IN, .revents = 0 }, .{ .fd = if (model.ended) -1 else fd, .events = p.POLL.IN, .revents = 0 } };
+        var fds = [_]p.pollfd{ .{ .fd = 0, .events = p.POLL.IN, .revents = 0 }, .{ .fd = if (model.ended) -1 else fd, .events = p.POLL.IN, .revents = 0 }, .{ .fd = signal_pipe[0], .events = p.POLL.IN, .revents = 0 } };
         // The only deadline is a one-shot attention flash. At rest, poll sleeps indefinitely.
         _ = try p.poll(&fds, if (flash_until > now) @intCast(flash_until - now) else -1);
+        if (fds[2].revents & p.POLL.IN != 0) {
+            var signals: [64]u8 = undefined;
+            _ = p.read(signal_pipe[0], &signals) catch 0;
+        }
         if (fds[1].revents & (p.POLL.IN | p.POLL.HUP) != 0) {
             var buffer: [65536]u8 = undefined;
             const n = try p.read(fd, &buffer);
@@ -805,6 +868,14 @@ pub fn run(allocator: A, args: []const []const u8) !u8 {
                     },
                     ' ' => {
                         ui.inline_pad = !ui.inline_pad;
+                        if (ui.inline_pad and ui.rows.items.len > 0) {
+                            if (ui.pad) |*old| old.deinit();
+                            ui.pad = scratch(allocator, self, opts.config, ui.rows.items[ui.selected]) catch null;
+                            const id = text(ui.rows.items[ui.selected], "id");
+                            ui.pad_len = @min(id.len, ui.pad_id.len);
+                            @memcpy(ui.pad_id[0..ui.pad_len], id[0..ui.pad_len]);
+                            ui.pad_host = ui.host;
+                        }
                         dirty = true;
                     },
                     '?' => {
