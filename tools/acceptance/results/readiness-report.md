@@ -10,7 +10,7 @@ Observe remains experimental on both platforms. The committed author-run records
 
 The records were regenerated after rebasing U05: `--state`, its complete public suite and the embedded `items/send/draft.lua` input are included. Historical dated live observations are provenance, not fixture-certified behavior.
 
-The baseline summaries identify their measured pre-U05 binary hashes; the new state contract is proven separately by the regenerated records.
+The final n40 baseline summaries identify their measured U05 binary hashes and private fixture HOME. The actual-agent sample retains its measured pre-U05 binary hash; it is evidence for that synthetic task, not the new state interpretation. The new state contract is proven separately by the regenerated records.
 
 The synthetic results establish explicit output, direct-child exit, cancellation, unknown-state and cleanup boundaries. They do not establish a performance or productivity improvement: the corrected F1/F4 arms count nine teerex-arm CLI/Rex execs versus six reference-arm execs, including diagnostic and cleanup calls. Both arms use the same counting wrapper. Server, GUI, neighbouring panes and whole-machine energy are excluded.
 

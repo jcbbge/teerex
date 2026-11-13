@@ -1,6 +1,6 @@
 # Safe-subset failing-CLI baseline
 
-Measured binaries (SHA-256): teerex `1bc44d0e27b4f82d6a26cce8ca97849217f62220873645165dd3dbbf4eea5860`; Rex `d09d824f5cadc348c156d3d7579fda5889747c69100c72b607cfd94dfb2e3679`. These identify the measured pre-U05 workload, independently of current readiness.
+Measured binaries (SHA-256): teerex `3b87f6552ac7d55bc93d4f851235a8fdf7b33527a19e2b3fd9560e491fcbd203`; Rex `d09d824f5cadc348c156d3d7579fda5889747c69100c72b607cfd94dfb2e3679`. Supervised fixtures and reference calls use disposable HOME with bytecode writes disabled.
 
 Readiness and task completion are separate. Hidden full text remains unknown.
 
@@ -27,31 +27,31 @@ Waited-exec CPU includes reaped descendants; RSS is the largest single waited ch
 
 | Arm | Fixture | n | Calls | Rex execs | stdout bytes | stderr bytes | output-dir bytes | CPU ms | max RSS KiB | Wall cold / median / p95 ms |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| teerex | F1 | 40 | 9 | 9 | 21051 | 146 | 72350 | 771.792 | 65100.0 | 981.460 / 1021.850 / 1100.740 |
-| teerex | F4 | 40 | 9 | 9 | 21044 | 146 | 72308 | 788.381 | 65100.0 | 1010.500 / 1010.777 / 1086.110 |
-| reference | F1 | 40 | 6 | 6 | 11185 | 0 | 0 | 425.538 | 65100.0 | 407.947 / 368.414 / 405.363 |
-| reference | F4 | 40 | 6 | 6 | 11123 | 0 | 0 | 429.625 | 65100.0 | 442.101 / 371.809 / 411.379 |
+| teerex | F1 | 40 | 9 | 9 | 21046 | 145 | 72408 | 739.834 | 65364.0 | 1094.393 / 1042.588 / 1143.680 |
+| teerex | F4 | 40 | 9 | 9 | 21039 | 145 | 72366 | 754.557 | 65364.0 | 965.294 / 1039.784 / 1115.291 |
+| reference | F1 | 40 | 6 | 6 | 11185 | 0 | 0 | 417.000 | 65364.0 | 382.033 / 385.282 / 433.057 |
+| reference | F4 | 40 | 6 | 6 | 11123 | 0 | 0 | 406.409 | 65364.0 | 409.927 / 374.071 / 442.374 |
 
 - F1: n=40; excluded=rex_server, gui, neighbour_panes, whole_machine_energy
-  - wall_ms.cold teerex/reference: 2.4059
-  - wall_ms.warm_median teerex/reference: 2.7736
-  - wall_ms.warm_p95 teerex/reference: 2.7154
+  - wall_ms.cold teerex/reference: 2.8647
+  - wall_ms.warm_median teerex/reference: 2.7060
+  - wall_ms.warm_p95 teerex/reference: 2.6409
   - calls teerex/reference: 1.5000
   - rex_client_launches teerex/reference: 1.5000
-  - stdout_bytes teerex/reference: 1.8821
+  - stdout_bytes teerex/reference: 1.8816
   - stderr_bytes teerex/reference: unknown (zero reference)
-  - cpu_ms teerex/reference: 1.8137
+  - cpu_ms teerex/reference: 1.7742
   - maxrss_kib teerex/reference: 1.0000
 
 - F4: n=40; excluded=rex_server, gui, neighbour_panes, whole_machine_energy
-  - wall_ms.cold teerex/reference: 2.2857
-  - wall_ms.warm_median teerex/reference: 2.7185
-  - wall_ms.warm_p95 teerex/reference: 2.6402
+  - wall_ms.cold teerex/reference: 2.3548
+  - wall_ms.warm_median teerex/reference: 2.7796
+  - wall_ms.warm_p95 teerex/reference: 2.5212
   - calls teerex/reference: 1.5000
   - rex_client_launches teerex/reference: 1.5000
-  - stdout_bytes teerex/reference: 1.8919
+  - stdout_bytes teerex/reference: 1.8915
   - stderr_bytes teerex/reference: unknown (zero reference)
-  - cpu_ms teerex/reference: 1.8350
+  - cpu_ms teerex/reference: 1.8566
   - maxrss_kib teerex/reference: 1.0000
 
 No improvement claim is made unless every B row passed. Pane-side CPU is null when exit-time process evidence was unreadable.
