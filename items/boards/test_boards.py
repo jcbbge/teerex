@@ -1,6 +1,7 @@
 """Public boards/seat/decision contracts. Live tests use only an owned disposable Rex."""
 import fcntl
 import json
+import runpy
 import os
 import pty
 import select
@@ -621,6 +622,22 @@ class CallsTest(unittest.TestCase):
         payload = json.loads(result.stdout)
         self.assertEqual([s["outcome"] for s in payload["sources"]], ["observed", "observed", "unknown"])
         self.assertEqual({r["command_host"] for r in payload["calls"]}, {"hive", "m5"})
+
+
+class StatusTest(unittest.TestCase):
+    def test_rex_timestamp_fractional_precision_on_python39(self):
+        status = runpy.run_path(str(ROOT / "items/boards/boards.py"))["status_evidence"]
+        status.__globals__["stamp"] = lambda: 946684802000  # 2000-01-01T00:00:02Z
+        for digits in range(10):
+            fraction = "." + "123456789"[:digits] if digits else ""
+            for clock, zone in (("00", "Z"), ("00", "+00:00"), ("18", "-06:00")):
+                day = "1999-12-31" if clock == "18" else "2000-01-01"
+                timestamp = day + "T" + clock + ":00:00" + fraction + zone
+                with self.subTest(timestamp=timestamp):
+                    record = status(dict(records=[dict(state="done", updated_at=timestamp)]))["records"][0]
+                    millis = int(("123456789"[:digits] + "000")[:3]) if digits else 0
+                    self.assertEqual(record["age_ms"], 2000 - millis)
+        self.assertIsNone(status(dict(records=[dict(state="done", updated_at="unknown")]))["records"][0]["age_ms"])
 
 
 class RexBoardsTest(unittest.TestCase):

@@ -651,8 +651,8 @@ def status_evidence(raw):
         result["age_ms"] = None
         try:
             timestamp = record["updated_at"].replace("Z", "+00:00")
-            # Rex returns nanoseconds; Python 3.9/3.10 accepts up to microseconds.
-            timestamp = re.sub(r"(\.\d{6})\d+", r"\1", timestamp)
+            # Rex fractional precision varies; Python 3.9/3.10 needs 3 or 6 digits.
+            timestamp = re.sub(r"\.(\d+)", lambda m: "." + m[1][:6].ljust(6, "0"), timestamp)
             at = datetime.datetime.fromisoformat(timestamp)
             if at.tzinfo is not None:
                 delta = stamp() - int(at.timestamp() * 1000)
