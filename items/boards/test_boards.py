@@ -778,11 +778,12 @@ class RexBoardsTest(unittest.TestCase):
             os.close(master)
             os.close(slave)
         self.addCleanup(stop)
-        def wait_for(needle, timeout=12):
+        def wait_for(needle, timeout=12, *, selected=None):
             end = time.monotonic()+timeout
             while time.monotonic() < end:
                 screen = bytes(output).rsplit(b"\x1b[2J\x1b[H", 1)[-1]
-                if needle.encode() in screen and b"Receipt:" in screen:
+                selection = selected is None or ("Selected: " + selected + " | ").encode() in screen
+                if needle.encode() in screen and selection and screen.endswith(b"\x1b[J"):
                     return screen.decode(errors="replace")
                 if select.select([master], [], [], .1)[0]:
                     try:
@@ -825,23 +826,12 @@ class RexBoardsTest(unittest.TestCase):
         self.assertTrue(all("dashboard" not in r for r in payload["rows"]))
         process, master, slave, saved, output, wait_for = self.keyboard_dashboard(args, env)
         wait_for("LAST CALL")
-        # Select by identity: Rex enumeration order is not an alphabetical contract.
+        # Require the committed exact-name filter and selection in the same frame.
+        # An earlier screen can already contain a name before its input is consumed.
         os.write(master, b"/dash-agent-alpha\r")
-        wait_for("> dash-agent-alpha")
-        os.write(master, b"/dash-agent\r")
-        screen = wait_for("dash-agent-beta")
-        alpha_first = screen.index("dash-agent-alpha") < screen.index("dash-agent-beta")
-        toward_beta, toward_alpha = (b"j", b"k") if alpha_first else (b"k", b"j")
-        os.write(master, toward_beta)
-        wait_for("> dash-agent-beta")
-        for byte in (b"\x1b", b"[", b"A" if alpha_first else b"B"):
-            os.write(master, byte)
-            time.sleep(.01)
-        wait_for("> dash-agent-alpha")
-        os.write(master, toward_alpha + (b"\x1b[B" if alpha_first else b"\x1b[A"))
-        wait_for("> dash-agent-beta")
+        wait_for("Filter: dash-agent-alpha", selected="dash-agent-alpha")
         os.write(master, b"/dash-agent-beta\r")
-        selected_screen = wait_for("Filter: dash-agent-beta")
+        selected_screen = wait_for("Filter: dash-agent-beta", selected="dash-agent-beta")
         self.assertRegex(selected_screen, r"dash-agent-beta[^\r\n]+working \[OSC\]\s+\d+s\s+\d{2}:\d{2}:\d{2}")
         self.assertEqual(initial, view(), "selection/filtering must not focus or move any pane")
         os.write(master, b"\r")
