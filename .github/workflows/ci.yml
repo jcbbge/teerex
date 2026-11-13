@@ -303,7 +303,10 @@ jobs:
         if: runner.os == 'Linux' || matrix.rex-api == 13
         env:
           REX_BIN: ${{ runner.temp }}/rex-bin/rex
-        run: python3 tools/cartridges/test_payloads.py --catalog "$RUNNER_TEMP/cartridge-catalog" --with-rex
+        run: |
+          python3 tools/cartridges/test_payloads.py --catalog "$RUNNER_TEMP/cartridge-catalog" --with-rex
+          TEEREX_BIN="$PWD/zig-out/bin/teerex" python3 tools/cartridges/test_payloads.py --catalog "$RUNNER_TEMP/cartridge-catalog" --with-rex --managed-runtime
+          python3 tools/acceptance/perf_measure.py --rex "$REX_BIN" --teerex "$PWD/zig-out/bin/teerex" --machine "ci-${{ runner.os }}" --source-revision "$GITHUB_SHA" --output "$RUNNER_TEMP/perf-smoke" --warm-runs 0
 
       - name: Check shared observation terms offline
         env:
