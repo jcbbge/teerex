@@ -137,6 +137,11 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     }));
+    exe.root_module.addImport("rex_mcp", b.createModule(.{
+        .root_source_file = b.path("items/mcp/main.zig"),
+        .target = target,
+        .optimize = optimize,
+    }));
     b.installArtifact(exe);
 
     const run = b.addRunArtifact(exe);

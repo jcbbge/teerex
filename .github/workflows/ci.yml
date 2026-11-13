@@ -247,6 +247,12 @@ jobs:
           REX_BIN: ${{ runner.temp }}/rex-bin/rex
         run: python3 items/surfaces/test_surfaces.py -v
 
+      - name: Run stdio MCP protocol and disposable-Rex round trips
+        env:
+          TEEREX_BIN: ${{ github.workspace }}/zig-out/bin/teerex
+          REX_BIN: ${{ runner.temp }}/rex-bin/rex
+        run: python3 items/mcp/test_mcp.py -v
+
       - name: Prepare disposable Linux SSH and fence acceptance
         if: runner.os == 'Linux'
         run: |

@@ -23,6 +23,7 @@ const usage =
     \\  fleet install|rollback                       Explicit named-host installation plan/apply
     \\  cartridges install|list|run|activate|remove|restore  Independent native payloads
     \\  cartridges doctor|repair                     Read-only findings; explicit old-stage cleanup plans
+    \\  mcp [--print-config claude|codex|pi]           Local stdio MCP tools; registration snippets only
     \\  targets resolve|exec                         Named-host lookup and explicit transport
     \\  run-visible                                  Visible noninteractive argv, output and actual exit
     \\  replay record|play|live                       Capture bytes, faithful replay and independent live checks
@@ -37,7 +38,7 @@ const usage =
     \\Where: configured command host; paths belong there, never silently uploaded.
     \\Why: report actual activity/results and unknowns, not infer readiness or completion.
     \\How: explicit config/host or socket/full IDs; no retries, fallback or autostart.
-    \\Python3.9+ is required for targets, boards, agents, recovery, fleet, cartridges, replay and palette install.
+    \\Python3.9+ is required for targets, boards, agents, recovery, fleet, cartridges, replay, mcp and palette install.
     \\Legacy direct-socket native tools do not require Python. SSH trust/key are explicit.
     \\Native call history adds no runtime dependency; missing end records stay unknown.
     \\Personal install/restart/close/config actions need their own authorization.
@@ -147,6 +148,7 @@ fn run(allocator: std.mem.Allocator) !void {
     args = try withDefaultSocket(allocator, args);
     const command = args[0];
     const rest = args[1..];
+    if (std.mem.eql(u8, command, "mcp")) finish(allocator, try @import("rex_mcp").run(allocator, rest));
     if (std.mem.eql(u8, command, "replay")) finish(allocator, try @import("rex_replay").run(allocator, rest));
     if (std.mem.eql(u8, command, "fleet") and rest.len > 0 and (std.mem.eql(u8, rest[0], "install") or std.mem.eql(u8, rest[0], "rollback"))) {
         const sources = @import("fleet_sources");
