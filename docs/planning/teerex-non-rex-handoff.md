@@ -1,5 +1,15 @@
 # teerex non-Rex handoff
 
+## Current delegation package — 13 November 2026
+
+Use the [current phased roadmap](../roadmap.md#current-phased-plan--13-november-2026), [H01–H08 delegation briefs](teerex-delegation-briefs.md) and [copy-ready asynchronous orchestrator prompt](teerex-orchestrator-prompt.md). The prompt requires only this public repository, reserves disjoint outputs, coordinates dependency-aware starts and gives one integrator responsibility for completion reports and canonical documentation.
+
+Joshua authorized publishing this package, not selecting manual park/resume or implementing every proposed scope. Filed issues remain externally owned. Outside-teerex work is brief/spec/scope preparation only; repository/recipient selection, implementation, publication of future outputs, paid evaluation, consumer cutover and personal-host actions keep their approval gates.
+
+## Preserved historical handoff
+
+The original body below is unchanged. Its scores, transfer hashes and statements about then-deferred work describe that historical checkpoint; this navigation is a later publication update. The newer operating-layer scope makes paired agent-core replacement teerex product responsibility with its existing owner, not a new generic runtime assignment.
+
 Derived excerpt of [the complete phase review](teerex-pdf-work-inventory.md), also available in the [review artifact](https://ampcode.com/artifacts/teerex-work-inventory-be8ac399-5274-44c5-8f52-8b322e298866). This is planning for optional separate ownership, not a new assignment or implementation approval. Raw PDFs/private source material are excluded.
 
 ## How to read the scope flags and scores

@@ -22,7 +22,7 @@ The separately checksummed onboarding package contains its release-time guides a
 
 ## Start here
 
-[Current product roadmap and complete checklist](docs/roadmap.md) — shipped capabilities and benefits, every original C01–C32 requirement, outstanding validation/product gaps, host blockers, and unchosen next features. The new alpha.5 brief selects paired agent-core source migrations; personal deployment/destructive host actions and deferred non-Rex projects remain separate.
+[Current product roadmap and complete checklist](docs/roadmap.md) — proposed remaining phase priorities, acceptance/cutover/rollout boundaries, shipped capabilities and the preserved C01–C32 checkpoint. Use the [outside-teerex delegation briefs](docs/planning/teerex-delegation-briefs.md) and [copy-ready asynchronous orchestrator prompt](docs/planning/teerex-orchestrator-prompt.md) for parallel planning/specification handoff. Filed issues stay externally owned; publishing the plan does not select its proposed features or authorize outside implementation. The alpha.5 brief's paired agent-core product migrations remain separate from personal rollout.
 
 1. [Level one: meet your installed Rex](docs/learning/level-1.md) — a small, read-only walkthrough. No config edits, runner access, VPS changes, or installs.
 2. [Research index](research/README.md) — the three completed investigations and their evidence boundaries.

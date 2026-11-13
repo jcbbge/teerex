@@ -1,5 +1,103 @@
 # teerex product roadmap
 
+## Current phased plan — 13 November 2026
+
+**Recommended next product order: manual Rex park/resume, minimal cartridge discovery, explicit evidence attachments, then narrower presentation filters if measurements justify them.** Prepare read-only readiness criteria and a safe-subset failing-CLI baseline alongside the first selected feature. This order is a proposal, not approval to implement every item.
+
+**Joshua authorized publication of this planning and handoff package. He did not select manual park/resume or approve outside implementation by doing so.** All filed issues remain externally owned, including those not named here. Keep their overlaps as dependencies; do not redispatch them as phase work. Future implementation requires an explicit selected scope; planning/specification can proceed within the handoff's boundaries.
+
+Use the [outside-teerex delegation briefs](planning/teerex-delegation-briefs.md) for H01–H08 and the [copy-ready orchestrator prompt](planning/teerex-orchestrator-prompt.md) to coordinate asynchronous, disjoint planning workloads. The [canonical non-Rex handoff](planning/teerex-non-rex-handoff.md) links these current documents while preserving its original historical body. No private artifact or Amp account is required to use the package.
+
+### Source and release are different baselines
+
+This plan was reconciled with public main through [724dbc3635520d9fd24d8fe521555908039b87c5](https://github.com/jcbbge/teerex/commit/724dbc3635520d9fd24d8fe521555908039b87c5), not the old local preservation checkout. Source includes `run-visible`, unfenced compute/callback routing, independent local scoped delivery, leaf-aware named-host routing, native-owned in-place jobs presentation, multi-state status watches with longer or explicitly unlimited waits, and pre-creation spawn failure classification. These externally owned increments are not new assignments here. Read the latest accepted contracts before starting dependent work; this dated plan does not freeze other agents' source changes.
+
+The frozen [alpha.5 release](releases/v0.1.0-alpha.5.md) remains at [682489d66dfdb39992b1b2e9f05054bcc009e6d7](https://github.com/jcbbge/teerex/commit/682489d66dfdb39992b1b2e9f05054bcc009e6d7). Newer source is not present in those archives merely because its version string still says alpha.5. This documentation publication changes no release asset and makes no current-head CI or runtime certification claim.
+
+The [definitive inventory](planning/teerex-pdf-work-inventory.md), [original validation record](planning/teerex-pdf-inventory-validation.json) and `research/` remain historical evidence. P1's 12 PDF pages and P2's 8 PDF pages are authoritative; Markdown attachments remain excluded. The handoff's new navigation does not reinterpret its historical scores or transfer hashes. Official documentation/API indexing is not unavailable proprietary Rex application source, and no binary redistribution permission is assumed.
+
+### Separate product, acceptance, cutover and rollout
+
+| Track | Work and finish boundary |
+| --- | --- |
+| Remaining teerex product | A specifically selected Rex-facing capability, implemented and verified in its supported domain. Original assistant suggestions are not all promised features. |
+| Product acceptance | Q02/Q05/Q10/Q11 and C31/C32/Q12 establish readiness, first-use, native presentation, managed-runtime and measured workload evidence. More test counts do not prove productivity. |
+| Consumer migration and cutover | Paired teerex/agent-core replacement and parity remain product responsibility under the existing external owner. Only approved cutover removes or switches working consumers. |
+| Personal rollout | A separately authorized named-host installation/configuration, global launcher change, pane action, server restart/update or VPS deployment. Publishing code or a plan grants none of these permissions. |
+
+Independent one/all cartridge installation already exists. The [manager](cartridges.md) builds separate native payloads; all current items remain experimental, so ready-only `--all` intentionally selects none. New operating-layer commands remain combined-CLI composition, not independent cartridges. Do not restart packaging or mark every item ready to fill that selection.
+
+### Prepare readiness and a baseline in parallel
+
+**Q02 and C31/C32/Q12 are acceptance work, not new feature implementation.** Define a supported read-only subset and a disposable failing-CLI workflow before judging the next feature useful. Acceptance design can proceed independently of feature code and filed-issue repairs.
+
+Record exact source/binary/Rex/API/target identity, expected diagnostic evidence, actual direct-child exit versus reports, unknown/refusal/deadline/cancel outcomes and neighboring-resource controls. Measure comparable cold/warm calls, wall time, returned bytes and scoped CPU/RSS, disclosing excluded processes. Use the visible path wherever visibility is promised; offstage is not a hidden-agent shortcut.
+
+A safe subset does not certify full takeover, atomic input, arbitrary descendant cleanup or isolation. Equal/truncated text and retained done reports must not manufacture completion. Actual model turns, interruptions/task and wrong-target-input rates require corresponding observations; no paid-model evaluation is approved here. Evaluate an item's entire advertised contract before changing catalog readiness: testing `compare` alone cannot make the whole observation cartridge ready.
+
+### First proposed feature: manual Rex park/resume
+
+**U01, A01–A02; P1:p2/p5.** Preserve an explicitly selected Rex context, the unresolved question/hypothesis and next experiment. Resume by showing that reasoning first, then attributed historical evidence and current target availability. Start with inspection, not automatic layout reconstruction or execution. This adjacent Phase 1 candidate was recommended, not separately selected by Joshua.
+
+Reuse the observation/evidence representation and a bounded private local record or reference. Keep source/session/block identity, supplied notes, missing fields and partial evidence explicit. A resumed record is not a fresh snapshot, authority grant, draft buffer or harness resume session. H01 can own a generic record envelope, but no new evidence service is a prerequisite.
+
+Proposed ownership is a continuity leaf and its own interface tests; coordinate root/build/docs wiring before editing shared paths. Acceptance should distinguish two asymmetric investigations, preserve Unicode and incomplete evidence, report missing/stale/different-server targets without fallback, refuse file hazards within the selected storage contract, and avoid content leakage in ordinary logs. Inspection must not focus, paste, relaunch or alter neighboring panes. Later explicit navigation is a separately tested effect.
+
+### Next proposed feature: minimal cartridge discovery
+
+**Q03, with Q05/Q11 acceptance.** Expose existing individual/all selection, experimental status, code/data/version plans and recovery guidance through the smallest coherent human/agent entry. Prefer a thin entry into the current manager over another manager, manifest format, interactive selector or GUI. Root `cartridges` dispatch is not currently wired; the standalone Python manager already works.
+
+Choose the entry shape after first-use observation. Preserve JSON/exit/plan semantics, stable HOME and independent removal. Coordinate root/packaging ownership; queue/retry, remote catalogs, new payload kinds and automatic repair are not implicit scope. Acceptance includes preview without execution, retained-data explanation, refusal recovery and a real manager-mediated launch. Direct payload invocation cannot satisfy managed-runtime lease acceptance.
+
+### Then attach explicit evidence to an existing receipt
+
+**U02, Rex-facing A08/A12; P1:pp4–5.** Attach bounded exact observation/run references and omissions for one selected failure/handoff workflow. Reuse continuity fields and H01's envelope if selected; do not build a continuous recorder or infer a universal failure trigger.
+
+Acceptance preserves target/source/check/exit identity, missing artifacts, truncation/unknowns and private export refusal. Compare a selected success and failure without turning a status report or screenshot into deployment proof. Start only when a baseline or real repeated support case demonstrates value.
+
+### Consider presentation filtering only after measurement
+
+**C03/C21/C22, with C24 as a safety constraint.** Select one evidence-preserving view, such as opt-in declared cosmetic progress differences, after establishing repetitive-read cost. Retain original samples/raw deltas, incompleteness and justified unknowns. Do not infer phase, idle, completion or input-wait from quiet/equal screens.
+
+Asymmetric prompts/errors/exits must survive; cosmetic-only reduction changes the view, not raw evidence. Hidden-tail changes remain unknown. Measure false suppression and actual acquisition/output/call cost against the baseline. Latest-view/capture and observation routing stay with their filed-issue owners. A generic perception engine remains H08 scoping, not a platform prerequisite.
+
+### Preserve all three original phases without rebuilding shipped work
+
+| Original phase | Source coverage | Remaining disposition |
+| --- | --- | --- |
+| Phase 1: six personal-workflow groups | A01–A12, P1:pp2–5 | U01 park/resume and U02 evidence attachments are optional Rex adapters. H01 covers generic records/receipts, H02 friction instrumentation, H03 capture/replay and H04 reusable authority/isolation. |
+| Phase 2: eight collaboration suggestions plus ledger | B01–B18, P1:pp6–12 | H05 task/experiment/interruption semantics, H06 causal decisions/knowledge/ledger, H07 prepared questions/attention, H01 handoffs. B18 is an aggregate recap, not another runtime to commission. |
+| Phase 3: eight Rex Dexterity groups plus recap | C01–C32, P2:pp2–8 | Bounded observation/deltas, deterministic loops, selected noninteractive execution, offstage/registry/presentation, recognition, exact filter/cache and narrow installed-API adaptation exist. Interpretation, stronger lifetimes, consequential maneuvers and host input guarantees remain distinct proposals or blockers. C29 module names are resolved choices; C30's universal facade is unselected. C31/C32 safe-subset acceptance is recommended. |
+
+The [complete inventory](planning/teerex-pdf-work-inventory.md) preserves each original group and physical-page locator; the release checkpoint below retains detailed C01–C32 coverage. Alpha.5 surfaces already add floating/layout modes; do not requeue “add floating panes.” Source status watches already add OR predicates and optional unlimited waits. Generic Phase 2 work must not be used to exclude the later selected teerex operating layer or paired agent-core replacement.
+
+Strong C04/C05/C07/C16/C17, guarded C09/C30, consequential C18 and full C31 takeover remain host/application-dependent. Cross-client writes disproved native-owner-as-exclusive-input-lock. Current jobs permits native-owned in-place label/focus while retaining its relocation/adoption restrictions; that is not input authority. A host-contract request with counterexamples is useful preparation; another client lock is not the missing enforcement guarantee. H03/H04 feasibility can inform a chosen maneuver without becoming compulsory platforms.
+
+### Acceptance, external dependencies and approval gates
+
+- **Q05:** independently observe first use, feature selection, unknown/refusal/privacy/recovery. Recipe/link validation is not human/model behavior evidence; paid-model evaluation requires separate approval.
+- **Q10:** qualify actual native Rex presentation/focus with neighboring-layout controls on a disposable supported Mac. Structural readback or rendered board text does not prove Rex.app painting. Personal runner access is not authorized.
+- **Q11:** use the manager launch path with stable HOME, expected nonblocking contention, running/dependency leases and cleanup. A cooperative invocation lease is not a Rex input lock or detached-descendant guarantee.
+- **Q06–Q09:** select worthwhile actual-build/minimum-OS/download-quarantine coverage before expanding it. API11, extra architectures, signing/notarization and catalog signatures are not certified by numeric version acceptance or hashes.
+- **Q04:** Joshua chooses the project license and rights treatment; public visibility is not a license.
+- **Externally owned filed work:** observation/target/executable/capture, messages/drafts, launch status/cwd/visibility, jobs/recovery, remote compute/channel/routing and paired agent-core migration remain dependencies. This is not a complete issue list or a request to reopen any issue. Consume accepted source/contracts and coordinate before changing overlapping paths.
+- **Shared integration:** one coordinator owns root/build/config/canonical documentation integration for newly selected work. Preserve external agents' changes and leave `.github/workflows/ci.yml` and `docs/ci.md` to their CI owner unless coordination explicitly changes that boundary.
+- **Consumer cutover:** retain relay, wrappers, native-owner/inbox/git/fence guards, custom harness behavior and private restart accounting until parity and specific authorization. Draft/resume APIs, actual harness hooks and private restart inputs remain missing where documented. Synthetic callbacks do not prove real harness parity; SSH exit/pane closure do not prove descendant death.
+
+### Outside work is ready for scoping delegation, not implementation
+
+The [H01–H08 briefs](planning/teerex-delegation-briefs.md) provide Who/What/Why/Where/When/How, origins, product/repository boundaries, inputs/outputs, dependencies, acceptance, non-goals and gates. Repository, recipient and use-case selection remain explicit missing decisions rather than invented scope.
+
+Recommend H01 records and H07 communication-practice specs first. H03 replay and H04 enforcement need a selected workload; H05 runtime and H06 memory begin with reuse/gap analysis; H02 instrumentation and H08 extraction await demonstrated recurrence or a second consumer. No outside implementation or new project creation follows from this order.
+
+The old custom Rivet GUI remains superseded by selecting Rex as the client. Real Rivet integration/cutover consumes the existing migration scope and real interfaces, not a newly invented UI project. A dedicated VPS remains an eventual rollout destination, not permission to choose its role/topology or change it.
+
+**Handoff action:** give the [orchestrator prompt](planning/teerex-orchestrator-prompt.md) to another agent. Its default is disjoint planning/specification and acceptance-design work with asynchronous completion reports. A proposed feature becomes implementation work only when Joshua explicitly selects it; this publication itself selects none.
+
+## Preserved release checkpoints
+
+**Everything below is the pre-publication release/history checklist, retained without rewriting its body.** The current plan above supersedes its old I/N priority order, stale issue-status statements and blanket exclusions. The historical unchecked rows are not new assignments; exact source contracts and externally owned issue results take precedence. Earlier source/release/CI statements describe their stated commits, not this documentation push.
+
 **Current public release is v0.1.0-alpha.5 at source `682489d66dfdb39992b1b2e9f05054bcc009e6d7`, not alpha.3/4 or a future candidate.** Use [current installation](concierge/setup.md), the [alpha.5 release/setup handoff](releases/v0.1.0-alpha.5.md#quick-changelog-and-current-setup-handoff) and the [operating-layer scope](alpha5.md). All four configured [release-head CI lanes](https://github.com/jcbbge/teerex/actions/runs/43294504395) passed; newer docs-only commits have their own CI state. Frozen archives are not rebuilt by source-documentation cleanup.
 
 **Current alpha.5 delivery:** [tested slices and remaining brief requirements](releases/v0.1.0-alpha.5.md), [shared contracts/ownership](alpha5.md). The new root supports explicitly named command hosts, operator-visible surfaces/palette, boards/seat/typed decisions, managed ACK-before-brief launches with jobs, explicit existing-pane presentation, structural snapshots/restoration/manual update inventory, and fleet plan/apply. Final combined Linux/Mac API13 suites and disposable loopback SSH pass; exact tag/assets and exact-head CI are separate delivery receipts. Authoritative drafts, real harness resume/hooks/custom guards, exact issue10 mixed-host topology and consolidated agent-core caller migration/deletions remain open. The diagnostic repair is already on [public main](https://github.com/jcbbge/teerex/commit/85c3f2955acb15d03ce62ce19bf0b95386a109d7) with all four checks green; the dated I01/N01/N02 audit below is preserved historical evidence, not a claim that repair is still absent. Neither whole issue #1 nor issue #10 is closed by diagnostics or named-host routing. `targets resolve` selects configured command hosts, not issue #2's resource labels/suffixes. Intermittent [issue #12](https://github.com/jcbbge/teerex/issues/12) is also unresolved; full [issue #11](https://github.com/jcbbge/teerex/issues/11) agent-core migration remains partial. Current guide/navigation cleanup supersedes the dated Q01 documentation-debt list below, not Q05's still-unperformed human/model usability acceptance.

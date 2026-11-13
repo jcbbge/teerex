@@ -172,6 +172,14 @@ The release guide and implementation evidence record exact binary identities, ac
 
 Joshua subsequently supplied exact-machine alpha.2 validation: Apple-silicon M5, macOS26.6.2/build25G83, Rex CLI/server `d018d2de8cc31281265906a4648ec9cae8d2f4c5`, API10/support0–10, Rex Beta0.1.0/build1925. Version/observe/compare/run exited0 and an idle-pane watch reached its deadline with exit124 using the exact alpha.2 executable SHA256 `551243190d91d529fd551a39c38c3b1fbfb62cc6f4dd90b44baff83ab7ced8af`, without restarting the existing server. This is user/setup-agent-reported evidence, not execution by this thread, and does not validate new alpha.3 features on M5 or hive. Private socket/session/pane addresses are deliberately excluded. Measured CLI/server identity takes precedence over the earlier app-channel inference.
 
+## Planning package publication — 13 November 2026
+
+Joshua requested planning for remaining phased teerex work while ignoring filed issues owned by other agents, plus brief/spec/scope preparation for work outside teerex. He then explicitly authorized committing and pushing that planning package and requested a meta prompt for another agent to coordinate parallel asynchronous workloads. This authorizes publication, not selection of manual park/resume or implementation of every outside proposal.
+
+The [current roadmap](roadmap.md#current-phased-plan--13-november-2026), [H01–H08 briefs](planning/teerex-delegation-briefs.md), [canonical handoff navigation](planning/teerex-non-rex-handoff.md) and [copy-ready orchestrator prompt](planning/teerex-orchestrator-prompt.md) separate product, acceptance, migration/cutover and personal rollout. The prompt defaults to disjoint planning/specification and acceptance-design outputs with dependency-aware asynchronous completion, one integrator and evidence/approval gates. No workers or feature implementation were started by publication. Paired agent-core replacement remains existing product responsibility, not newly delegated generic runtime work.
+
+The roadmap's former body and original non-Rex handoff body remain preserved beneath explicit historical labels; their old priorities and transfer hashes are not current assignments or file hashes after navigation was added. The definitive PDF inventory, its validation JSON and research remain unchanged. No frozen release assets, personal hosts, private inputs or outside repositories are altered by this package.
+
 ## Decisions still open
 
 | Decision | What is not established |
