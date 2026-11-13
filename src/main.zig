@@ -11,6 +11,7 @@ const usage =
     \\
     \\Operating-layer commands:
     \\  surfaces resolve|session ensure|ensure|open|inspect|rename|move|focus|close|palette  Visible terminals and native palette plans
+    \\  board [--replay FILE] | feed              Live themed stream and machine vitals
     \\  boards inbox|fleet|calls|friction|probe|state                Live boards, typed store and remap plans
     \\  seat register|inspect|clear              Exact-address operator seat
     \\  inbox append|inspect|clear                    Private retained messages
@@ -159,6 +160,10 @@ fn run(allocator: std.mem.Allocator) !void {
         try forwarded.appendSlice(allocator, &.{ "python3", "-I", "-c", try @import("rex_boards").call_log.python(allocator, script) });
         try forwarded.appendSlice(allocator, rest);
         return std.process.execv(allocator, forwarded.items);
+    }
+    if (std.mem.eql(u8, command, "board")) {
+        if (rest.len > 0 and std.mem.eql(u8, rest[0], "feed")) finish(allocator, try @import("rex_boardfeed").run(allocator, rest[1..]));
+        finish(allocator, try @import("rex_board").run(allocator, rest));
     }
     if (std.mem.eql(u8, command, "mcp")) finish(allocator, try @import("rex_mcp").run(allocator, rest));
     if (std.mem.eql(u8, command, "replay")) finish(allocator, try @import("rex_replay").run(allocator, rest));
