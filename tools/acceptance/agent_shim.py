@@ -19,10 +19,21 @@ def run(config, tool, argv):
     began = time.monotonic_ns()
     target = argv[argv.index("--block") + 1] if "--block" in argv and argv.index("--block") + 1 < len(argv) else None
     allowed = {"observe", "compare", "watch", "run-visible", "run", "surfaces", "open", "close", "send", "ask", "api", "call", "new", "do", "agents", "ack", "stop", "inspect", "version"}
-    verbs = [x for x in argv[:2] if x in allowed]
+    verbs = [x for x in argv if x in allowed][:2]
+    event_input = False
+    for argument in argv:
+        if argument.startswith("{"):
+            try:
+                value = json.loads(argument)
+                if isinstance(value, dict) and isinstance(value.get("block_id"), str):
+                    target = value["block_id"]
+                    event_input = "block.event" in argv and value.get("event", {}).get("type") in ("paste", "key", "keypress")
+            except ValueError:
+                pass
+    input_attempted = "send" in verbs or event_input
     interrupted = tool == "agent-send" or tool == "teerex" and "ask" in argv
     blocked = tool == "teerex" and config["condition"] == "plain-rex"
-    entry = dict(t=began, tool=tool, verb=verbs, target_block=target, stdout_bytes=0, exit=0)
+    entry = dict(t=began, tool=tool, verb=verbs, target_block=target, stdout_bytes=0, exit=0, input_attempted=input_attempted)
     if interrupted or blocked:
         entry.update(exit=127 if blocked and not interrupted else 0, blocked=blocked, interruption=interrupted)
         append(config["log"], entry)

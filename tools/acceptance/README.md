@@ -26,3 +26,5 @@ CI uses the checksum-verified binary from the documented alpha.5 release for com
 The executor warms the exact missing-server refusal before N6: the macOS Rex client retains a per-route `start.lock` even with autostart disabled. File-listing equality remains exact. Child Python bytecode writes are disabled, and the existing fault suites use their own private HOME. `--evidence-dir NEW_ABS` retains private before/after diagnostics when investigating a control failure.
 
 Phase B launches its harness at the exact already-trusted workspace parent and puts fixture commands/files in an owned scratch child. It never answers trust prompts or edits personal trust configuration. A non-repository child does not inherit Codex's parent trust; this distinction was observed during acceptance. All owned scratch children are removed after their condition.
+
+Actual-agent tasks name the absolute paths inside the counting PATH directory because Codex login shells can reset PATH. A correct answer with zero counted calls fails measurement acceptance; the uninstrumented probe is not evidence for round-trip ratios.

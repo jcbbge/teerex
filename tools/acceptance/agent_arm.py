@@ -68,7 +68,7 @@ def run(args):
                             shutil.copyfile(ROOT / "tools/acceptance/fail_fixture.py", work / "fail_fixture.py")
                             os.chmod(work / "fail_fixture.py", 0o600)
                             brief = ("Run `python3 fail_fixture.py F1` visibly, find why it fails, and report the failing assertion and the exit code. Do not edit files.\n"
-                                "This is an explicitly authorized acceptance measurement. Use only PATH teerex/rex tools for the task. "
+                                "This is an explicitly authorized acceptance measurement. Login shells may reset PATH, so invoke only the absolute counting wrappers " + str(shim / "teerex") + " and " + str(shim / "rex") + " for every task tool command. Never invoke the underlying binaries directly. "
                                 "Task panes must be created only on the private socket " + str(private.socket) + " in session " + task_session + " anchored to " + anchor + ". "
                                 "Use explicit cwd " + str(work) + ". The agent tab is on a different server; never send task input there. "
                                 "Do not use tools to type messages or reports into other panes. Do not spawn agents. End with the assertion and numeric exit code in your final response; the managed Stop hook collects it. "
@@ -109,7 +109,7 @@ def run(args):
                             entries = [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
                             owned_path = work / "owned.jsonl"
                             owned = set(json.loads(line) for line in owned_path.read_text().splitlines()) if owned_path.exists() else set()
-                            misdirected = sum(1 for entry in entries if "send" in entry["verb"] and entry.get("target_block") not in owned)
+                            misdirected = sum(1 for entry in entries if entry.get("input_attempted") and entry.get("target_block") not in owned)
                             result = dict(profile=profile, condition=condition, tool_round_trips=len(entries), interruptions=sum(bool(e.get("interruption")) for e in entries),
                                 misdirected_inputs=misdirected, correct_report=correct, stop_observed=stopped, wall_s=time.monotonic() - began,
                                 agent_pane_closed=False)
@@ -144,6 +144,6 @@ def run(args):
             if rows:
                 lines.append("| %s | %s | %s | %s | %s | %s |" % (condition, len(rows), statistics.median(r["tool_round_trips"] for r in rows), statistics.median(r["interruptions"] for r in rows), sum(r["misdirected_inputs"] for r in rows), sum(r["correct_report"] for r in rows)))
         save(args.out / "summary.md", ("\n".join(lines) + "\n").encode())
-    passed = len(report["runs"]) == len(profiles) * args.agent_runs * 2 and report["notification_sink_closed"] and all(r["correct_report"] and r["agent_pane_closed"] for r in report["runs"])
+    passed = len(report["runs"]) == len(profiles) * args.agent_runs * 2 and report["notification_sink_closed"] and all(r["correct_report"] and r["agent_pane_closed"] and r["tool_round_trips"] > 0 for r in report["runs"])
     print(json.dumps(dict(kind="agent_baseline_result", passed=passed, runs=len(report["runs"]))))
     return 0 if passed else 1
