@@ -6,7 +6,9 @@ import json
 import os
 from pathlib import Path
 import shlex
+import shutil
 import signal
+import socket
 import subprocess
 import sys
 import tempfile
@@ -28,13 +30,28 @@ args=sys.argv[3:]
 protocol=args[-1] if args and "Messaging protocol (not a task brief):" in args[-1] else None
 with out.open("a") as f:
     f.write(json.dumps({"event":"started", "pid":os.getpid(), "argv":args[:-1] if protocol else args,
+                        "cwd":os.getcwd(), "stdin_tty":os.isatty(0),
+                        "registry_present":Path(os.environ.get("AGENT_REGISTRY","/nonexistent")).exists(),
                         "env":{k:v for k,v in os.environ.items() if k.startswith(("AGENT_", "LC_"))}}) + "\n"); f.flush()
 if protocol:
     with out.open("a") as f: f.write(json.dumps({"event":"protocol_argument","payload":protocol})+"\n")
     if behavior != "noack":
         line=protocol.split("Acknowledge this protocol now by running:\n",1)[1].split("\n",1)[0]
+        if behavior == "lateack": time.sleep(1)
         result=subprocess.run(shlex.split(line),capture_output=True,text=True)
         with out.open("a") as f: f.write(json.dumps({"event":"ack","code":result.returncode,"stdout":result.stdout})+"\n")
+        if behavior == "channel":
+            client=shlex.split(line)
+            client=client[:client.index("--request-id")]
+            cmd=client+["--request-id","a"*32,"--operation","send","--to","report-to","--message-file","-"]
+            for unused in range(2):
+                result=subprocess.run(cmd,input="fenced β: quotes '\"\nlast line\n\n",capture_output=True,text=True)
+                with out.open("a") as f: f.write(json.dumps({"event":"channel-result","code":result.returncode,"stdout":result.stdout})+"\n")
+            hook=json.loads(args[args.index('--settings')+1])['hooks']['Stop'][0]['hooks'][0]['command']
+            result=subprocess.run(hook,shell=True,
+                                  input=json.dumps({"hook_event_name":"Stop","last_assistant_message":"fenced turn complete β"}),
+                                  capture_output=True,text=True)
+            with out.open("a") as f: f.write(json.dumps({"event":"channel-stop","code":result.returncode,"stdout":result.stdout})+"\n")
 buf=b""
 while True:
     part=os.read(0,65536)
@@ -447,6 +464,256 @@ class AgentsTest(unittest.TestCase):
         self.assertFalse(self.worker_log.exists())
         self.assertEqual(len(self.rpc("session.view", {"session_id": self.session})["windows"]), 2)
         self.assertEqual([v for v in events(self.starter_log) if v["event"] == "input"], [])
+
+    def enable_channel(self, count=32, lifetime=60000):
+        self.delivery = self.work / "delivery"
+        self.delivery.mkdir(mode=0o700)
+        self.settings["profiles"]["probe"]["delivery"] = dict(directory=str(self.delivery), grants=["send", "ack", "stop"],
+                                                                  max_requests=count, lifetime_ms=lifetime)
+
+    def channel_cli(self, launch_id, *args, request_id="c" * 32, **kwargs):
+        return self.run_cli("channel", "--handle", str(self.delivery / launch_id / "handle.json"),
+                            "--request-id", request_id, *args, **kwargs)
+
+    @unittest.skipUnless(os.environ.get("TEEREX_AGENTS_FENCE") == "1", "explicit real Linux bubblewrap acceptance gate")
+    def test_real_fence_denies_rex_and_registry_but_scoped_ack_send_stop_work(self):
+        self.assertEqual(sys.platform, "linux")
+        self.assertIsNotNone(shutil.which("bwrap"))
+        self.enable_channel()
+        fenced = self.work / "fenced"
+        fenced.mkdir()
+        self.worker_log = fenced / "worker.jsonl"
+        wrapper = self.work / "fence.py"
+        # Rivet's bwrap adapter mounts only toolchain/cwd/declared extra paths; /tmp and /run are masked.
+        # Match that contract, with ONLY this launch's channel mounted, never registry/store/Rex socket.
+        denial_probe = ("import os,socket,json\nfrom pathlib import Path\n"
+                        f"paths={dict(rex=str(self.socket), registry=str(self.registry))!r}\nresults={{}}\n"
+                        "for k,p in paths.items():\n"
+                        " try:\n"
+                        "  socket.socket(socket.AF_UNIX).connect(p) if k=='rex' else os.open(p,os.O_RDONLY)\n"
+                        "  results[k]=False\n"
+                        " except OSError: results[k]=True\n"
+                        "Path('/work/denial.json').write_text(json.dumps(results))\n")
+        wrapper.write_text("import json,os,subprocess,sys\nfrom pathlib import Path\n" +
+                           "cmd=['bwrap','--die-with-parent']\n" +
+                           "for p in ['/usr','/bin','/sbin','/lib','/lib64','/etc']:\n" +
+                           " if Path(p).exists(): cmd+=['--ro-bind',p,p]\n" +
+                           "cmd+=['--dev','/dev','--proc','/proc','--tmpfs','/tmp','--tmpfs','/run','--tmpfs','/var']\n" +
+                           f"cmd+=['--ro-bind',{BIN!r},{BIN!r},'--bind',{str(fenced)!r},'/work']\n" +
+                           "channel=str(Path(os.environ['AGENT_CHANNEL']).parent)\ncmd+=['--ro-bind',channel,channel]\n" +
+                           f"probe={denial_probe!r}\n" +
+                           f"code=probe+{FIXTURE!r}\n" +
+                           f"os.execvp('bwrap',cmd+['--chdir','/work','--',{sys.executable!r},'-c',code,'/work/worker.jsonl','channel',*sys.argv[2:]])\n")
+        self.settings["profiles"]["probe"].update(argv=[sys.executable, str(wrapper), "channel"], standing_flags=[],
+                                                   harness="claude", hook_events=True)
+        p, packet = self.launch("channel", ack_timeout=4000)
+        self.assertEqual(p.returncode, 0, p.stderr + p.stdout + "\n" + str(packet))
+        launch_id = packet["launch_id"]
+        results = wait_for(lambda: [v for v in events(self.worker_log) if v["event"] == "channel-result"]
+                           if len([v for v in events(self.worker_log) if v["event"] == "channel-result"]) == 2 else None)
+        self.assertEqual(json.loads((fenced / "denial.json").read_text()), dict(rex=True, registry=True))
+        self.assertEqual([v["code"] for v in results], [0, 1])
+        self.assertIn("already_attempted", json.loads(results[1]["stdout"])["failure_reason"])
+        wait_for(lambda: [v for v in events(self.worker_log) if v["event"] == "channel-stop"])
+        self.assertEqual([v["code"] for v in events(self.worker_log) if v["event"] == "channel-stop"], [0])
+        env = [v for v in events(self.worker_log) if v["event"] == "started"][0]["env"]
+        self.assertNotIn("AGENT_REGISTRY", env)
+        self.assertNotIn("LC_AGENT_REGISTRY", env)
+        self.assertEqual(env["AGENT_LAUNCH_ID"], launch_id)
+        notices = wait_for(lambda: [v["payload"] for v in events(self.starter_log) if v["event"] == "input"]
+                           if len([v for v in events(self.starter_log) if v["event"] == "input"]) == 2 else None)
+        self.assertEqual(notices[0], "FROM probe: fenced β: quotes '\"\nlast line\n\n")
+        self.assertIn("fenced turn complete β", notices[1])
+        # The brief still traverses the original ACK-before-one-brief gate and keeps trailing bytes.
+        inputs = wait_for(lambda: [v["payload"] for v in events(self.worker_log) if v["event"] == "input"])
+        self.assertEqual(inputs, ["FROM probe: " + self.brief.read_text()])
+        os.kill(events(self.worker_log)[0]["pid"], signal.SIGTERM)
+        wait_for(lambda: self.record(launch_id)["immediate_child_term"])
+        wait_for(lambda: not (self.delivery / launch_id).exists())
+        p, result = self.channel_cli(launch_id, "--operation", "send", "--to", "starter", "--message-file", str(self.brief))
+        self.assertEqual(p.returncode, 1)
+        self.assertFalse(result["retry_safe"])
+
+    def test_channel_fixed_grants_framing_lease_and_no_retry(self):
+        self.enable_channel()
+        p, packet = self.launch()
+        self.assertEqual(p.returncode, 0, p.stderr + p.stdout)
+        launch_id = packet["launch_id"]
+        handle_path = self.delivery / launch_id / "handle.json"
+        handle = json.loads(handle_path.read_text())
+        def raw_request(**changes):
+            request = dict(launch_id=launch_id, token=handle["token"], request_id="d" * 32,
+                           operation="send", to="starter", body="one exact β\n\n")
+            request.update(changes)
+            if request["operation"] == "stop":
+                request.pop("to")
+                request.pop("body")
+            with socket.socket(socket.AF_UNIX) as c:
+                c.settimeout(5)
+                c.connect(handle["socket"])
+                c.sendall(json.dumps(request).encode() + b"\n")
+                data = b""
+                while not data.endswith(b"\n"):
+                    data += c.recv(65536)
+                return json.loads(data)
+        for changes, reason in ((dict(token="0" * 64), "token_mismatch"),
+                                (dict(launch_id="0" * 32), "launch_mismatch"),
+                                (dict(to=self.starter), "fixed_channel_destination"),
+                                (dict(operation="exec"), "not_granted"),
+                                (dict(body="bad\x1bcontrol"), "invalid_or_oversized"),
+                                (dict(body="x" * 32769), "invalid_or_oversized"),
+                                (dict(socket=str(self.socket)), "unknown_channel_field"),
+                                (dict(operation="stop", event={"hook_event_name":"Stop", "transcript_path":"/etc/passwd"}),
+                                 "channel_transcript_path_forbidden")):
+            with self.subTest(changes=list(changes)):
+                result = raw_request(**changes)
+                self.assertEqual(result["code"], 1)
+                self.assertIn(reason, result["result"]["failure_reason"])
+        self.assertEqual([v for v in events(self.starter_log) if v["event"] == "input"], [])
+        p, bad = self.channel_cli(launch_id, "--operation", "ack", "--session", self.session, "--block", self.starter,
+                                  "--to", "starter")
+        self.assertEqual(p.returncode, 1)
+        self.assertIn("irrelevant_channel_argument", bad["failure_reason"])
+        for raw, reason in ((b'{"operation":"send","operation":"ack"}\n', "duplicate_channel_field"),
+                            (b'{}\n{}\n', "one_channel_frame_required"), (b'{', "incomplete_channel_frame"),
+                            (b'x' * 49153, "channel_frame_too_large"),
+                            (b'[' * 20000 + b']' * 20000 + b'\n', None)):
+            with socket.socket(socket.AF_UNIX) as c:
+                c.settimeout(2)
+                c.connect(handle["socket"])
+                c.sendall(raw)
+                c.shutdown(socket.SHUT_WR)
+                response = b""
+                while not response.endswith(b"\n"):
+                    part = c.recv(65536)
+                    self.assertTrue(part)
+                    response += part
+            result = json.loads(response)
+            self.assertEqual(result["code"], 1)
+            if reason is not None:  # Deep JSON can refuse at parser depth or at the required object envelope.
+                self.assertIn(reason, result["result"]["failure_reason"])
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            simultaneous = list(pool.map(lambda unused: raw_request(), range(2)))
+        self.assertEqual(sorted(v["code"] for v in simultaneous), [0, 1])
+        self.assertTrue(all(not v["result"]["retry_safe"] for v in simultaneous))
+        refusal = [v for v in simultaneous if v["code"] == 1][0]
+        self.assertIn("already_attempted", refusal["result"]["failure_reason"])
+        wait_for(lambda: len([v for v in events(self.starter_log) if v["event"] == "input"]) == 1)
+        # Dropping the response after submission still leaves durable intent and refuses a resend.
+        request = dict(launch_id=launch_id, token=handle["token"], request_id="e" * 32, operation="send", to="starter", body="lost receipt β")
+        with socket.socket(socket.AF_UNIX) as c:
+            c.connect(handle["socket"])
+            c.sendall(json.dumps(request).encode() + b"\n")
+        wait_for(lambda: self.record(launch_id).get("channel_requests", {}).get("e" * 32))
+        result = raw_request(request_id="e" * 32, body="lost receipt β")
+        self.assertEqual(result["code"], 1)
+        self.assertIn("already_attempted", result["result"]["failure_reason"])
+        wait_for(lambda: len([v for v in events(self.starter_log) if v["event"] == "input"]) == 2)
+        stalled = subprocess.Popen([BIN, "agents", "channel", "--handle", str(handle_path), "--request-id", "f" * 32,
+                                    "--operation", "send", "--to", "starter", "--message-file", "-"],
+                                   stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=self.env)
+        try:
+            self.assertEqual(stalled.wait(timeout=4), 1)
+            self.assertIn("input_eof_deadline_2s", json.loads(stalled.stdout.read())["failure_reason"])
+        finally:
+            if stalled.poll() is None:
+                stalled.kill()
+                stalled.wait()
+            stalled.stdin.close()
+            stalled.stdout.close()
+            stalled.stderr.close()
+        self.assertEqual(len([v for v in events(self.starter_log) if v["event"] == "input"]), 2)
+        # Final-component symlinks are not accepted as capability files.
+        alias = self.work / "handle-link"
+        alias.symlink_to(handle_path)
+        p, result = self.run_cli("channel", "--handle", str(alias), "--request-id", "f" * 32,
+                                 "--operation", "send", "--to", "starter", "--message-file", str(self.brief))
+        self.assertEqual(p.returncode, 1)
+        os.kill(events(self.worker_log)[0]["pid"], signal.SIGTERM)
+        wait_for(lambda: not handle_path.exists())
+
+    @unittest.skipUnless(os.environ.get("TEEREX_AGENTS_INTEGRATION") == "1", "requires combined boards routing")
+    def test_channel_registered_seat_and_store_refusal_never_paste(self):
+        self.enable_channel()
+        store = self.work / "boards"
+        store.mkdir(mode=0o700)
+        self.settings["defaults"]["store"] = str(store)
+        target = ["--store", str(store), "--host", "disposable", "--socket", str(self.socket),
+                  "--session", self.session, "--block", self.starter]
+        result = subprocess.run([BIN, "seat", "register", *target, "--owner", "operator"], capture_output=True, text=True, env=self.env)
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        p, packet = self.launch()
+        self.assertEqual(p.returncode, 0, p.stderr + p.stdout)
+        launch_id = packet["launch_id"]
+        p, result = self.channel_cli(launch_id, "--operation", "send", "--to", "starter", "--message-file", str(self.brief))
+        self.assertEqual(p.returncode, 0, p.stderr + p.stdout)
+        self.assertEqual(result["receipt"]["outcome"], "recorded")
+        inbox = json.loads(subprocess.check_output([BIN, "inbox", "inspect", *target], env=self.env))
+        self.assertEqual([r["body"] for r in inbox["seat"]["records"]], [self.brief.read_text()])
+        self.assertEqual([v for v in events(self.starter_log) if v["event"] == "input"], [])
+        store.chmod(0o755)
+        try:
+            p, result = self.channel_cli(launch_id, "--operation", "send", "--to", "starter", "--message-file", str(self.brief),
+                                         request_id="f" * 32)
+            self.assertEqual(p.returncode, 1)
+            self.assertEqual(result["outcome"], "uncertain")
+            self.assertNotEqual(result["receipt"]["outcome"], "events_acknowledged")
+            self.assertEqual([v for v in events(self.starter_log) if v["event"] == "input"], [])
+        finally:
+            store.chmod(0o700)
+
+    def test_channel_expiry_count_and_cancel_revoke_without_stopping_other_panes(self):
+        self.enable_channel(count=2, lifetime=1000)
+        p, packet = self.launch()
+        self.assertEqual(p.returncode, 0, p.stderr + p.stdout)
+        launch_id = packet["launch_id"]
+        p, result = self.channel_cli(launch_id, "--operation", "send", "--to", "starter", "--message-file", str(self.brief))
+        self.assertEqual(p.returncode, 0, p.stderr + p.stdout)
+        wait_for(lambda: not (self.delivery / launch_id).exists())
+        self.assertIsNone(self.record(launch_id)["immediate_child_term"])
+        self.assertEqual(self.record(launch_id)["channel_status"], "revoked")
+        self.assertEqual(len(self.rpc("session.view", dict(session_id=self.session))["windows"]), 2)
+        # A separate launch expires even when it has unused requests, with its child still alive.
+        self.settings["profiles"]["probe"]["delivery"]["max_requests"] = 32
+        self.worker_log = self.work / "expiring-worker.jsonl"
+        self.settings["profiles"]["probe"]["argv"][2] = str(self.worker_log)
+        p, packet = self.launch()
+        self.assertEqual(p.returncode, 0, p.stderr + p.stdout)
+        expired_grant = json.loads((self.delivery / packet["launch_id"] / "handle.json").read_text())
+        wait_for(lambda: not (self.delivery / packet["launch_id"]).exists())
+        self.assertIsNone(self.record(packet["launch_id"])["immediate_child_term"])
+        # Signal the actual recorded visible supervisor: its channel revokes and its own child is reaped.
+        self.settings["profiles"]["probe"]["delivery"]["lifetime_ms"] = 60000
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            self.worker_log = self.work / ("cancelled-worker-" + str(sig) + ".jsonl")
+            self.settings["profiles"]["probe"]["argv"][2] = str(self.worker_log)
+            p, packet = self.launch()
+            self.assertEqual(p.returncode, 0, p.stderr + p.stdout)
+            state = self.record(packet["launch_id"])
+            active_grant = json.loads((self.delivery / packet["launch_id"] / "handle.json").read_text())
+            for claimed_launch, reason in ((expired_grant["launch_id"], "launch_mismatch"),
+                                           (active_grant["launch_id"], "token_mismatch")):
+                with socket.socket(socket.AF_UNIX) as c:
+                    c.settimeout(3)
+                    c.connect(active_grant["socket"])
+                    c.sendall(json.dumps(dict(launch_id=claimed_launch, token=expired_grant["token"], request_id="9" * 32,
+                                             operation="send", to="starter", body="must not cross launch")).encode() + b"\n")
+                    response = b""
+                    while not response.endswith(b"\n"):
+                        part = c.recv(65536)
+                        self.assertTrue(part)
+                        response += part
+                result = json.loads(response)
+                self.assertEqual(result["code"], 1)
+                self.assertIn(reason, result["result"]["failure_reason"])
+            os.kill(state["supervisor_pid"], sig)
+            wait_for(lambda: not (self.delivery / packet["launch_id"]).exists())
+            wait_for(lambda: self.record(packet["launch_id"])["immediate_child_term"])
+            # SIGINT in Python is reported as KeyboardInterrupt/exit130 rather than an OS signal.
+            self.assertIn(self.record(packet["launch_id"])["immediate_child_term"],
+                          ({"Signal": sig}, {"Exited": 128 + sig}))
+            os.kill(events(self.starter_log)[0]["pid"], 0)
 
     def test_profiles_shell_and_refusals_leave_personal_settings_untouched(self):
         self.settings["profiles"]["claude"] = dict(argv=["/not/installed/claude"], harness="claude",

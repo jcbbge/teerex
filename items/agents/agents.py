@@ -10,8 +10,10 @@ import os
 from pathlib import Path
 import re
 import secrets
+import select
 import shlex
 import signal
+import socket
 import stat
 import subprocess
 import sys
@@ -248,6 +250,257 @@ def send_options(state):
     return ["--store", absolute(state["store"]), "--host", state["target"]["host"]] if state["store"] else []
 
 
+def delivery_config(value):
+    if value is None:
+        return None
+    require(isinstance(value, dict) and set(value) == {"directory", "grants", "max_requests", "lifetime_ms"},
+            "invalid_delivery_config")
+    absolute(value["directory"])
+    grants = value["grants"]
+    require(isinstance(grants, list) and grants and all(g in ("send", "ack", "stop") for g in grants)
+            and len(set(grants)) == len(grants), "explicit_delivery_grants_required")
+    require(type(value["max_requests"]) is int and 1 <= value["max_requests"] <= 64, "invalid_delivery_count")
+    require(type(value["lifetime_ms"]) is int and 1000 <= value["lifetime_ms"] <= 86400000, "invalid_delivery_lifetime")
+    # Validate the parent before creation, without putting a registry or lock inside the grant.
+    fd = os.open(value["directory"], os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        s = os.fstat(fd)
+        require(s.st_uid == os.getuid() and stat.S_IMODE(s.st_mode) == 0o700, "private_delivery_parent_required")
+    finally:
+        os.close(fd)
+    return dict(value)
+
+
+def source_bytes(path):
+    if path != "-":
+        return read_file(path, 32768)
+    end = time.monotonic() + 2
+    raw = bytearray()
+    while True:
+        remaining = end - time.monotonic()
+        require(remaining > 0 and select.select([sys.stdin.fileno()], [], [], max(0, remaining))[0], "input_eof_deadline_2s")
+        part = os.read(sys.stdin.fileno(), min(4096, 32769 - len(raw)))
+        if not part:
+            return bytes(raw)
+        raw.extend(part)
+        require(len(raw) <= 32768, "input_too_large")
+
+
+def frame_read(connection, budget=.5):
+    raw = bytearray()
+    end = time.monotonic() + budget
+    # One bounded JSON line per connection. Newlines inside strings are JSON escaped.
+    while b"\n" not in raw:
+        remaining = end - time.monotonic()
+        require(remaining > 0, "channel_frame_deadline")
+        connection.settimeout(remaining)
+        part = connection.recv(min(4096, 49153 - len(raw)))
+        require(part, "incomplete_channel_frame")
+        raw.extend(part)
+        require(len(raw) <= 49152, "channel_frame_too_large")
+    require(raw.endswith(b"\n") and raw.count(b"\n") == 1, "one_channel_frame_required")
+    def unique(pairs):
+        value = {}
+        for key, item in pairs:
+            require(key not in value, "duplicate_channel_field")
+            value[key] = item
+        return value
+    value = json.loads(raw, object_pairs_hook=unique)
+    require(isinstance(value, dict), "invalid_channel_frame")
+    return value
+
+
+def channel_failure(reason, outcome="refused_or_uncertain"):
+    return dict(schema_version=1, kind="agent_channel_result", outcome=outcome,
+                failure_reason=str(reason), retry_safe=False)
+
+
+class Channel:
+    """A launch-owned socket; the visible supervisor is its only servicing process.
+
+    The directory is the only fence mount. No filesystem paths supplied by a peer are opened.
+    Bearer authority is cooperative outside a fence, not authentication against the same account.
+    """
+    def __init__(self, root, state):
+        self.root, self.state = root, state
+        self.policy = state["delivery"]
+        self.directory = str(Path(self.policy["directory"]) / state["launch_id"])
+        self.path = str(Path(self.directory) / "channel.sock")
+        self.handle = str(Path(self.directory) / "handle.json")
+        self.count = 0
+        self.next_accept = 0
+        self.closed = False
+        self.token = secrets.token_hex(32)
+        self.expires = min(state["review_at"], now() + self.policy["lifetime_ms"])
+        self.deadline = time.monotonic() + max(0, (self.expires - now()) / 1000)
+        require(len(os.fsencode(self.path)) < 100, "channel_socket_path_too_long")
+        self.parent = os.open(self.policy["directory"], os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        self.fd = None
+        self.listener = None
+        try:
+            os.mkdir(state["launch_id"], 0o700, dir_fd=self.parent)
+            self.fd = os.open(state["launch_id"], os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=self.parent)
+            self.identity = os.fstat(self.fd)
+            self.listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            self.listener.bind(self.path)
+            os.chmod(self.path, 0o600)
+            self.listener.listen(4)
+            self.listener.settimeout(.05)
+            handle = dict(schema_version=1, launch_id=state["launch_id"], token=self.token, socket=self.path,
+                          expires_at=self.expires, grants=self.policy["grants"])
+            fd = os.open("handle.json", os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=self.fd)
+            with os.fdopen(fd, "w") as f:
+                json.dump(handle, f)
+            update(root, state["launch_id"], lambda s: s.update(channel_status="active", channel_expires_at=self.expires))
+        except BaseException:
+            self.close()
+            raise
+
+    def close(self):
+        if self.closed:
+            return
+        self.closed = True
+        if self.listener is not None:
+            self.listener.close()
+        if self.fd is not None:
+            for name in ("channel.sock", "handle.json"):
+                with contextlib.suppress(FileNotFoundError):
+                    os.unlink(name, dir_fd=self.fd)
+            os.close(self.fd)
+            # Never follow a peer's substitution while removing our own directory.
+            with contextlib.suppress(FileNotFoundError, OSError):
+                s = os.stat(self.state["launch_id"], dir_fd=self.parent, follow_symlinks=False)
+                if (s.st_dev, s.st_ino) == (self.identity.st_dev, self.identity.st_ino):
+                    os.rmdir(self.state["launch_id"], dir_fd=self.parent)
+        os.close(self.parent)
+
+    def dispatch(self, request):
+        require(set(request) <= {"launch_id", "token", "request_id", "operation", "to", "body", "session", "block", "event"},
+                "unknown_channel_field")
+        require(request.get("launch_id") == self.state["launch_id"], "channel_launch_mismatch")
+        require(isinstance(request.get("token"), str) and secrets.compare_digest(request["token"], self.token),
+                "channel_token_mismatch")
+        event_id = identifier(request.get("request_id"))
+        operation = request.get("operation")
+        require(operation in self.policy["grants"], "channel_operation_not_granted")
+        required = {"launch_id", "token", "request_id", "operation"}
+        required |= {"send": {"to", "body"}, "ack": {"session", "block"}, "stop": {"event"}}[operation]
+        require(set(request) == required, "invalid_channel_operation_fields")
+        if operation == "send":
+            require(request["to"] in ("starter", "report-to"), "fixed_channel_destination_required")
+            message(request["body"].encode())
+        elif operation == "ack":
+            address_id(request["session"], "session")
+            address_id(request["block"], "block")
+        else:
+            validate_hook_event(request["event"], allow_transcript=False)
+        def intent(s):
+            require(s["immediate_child_term"] is None, "channel_child_already_exited")
+            history = s.setdefault("channel_requests", {})
+            require(event_id not in history, "channel_request_already_attempted_no_retry")
+            require(len(history) < self.policy["max_requests"], "channel_request_limit")
+            history[event_id] = dict(operation=operation, outcome="uncertain", attempted_at=now())
+        update(self.root, self.state["launch_id"], intent)
+        if operation == "send":
+            state = load(self.root, self.state["launch_id"])
+            destination = state["starter" if request["to"] == "starter" else "report_to"]
+            code, packet = send(self.root, state, destination, request["body"], "channel-" + event_id)
+            result = dict(schema_version=1, kind="agent_channel_result", request_id=event_id, retry_safe=False,
+                          outcome="transport_acknowledged" if transport_ack(code, packet) else "uncertain",
+                          client_exit=code, receipt=packet, target=destination)
+        elif operation == "ack":
+            state = load(self.root, self.state["launch_id"])
+            code, result = ack(argparse.Namespace(registry=self.root, launch_id=state["launch_id"], token=state["token"],
+                                                 session=request["session"], block=request["block"]))
+        else:
+            code, result = report_stop(self.root, self.state["launch_id"], event_id, request["event"], allow_transcript=False)
+        update(self.root, self.state["launch_id"], lambda s: s["channel_requests"][event_id].update(
+            outcome=result["outcome"], client_exit=code, receipt=result.get("receipt") if operation == "send" else None))
+        return code, result
+
+    def service(self):
+        if self.closed:
+            time.sleep(.05)
+            return
+        if time.monotonic() >= self.deadline or self.count >= self.policy["max_requests"]:
+            self.close()
+            update(self.root, self.state["launch_id"], lambda s: s.update(channel_status="revoked"))
+            return
+        remaining = self.next_accept - time.monotonic()
+        if remaining > 0:
+            time.sleep(min(.05, remaining))
+            return
+        try:
+            connection, unused = self.listener.accept()
+        except socket.timeout:
+            return
+        except OSError:
+            if self.closed:  # INT/TERM can revoke while accept is waiting.
+                return
+            raise
+        self.count += 1
+        self.next_accept = time.monotonic() + .05
+        with connection:
+            connection.settimeout(.5)
+            try:
+                request = frame_read(connection)
+                # Recheck after the bounded read, not just at accept.
+                require(time.monotonic() < self.deadline, "channel_expired")
+                code, result = self.dispatch(request)
+            except (Refusal, OSError, ValueError, KeyError, TypeError, AttributeError, RecursionError, subprocess.SubprocessError) as exc:
+                code, result = 1, channel_failure(exc)
+            response = json.dumps(dict(code=code, result=result), ensure_ascii=False).encode() + b"\n"
+            if len(response) > 49152:
+                response = json.dumps(dict(code=1, result=channel_failure("receipt_too_large_inspect_registry", "delivery_uncertain_no_retry"))).encode() + b"\n"
+            with contextlib.suppress(OSError):
+                connection.sendall(response)
+
+
+def channel(o):
+    handle = json.loads(read_file(o.handle, 4096, private=True))
+    require(handle["schema_version"] == 1 and now() < handle["expires_at"], "channel_expired_or_invalid")
+    operation = o.channel_operation
+    allowed = {"send": {"to", "message_file"}, "ack": {"session", "block"}, "stop": {"event_file"}}[operation]
+    require(all(getattr(o, key) is None or key in allowed for key in ("to", "message_file", "session", "block", "event_file")),
+            "irrelevant_channel_argument")
+    require(operation in handle["grants"], "channel_operation_not_granted")
+    request = dict(launch_id=identifier(handle["launch_id"]), token=text(handle["token"], 64),
+                   request_id=identifier(o.request_id), operation=operation)
+    if operation == "send":
+        require(o.to in ("starter", "report-to") and o.message_file is not None, "fixed_channel_destination_and_message_required")
+        raw = source_bytes(o.message_file)
+        request.update(to=o.to, body=message(raw))
+    elif operation == "ack":
+        request.update(session=address_id(o.session, "session"), block=address_id(o.block, "block"))
+    else:
+        require(o.event_file is not None, "hook_event_required")
+        raw = source_bytes(o.event_file)
+        require(len(raw) <= 32768, "hook_event_too_large")
+        event = json.loads(raw)
+        # Read any transcript inside the worker's own fence. The outside authority never opens its paths.
+        validate_hook_event(event)
+        if event["hook_event_name"] == "Stop" and not event.get("last_assistant_message"):
+            try:
+                event["last_assistant_message"] = transcript_last_text(event.get("transcript_path"))[:1500]
+            except (OSError, Refusal, ValueError):
+                event["last_assistant_message"] = "(last words unavailable inside worker)"
+        event.pop("transcript_path", None)
+        request["event"] = event
+    raw = json.dumps(request, ensure_ascii=False).encode() + b"\n"
+    require(len(raw) <= 49152, "channel_frame_too_large")
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+        client.settimeout(12)
+        try:
+            client.connect(absolute(handle["socket"]))
+            client.sendall(raw)
+            packet = frame_read(client, budget=12)
+            require(set(packet) == {"code", "result"}, "invalid_channel_receipt")
+            return packet["code"], packet["result"]
+        except (OSError, ValueError, Refusal) as exc:
+            # Even a failed response can follow applied input. Never reconnect or replay.
+            return 1, channel_failure(exc, "delivery_uncertain_no_retry")
+
+
 def config(path):
     value = json.loads(read_file(path))
     require(value.get("schema_version") == 1 and isinstance(value.get("profiles"), dict), "invalid_profiles_config")
@@ -273,6 +526,12 @@ def launch(o):
     require(type(profile.get("hook_events", False)) is bool, "invalid_hook_events")
     if profile.get("hook_events"):
         require(profile.get("harness", o.profile) == "claude" and "--settings" not in argv, "unsupported_or_conflicting_hook_adapter")
+    delivery = delivery_config(profile.get("delivery"))
+    require("execution" not in profile and "callbacks" not in profile, "remote_compute_not_yet_supported")
+    if delivery is not None:
+        require(Path(argv[0]).name not in ("ssh", "mosh"), "delivery_requires_local_profile")
+        require("ack" in delivery["grants"], "managed_delivery_requires_ack_grant")
+        require(not profile.get("hook_events") or "stop" in delivery["grants"], "hooks_require_stop_grant")
     # Explicit defaults replace personal/global shell edits; command-line options override them.
     for key in ("registry", "socket", "session", "cwd", "starter_session", "starter_block", "report_to_session",
                 "report_to_block", "host", "owner", "purpose", "store"):
@@ -305,7 +564,7 @@ def launch(o):
                  protocol_acknowledged=False, protocol_outcome=None, brief_attempted=False, brief_outcome=None,
                  immediate_child_term=None, notifications={}, brief_file=None, protocol_file=None,
                  hook_events=profile.get("hook_events", False), client_path=os.environ.get("PATH", os.defpath),
-                 rex_executable=os.environ.get("TEEREX_INTERNAL_REX"))
+                 rex_executable=os.environ.get("TEEREX_INTERNAL_REX"), delivery=delivery)
     with Registry(root) as registry:
         if brief is not None:
             state["brief_file"] = registry.write_message(launch_id, "brief", brief)
@@ -335,14 +594,26 @@ def launch(o):
         return 1, receipt(load(root, launch_id), "fleet_report_uncertain")
     # The first harness prompt is an explicit profile-supported argv argument. Sending terminal input
     # immediately after creation would race shell/harness startup and silently lose the protocol.
+    ack_command = [RUNTIME, "agents", "ack", "--registry", root, "--launch-id", launch_id,
+                   "--token", token, "--session", session, "--block", block]
+    if delivery is not None:
+        ack_command = [RUNTIME, "agents", "channel", "--handle", str(Path(delivery["directory"]) / launch_id / "handle.json"),
+                       "--request-id", secrets.token_hex(16), "--operation", "ack", "--session", session, "--block", block]
+    report_command = [RUNTIME, "send", "--socket", socket, "--session", rs, "--block", rb, "--from", name,
+                      "--message-file", "-", *send_options(state)]
+    if delivery is not None:
+        report_command = [RUNTIME, "agents", "channel", "--handle", str(Path(delivery["directory"]) / launch_id / "handle.json"),
+                          "--request-id", "NEW_HEX32", "--operation", "send", "--to", "report-to", "--message-file", "-"]
     protocol = ("Messaging protocol (not a task brief):\n"
                 f"Your name is {name}; your pane is {session} {block}.\n"
                 f"Your starter is {ss} {sb}; report-to is {rs} {rb}.\n"
-                "Report stops, results, blockers and questions directly to report-to using teerex send; "
-                "never type into a registered human seat. A finished turn is idle, not process death.\n"
+                "Report stops, results, blockers and questions directly to report-to; never type into a registered human seat.\n"
+                "A finished turn is idle, not process death. Supply report bytes on stdin then EOF using:\n" +
+                shlex.join(report_command) + "\n" +
+                ("Replace NEW_HEX32 with a fresh 32-lowercase-hex request id for each NEW message; never retry uncertain input.\n"
+                 if delivery is not None else "Never retry uncertain input.\n") +
                 "Do not begin a task or launch another agent before the brief. Acknowledge this protocol now by running:\n" +
-                shlex.join([RUNTIME, "agents", "ack", "--registry", root, "--launch-id", launch_id,
-                            "--token", token, "--session", session, "--block", block]) +
+                shlex.join(ack_command) +
                 "\nThis ACK records protocol acknowledgment only, not readiness, authorization or exclusive input control.")
     with Registry(root) as registry:
         state = registry.read(launch_id)
@@ -468,32 +739,41 @@ def transcript_last_text(path):
 
 
 def stop(o):
-    raw = sys.stdin.buffer.read(32769) if o.event_file == "-" else read_file(o.event_file, 32768)
+    raw = source_bytes(o.event_file)
     require(len(raw) <= 32768, "hook_event_too_large")
     event = json.loads(raw)
     require(isinstance(event, dict), "invalid_hook_event")
-    kind = event.get("hook_event_name")
-    require(kind in ("Stop", "StopFailure"), "unsupported_hook_event")
+    event_id = identifier(o.event_id) if o.event_id else secrets.token_hex(16)
+    return report_stop(o.registry, o.launch_id, event_id, event)
+
+
+def validate_hook_event(event, allow_transcript=True):
+    require(isinstance(event, dict), "invalid_hook_event")
+    require(event.get("hook_event_name") in ("Stop", "StopFailure"), "unsupported_hook_event")
+    require(isinstance(event.get("last_assistant_message", "") or "", str), "invalid_last_words")
+    require(len(json.dumps(event).encode()) <= 32768, "hook_event_too_large")
+    require(allow_transcript or "transcript_path" not in event, "channel_transcript_path_forbidden")
+
+
+def report_stop(root, launch_id, event_id, event, allow_transcript=True):
+    validate_hook_event(event, allow_transcript)
+    kind = event["hook_event_name"]
     last = event.get("last_assistant_message", "") or ""
-    require(isinstance(last, str), "invalid_last_words")
-    if kind == "Stop" and not last:
+    if allow_transcript and kind == "Stop" and not last:
         try:
             last = transcript_last_text(event.get("transcript_path"))
         except (OSError, Refusal, ValueError):
             last = "(last words unavailable: transcript could not be read)"
     error = str(event.get("error") or event.get("error_details") or event.get("message") or "unknown error")
     details = (last[:1500] or "(no last words supplied)") if kind == "Stop" else error[:600]
-    state = load(o.registry, o.launch_id)
-    # Hook metadata is a report by the configured harness, never measured process death.
-    # Equal last words can occur on different turns; never deduplicate by message text.
-    # A caller reconciling the same hook invocation can supply its stable event ID explicitly.
-    event_id = identifier(o.event_id) if o.event_id else secrets.token_hex(16)
+    state = load(root, launch_id)
+    # Hook metadata reports a turn, never process death; only invocation IDs deduplicate.
     title = "IDLE (harness turn-stop report)" if kind == "Stop" else "ERROR (harness failure report, death not verified)"
     body = f"{title}: {state['name']}\n{details}"
     def remembered(s):
         s["last_hook"] = dict(kind=kind, at=now(), text=details, evidence="harness_report_not_process_death")
-    update(o.registry, o.launch_id, remembered)
-    return notify(o.registry, o.launch_id, event_id, body, "harness_report_not_process_death",
+    update(root, launch_id, remembered)
+    return notify(root, launch_id, event_id, body, "harness_report_not_process_death",
                   reported_state="idle" if kind == "Stop" else "unknown")
 
 
@@ -514,18 +794,31 @@ def supervise(o):
         require(not s.get("supervisor_claimed"), "supervisor_already_claimed")
         require(s["immediate_child_term"] is None, "child_already_exited")
         s["supervisor_claimed"] = True
+        s["supervisor_pid"] = os.getpid()
     update(o.registry, o.launch_id, claim)
     env = dict(os.environ)
+    for key in ("AGENT_CHANNEL", "LC_AGENT_CHANNEL"):
+        env.pop(key, None)  # A new launch never inherits its parent's capability implicitly.
     metadata = dict(AGENT_SESSION=sid, AGENT_PANE=bid, REX_SESSION=sid, REX_BLOCK=bid, AGENT_NAME=state["name"],
                     AGENT_STARTER=state["starter"]["session_id"] + " " + state["starter"]["block_id"],
                     AGENT_REPORT_TO=state["report_to"]["session_id"] + " " + state["report_to"]["block_id"],
                     AGENT_LAUNCH_ID=o.launch_id, AGENT_REGISTRY=o.registry)
+    broker = Channel(o.registry, state) if state.get("delivery") is not None else None
+    if broker is not None:
+        metadata.pop("AGENT_REGISTRY")
+        env.pop("AGENT_REGISTRY", None)
+        env.pop("LC_AGENT_REGISTRY", None)
+        metadata["AGENT_CHANNEL"] = broker.handle
     env.update(metadata)
     env.update({"LC_" + k: v for k, v in metadata.items()})
     argv = state["argv"]
     if state.get("hook_events"):
         require(state["harness"] == "claude", "automatic_hook_adapter_not_supported_for_harness")
         hook = shlex.join([RUNTIME, "agents", "stop", "--registry", o.registry, "--launch-id", o.launch_id, "--event-file", "-"])
+        if broker is not None:
+            # Each hook invocation creates its own request ID inside the worker, never a static per-launch ID.
+            hook = (shlex.join([RUNTIME, "agents", "channel", "--handle", broker.handle, "--operation", "stop",
+                               "--event-file", "-"]) + " --request-id \"$(python3 -c 'import secrets; print(secrets.token_hex(16))')\"")
         require("--settings" not in argv, "profile_settings_conflict")
         settings = {"hooks": {k: [{"hooks": [{"type": "command", "command": hook, "timeout": 15}]}]
                               for k in ("Stop", "StopFailure")}}
@@ -542,17 +835,29 @@ def supervise(o):
         child = subprocess.Popen(argv, env=env, cwd=state["cwd"])
         update(o.registry, o.launch_id, lambda s: s.update(immediate_child_started_at=now(), protocol_outcome="argument_supplied"))
         def forward(sig, unused):
+            # Revoke on cancellation even if the child ignores its forwarded signal.
+            if broker is not None:
+                broker.close()
+                update(o.registry, o.launch_id, lambda s: s.update(channel_status="revoked"))
             # Only our still-unreaped immediate child. Not a process-tree stop guarantee.
             with contextlib.suppress(ProcessLookupError):
                 child.send_signal(sig)
         signal.signal(signal.SIGTERM, forward)
         signal.signal(signal.SIGINT, forward)
-        code = child.wait()
+        if broker is None:
+            code = child.wait()
+        else:
+            while child.poll() is None:
+                broker.service()
+            code = child.returncode
         term = {"Exited": code} if code >= 0 else {"Signal": -code}
     except OSError as exc:
         term = {"launch_error": str(exc)[:600]}
         code = 125
     finally:
+        if broker is not None:
+            broker.close()
+            update(o.registry, o.launch_id, lambda s: s.update(channel_status="revoked"))
         if term is not None:
             update(o.registry, o.launch_id, lambda s: s.update(immediate_child_term=term, immediate_child_ended_at=now()))
     osc("done" if term == {"Exited": 0} else "error", "immediate child terminated; descendants not verified")
@@ -611,13 +916,22 @@ def shell(o):
 
 def parser():
     p = argparse.ArgumentParser(prog="teerex agents", description=(
-        "Visible launch profiles, durable jobs responsibility, token/address protocol ACK gating and explicit stop reports. "
+        "Visible profiles, protocol ACK-before-one-brief, opt-in bounded local fence channel. "
         "Python3.9+. API13 jobs. Creation, transport ACK, agent ACK, idle and child exit are distinct. "
         "No readiness claim, input lease, hidden agent, daemon, automatic retry/close or whole-tree death guarantee."))
     sub = p.add_subparsers(dest="operation", required=True)
     for op in ("profiles", "shell"):
         q = sub.add_parser(op, help="inspect profiles" if op == "profiles" else "print opt-in shell functions; never edits shell files")
         q.add_argument("--config", required=True)
+    q = sub.add_parser("channel", help="one bounded launch-scoped request; no Rex socket, registry or arbitrary destination")
+    q.add_argument("--handle", required=True)
+    q.add_argument("--request-id", required=True, help="32 lowercase hex; reuse refuses, never resends")
+    q.add_argument("--operation", dest="channel_operation", required=True, choices=("send", "ack", "stop"))
+    q.add_argument("--to", choices=("starter", "report-to"))
+    q.add_argument("--message-file", help="send only: absolute UTF-8 file or -; <=32KiB/EOF within 2s")
+    q.add_argument("--event-file", help="stop only: absolute JSON file or -; <=32KiB/EOF within 2s")
+    q.add_argument("--session", help="ack only: exact own session:UUID, not a destination selector")
+    q.add_argument("--block", help="ack only: exact own block:UUID, not a destination selector")
     q = sub.add_parser("launch", help="create visible pane, track jobs, send protocol, await agent ACK, attempt brief once")
     q.add_argument("--config", required=True)
     q.add_argument("--profile", required=True)
@@ -639,7 +953,7 @@ def parser():
             for key in ("token", "session", "block"):
                 q.add_argument("--" + key, required=True)
         if op == "stop":
-            q.add_argument("--event-file", required=True, help="absolute JSON file or - for bounded stdin")
+            q.add_argument("--event-file", required=True, help="absolute JSON file or - for <=32KiB stdin/EOF within 2s")
             q.add_argument("--event-id", help="optional stable 32-lowercase-hex hook invocation ID; duplicate attempts refuse")
         if op == "present":
             for key in ("owner", "reason", "anchor"):
@@ -667,7 +981,7 @@ def main():
         sig = exc.args[0] if isinstance(exc, Cancelled) else signal.SIGINT
         print(json.dumps(dict(schema_version=1, kind="agents_result", outcome="cancelled_uncertain", retry_safe=False)))
         return 128 + sig
-    except (Refusal, OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as exc:
+    except (Refusal, OSError, ValueError, KeyError, TypeError, RecursionError, subprocess.SubprocessError) as exc:
         print(json.dumps(dict(schema_version=1, kind="agents_result", outcome="refused_or_uncertain", failure_reason=str(exc),
                               retry_safe=False, agent_readiness="not_assessed", all_processes_verified_gone=False)))
         return 1

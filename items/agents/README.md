@@ -7,7 +7,7 @@
 - **Who:** the operator or an authorized starter, explicitly responsible for a profile's program and selected pane. A recorded owner label is responsibility, not authenticated authority or an input lease.
 - **What:** create one retained visible tab, register its jobs responsibility before starting the harness, supply only the messaging protocol as its initial prompt argument, await an explicit token-and-pane-bound agent ACK, then attempt the task brief once. A visible in-pane supervisor waits for its immediate child and attempts notifications automatically; optional harness callbacks report idle/error turns separately.
 - **When:** use managed launch for a new agent, `inspect` for saved evidence, explicit `deliver` after a late ACK if no brief was attempted, and `present` when deliberately bringing a pane beside the seat. Never re-run launch because an ACK was lost: creation or input might already have happened.
-- **Where:** Linux x86_64 and Apple-silicon macOS, Python **3.9+**, an installed teerex and trusted Rex client, existing API13 server/session, command-host-local private registry and absolute executable/cwd paths. The supervisor and registry must be accessible on the pane's execution host. CLI host, server and attached terminal host are not interchangeable. Root named-host routing executes the leaf on the selected command host; it does not make these addresses arbitrary cross-host reply routes.
+- **Where:** Linux x86_64 and Apple-silicon macOS, Python **3.9+**, an installed teerex and trusted Rex client, existing API13 server/session, command-host-local private registry and absolute executable/cwd paths. The supervisor and registry must be accessible on the pane's execution host. The [source-only extensions below](#source-only-compute-routing-and-scoped-delivery-issues14-and21) add explicit unfenced SSH compute and separately tested local fenced delivery; alpha.5 assets do not include them. CLI host, server and attached terminal host are not interchangeable. Root named-host routing executes the leaf on the selected command host; it does not make these addresses arbitrary cross-host reply routes.
 - **Why:** a visible creation ACK is not readiness; terminal input immediately after creation races shell/harness startup. The initial protocol is therefore an explicitly supported **final prompt argv argument**, never a startup-delay guess or a screen-scraped readiness heuristic. Only the agent's explicit ACK opens the brief gate.
 - **How:** configure explicit profiles/default targets once, inspect them, then use one managed launch command. Opt-in shell functions can make the profile's name the launch command without editing global shell/security settings.
 
@@ -126,11 +126,57 @@ This delegates `jobs present --relocate yes` with the saved exact target, under 
 
 The native leaf execs Python in the same CLI PID; Python and a usable teerex must exist on the command/pane host. Build/install/upgrade use the shared integrated executable; no separate package is claimed. Upgrades leave existing retained supervisors and state alone. Uninstall by stopping use/removing the installed executable through the shared installer; only deliberately owned panes should be closed. Private records/message files are intentionally retained for reconciliation and are not automatically deleted with the binary.
 
-The explicit registry is an existing owned directory, exact0700, no final symlink. Its stable `agents.lock` and records are owned single-link regular files, exact0600 with final symlinks refused. Cooperating commands wait at most2 seconds for the lifecycle lock; **this is lock acquisition, not a retry of a remote creation/input/notification**. Jobs uses its separate lock in the same directory. Parents/ACLs/root/same-account access are outside this confidentiality boundary; use a trusted local filesystem. At most32 launch records and32 jobs entries; each lifecycle record/config is at most256KiB. Messages/hook JSON are at most32KiB; notifications max64 per launch, presentation attempts max32, no eviction. The CLI retains bounded reads; explicit hook stdin waits for EOF/its byte bound, not a standalone wall-clock lease.
+The explicit registry is an existing owned directory, exact0700, no final symlink. Its stable `agents.lock` and records are owned single-link regular files, exact0600 with final symlinks refused. Cooperating commands wait at most2 seconds for the lifecycle lock; **this is lock acquisition, not a retry of a remote creation/input/notification**. Jobs uses its separate lock in the same directory. Parents/ACLs/root/same-account access are outside this confidentiality boundary; use a trusted local filesystem. At most32 launch records and32 jobs entries; each lifecycle record/config is at most256KiB. Messages/hook JSON are at most32KiB; notifications max64 per launch, presentation attempts max32, no eviction. Current source bounds hook/channel stdin through EOF to2 seconds; the earlier alpha.5 hook CLI had only its EOF/byte bound. This input budget is separate from the channel lease and delivery budget.
 
 Each save exclusively creates `agents-ID.json.next`, syncs, renames over the committed record and syncs the directory. Existing staged writes are never overwritten/promoted. Crash/disk/fsync failure can leave uncertainty; keep the committed and staged files privately, inspect the exact pane/jobs, and reconcile while no operation is active. Files contain private argv, paths, token, brief/protocol text and last reports; public normal receipts omit token/argv/brief, but are not a comprehensive redaction system. Do not publish the registry.
 
 The ACK wait budget excludes creation, jobs, subprocess cleanup, filesystem/scheduling and stdout waits. Each foreground teerex child invocation has a 10-second client wait, bounded diagnostic reads (4096 bytes), and up to one additional second for the owned native client's cleanup after TERM before a required KILL. The Python controller explicitly installs INT/TERM handlers even when INT was inherited as ignored. No client failure closes the server-created agent pane. Exit0 verifies only the reported stage; 1 refusal/error/uncertainty; argparse usage2; ACK wait124; INT130/TERM143. Always inspect exit status **and** JSON. `agent_readiness`, `task_completion` remain `not_assessed`; `all_processes_verified_gone`, `exclusive_input_lease`, `retry_safe` remain false.
+
+## Source-only scoped delivery (issue21)
+
+**Not in published alpha.5.** This opt-in local path is not permission to remove Rivet's relay or change a personal fence. Profiles without `delivery` retain their local lifecycle. Explicit `execution`/`callbacks` fields refuse before pane creation; remote compute and remote fenced delivery are not implemented in this slice. No SSH forwarding, socket exposure or general RPC proxy is added.
+
+### Launch-scoped local fence channel (#21)
+
+Add this field to a local profile only:
+
+```json
+{
+  "delivery": {
+    "directory": "/absolute/private/channel-parent",
+    "grants": ["send", "ack", "stop"],
+    "max_requests": 16,
+    "lifetime_ms": 60000
+  }
+}
+```
+
+- **Who:** the starter deliberately authorizes the listed methods for this launch only. Parent directory must already be owned exact0700 on a trusted local filesystem. Grants must be unique/nonempty and drawn only from send/ack/stop; managed launch requires ack, and configured hooks require stop. Omitted grants confer no authority.
+- **What/where:** the **visible outside supervisor itself**, not a second daemon/thread/service, owns `PARENT/LAUNCH_ID/channel.sock` and private `handle.json`. Child env exports `AGENT_CHANNEL` (and `LC_AGENT_CHANNEL`) naming that handle plus the existing launch/address metadata; `AGENT_REGISTRY` and its LC variant are removed. The token lives in the handle, not a raw socket/store/config grant.
+- **When:** the grant is usable only after the supervisor opens it and until its monotonic lease, connection count, child exit or supervisor INT/TERM revokes it. Lifetime is 1000..86400000ms and no later than review_at; request limit is 1..64 **accepted connections**, including malformed/wrong-token attempts. Unused capacity does not keep it alive after the lease or child exit.
+- **How:** the operator's fence adapter mounts **only this launch directory**, preferably read-only, at its original absolute path. A Unix socket is connectable through the tested read-only bind mount; the worker writes no mailbox files. Keep Rex socket, registry, boards store, other launches, SSH keys and host config outside the fence. The binary/toolchain and worker cwd are separate deliberate mounts. The profile does not construct or weaken the fence for you.
+
+```sh
+# Supply message bytes on stdin, then EOF; pick a fresh ID for each new message.
+teerex agents channel --handle "$AGENT_CHANNEL" --request-id 0123456789abcdef0123456789abcdef \
+  --operation send --to report-to --message-file -
+# Generated protocol uses the same handle for ACK plus the exact own --session/--block.
+# Generated Stop/StopFailure hooks use operation stop and --event-file -.
+```
+
+Only send accepts `--to starter|report-to`/`--message-file`; ACK accepts only own full session/block; Stop accepts only event-file. All require handle and request-id. Irrelevant flags, unknown/duplicate frame fields, wrong tokens/launch IDs, arbitrary destinations/methods, invalid message controls/UTF-8 and oversize frames refuse. Worker Stop reads a transcript only inside its own fence and strips its path; the outside handler refuses transcript paths rather than opening worker-selected host files.
+
+The channel admits at most one request at a time, backlog4, at most20 accepted connections/second, 49152-byte newline-delimited JSON frames and 32768-byte messages/events. Frame acquisition has a total0.5-second deadline; CLI stdin needs EOF within2 seconds, with the same32KiB cap. A send retains the existing ten-second foreground-client budget and original nested send/seat/refusal receipt; the client bounds its connect/write/response waits to12 seconds each. Notifications, history and state retain the existing finite registry budgets; direct channel sends create at most64 bounded message files, with hook notices subject to the existing notification cap, not a worker-writable spool. Durable request intent precedes any send. Duplicate/concurrent IDs refuse, even after a dropped response; `retry_safe:false` always. An unresolved response is `delivery_uncertain_no_retry`, never an instruction to reconnect/replay. Inspect the private registry outside the fence to reconcile it.
+
+Lease/revocation stops **new admission**; it does not undo input or cancel an already dispatched send. Socket/handle are removed through the pinned launch directory on normal teardown; substitution never triggers recursive deletion or following symlinks. SIGKILL/crash may leave inert files, but no independent servicing process remains. A filesystem bearer capability is not kernel revocation, authentication against arbitrary same-account host code, or proof descendants stopped. If a worker can access other launches/host sockets through a bad fence mount, these files do not repair that sandbox. **Linux bubblewrap acceptance is tested; macOS fence/channel equivalence is not certified.**
+
+### Source acceptance and remaining cutover
+
+On disposable Linux x86_64, Zig0.15.2, Rex preview.16/API13, all **16** public lifecycle tests passed. Run `TEEREX_AGENTS_FENCE=1 TEEREX_AGENTS_INTEGRATION=1 TEEREX_AGENTS_CROSS_SESSION=1 TEEREX_BIN=ABS REX_BIN=ABS python3 items/agents/test_agents.py -v`. The fence gate requires working Linux bubblewrap namespaces and no personal endpoints; omitted gates explicitly skip, not pass.
+
+The independent real bubblewrap test masks /tmp, /run and /var, denies direct Rex socket and registry access, then permits the scoped ACK, one exact multiline/trailing-newline report and configured Stop hook through only the read-only launch directory. Further cases cover malformed/oversized/duplicate frames, invalid targets/tokens/launch IDs, duplicate/lost response without resend, EOF budget, symlink refusal, expiry/count/INT/TERM teardown, seat append with zero PTY input and original store refusal without paste fallback. Synthetic hooks are not paid-harness certification; isolated environments are not two physical hosts or personal M5/hive validation.
+
+Rivet `jobs/src/relay.ts` explicitly grants its configured command to otherwise read-only workers; `jobs/src/sandbox.ts` currently adds a **shared** configured relay mailbox to writable fence paths. `jobs/sandboxes/bwrap.ts` uses explicit toolchain/cwd mounts and masks /tmp,/run,/var. Source was inspected, not personal service configuration. A migration must replace that shared mount/command with the per-launch grant without broadening any harness/git/native-owner guard. Actual Rivet adapter integration, remote fenced compute transport, macOS parity and authorized relay cutover remain open. **Retain agent-relay.service, its callers and all working guards until that parity is proven.** `run-visible` can later compose literal supervisor argv and scoped env for the same lifetime; no second service or extra run ABI is required here.
 
 ## Verification and migration gates
 
