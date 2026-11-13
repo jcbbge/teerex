@@ -64,11 +64,32 @@ local function deliver()
     emit({event="ack", stage="enter"})
     if saved ~= "" then
         rex.sleep(.4)
-        draft.restored = not not paste_text(saved)
-        rex.sleep(.05)
-        draft.restore_verified = draft.restored and read_draft() == saved
-        report("restored")
-        if not draft.restore_verified then emit({event="failed", reason="draft_restore_unverified"}); rex.stop(); return end
+        local acknowledged = not not paste_text(saved)
+        draft.restored, draft.restore_verified = false, false
+        local verify_timer, restore_bound, complete
+        local function finish_restore(warning)
+            if complete then return end
+            complete = true
+            if verify_timer then verify_timer:cancel() end
+            if restore_bound then restore_bound:cancel() end
+            report("restored")
+            if warning then emit({event="warning", reason=warning}) end
+            -- Restoration cannot undo the already acknowledged message/Enter.
+            emit({event="finished"})
+            rex.stop()
+        end
+        if not acknowledged then finish_restore("draft_restore_failed"); return end
+        local function verify(final)
+            if read_draft() == saved then
+                draft.restored, draft.restore_verified = true, true
+                finish_restore(nil)
+            elseif final then
+                finish_restore("draft_restore_unverified")
+            end
+        end
+        verify_timer = rex.every(.1, function() verify(false) end)
+        restore_bound = rex.after(1.5, function() verify(true) end)
+        return
     end
     emit({event="finished"})
     rex.stop()

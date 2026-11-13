@@ -15,6 +15,7 @@ const usage =
     \\Local inbox markers refuse input. Same-host/TMPDIR agent-send mkdir lock serializes cooperating senders only.
     \\Timeout defaults to draft wait+10000ms (ignore:10000), range100..115000; includes lock/Rex.
     \\Draft text is never reported. Keystrokes between final read and Ctrl-U can still race clearing.
+    \\Restore polls100ms up to1500ms; unverified/failed restore warns without failing acknowledged send.
     \\Stale locks are never stolen.
     \\JSON reports attempts/acknowledgements, NOT application consumption, atomic delivery, or an input lease.
     \\Exit: 0 both ACKs, 1 refusal/error/uncertain, 2 usage, 124 deadline, 130 SIGINT, 143 SIGTERM.
@@ -46,6 +47,7 @@ const Collector = struct {
     timer: *std.time.Timer,
     draft: Draft,
     draft_wait_started: ?u64 = null,
+    draft_warning: ?[]const u8 = null,
     pending: std.ArrayList(u8) = .empty,
     source: ?Source = null,
     paste_attempted: bool = false,
@@ -92,6 +94,8 @@ const Collector = struct {
                 } else if (std.mem.eql(u8, f.stage orelse "", "enter") and self.enter_attempted and !self.enter_acknowledged) {
                     self.enter_acknowledged = true;
                 } else return error.InvalidSendFrame;
+            } else if (std.mem.eql(u8, f.event, "warning") and self.enter_acknowledged and self.draft_warning == null) {
+                self.draft_warning = f.reason orelse return error.InvalidSendFrame;
             } else if (std.mem.eql(u8, f.event, "refused") or std.mem.eql(u8, f.event, "failed")) {
                 self.reason = f.reason orelse return error.InvalidSendFrame;
                 self.finished = true;
@@ -334,6 +338,7 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
         .failure_reason = failure orelse collector.reason orelse if (backend != null and !success) @as(?[]const u8, "rex_transport_incomplete") else null,
         .cancellation_signal = if (signal == 0) @as(?u8, null) else signal,
         .draft = collector.draft,
+        .draft_warning = collector.draft_warning,
         .paste = .{ .attempted = collector.paste_attempted, .acknowledged = collector.paste_acknowledged },
         .enter = .{ .attempted = collector.enter_attempted, .acknowledged = collector.enter_acknowledged },
         .attempt_evidence = "received_local_pre_call_frames_not_server_dispatch_proof",

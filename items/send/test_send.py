@@ -125,10 +125,10 @@ class SendTest(unittest.TestCase):
     def pasted(message, sender="worker"):
         return b"\x1b[200~FROM " + sender.encode() + b": " + message + b"\x1b[201~\r"
 
-    def prompt(self, suggestion="suggestion", ignore_clear=False):
+    def prompt(self, suggestion="suggestion", ignore_clear=False, mode="clear"):
         log = self.work / ("prompt-" + str(time.monotonic_ns()))
         fixture = Path(__file__).with_name("prompt_fixture.py")
-        made = self.rex_json("new", "--json", "--keep-open", "--shell=none", "--", sys.executable, str(fixture), str(log), suggestion, "ignore-clear" if ignore_clear else "clear")
+        made = self.rex_json("new", "--json", "--keep-open", "--shell=none", "--", sys.executable, str(fixture), str(log), suggestion, "ignore-clear" if ignore_clear else mode)
         target = made["session_id"], made["initial_windows"][0]["block_ids"][0]
         for _ in range(100):
             if log.exists():
@@ -192,6 +192,28 @@ class SendTest(unittest.TestCase):
         self.assertEqual([json.loads(line) for line in log.read_text().splitlines()], ["FROM worker: hello"])
         self.assertIn("> " + text, self.prompt_text(target))
         self.assertNotIn(text, r.stdout + r.stderr)
+
+    def test_restore_late_redraw_and_dropped_paste_preserve_send_ack(self):
+        for mode, verified in (("late-redraw", True), ("drop-restore", False)):
+            with self.subTest(mode=mode):
+                target, log = self.prompt(mode=mode)
+                text = "PRIVATE_RESTORE_DRAFT_α"
+                self.type_draft(target, text)
+                result = subprocess.run(self.command(target) + ["--draft-wait-ms", "0"],
+                                        env=self.env, capture_output=True, text=True, timeout=6)
+                packet = json.loads(result.stdout)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(packet["outcome"], "events_acknowledged")
+                self.assertIsNone(packet["failure_reason"])
+                self.assertEqual(packet["draft"]["restored"], verified)
+                self.assertEqual(packet["draft"]["restore_verified"], verified)
+                self.assertEqual(packet["draft_warning"], None if verified else "draft_restore_unverified")
+                self.assertEqual([json.loads(line) for line in log.read_text().splitlines()], ["FROM worker: hello"])
+                self.assertNotIn(text, result.stdout + result.stderr)
+                if verified:
+                    self.assertIn("> " + text, self.prompt_text(target))
+                else:
+                    self.assertNotIn(text, self.prompt_text(target))
 
     def test_guard_refuses_uncleared_draft_and_validates_limits(self):
         target, log = self.prompt(ignore_clear=True)
