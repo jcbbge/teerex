@@ -201,6 +201,8 @@ class RuntimeTest(unittest.TestCase):
 
     def test_pinned_executable_is_reported_and_overrides_path(self):
         for global_pin in (False, True):
+            if global_pin and Path(BIN).name != "teerex":
+                continue  # --rex is a combined-CLI global option; a standalone cartridge payload has no global options.
             env = dict(self.env("server_build"), TEEREX_REX=self.rex)
             command = self.command()
             if global_pin:
