@@ -10,6 +10,21 @@
 
 Use the [outside-teerex delegation briefs](planning/teerex-delegation-briefs.md) for H01–H08 and the [copy-ready orchestrator prompt](planning/teerex-orchestrator-prompt.md) to coordinate asynchronous, disjoint planning workloads. The [canonical non-Rex handoff](planning/teerex-non-rex-handoff.md) links these current documents while preserving its original historical body. No private artifact or Amp account is required to use the package.
 
+### Implementation specs (planning wave 1, 13 November 2026)
+
+Each item below has an implementation-ready spec, handed to its builders under the overnight authority. The [coordination ledger](planning/workloads/coordination.md) records owners, handoffs and events.
+
+| Items | Spec | Builders |
+| --- | --- | --- |
+| H01 records, U01/U02 park/resume | [evidence-records.md](planning/workloads/evidence-records.md) (the single store; [continuity spec](planning/workloads/continuity-park-resume.md) stays normative for availability, navigate and leak tests) | teerex lead, rexconfig, agent-core |
+| Q03 cartridge discovery | [cartridge-discovery.md](planning/workloads/cartridge-discovery.md) | teerex lead, agent-core |
+| Q02/C31/C32 readiness and baseline | [readiness-acceptance.md](planning/workloads/readiness-acceptance.md) | teerex lead, agent-core |
+| C03/C21/C22 presentation view (C24) | [presentation-filter.md](planning/workloads/presentation-filter.md) | teerex lead |
+| H02 friction, H06 decisions | [friction-and-decisions.md](planning/workloads/friction-and-decisions.md) | teerex lead, agent-core |
+| H03 replay, H08 observation terms | [observation-replay-measurement.md](planning/workloads/observation-replay-measurement.md) | teerex lead |
+| H07 prepared questions | [attention-policy.md](planning/workloads/attention-policy.md) | teerex lead, agent-core |
+| H04 fence authority, H05 interruption | held privately until the Rivet fence changes install | Rivet lead, teerex lead, rexconfig, agent-core |
+
 ### Source and release are different baselines
 
 This plan was reconciled with public main through [724dbc3635520d9fd24d8fe521555908039b87c5](https://github.com/jcbbge/teerex/commit/724dbc3635520d9fd24d8fe521555908039b87c5), not the old local preservation checkout. Source includes `run-visible`, unfenced compute/callback routing, independent local scoped delivery, leaf-aware named-host routing, native-owned in-place jobs presentation, multi-state status watches with longer or explicitly unlimited waits, and pre-creation spawn failure classification. These externally owned increments are not new assignments here. Read the latest accepted contracts before starting dependent work; this dated plan does not freeze other agents' source changes.
