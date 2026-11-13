@@ -4,8 +4,9 @@ const supervised = @import("supervised_child");
 
 const usage =
     \\Usage: teerex doctor --socket /absolute/path [--timeout-ms N] [--baseline FILE]
-    \\Read-only, narrow API-10..13 diagnosis for observe/watch/run. Requires macOS and Rex on PATH.
+    \\Read-only, narrow API-10..13 diagnosis for observe/watch/run. Requires macOS/Linux and Rex on PATH (or global --rex ABS / TEEREX_REX).
     \\Uses only the explicit existing socket; never autostarts, upgrades, configures, reads terminal text or executes argv.
+    \\Reports rex_executable, client/server mismatch and platform applicability (Linux run: not_applicable).
     \\Checks CLI/server versions, five selected method descriptions and Lua binding shapes, not program behavior.
     \\Discovery is not permission. Advertised requirements do not prove execution, cleanup or input safety.
     \\Optional baseline is a prior doctor JSON receipt (at most 128 KiB); changed identity requires adapter revalidation.
@@ -65,6 +66,7 @@ const Diagnosis = struct {
     env: std.process.EnvMap,
     timer: std.time.Timer,
     timeout_ms: u64,
+    executable: ?[]const u8 = null,
     cli: ?Identity = null,
     server: ?Identity = null,
     checks: [methods.len]Check = undefined,
@@ -76,7 +78,7 @@ const Diagnosis = struct {
         if (supervised.requestedSignal() != 0) return error.DoctorCancelled;
         const elapsed = self.timer.read() / std.time.ns_per_ms;
         if (elapsed >= self.timeout_ms) return error.DoctorDeadlineExceeded;
-        const base = [_][]const u8{ "rex", "--autostart=false", "--server", self.endpoint, "--timeout", "2s", "--color", "never" };
+        const base = [_][]const u8{ self.executable orelse return error.FileNotFound, "--autostart=false", "--server", self.endpoint, "--timeout", "2s", "--color", "never" };
         const argv = try std.mem.concat(self.allocator, []const u8, &.{ &base, suffix });
         var output: Output = .{ .allocator = self.allocator };
         const result = try supervised.collect(self.allocator, argv, &self.env, self.timeout_ms - elapsed, &output);
@@ -241,10 +243,14 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
         for (parsed.value.adapter_identity.?) |c| if (!std.ascii.isHex(c)) return usageError("invalid baseline identity");
         break :blk .{ .schema_version = parsed.value.schema_version, .kind = parsed.value.kind, .adapter_identity = parsed.value.adapter_identity };
     } else null;
-    if (builtin.os.tag != .macos) return error.DoctorRequiresMacOS;
+    if (builtin.os.tag != .macos and builtin.os.tag != .linux) return error.DoctorRequiresUnix;
     const endpoint = try std.fmt.allocPrint(allocator, "unix://{s}", .{path});
     var d: Diagnosis = .{ .allocator = allocator, .endpoint = endpoint, .env = try std.process.getEnvMap(allocator), .timer = try std.time.Timer.start(), .timeout_ms = budget };
     for ([_][]const u8{ "REX_SERVER", "REX_SESSION", "REX_BLOCK", "REX_CLIENT" }) |key| d.env.remove(key);
+    d.executable = rexExecutable(allocator, &d.env) catch |err| blk: {
+        try d.failure("rex_executable", err);
+        break :blk null;
+    };
     const signals = supervised.Signals.init();
     defer signals.deinit();
     d.cli = d.identity(&.{ "version", "--json" }) catch |err| blk: {
@@ -304,6 +310,10 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
         if (std.mem.eql(u8, diagnostic.error_name, "DoctorDeadlineExceeded")) deadline = true;
     }
     const ok = complete and !identity_changed and cancelled == 0 and !deadline;
+    const same_build: ?bool = if (d.cli != null and d.server != null) d.cli.?.api_revision == d.server.?.api_revision and
+        d.cli.?.api_min_revision == d.server.?.api_min_revision and std.mem.eql(u8, d.cli.?.platform, d.server.?.platform) and
+        std.mem.eql(u8, d.cli.?.rex_version, d.server.?.rex_version) and optionalEqual(d.cli.?.commit, d.server.?.commit) and
+        optionalEqual(d.cli.?.built_at, d.server.?.built_at) and d.cli.?.dirty == d.server.?.dirty else @as(?bool, null);
     const output = try std.json.Stringify.valueAlloc(allocator, .{
         .schema_version = 1,
         .kind = "rex_compatibility_doctor",
@@ -311,10 +321,16 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
         .client_platform = @tagName(builtin.os.tag) ++ "/" ++ @tagName(builtin.cpu.arch),
         .cli = d.cli,
         .source = d.server,
-        .cli_server_same_build = if (d.cli != null and d.server != null) d.cli.?.api_revision == d.server.?.api_revision and
-            d.cli.?.api_min_revision == d.server.?.api_min_revision and std.mem.eql(u8, d.cli.?.platform, d.server.?.platform) and
-            std.mem.eql(u8, d.cli.?.rex_version, d.server.?.rex_version) and optionalEqual(d.cli.?.commit, d.server.?.commit) and
-            optionalEqual(d.cli.?.built_at, d.server.?.built_at) and d.cli.?.dirty == d.server.?.dirty else @as(?bool, null),
+        .rex_executable = d.executable,
+        .cli_server_same_build = same_build,
+        .cli_server_mismatch = if (same_build) |same| !same else @as(?bool, null),
+        .client_server_check = if (same_build) |same| (if (same) "same_build" else "mismatch_review_selected_client_and_server") else "unknown",
+        .operation_platform_support = .{
+            .observe = "applicable",
+            .watch = "applicable",
+            .run = if (builtin.os.tag == .macos) "applicable" else "not_applicable",
+            .run_reason = if (builtin.os.tag == .macos) @as(?[]const u8, null) else "teerex run requires macOS; binding discovery does not establish Linux execution support",
+        },
         .accepted_api_revisions = .{ .min = 10, .max = 13 },
         .api_revision_matches = if (d.cli != null and d.server != null) api_range else @as(?bool, null),
         .api_revision_refusal = revision_refusal,
@@ -346,4 +362,27 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
 fn optionalEqual(a: ?[]const u8, b: ?[]const u8) bool {
     if (a == null or b == null) return a == null and b == null;
     return std.mem.eql(u8, a.?, b.?);
+}
+
+// Freeze PATH selection before invoking Rex; receipts name the executable used.
+fn rexExecutable(allocator: std.mem.Allocator, env: *std.process.EnvMap) ![]const u8 {
+    if (env.get("TEEREX_INTERNAL_REX")) |path| {
+        if (!std.fs.path.isAbsolute(path)) return error.RexExecutableMustBeAbsolute;
+        return path;
+    }
+    if (env.get("TEEREX_REX")) |path| {
+        if (!std.fs.path.isAbsolute(path)) return error.RexExecutableMustBeAbsolute;
+        return path;
+    }
+    var denied = false;
+    var paths = std.mem.splitScalar(u8, env.get("PATH") orelse "", std.fs.path.delimiter);
+    while (paths.next()) |directory| {
+        const path = try std.fs.path.resolve(allocator, &.{ directory, "rex" });
+        std.posix.access(path, std.posix.X_OK) catch |err| {
+            if (err == error.AccessDenied) denied = true;
+            continue;
+        };
+        return path;
+    }
+    return if (denied) error.AccessDenied else error.FileNotFound;
 }

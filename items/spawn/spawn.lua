@@ -32,7 +32,8 @@ if not report_found then refuse("report_target_not_attached_terminal"); return e
 -- Positional parameters preserve argv, quotes, empty arguments and Unicode.
 -- The cwd is on the terminal host; never validate it on the CLI host instead.
 local shim = [[
-cd -- "$1" || exit 125
+if [ -n "$1" ]; then cd -- "$1" || exit 125
+else cd -- "$HOME" || exit 125; fi
 export AGENT_SESSION="$REX_SESSION" AGENT_PANE="$REX_BLOCK"
 export LC_REX_SESSION="$REX_SESSION" LC_REX_BLOCK="$REX_BLOCK"
 export AGENT_NAME="$2" LC_AGENT_NAME="$2"
@@ -44,7 +45,7 @@ local command = {"sh", "-c", shim, "teerex-spawn", a.cwd, a.name, a.report_sessi
 for _, arg in ipairs(a.argv) do command[#command+1] = arg end
 local params = {session_id=a.session_id, window_label=a.name, focus=false,
     layout={block={flavor="com.superlogical.terminal.shell", label=a.name,
-        options={command=command, cwd=a.cwd, exit={on_completion=false}}}}}
+        options={command=command, cwd=a.cwd ~= "" and a.cwd or nil, exit={on_completion=false}}}}}
 -- Reserve protocol space and account for Rex's actual encoder expansion.
 if #rex.json.encode({jsonrpc="2.0",id=1,method="session.new_window",params=params}) > 60000 then
     refuse("encoded_spawn_exceeds_limit"); return
@@ -63,7 +64,18 @@ if type(after) == "table" and after.session_id == a.session_id then
             for _, l in ipairs(w.layers or {}) do
                 for _, b in ipairs(l.blocks or {}) do
                     if b.block_id == made.block_ids[1] and b.creator_name == "com.superlogical.terminal" then
-                        emit({event="verified"}); return
+                        local directory = a.cwd
+                        if directory == "" then
+                            local found = rex.call("com.superlogical.terminal.list_dir", {
+                                session_id=a.session_id, block_id=made.block_ids[1],
+                                args={path="~",limit=1}})
+                            if type(found) ~= "table" or type(found.home) ~= "string" or
+                                found.home:sub(1,1) ~= "/" then
+                                emit({event="failed",reason="target_home_unavailable"}); return
+                            end
+                            directory = found.home
+                        end
+                        emit({event="verified",cwd=directory}); return
                     end
                 end
             end

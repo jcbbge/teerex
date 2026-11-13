@@ -140,11 +140,10 @@ jobs:
           TEEREX_BIN: ${{ github.workspace }}/zig-out/bin/teerex
         run: python3 items/filter/test_cache.py -v
 
-      - name: Run Linux offline doctor guards
+      - name: Run disposable-Linux doctor regressions
         if: runner.os == 'Linux'
         env:
           TEEREX_BIN: ${{ github.workspace }}/zig-out/bin/teerex
-          TEEREX_OFFLINE_ONLY: '1'
         run: python3 items/doctor/test_doctor.py -v
 
       - name: Run cartridge lifecycle and native installed-payload contracts

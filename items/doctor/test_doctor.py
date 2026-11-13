@@ -1,4 +1,4 @@
-"""Public doctor contract. Runtime checks use only disposable macOS Rex servers.
+"""Public doctor contract. Runtime checks use only disposable macOS/Linux Rex servers.
 
 TEEREX_BIN selects the combined executable. TEEREX_OFFLINE_ONLY=1 runs native
 argument/baseline/platform controls without Rex. No personal/default server is used.
@@ -50,11 +50,11 @@ class OfflineTest(unittest.TestCase):
                 self.assertEqual(result.returncode, 2, result.stderr)
                 self.assertEqual(result.stdout, "")
 
-    @unittest.skipIf(sys.platform == "darwin", "native non-Mac guard")
+    @unittest.skipIf(sys.platform in ("darwin", "linux"), "native unsupported-platform guard")
     def test_other_platforms_reject_without_launching_rex(self):
         result = self.invoke("--socket", "/tmp/not-used.sock")
         self.assertEqual(result.returncode, 1)
-        self.assertIn("DoctorRequiresMacOS", result.stderr)
+        self.assertIn("DoctorRequiresUnix", result.stderr)
         self.assertEqual(result.stdout, "")
 
 
@@ -100,8 +100,6 @@ sys.stdout.write(json.dumps(data))
 class RuntimeTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        if sys.platform != "darwin":
-            raise RuntimeError("Runtime validation requires a disposable Mac, not Linux/VPS support")
         cls.rex = shutil.which("rex")
         if not cls.rex or not BIN.is_file():
             raise RuntimeError("Build teerex and put the explicitly selected test Rex on PATH")
@@ -168,6 +166,10 @@ class RuntimeTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(packet["diagnostics"], [])
         self.assertTrue(packet["cli_server_same_build"])
+        self.assertEqual(packet["rex_executable"], str(self.shim_dir / "rex"))
+        self.assertFalse(packet["cli_server_mismatch"])
+        self.assertEqual(packet["operation_platform_support"]["run"],
+                         "applicable" if sys.platform == "darwin" else "not_applicable")
         self.assertTrue(packet["advertised_requirements_met"])
         self.assertFalse(packet["behavior_certified"])
         version = json.loads(subprocess.check_output(self.base + ["api", "call", "server.version"], text=True))
@@ -197,6 +199,19 @@ class RuntimeTest(unittest.TestCase):
                 self.assertNotIn("rex.call(", tail[2])
                 self.assertNotIn("rex.exec.start(", tail[2])
 
+    def test_pinned_executable_is_reported_and_overrides_path(self):
+        for global_pin in (False, True):
+            env = dict(self.env("server_build"), TEEREX_REX=self.rex)
+            command = self.command()
+            if global_pin:
+                command = [str(BIN), "--rex", self.rex, *command[1:]]
+                env["TEEREX_REX"] = "/does/not/exist"
+            result = subprocess.run(command, capture_output=True, text=True, env=env, timeout=8)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            packet = json.loads(result.stdout)
+            self.assertEqual(packet["rex_executable"], self.rex)
+            self.assertFalse(packet["cli_server_mismatch"])
+
     def test_baseline_unchanged_and_identity_invalidation(self):
         result, first = self.invoke()
         self.assertEqual(result.returncode, 0)
@@ -211,6 +226,7 @@ class RuntimeTest(unittest.TestCase):
             with self.subTest(mode=mode):
                 result, changed = self.invoke(mode, "--baseline", str(baseline))
                 self.assertEqual(result.returncode, 1)
+                if mode == "server_build": self.assertTrue(changed["cli_server_mismatch"])
                 self.assertTrue(changed["advertised_requirements_met"])
                 self.assertTrue(changed["adapter_revalidation_required"])
                 self.assertEqual(changed["identity_status"], "changed_or_unknown")

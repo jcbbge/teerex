@@ -1,6 +1,6 @@
 # doctor
 
-[Operator/agent addendum: Who, What, When, Where, Why, How](../../docs/concierge/features.md#6-doctor-narrow-advertised-compatibility-and-drift) covers current alpha.5 use, platform/API support, verification, privacy and lifecycle. [Install/upgrade current alpha.5](../../docs/concierge/setup.md); runtime remains Mac/API10–13 only. A separate [experimental doctor cartridge](../../docs/cartridges.md) ships on Mac. Discovery remains distinct from permission and behavior certification.
+[Operator/agent addendum: Who, What, When, Where, Why, How](../../docs/concierge/features.md#6-doctor-narrow-advertised-compatibility-and-drift) covers current alpha.5 use, platform/API support, verification, privacy and lifecycle. [Install/upgrade current alpha.5](../../docs/concierge/setup.md); runtime supports macOS and Linux x86_64 with API10–13. A separate [experimental doctor cartridge](../../docs/cartridges.md) ships on Mac. Discovery remains distinct from permission and behavior certification.
 
 **Experimental, read-only compatibility diagnosis for observe/watch/run with numeric API acceptance 10–13 and concrete selected-shape checks.** Numeric acceptance is not certification of every build in that range. This is the narrow Phase 3 #8, C25–C28 slice, not a generated client, a generic schema validator, a ready independently packaged cartridge or permission to use discovered methods. Historical review and non-Rex material are unchanged.
 
@@ -14,7 +14,7 @@ zig build -Doptimize=ReleaseSmall
 ./zig-out/bin/teerex doctor --socket /absolute/path/to/existing/rex.sock
 ```
 
-The existing socket is mandatory and absolute. There is no environment/default-server fallback, implicit terminal selection or missing-server autostart. `REX_SERVER`, `REX_SESSION`, `REX_BLOCK` and `REX_CLIENT` hints are removed from child environments. All Rex calls explicitly pass `--autostart=false`, the selected Unix endpoint, `--timeout 2s` and `--color never`. The CLI is resolved through `PATH`: use a deliberately selected, trusted Rex executable. A malicious executable or Rex's own runtime/configuration is outside teerex's guarantee.
+The existing socket is mandatory and absolute. There is no environment/default-server fallback, implicit terminal selection or missing-server autostart. `REX_SERVER`, `REX_SESSION`, `REX_BLOCK` and `REX_CLIENT` hints are removed from child environments. All Rex calls explicitly pass `--autostart=false`, the selected Unix endpoint, `--timeout 2s` and `--color never`. The CLI is resolved once through `PATH`, or selected with global `teerex --rex /absolute/rex doctor ...` or `TEEREX_REX=/absolute/rex`. Every diagnostic packet includes `rex_executable` (null when resolution fails), and `cli` contains its discovered version or null with diagnostics. Use a deliberately selected, trusted Rex executable. A malicious executable or Rex's own runtime/configuration is outside teerex's guarantee.
 
 Doctor performs at most eight serial Rex invocations:
 
@@ -23,13 +23,13 @@ Doctor performs at most eight serial Rex invocations:
 3. `api describe METHOD --json` inspects **only five** descriptions: `server.version`, `com.superlogical.terminal.format`, `.process`, `.pwd` and `.program_status`.
 4. One fixed `do -e` script checks the types of `rex.call`, `rex.json.encode`, `rex.sleep` and `rex.exec.start`. It never calls `rex.exec.start`/`rex.sleep`, supplies arbitrary code, starts an argv or reads terminal content. Executing fixed introspection and encoding JSON is not execution-behavior validation.
 
-Descriptions are inspected only after both identities report integer API revisions **10–13**, with overlapping reported minimum/maximum API support. Missing revision means 0, per the observed version contract; outside-range or nonoverlapping support is refused with the **actual CLI/server revisions and minimums** in `api_revision_refusal`. Different CLI/server versions/builds are reported, not automatically treated as incompatible if the range and selected shapes match. No restart, downgrade, download, installation, config edit, terminal input, ownership change, session enumeration/creation or upgrade is attempted or recommended by doctor. Tests separately create disposable servers; the command does not. There is no update/restart prerequisite: updating Joshua's current API10 server would close existing panes, and is not authorized by compatibility discovery.
+Descriptions are inspected only after both identities report integer API revisions **10–13**, with overlapping reported minimum/maximum API support. Missing revision means 0, per the observed version contract; outside-range or nonoverlapping support is refused with the **actual CLI/server revisions and minimums** in `api_revision_refusal`. Different CLI/server versions/builds set `cli_server_mismatch=true` and `client_server_check="mismatch_review_selected_client_and_server"`; they are not automatically treated as incompatible if the range and selected shapes match. No restart, downgrade, download, installation, config edit, terminal input, ownership change, session enumeration/creation or upgrade is attempted or recommended by doctor. Tests separately create disposable servers; the command does not. There is no update/restart prerequisite: updating Joshua's current API10 server would close existing panes, and is not authorized by compatibility discovery.
 
 The explicit checks cover the selected invocation method, top-level argument/output object types, absence of additional required arguments the shipped collectors do not supply, and advertised field types actually consumed by those collectors. Nullable process/report owners and last-exit evidence are checked. This deliberately does **not** evaluate arbitrary schemas, resolve references, interpret prose/examples as code, validate all JSON Schema constraints, or certify data/behavior on a real terminal. It does not inspect `session.view`, write/ownership/layout APIs, unrelated creator methods or generic help/catalog exports.
 
 ## JSON and exits
 
-Every normal diagnostic result is one JSON object with `schema_version=1`, `kind="rex_compatibility_doctor"`. Usage errors return **2** with no JSON; unsupported platforms and exceptional allocator/output failures can return **1** without a packet. Always check the exit status and parse the entire object. Runtime diagnosis is macOS-only; offline help/argument/baseline rejection works on other targets. This does not establish Linux/VPS compatibility.
+Every normal diagnostic result is one JSON object with `schema_version=1`, `kind="rex_compatibility_doctor"`. Usage errors return **2** with no JSON; unsupported platforms other than macOS/Linux and exceptional allocator/output failures can return **1** without a packet. Always check the exit status and parse the entire object. Runtime diagnosis runs on macOS and Linux. `operation_platform_support` marks the Mac-only `run` operation `not_applicable` on Linux with a reason; binding discovery remains a shape check, not Linux execution support. Offline help/argument/baseline rejection works on other targets.
 
 - `cli` and `source` distinguish the local CLI from the reported server, with null for unavailable identities. `cli_server_same_build` compares reported fields, not authenticated host/process identity. An explicit or forwarded socket is not proof of locality.
 - `accepted_api_revisions={"min":10,"max":13}` states numeric policy. `api_revision_matches` is false for unsupported/legacy revisions or nonoverlapping support, null if either identity could not be obtained. `api_revision_refusal` names found revisions/minimums and the accepted range; it is null when no range refusal is established.
@@ -71,7 +71,7 @@ Public tests consume only the CLI via `TEEREX_BIN`:
 ```sh
 # Native argument/baseline/platform checks; never launch Rex.
 TEEREX_BIN=/absolute/path/to/teerex TEEREX_OFFLINE_ONLY=1 python3 items/doctor/test_doctor.py -v
-# Disposable macOS server and controlled transport/schema faults. Explicit test Rex on PATH.
+# Disposable macOS/Linux server and controlled transport/schema faults. Explicit test Rex on PATH.
 TEEREX_BIN=/absolute/path/to/teerex python3 items/doctor/test_doctor.py -v
 ```
 
@@ -97,3 +97,7 @@ The immediate candidate is the integrator's exact **300888-byte** executable, SH
 The setup agent's **supplied actual M5 observation evidence** is separate: `0.0.1793645657-gd018d2`, API10, returned all five reads with only the old pin removed. This is not the preview.13 build tested here, nor independent M5 run/exec validation. Joshua reports current Rex Beta app build1925 bundles preview.14/API12; preview.16/API13 is a separate CLI-channel build, not an app-update prerequisite. No existing personal server was restarted, updated or reconfigured. API11, other builds with the same revision, actual M5/hive execution, offstage and installation remain outside this validation.
 
 Source mapping: [original Phase 3 #8/C25–C28 and V02/V03/V08](../../docs/planning/teerex-pdf-work-inventory.md), [observe collector](../observe/collect.lua), [run executor](../run/execute.lua), and [original API provenance](../../research/provenance/README.md). No historical scores or non-Rex assignments were altered.
+
+## Linux and executable receipt update
+
+The current source executes the full doctor suite on a private Linux Rex server as well as macOS. The historical matrix above records earlier Mac-only source; it does not describe the current Linux gate. Client/server build mismatch is an explicit diagnostic flag, independent of advertised compatibility. Missing identity stays unknown. No new macOS-only probe is attempted on Linux; the existing fixed descriptor and binding queries are portable, while run's platform applicability is reported separately.

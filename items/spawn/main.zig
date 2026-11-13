@@ -3,10 +3,11 @@ const builtin = @import("builtin");
 const supervised = @import("supervised_child");
 
 const usage =
-    \\Usage: teerex spawn --socket ABS --session session:UUID --name LABEL --cwd ABS
+    \\Usage: teerex spawn --socket ABS --session session:UUID --name LABEL [--cwd ABS]
     \\                    --report-to-session session:UUID --report-to-block block:UUID [--timeout-ms N] -- ARGV...
     \\Create one window-attached agent terminal on the explicit existing Rex server, without switching focus.
-    \\Requires macOS/Linux, Rex on PATH, API10..13 and canonical lowercase IDs. No autostart or detached fallback.
+    \\Requires macOS/Linux, Rex on PATH (or global --rex ABS / TEEREX_REX), API10..13 and canonical lowercase IDs. No autostart or detached fallback.
+    \\Omitted cwd uses the target terminal HOME, resolved on the server and returned in cwd.
     \\Exports agent-core address/name/report-to and LC_ metadata through a fixed sh shim; argv is never interpolated.
     \\Creation ACK is not agent readiness/completion. This is not a sandbox or an input lease.
     \\Timeout defaults to 5000 ms (100..60000), plus bounded transport cleanup. No creation retry or automatic close.
@@ -18,10 +19,11 @@ const usage =
 
 const Source = struct { rex_version: []const u8, platform: []const u8, api_revision: i64 };
 const Created = struct { window_id: []const u8, block_id: []const u8, revision: u64 };
-const Frame = struct { event: []const u8, source: ?Source = null, created: ?Created = null, reason: ?[]const u8 = null };
+const Frame = struct { event: []const u8, source: ?Source = null, created: ?Created = null, reason: ?[]const u8 = null, cwd: ?[]const u8 = null };
 const Collector = struct {
     allocator: std.mem.Allocator,
     pending: std.ArrayList(u8) = .empty,
+    cwd: ?[]const u8 = null,
     source: ?Source = null,
     created: ?Created = null,
     attempt_seen: bool = false,
@@ -47,6 +49,7 @@ const Collector = struct {
                 if (!fullId(c.window_id, "window:") or !fullId(c.block_id, "block:")) return error.InvalidSpawnFrame;
                 self.created = c;
             } else if (std.mem.eql(u8, f.event, "verified") and self.created != null) {
+                self.cwd = f.cwd;
                 self.verified = true;
                 self.finished = true;
             } else if ((std.mem.eql(u8, f.event, "refused") and !self.attempt_seen) or std.mem.eql(u8, f.event, "failed")) {
@@ -107,14 +110,14 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
     const path = socket orelse return usageError("--socket is required");
     const sid = session orelse return usageError("--session is required");
     const label = name orelse return usageError("--name is required");
-    const directory = cwd orelse return usageError("--cwd is required");
+    const directory = cwd orelse "";
     const parent_session = report_session orelse return usageError("--report-to-session is required");
     const parent_block = report_block orelse return usageError("--report-to-block is required");
     const budget = timeout orelse 5000;
     if (i >= args.len or i + 1 >= args.len) return usageError("-- and a nonempty command are required");
     const command = args[i + 1 ..];
     if (command[0].len == 0) return usageError("command must not be empty");
-    if (!std.fs.path.isAbsolute(path) or !std.fs.path.isAbsolute(directory)) return usageError("socket and cwd must be absolute");
+    if (!std.fs.path.isAbsolute(path) or (cwd != null and !std.fs.path.isAbsolute(directory))) return usageError("socket and cwd must be absolute");
     if (!fullId(sid, "session:") or !fullId(parent_session, "session:") or !fullId(parent_block, "block:")) return usageError("canonical lowercase full session/block IDs are required");
     if (label.len == 0 or label.len > 128 or !std.unicode.utf8ValidateSlice(label)) return usageError("name must be 1..128 UTF-8 bytes");
     for (label) |c| if (c < 32 or c == 127) return usageError("name must not contain controls");
@@ -134,14 +137,23 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
     var env = try std.process.getEnvMap(allocator);
     for ([_][]const u8{ "REX_SERVER", "REX_SESSION", "REX_BLOCK", "REX_CLIENT" }) |key| env.remove(key);
     const endpoint = try std.fmt.allocPrint(allocator, "unix://{s}", .{path});
-    const argv = [_][]const u8{ "rex", "--autostart=false", "--server", endpoint, "--timeout", "3s", "--color", "never", "do", "--session", sid, "-e", @embedFile("spawn.lua"), "--args", request };
+    var executable_error: ?anyerror = null;
+    const executable = rexExecutable(allocator, &env) catch |err| blk: {
+        executable_error = err;
+        break :blk null;
+    };
+    const argv = [_][]const u8{ executable orelse "rex", "--autostart=false", "--server", endpoint, "--timeout", "3s", "--color", "never", "do", "--session", sid, "-e", @embedFile("spawn.lua"), "--args", request };
     const signals = supervised.Signals.init();
     defer signals.deinit();
     var timer = try std.time.Timer.start();
     var c: Collector = .{ .allocator = allocator };
     var failure: ?[]const u8 = null;
     var launch_failed = false;
-    const result: ?supervised.Result = supervised.collect(allocator, &argv, &env, budget, &c) catch |err| blk: {
+    const result: ?supervised.Result = if (executable_error) |err| blk: {
+        failure = @errorName(err);
+        launch_failed = true;
+        break :blk null;
+    } else supervised.collect(allocator, &argv, &env, budget, &c) catch |err| blk: {
         failure = @errorName(err);
         launch_failed = switch (err) {
             error.FileNotFound, error.AccessDenied, error.InvalidExe, error.RexExecutableMustBeAbsolute => true,
@@ -166,6 +178,9 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
         .schema_version = 1,
         .kind = "spawn_result",
         .target = .{ .server = endpoint, .session_id = sid },
+        .rex_executable = executable,
+        .cwd = c.cwd orelse cwd,
+        .cwd_source = if (cwd != null) "explicit" else "target_home",
         .source = c.source,
         .created = c.created,
         .attached_location_verified = c.verified,
@@ -188,4 +203,27 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
     try std.fs.File.stdout().writeAll(output);
     try std.fs.File.stdout().writeAll("\n");
     return if (signal != 0) 128 + signal else if (deadline) 124 else if (success) 0 else 1;
+}
+
+// Freeze PATH selection before invoking Rex; receipts name the executable used.
+fn rexExecutable(allocator: std.mem.Allocator, env: *std.process.EnvMap) ![]const u8 {
+    if (env.get("TEEREX_INTERNAL_REX")) |path| {
+        if (!std.fs.path.isAbsolute(path)) return error.RexExecutableMustBeAbsolute;
+        return path;
+    }
+    if (env.get("TEEREX_REX")) |path| {
+        if (!std.fs.path.isAbsolute(path)) return error.RexExecutableMustBeAbsolute;
+        return path;
+    }
+    var denied = false;
+    var paths = std.mem.splitScalar(u8, env.get("PATH") orelse "", std.fs.path.delimiter);
+    while (paths.next()) |directory| {
+        const path = try std.fs.path.resolve(allocator, &.{ directory, "rex" });
+        std.posix.access(path, std.posix.X_OK) catch |err| {
+            if (err == error.AccessDenied) denied = true;
+            continue;
+        };
+        return path;
+    }
+    return if (denied) error.AccessDenied else error.FileNotFound;
 }

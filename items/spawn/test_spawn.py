@@ -101,6 +101,9 @@ class SpawnTest(unittest.TestCase):
         self.assertEqual(self.rpc("session.view", {"session_id": report_session}), report_before)
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
         self.assertEqual(packet["outcome"], "created_and_attached")
+        self.assertEqual(packet["rex_executable"], self.rex)
+        self.assertEqual(packet["cwd"], str(cwd))
+        self.assertEqual(packet["cwd_source"], "explicit")
         self.assertIsNone(packet["failure_reason"])
         self.assertEqual(packet["backend_term"], {"Exited": 0})
         self.assertTrue(packet["attached_location_verified"])
@@ -136,6 +139,32 @@ class SpawnTest(unittest.TestCase):
             time.sleep(.02)
         self.assertEqual(process["last_exit"]["exit_code"], 0)
         self.assertTrue(any(w["window_id"] == created["window_id"] for w in self.view()["windows"]))
+
+    def test_default_cwd_uses_target_home_despite_client_home_and_pinned_rex(self):
+        output = self.work / "default-cwd.json"
+        code = f"import os;from pathlib import Path;Path({str(output)!r}).write_text(os.getcwd())"
+        command = self.command(sys.executable, "-c", code)
+        index = command.index("--cwd")
+        del command[index:index + 2]
+        for global_pin in (False, True):
+            with self.subTest(global_pin=global_pin):
+                output.unlink(missing_ok=True)
+                env = dict(self.env, HOME=str(self.work), PATH="/no-rex-here", TEEREX_REX=self.rex)
+                if global_pin:
+                    command_run = [BIN, "--rex", self.rex, *command[1:]]
+                    env["TEEREX_REX"] = "/does/not/exist"
+                else:
+                    command_run = command
+                result = subprocess.run(command_run, capture_output=True, text=True, env=env, timeout=10)
+                self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+                packet = json.loads(result.stdout)
+                self.assertEqual(packet["rex_executable"], self.rex)
+                self.assertEqual(packet["cwd_source"], "target_home")
+                self.assertEqual(packet["cwd"], str(Path.home()))
+                for _ in range(100):
+                    if output.exists(): break
+                    time.sleep(.02)
+                self.assertEqual(output.read_text(), packet["cwd"])
 
     def test_missing_report_target_and_encoded_limits_do_not_create(self):
         before = self.view()
@@ -209,6 +238,11 @@ class SpawnTest(unittest.TestCase):
         self.assertEqual(packet["outcome"], "backend_error")
         self.assertEqual(packet["failure_reason"], "AccessDenied")
         self.assertIsNone(packet["backend_term"])
+        self.env["TEEREX_REX"] = "relative-rex"
+        result, packet = self.invoke("/bin/true")
+        self.assertEqual(packet["outcome"], "backend_error")
+        self.assertEqual(packet["failure_reason"], "RexExecutableMustBeAbsolute")
+        self.assertIsNone(packet["rex_executable"])
         self.assertEqual(self.view(), before)
 
     def test_lost_creation_receipt_is_uncertain_and_does_not_retry_or_close(self):
