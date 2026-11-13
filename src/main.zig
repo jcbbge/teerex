@@ -16,7 +16,7 @@ const usage =
     \\  inbox append|inspect|clear                    Private retained messages
     \\  ask                                          Complete typed decisions or explicit resolution
     \\  agents launch|profiles|shell|ack|deliver|inspect|stop|present
-    \\         exec|exited|channel                   Explicit compute callbacks / local scoped delivery
+    \\         exec|exited|channel|fence-probe       Compute callbacks / local delivery / fence checks
     \\  spawn --profile NAME --profiles ABS           Managed protocol-ACK-before-brief launch
     \\  recovery snapshot|inspect|restore|update      Private snapshots and reviewed restoration
     \\  snapshot|restore|update                       Recovery aliases; update is manual handoff

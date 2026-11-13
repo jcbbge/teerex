@@ -1276,6 +1276,7 @@ def parser():
     for op in ("profiles", "shell"):
         q = sub.add_parser(op, help="inspect profiles" if op == "profiles" else "print replacement human-launch functions; no starter/brief needed; never edits shell files")
         q.add_argument("--config", required=True)
+    sub.add_parser("fence-probe", help="one-shot inside-fence checks; --protect-file ABS [--then -- ARGV...]; outside: --record-identities --out ABS")
     q = sub.add_parser("exec", help="compute-host adapter for an explicit managed execution route; never a channel method")
     q.add_argument("--payload", required=True, help="bounded base64 JSON literal argv/cwd/protocol and callback route")
     q = sub.add_parser("channel", help="one bounded launch-scoped request; no Rex socket, registry or arbitrary destination")

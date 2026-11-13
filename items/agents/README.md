@@ -266,3 +266,52 @@ See [agent-core migration gates](agent-core-migration.md) before deleting stopga
 ### Native send draft guard (source follow-on #4)
 
 Notifications, automatic exit alerts, delivered briefs and scoped-channel sends all call native `send`, whose default now preserves parsed operator drafts. Native sends may wait30s for typing (configurable up to55s), then clear/send/restore without submitting the draft. See the [exact send contract and race limits](../send/README.md#default-draft-guard---draft-guardignore). Send subprocesses allow120s, channel responses and Stop/callback wrappers250s for two destinations; receipt ACKs still do not prove application consumption. The typed protocol itself does not bypass this guard.
+
+### One-shot fence admission (`agents fence-probe`)
+
+Before starting a fenced harness, check the caller-declared resources with the same teerex binary **inside** that fence. This leaf never contacts Rex, opens a pane or starts a monitor. It is a launch-time check, not authentication against unfenced processes running as the same UID. The fence builder and protect file remain trusted; a worker that already ran can change its environment after a probe. Only the listed paths/ports are checked, not arbitrary aliases elsewhere in a mount tree.
+
+Prepare an owned regular0600 JSON template on the host (synthetic example):
+
+```json
+{
+  "schema_version": 1,
+  "absent_paths": ["/absolute/private-control.sock", "/absolute/private-store", "/absolute/sign-in.json"],
+  "closed_tcp": ["127.0.0.1:7001", "[::1]:7002"],
+  "require_pid_namespace": true,
+  "require_new_session": true,
+  "required_paths": ["/absolute/launch-channel/channel.sock"]
+}
+```
+
+Record fresh host identities **outside** the fence for every launch; no hand-maintained inode numbers:
+
+```sh
+teerex agents fence-probe --record-identities --protect-file /absolute/template.json --out /absolute/launch/protect.json
+```
+
+`--out` is a new absolute file, created exclusively/no-follow0600, flushed before return; existing files refuse. It contains the template plus `host_identities.absent_paths` (each path's `st_dev`/`st_ino`, or null if absent on the host) and, when required, `host_identities.pid_namespace`. Symlinks are followed when identifying objects: a link to the host object cannot masquerade as a copy. Missing host paths are recorded as null; if one appears inside, the probe fails with `state:identity_unknown` rather than inventing its identity. Other recording errors fail closed. Never record from inside the fence or reuse stale per-launch snapshots.
+
+Mount that recorded file read-only, then put the probe before the literal harness argv:
+
+```sh
+teerex agents fence-probe --protect-file /absolute/launch/protect.json --then -- /absolute/harness 'literal argument'
+# Check only, without a harness:
+teerex agents fence-probe --protect-file /absolute/launch/protect.json
+```
+
+Protect files must be owned, single-link, nonsymlink regular files, exactly0600, at most64KiB. Unknown/duplicate fields, relative paths, duplicate list entries, more than64 entries/list, wrong types and nonnumeric/non-loopback TCP addresses refuse. Lists default to empty, booleans to false. There is **no `readonly_paths` list**: a per-call writable sign-in copy may refresh its token.
+
+Checks return separate facts:
+
+- `absent_path`: missing (ENOENT) or inaccessible (EACCES) passes. A present object with the recorded host identity **fails**, even a read-only bind or a socket refusing connections. A different identity passes with `state:shadowed`, allowing a writable per-launch copy. Present objects without an available recorded identity fail. Path checks require the outside snapshot.
+- `closed_tcp`: each literal loopback endpoint must refuse (ECONNREFUSED/ENETUNREACH) or time out within500ms. A successful connection fails. Other errors fail closed; ports may be omitted in the caller's per-launch derivative. DNS names are forbidden. These checks neither install egress nor prove public network access.
+- `pid_namespace`: the current `/proc/self/ns/pid` must differ from the recorded host namespace. This supports a fresh `/proc` mount, where `NSpid` legitimately has only one value. Missing namespace evidence fails.
+- `new_session`: opening `/dev/tty` must fail with ENXIO. This checks the absence of a controlling terminal; it never attempts TIOCSTI on a pane.
+- `required_path`: must exist; a Unix socket must accept one bounded500ms connection, immediately closed **without a frame**. This costs one channel admission (and produces a refused/incomplete-frame receipt when logged); budget for it. It is not an agent ACK. Ordinary required files are checked for existence only.
+
+Stdout is one flushed JSON object: `kind:fence_probe_result`, `schema_version:1`, `passed`, `checks` (each has `check`, `target`, `result:pass|fail`, nullable numeric `errno`, plus path state where applicable), and `exec:started|not_started`. Recording adds `recorded_protect_file`. With `--then`, successful checks emit the JSON before `execvp` replaces the probe in the **same PID**; subsequent output/exit belongs to the harness. `exec:started` describes that handoff attempt; if the OS refuses exec, stderr names it and exit is1. No retry or fallback runs. Without `--then`, exec remains `not_started`.
+
+Exit0: all checks passed (or identities recorded). Exit1: a failed check/exec, with stderr beginning `teerex agents fence-probe: refused:` and the first failure; the harness is never started on failed checks. Exit2: usage. Exit3: missing/invalid/oversized/nonprivate protect input, missing host baseline or failed identity recording/output. A successfully execed harness controls its own exit status.
+
+Linux API13 CI runs the new tests under the existing `TEEREX_AGENTS_FENCE=1` gate. Real bubblewrap controls show host socket/store and `/proc/<outside-pid>/root` denial, a host bind rejected versus a writable copy accepted, same-PID handoff, PID namespace teardown of setsid descendants, host-signal exclusion, scoped channel ACK after the required-socket check, and no controlling terminal on a **disposable** PTY. The PTY counterexample attempts TIOCSTI only there; modern kernels may independently deny it (reported as kernel evidence, never relaxed). A disposable slirp4netns egress fixture checks both blocked host loopback and real public HTTPS; it installs no helper/service on the host. CI provisions bubblewrap/slirp4netns; production fence/egress construction remains the caller's responsibility. macOS/Linux parity and a live Rivet cutover are separate checks.

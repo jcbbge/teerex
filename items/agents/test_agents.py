@@ -851,6 +851,282 @@ class AgentsTest(unittest.TestCase):
         self.assertIsNone(failure["remote_child_term"])
         self.assertEqual(failure["immediate_child_term"], {"Exited": 255})
 
+    def probe_record(self, config, folder=None):
+        folder = folder or self.work
+        template, protected = folder / "template.json", folder / "protect.json"
+        template.write_text(json.dumps(dict(schema_version=1, **config)))
+        template.chmod(0o600)
+        result, packet = self.run_cli("fence-probe", "--record-identities", "--protect-file", str(template), "--out", str(protected))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue(packet["passed"])
+        self.assertEqual(protected.stat().st_mode & 0o777, 0o600)
+        return protected
+
+    def probe_fence(self, scratch, *, pid=True, session=True):
+        command = ["bwrap", "--die-with-parent"]
+        if pid:
+            command += ["--unshare-pid"]
+        if session:
+            command += ["--new-session"]
+        for path in ("/usr", "/bin", "/sbin", "/lib", "/lib64", "/etc"):
+            if Path(path).exists():
+                command += ["--ro-bind", path, path]
+        command += ["--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp", "--tmpfs", "/run", "--tmpfs", "/var",
+                          "--ro-bind", sys.prefix, sys.prefix, "--ro-bind", BIN, BIN,
+                          "--bind", str(scratch), "/work", "--chdir", "/work"]
+        if (scratch / "protect.json").exists():
+            command += ["--ro-bind", str(scratch / "protect.json"), "/work/protect.json"]
+        return command
+
+    @unittest.skipUnless(os.environ.get("TEEREX_AGENTS_FENCE") == "1", "explicit real Linux bubblewrap acceptance gate")
+    def test_fence_probe_private_schema_and_recording_fail_closed(self):
+        template = self.work / "template.json"
+        protected = self.work / "protect.json"
+        valid = dict(schema_version=1, absent_paths=[str(self.registry)])
+        for value in (dict(valid, extra=True), dict(valid, absent_paths=["relative"]),
+                      dict(valid, absent_paths=["/x"] * 65), dict(valid, closed_tcp=["8.8.8.8:53"]),
+                      dict(valid, readonly_paths=[]), dict(valid, require_pid_namespace=1),
+                      dict(valid, host_identities={"absent_paths": {str(self.registry): {"st_dev": True, "st_ino": 1}}})):
+            template.write_text(json.dumps(value)); template.chmod(0o600)
+            result, packet = self.run_cli("fence-probe", "--protect-file", str(template))
+            self.assertEqual(result.returncode, 3, result.stdout + result.stderr)
+            self.assertEqual(packet["exec"], "not_started")
+        for raw, mode in ((b"x" * 65537, 0o600), (b'{"schema_version":1,"schema_version":1}', 0o600),
+                          (json.dumps(valid).encode(), 0o644)):
+            template.write_bytes(raw); template.chmod(mode)
+            self.assertEqual(self.run_cli("fence-probe", "--protect-file", str(template))[0].returncode, 3)
+        self.assertEqual(self.run_cli("fence-probe", "--protect-file", str(self.work / "missing"))[0].returncode, 3)
+        template.write_text(json.dumps(valid)); template.chmod(0o600)
+        link = self.work / "symlink"
+        link.symlink_to(template)
+        self.assertEqual(self.run_cli("fence-probe", "--protect-file", str(link))[0].returncode, 3)
+        for args in (("--then",), ("--then", "--"), ("--out", str(protected)), ("--record-identities",)):
+            self.assertEqual(self.run_cli("fence-probe", "--protect-file", str(template), *args)[0].returncode, 2)
+        self.probe_record(dict(absent_paths=[str(self.registry)]))
+        self.assertEqual(self.run_cli("fence-probe", "--record-identities", "--protect-file", str(template), "--out", str(protected))[0].returncode, 3)
+
+    @unittest.skipUnless(os.environ.get("TEEREX_AGENTS_FENCE") == "1", "explicit real Linux bubblewrap acceptance gate")
+    def test_fence_probe_host_identity_shadow_socket_proc_and_exec(self):
+        scratch = self.work / "fenced"
+        scratch.mkdir()
+        credential = self.work / "synthetic-sign-in"
+        credential.write_text("synthetic fixture only")
+        copy = scratch / "copy"
+        copy.write_text(credential.read_text())
+        protected_dirs = [self.registry]
+        for name in ("boards", "jobs", "outbox"):
+            path = self.work / name
+            path.mkdir()
+            protected_dirs.append(path)
+        outside_proc = f"/proc/{self.server.pid}/root{self.socket}"
+        channel = self.root / ("probe-channel-" + scratch.parent.name)
+        channel.mkdir(mode=0o700)
+        channel_socket = channel / "channel.sock"
+        with socket.socket(socket.AF_UNIX) as listener:
+            listener.bind(str(channel_socket)); listener.listen(4); listener.settimeout(2)
+            protected = self.probe_record(dict(absent_paths=[str(self.socket), outside_proc, str(credential), *map(str, protected_dirs)],
+                                               required_paths=[str(channel_socket)], require_pid_namespace=True, require_new_session=True), scratch)
+            with socket.socket(socket.AF_UNIX) as direct:
+                direct.connect(str(self.socket))  # A1 counterexample: this is a real reachable disposable Rex.
+            outside, packet = self.run_cli("fence-probe", "--protect-file", str(protected))
+            self.assertEqual(outside.returncode, 1)
+            self.assertFalse(packet["passed"])
+            self.assertEqual(packet["exec"], "not_started")
+            listener.accept()[0].close()
+            marker = scratch / "marker"
+            harness = ("import errno,os,json,socket\nfrom pathlib import Path\n" +
+                       f"for path in {[str(self.socket), outside_proc]!r}:\n" +
+                       " assert not Path(path).is_socket()\n" +
+                       " with socket.socket(socket.AF_UNIX) as connection:\n" +
+                       "  try:connection.connect(path)\n" +
+                       "  except OSError as e:assert e.errno in (errno.ENOENT,errno.EACCES),e\n" +
+                       "  else:raise AssertionError('host socket reachable')\n" +
+                       "Path('/work/marker').write_text(str(os.getpid()));print(json.dumps(dict(harness_pid=os.getpid())))")
+            base = self.probe_fence(scratch) + ["--ro-bind", str(channel), str(channel)]
+            args = [BIN, "agents", "fence-probe", "--protect-file", "/work/protect.json", "--then", "--", sys.executable, "-c", harness]
+            # A11 counterexample: deliberately expose the host identity, even read-only.
+            bad = subprocess.run(base + ["--ro-bind", str(credential), str(credential), "--", *args], capture_output=True, text=True, timeout=10)
+            self.assertEqual(bad.returncode, 1, bad.stdout + bad.stderr)
+            self.assertTrue(bad.stderr.startswith("teerex agents fence-probe: refused:"))
+            self.assertEqual(json.loads(bad.stdout)["exec"], "not_started")
+            self.assertFalse(marker.exists())
+            listener.accept()[0].close()
+            # A writable per-call copy is explicitly allowed, despite occupying the protected path.
+            good = subprocess.run(base + ["--bind", str(copy), str(credential), "--", *args], capture_output=True, text=True, timeout=10)
+            self.assertEqual(good.returncode, 0, good.stdout + good.stderr)
+            probe, harness_result = map(json.loads, good.stdout.splitlines())
+            self.assertTrue(probe["passed"])
+            self.assertEqual(probe["exec"], "started")
+            self.assertTrue(any(c.get("state") == "shadowed" and c["target"] == str(credential) for c in probe["checks"]))
+            self.assertEqual(int(marker.read_text()), harness_result["harness_pid"])
+            listener.accept()[0].close()
+            # Record the PID before exec from the same in-fence launcher, then compare after exec.
+            wrapped = f"import os;from pathlib import Path;Path('/work/before').write_text(str(os.getpid()));os.execv({BIN!r},{args!r})"
+            same = subprocess.run(base + ["--", sys.executable, "-c", wrapped], capture_output=True, text=True, timeout=10)
+            self.assertEqual(same.returncode, 0, same.stdout + same.stderr)
+            self.assertEqual((scratch / "before").read_text(), marker.read_text())
+            listener.accept()[0].close()
+
+    @unittest.skipUnless(os.environ.get("TEEREX_AGENTS_FENCE") == "1", "explicit real Linux bubblewrap acceptance gate")
+    def test_fence_probe_pid_namespace_signal_and_descendant_containment(self):
+        scratch = self.work / "pid-fence"
+        scratch.mkdir()
+        self.probe_record(dict(require_pid_namespace=True), scratch)
+        tag = "teerex-probe-descendant-" + str(time.monotonic_ns())
+        descendant = "import os,time;from pathlib import Path;os.setsid();Path('/work/descendant-ready').touch();time.sleep(120)"
+        harness = f'''import errno,json,os,subprocess,time
+from pathlib import Path
+try:os.kill({self.server.pid},0); outside_signal=True
+except ProcessLookupError:outside_signal=False
+p=subprocess.Popen([{sys.executable!r},'-c',{descendant!r},{tag!r}],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,stdin=subprocess.DEVNULL)
+for i in range(100):
+ if Path('/work/descendant-ready').exists():break
+ time.sleep(.02)
+assert Path('/work/descendant-ready').exists()
+Path('/work/descendant-namespace').write_text(os.readlink('/proc/self/ns/pid'))
+print(json.dumps(dict(outside_signal=outside_signal)))
+'''
+        args = [BIN, "agents", "fence-probe", "--protect-file", "/work/protect.json", "--then", "--", sys.executable, "-c", harness]
+        result = subprocess.run(self.probe_fence(scratch) + ["--", *args], capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertFalse(json.loads(result.stdout.splitlines()[1])["outside_signal"])
+        namespace = (scratch / "descendant-namespace").read_text()
+        def tagged():
+            found = []
+            for path in Path('/proc').glob('[0-9]*/cmdline'):
+                try:
+                    if tag.encode() in path.read_bytes().split(b'\0'):found.append(int(path.parent.name))
+                except OSError:pass
+            return found
+        self.assertEqual(tagged(), [], "PID namespace teardown must remove even setsid descendants")
+        remaining = []
+        for path in Path('/proc').glob('[0-9]*/ns/pid'):
+            try:
+                if os.readlink(path) == namespace:remaining.append(str(path))
+            except OSError:pass
+        self.assertEqual(remaining, [])
+        # A6/A11 counterexample: without PID isolation the probe blocks the harness.
+        refused = subprocess.run(self.probe_fence(scratch, pid=False) + ["--", *args], capture_output=True, text=True, timeout=10)
+        self.assertEqual(refused.returncode, 1, refused.stdout + refused.stderr)
+        # A5/A6 control deliberately omits the probe too, exposing the containment difference.
+        (scratch / 'descendant-ready').unlink()
+        try:
+            control = subprocess.run(self.probe_fence(scratch, pid=False) + ["--", sys.executable, "-c", harness], capture_output=True, text=True, timeout=10)
+            self.assertEqual(control.returncode, 0, control.stdout + control.stderr)
+            self.assertTrue(json.loads(control.stdout)["outside_signal"])
+            self.assertEqual(len(tagged()), 1)
+        finally:
+            for pid in tagged():os.kill(pid, signal.SIGKILL)
+
+    @unittest.skipUnless(os.environ.get("TEEREX_AGENTS_FENCE") == "1", "explicit real Linux bubblewrap acceptance gate")
+    def test_fence_probe_disposable_tty_session_and_tiocsti(self):
+        import pty
+        import termios
+        scratch = self.work / "tty-fence"
+        scratch.mkdir()
+        self.probe_record(dict(require_new_session=True), scratch)
+        master, slave = pty.openpty()
+        self.addCleanup(os.close, master)
+        self.addCleanup(os.close, slave)
+        def disposable(command):
+            def attach():
+                os.setsid()
+                fcntl.ioctl(slave, termios.TIOCSCTTY, 0)
+            return subprocess.run(command, stdin=slave, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                  text=True, preexec_fn=attach, timeout=10)
+        args = [BIN, "agents", "fence-probe", "--protect-file", "/work/protect.json"]
+        good = disposable(self.probe_fence(scratch) + ["--", *args])
+        self.assertEqual(good.returncode, 0, good.stdout + good.stderr)
+        self.assertEqual(json.loads(good.stdout)["checks"][0]["errno"], errno.ENXIO)
+        control = disposable(self.probe_fence(scratch, session=False) + ["--", *args])
+        self.assertEqual(control.returncode, 1, control.stdout + control.stderr)
+        inject = """import fcntl,json,os,select,termios,tty
+fd=os.open('/dev/tty',os.O_RDWR);tty.setraw(fd)
+try:
+ fcntl.ioctl(fd,termios.TIOCSTI,b'z')
+ readable=select.select([fd],[],[],1)[0]
+ print(json.dumps(dict(injected=os.read(fd,1).decode() if readable else None)))
+except OSError as e:print(json.dumps(dict(kernel_errno=e.errno)))
+"""
+        attempt = disposable(self.probe_fence(scratch, session=False) + ["--", sys.executable, "-c", inject])
+        self.assertEqual(attempt.returncode, 0, attempt.stdout + attempt.stderr)
+        evidence = json.loads(attempt.stdout)
+        print("Disposable PTY TIOCSTI control:", json.dumps(evidence), flush=True)
+        # Modern kernels may independently prohibit TIOCSTI; never relax that protection.
+        self.assertTrue(evidence.get("injected") == "z" or evidence.get("kernel_errno") in (errno.EIO, errno.EPERM), evidence)
+
+    @unittest.skipUnless(os.environ.get("TEEREX_AGENTS_FENCE") == "1", "explicit real Linux bubblewrap acceptance gate")
+    def test_fence_probe_closed_loopback_with_real_egress_and_host_counterexample(self):
+        import select
+        self.assertIsNotNone(shutil.which("slirp4netns"))
+        scratch = self.work / "network-fence"
+        scratch.mkdir()
+        with socket.socket() as listener:
+            listener.bind(("127.0.0.1", 0)); listener.listen(4)
+            port = listener.getsockname()[1]
+            self.probe_record(dict(closed_tcp=["127.0.0.1:" + str(port)]), scratch)
+            marker = scratch / "network-harness"
+            probe = [BIN, "agents", "fence-probe", "--protect-file", "/work/protect.json", "--then", "--"]
+            refused = subprocess.run(self.probe_fence(scratch) + ["--", *probe, sys.executable, "-c",
+                                    "from pathlib import Path;Path('/work/network-harness').touch()"], capture_output=True, text=True, timeout=10)
+            self.assertEqual(refused.returncode, 1, refused.stdout + refused.stderr)
+            self.assertFalse(marker.exists())
+            self.assertEqual(json.loads(refused.stdout)["checks"][0]["result"], "fail")
+            resolver = scratch / "resolv.conf"
+            resolver.write_text("nameserver 10.0.2.3\n")
+            harness = """import json,socket,ssl
+from pathlib import Path
+with socket.create_connection(('api.openai.com',443),timeout=15) as tcp:
+ with ssl.create_default_context().wrap_socket(tcp,server_hostname='api.openai.com') as tls:
+  tls.sendall(b'HEAD / HTTP/1.1\\r\\nHost: api.openai.com\\r\\nConnection: close\\r\\n\\r\\n')
+  status=tls.recv(1024).split(b'\\r\\n',1)[0].decode()
+  assert status.startswith('HTTP/1.1 '),status
+  print(json.dumps(dict(public_https=status)))
+Path('/work/network-harness').touch()
+"""
+            # Test fixture only: configure egress before releasing the fenced probe/harness.
+            # No helper daemon, DNS forwarder or host network policy is installed.
+            info_r, info_w = os.pipe()
+            block_r, block_w = os.pipe()
+            ready_r, ready_w = os.pipe()
+            exit_r, exit_w = os.pipe()
+            descriptors = [info_r, info_w, block_r, block_w, ready_r, ready_w, exit_r, exit_w]
+            process = slirp = None
+            try:
+                command = self.probe_fence(scratch) + ["--unshare-net", "--info-fd", str(info_w), "--block-fd", str(block_r),
+                            "--ro-bind", str(resolver), "/run/systemd/resolve/stub-resolv.conf", "--", *probe, sys.executable, "-c", harness]
+                process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, pass_fds=(info_w, block_r))
+                raw = b""
+                while b"}" not in raw:
+                    self.assertTrue(select.select([info_r], [], [], 10)[0], "bubblewrap did not publish its child identity")
+                    part = os.read(info_r, 4096)
+                    self.assertTrue(part, "missing bubblewrap child identity")
+                    raw += part
+                child_pid = json.loads(raw)["child-pid"]
+                slirp = subprocess.Popen(["slirp4netns", "--configure", "--disable-host-loopback", "--mtu", "65520",
+                                          "--ready-fd", str(ready_w), "--exit-fd", str(exit_r), str(child_pid), "tap0"],
+                                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, pass_fds=(ready_w, exit_r))
+                self.assertTrue(select.select([ready_r], [], [], 10)[0], "slirp did not become ready")
+                self.assertTrue(os.read(ready_r, 1))
+                os.write(block_w, b"1")
+                stdout, stderr = process.communicate(timeout=35)
+                self.assertEqual(process.returncode, 0, stdout + stderr)
+                result, https = map(json.loads, stdout.splitlines())
+                self.assertTrue(result["passed"])
+                self.assertEqual(result["checks"][0]["check"], "closed_tcp")
+                self.assertTrue(marker.exists())
+                self.assertTrue(https["public_https"].startswith("HTTP/1.1 "))
+            finally:
+                for descriptor in descriptors:
+                    os.close(descriptor)
+                for child in (process, slirp):
+                    if child is not None:
+                        if child.poll() is None:
+                            child.terminate()
+                        try:child.communicate(timeout=5)
+                        except subprocess.TimeoutExpired:
+                            child.kill();child.communicate(timeout=5)
+
     def enable_channel(self, count=32, lifetime=60000):
         self.delivery = self.work / "delivery"
         self.delivery.mkdir(mode=0o700)
@@ -868,6 +1144,8 @@ class AgentsTest(unittest.TestCase):
         self.enable_channel()
         fenced = self.work / "fenced"
         fenced.mkdir()
+        self.probe_record(dict(absent_paths=[str(self.socket), str(self.registry)],
+                               require_pid_namespace=True, require_new_session=True), fenced)
         self.worker_log = fenced / "worker.jsonl"
         wrapper = self.work / "fence.py"
         # Rivet's bwrap adapter mounts only toolchain/cwd/declared extra paths; /tmp and /run are masked.
@@ -880,17 +1158,22 @@ class AgentsTest(unittest.TestCase):
                         "  results[k]=False\n"
                         " except OSError: results[k]=True\n"
                         "Path('/work/denial.json').write_text(json.dumps(results))\n")
+        exiting_fixture = FIXTURE.replace('behavior in ("exit7", "remote-exit7")',
+                                          'behavior in ("exit7", "remote-exit7", "channel")')
         wrapper.write_text("import json,os,subprocess,sys\nfrom pathlib import Path\n" +
-                           "cmd=['bwrap','--die-with-parent']\n" +
+                           "cmd=['bwrap','--die-with-parent','--unshare-pid','--new-session']\n" +
                            "for p in ['/usr','/bin','/sbin','/lib','/lib64','/etc']:\n" +
                            " if Path(p).exists(): cmd+=['--ro-bind',p,p]\n" +
                            "cmd+=['--dev','/dev','--proc','/proc','--tmpfs','/tmp','--tmpfs','/run','--tmpfs','/var']\n" +
                            f"cmd+=['--ro-bind',{sys.prefix!r},{sys.prefix!r}]\n" +
                            f"cmd+=['--ro-bind',{BIN!r},{BIN!r},'--bind',{str(fenced)!r},'/work']\n" +
                            "channel=str(Path(os.environ['AGENT_CHANNEL']).parent)\ncmd+=['--ro-bind',channel,channel]\n" +
+                           f"protect=Path({str(fenced / 'protect.json')!r})\n" +
+                           "config=json.loads(protect.read_text());config['required_paths']=[str(Path(channel)/'channel.sock')]\n" +
+                           "protect.write_text(json.dumps(config))\ncmd += ['--ro-bind',str(protect),'/work/protect.json']\n" +
                            f"probe={denial_probe!r}\n" +
-                           f"code=probe+{FIXTURE!r}\n" +
-                           f"os.execvp('bwrap',cmd+['--chdir','/work','--',{sys.executable!r},'-c',code,'/work/worker.jsonl','channel',*sys.argv[2:]])\n")
+                           f"code=probe+{exiting_fixture!r}\n" +
+                           f"os.execvp('bwrap',cmd+['--chdir','/work','--',{BIN!r},'agents','fence-probe','--protect-file','/work/protect.json','--then','--',{sys.executable!r},'-c',code,'/work/worker.jsonl','channel',*sys.argv[2:]])\n")
         self.settings["profiles"]["probe"].update(argv=[sys.executable, str(wrapper), "channel"], standing_flags=[],
                                                    harness="claude", hook_events=True)
         p, packet = self.launch("channel", ack_timeout=4000)
@@ -914,7 +1197,7 @@ class AgentsTest(unittest.TestCase):
         # The brief still traverses the original ACK-before-one-brief gate and keeps trailing bytes.
         inputs = wait_for(lambda: [v["payload"] for v in events(self.worker_log) if v["event"] == "input"])
         self.assertEqual(inputs, ["FROM probe: " + self.brief.read_text()])
-        os.kill(events(self.worker_log)[0]["pid"], signal.SIGTERM)
+        # The fixture exits on the brief; namespace-local PIDs are never signalled from the host.
         wait_for(lambda: self.record(launch_id)["immediate_child_term"])
         wait_for(lambda: not (self.delivery / launch_id).exists())
         p, result = self.channel_cli(launch_id, "--operation", "send", "--to", "starter", "--message-file", str(self.brief))

@@ -110,7 +110,7 @@ class TargetsTest(unittest.TestCase):
         cases += [([op], socket) for op in ("snapshot", "restore", "update")]
         cases += [(["adapters", op], socket) for op in ("generate", "call")]
         cases += [(["agents", op], target if op == "launch" else []) for op in
-                  ("launch", "profiles", "shell", "exec", "channel", "ack", "exited", "deliver", "inspect", "present", "stop", "supervise")]
+                  ("launch", "profiles", "shell", "exec", "channel", "fence-probe", "ack", "exited", "deliver", "inspect", "present", "stop", "supervise")]
         for path, selectors in cases:
             with self.subTest(path=path):
                 # Public argv fixture tests placement without running a mutation or using help to bypass injection.

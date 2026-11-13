@@ -248,7 +248,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y bubblewrap openssh-server
+          sudo apt-get install -y bubblewrap openssh-server slirp4netns
           sudo install -d -m 755 /run/sshd
           # Ubuntu restricts unprofiled user namespaces. Grant only the fixture's
           # bwrap executable; never disable the system-wide AppArmor restriction.
@@ -278,6 +278,7 @@ jobs:
             -Mrex_boards=items/boards/main.zig -O ReleaseSmall \
             -femit-bin="$RUNNER_TEMP/boards-route-helper"
           BOARDS_ROUTE_HELPER_BIN="$RUNNER_TEMP/boards-route-helper" python3 items/boards/test_boards.py -v
+          # TEEREX_AGENTS_FENCE also gates the real fence-probe containment/egress/PTY cases.
           python3 items/agents/test_agents.py -v
           python3 items/recovery/test_recovery.py -v
           python3 tools/fleet-install/test_fleet_install.py -v
