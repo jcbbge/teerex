@@ -336,7 +336,12 @@ const UI = struct {
                     const index = self.rows.items.len + i;
                     const age = @max(0, model.timestamp - @as(i64, @intFromFloat(@min(1e15, @max(0, num(get(item, "since")))))));
                     if (lines.items.len < self.hit.len) self.hit[lines.items.len] = index;
-                    try add(&lines, a, try fmt(a, "{s} {s} · {d}{s}", .{ if (index == self.selected) "►" else "·", text(item, "text"), @divTrunc(age, if (age >= 3600000) @as(i64, 3600000) else 60000), if (age >= 3600000) "h" else "m" }), if (get(item, "broken").bool) .problem else .words);
+                    const suffix = try fmt(a, " · {d}{s}", .{ @divTrunc(age, if (age >= 3600000) @as(i64, 3600000) else 60000), if (age >= 3600000) "h" else "m" });
+                    const budget = (width -| 7) -| (2 + cells(suffix));
+                    const label = try clip(a, text(item, "text"), budget);
+                    const shortened = cells(label) < cells(text(item, "text"));
+                    const held_title = if (shortened) try fmt(a, "{s}…", .{try clip(a, label, budget -| 1)}) else label;
+                    try add(&lines, a, try fmt(a, "{s} {s}{s}", .{ if (index == self.selected) "►" else "·", held_title, suffix }), if (get(item, "broken").bool) .problem else .words);
                     lines.items[lines.items.len - 1].held_broken = get(item, "broken").bool;
                 }
                 if (self.held_rows.items.len > held_limit) {

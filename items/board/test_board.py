@@ -171,6 +171,18 @@ class BoardTest(unittest.TestCase):
         p.key(b'j');self.assertIn('► ship? newer',p.view())
         p.key(b' ');self.assertNotIn('Scratchpad',p.view())
 
+    def test_held_long_text_reserves_age_at_narrow_width(self):
+        path=self.root/'long-held.jsonl'
+        row=dict(id='long',text='ship? '+('Long title 界 '*30),since=1,broken=False)
+        path.write_text(json.dumps(dict(v=1,t=50*3600000+1,host='hive',kind='held',available=True,items=[row]))+'\n')
+        for width in (40,88):
+            with self.subTest(width=width):
+                p=Pane(self.root,width=width,fixture=path);self.addCleanup(p.close)
+                p.until(lambda:b'ship?' in p.output);p.settle()
+                line=next(line for line in p.view().splitlines() if 'ship?' in line)
+                self.assertIn('… · 50h',line)
+                self.assertTrue(line.rstrip().endswith('│'),line)
+
     def test_held_unavailable_is_plain_and_json_failure(self):
         path=self.root/'unavailable.jsonl'
         path.write_text(json.dumps(dict(v=1,t=1,host='hive',kind='held',available=False,items=[]))+'\n')
