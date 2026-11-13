@@ -959,25 +959,6 @@
         "StateTest.test_root_socket_default_and_separate_tail_mode",
         "StateTest.test_bad_options_and_missing_targets_never_guess"
       ]
-    },
-    {
-      "id": "state.readme-312",
-      "text": "A read-only hive API-13 check on 13 November 2026 found the real Codex replay pane idle with a dim placeholder and no draft. The lead Claude pane rendered `\u00b7 Gesticulating\u2026 (3h 31m 1s \u00b7 \u2193 200.2k tokens)` above its input; that observed elapsed/token spinner shape is covered alongside its Esc-to-interrupt shape. No live Pi process was exercised; Pi coverage is installed-source-derived fixtures. Mac behavior remains for the Mac CI lane to establish.",
-      "readme_line": 312,
-      "tests": [
-        "ClassifyTest.test_all_harnesses_and_states_have_evidence",
-        "ClassifyTest.test_partial_conflicting_quoted_and_old_evidence_stay_unknown_or_idle",
-        "ClassifyTest.test_draft_text_is_not_copied_into_evidence",
-        "ClassifyTest.test_shell_and_measured_exit_are_distinct_from_done_report",
-        "ClassifyTest.test_osc_reports_are_preserved_with_unknown_freshness",
-        "StateTest.test_drawn_claude_codex_placeholders_and_real_drafts",
-        "StateTest.test_drawn_working_menus_questions_and_errors",
-        "StateTest.test_pi_editor_uses_shared_style_filter_and_real_text",
-        "StateTest.test_partial_capture_is_unknown_and_no_input_is_sent",
-        "StateTest.test_real_exit_and_retained_done_are_not_completion",
-        "StateTest.test_root_socket_default_and_separate_tail_mode",
-        "StateTest.test_bad_options_and_missing_targets_never_guess"
-      ]
     }
   ]
 }
