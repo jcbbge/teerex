@@ -26,6 +26,7 @@ const usage =
     \\  targets resolve|exec                         Named-host lookup and explicit transport
     \\  run-visible                                  Visible noninteractive argv, output and actual exit
     \\  replay record|play|live                       Capture bytes, faithful replay and independent live checks
+    \\  clutch take|release|status|palette  Cooperative human takeover and hand-back
     \\Existing tools: observe, compare, watch, run, offstage, doctor, send, spawn,
     \\                jobs, adapters, maneuver-check, filter
     \\Use COMMAND --help for exact flags, effects, evidence and limits.
@@ -170,6 +171,7 @@ fn run(allocator: std.mem.Allocator) !void {
     if (std.mem.eql(u8, command, "doctor")) finish(allocator, try @import("rex_doctor").run(allocator, rest));
     if (std.mem.eql(u8, command, "jobs")) finish(allocator, try @import("rex_jobs").run(allocator, rest));
     if (std.mem.eql(u8, command, "adapters")) finish(allocator, try @import("rex_adapters").run(allocator, rest));
+    if (std.mem.eql(u8, command, "clutch")) finish(allocator, try @import("rex_clutch").run(allocator, rest));
     if (std.mem.eql(u8, command, "send")) finish(allocator, try send(allocator, rest));
     if (std.mem.eql(u8, command, "boards")) finish(allocator, try @import("rex_boards").run(allocator, rest));
     if (std.mem.eql(u8, command, "seat") or std.mem.eql(u8, command, "inbox") or std.mem.eql(u8, command, "ask") or std.mem.eql(u8, command, "fleet")) finish(allocator, try @import("rex_boards").run(allocator, args));

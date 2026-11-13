@@ -27,6 +27,7 @@ SELECTORS = {**{(verb,): ("socket",) for verb in
              **{(verb, op): ("socket", "host", "store") for verb, operations in
                 (("seat", ("register", "inspect", "clear")), ("inbox", ("append", "inspect", "clear")),
                  ("fleet", ("report", "forget"))) for op in operations},
+             **{("clutch", op): ("socket",) for op in ("take", "release", "status", "palette")},
              ("agents", "launch"): ("socket", "host", "store")}
 
 

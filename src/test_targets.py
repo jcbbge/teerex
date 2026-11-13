@@ -118,6 +118,7 @@ class TargetsTest(unittest.TestCase):
         cases += [(["recovery", op], [] if op == "inspect" else socket)
                   for op in ("inspect", "snapshot", "restore", "update")]
         cases += [([op], socket) for op in ("snapshot", "restore", "update")]
+        cases += [(["clutch", op], socket) for op in ("take", "release", "status", "palette")]
         cases += [(["adapters", op], socket) for op in ("generate", "call")]
         cases += [(["agents", op], target if op == "launch" else []) for op in
                   ("launch", "profiles", "shell", "exec", "channel", "fence-probe", "ack", "exited", "deliver", "inspect", "present", "stop", "supervise")]

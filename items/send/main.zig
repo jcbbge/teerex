@@ -1,6 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const supervised = @import("supervised_child");
+pub const clutch_state = @import("clutch_state.zig");
 
 const usage =
     \\Usage: teerex send --socket ABS --session session:UUID --block block:UUID --from LABEL --message-file ABS|- [--timeout-ms N]
@@ -8,12 +9,14 @@ const usage =
     \\Requires Linux/macOS, Rex on PATH, existing API10..13 server, and canonical lowercase full IDs.
     \\Select a dedicated agent terminal: this can submit/execute input and does not establish prompt safety.
     \\--draft guard|ignore defaults guard: wait for quiet/empty draft, clear, send, restore without Enter.
+    \\Cooperative clutch always applies, including --draft ignore; held panes wait then refuse pane_held_by_human.
+    \\State: TEEREX_CLUTCH_DIR or ~/.local/state/teerex/clutch; same command/Rex host required.
     \\--draft-wait-ms N defaults 30000 (0..55000); quiet window1500ms, restore delay400ms.
     \\Ignore preserves prior paste/Enter behavior. No chunking, retry, inbox forwarding, or autostart.
     \\File: regular, or - reads stdin until EOF within the same deadline/cancellation budget, before any dispatch.
     \\Input: 1..65536 UTF-8 bytes; LF/tab allowed, other C0/DEL rejected. Encoded RPC capped at 60000 bytes.
     \\Local inbox markers refuse input. Same-host/TMPDIR agent-send mkdir lock serializes cooperating senders only.
-    \\Timeout defaults to draft wait+10000ms (ignore:10000), range100..115000; includes lock/Rex.
+    \\Timeout defaults to draft wait+10000ms (including ignore), range100..115000; includes lock/Rex.
     \\Draft text is never reported. Keystrokes between final read and Ctrl-U can still race clearing.
     \\Restore polls100ms up to1500ms; unverified/failed restore warns without failing acknowledged send.
     \\Stale locks are never stolen.
@@ -33,7 +36,9 @@ const Draft = struct {
     restored: ?bool = null,
     restore_verified: ?bool = null,
 };
+const Clutch = struct { held_observed: bool = false, waited_ms: u64 = 0, bound_reached: bool = false };
 const Frame = struct {
+    clutch: ?Clutch = null,
     event: []const u8,
     source: ?Source = null,
     stage: ?[]const u8 = null,
@@ -46,6 +51,7 @@ const Collector = struct {
     allocator: std.mem.Allocator,
     timer: *std.time.Timer,
     draft: Draft,
+    clutch: Clutch = .{},
     draft_wait_started: ?u64 = null,
     draft_warning: ?[]const u8 = null,
     pending: std.ArrayList(u8) = .empty,
@@ -70,6 +76,8 @@ const Collector = struct {
             if (std.mem.eql(u8, f.event, "source")) {
                 if (self.source != null) return error.InvalidSendFrame;
                 self.source = f.source orelse return error.InvalidSendFrame;
+            } else if (std.mem.eql(u8, f.event, "clutch")) {
+                self.clutch = f.clutch orelse return error.InvalidSendFrame;
             } else if (std.mem.eql(u8, f.event, "draft")) {
                 const waited = self.draft.waited_ms;
                 self.draft = f.draft orelse return error.InvalidSendFrame;
@@ -208,7 +216,7 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
     const mode = draft_mode orelse "guard";
     const draft_wait_ms = draft_wait orelse 30000;
     if ((!std.mem.eql(u8, mode, "guard") and !std.mem.eql(u8, mode, "ignore")) or draft_wait_ms > 55000) usageError("draft must be guard|ignore; draft wait must be 0..55000 ms");
-    const timeout_ms = timeout orelse (if (std.mem.eql(u8, mode, "guard")) draft_wait_ms + 10000 else 10000);
+    const timeout_ms = timeout orelse (draft_wait_ms + 10000);
     if (!std.fs.path.isAbsolute(path) or (!std.mem.eql(u8, file_path, "-") and !std.fs.path.isAbsolute(file_path))) usageError("socket must be absolute; message file must be absolute or - for stdin");
     if (!fullId(sid, "session:") or !fullId(bid, "block:")) usageError("canonical lowercase full session:UUID and block:UUID are required");
     if (sender.len < 1 or sender.len > 128 or !textValid(sender, false)) usageError("from must be 1..128 UTF-8 bytes without controls");
@@ -221,6 +229,10 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
     const started_at = std.time.milliTimestamp();
     var env = try std.process.getEnvMap(allocator);
     for ([_][]const u8{ "REX_SERVER", "REX_SESSION", "REX_BLOCK", "REX_CLIENT" }) |key| env.remove(key);
+    var clutch = try clutch_state.Store.open(allocator, &env, path, sid, bid);
+    defer clutch.close();
+    // Validate existing state before invoking Lua; corrupt or unsafe state fails closed.
+    _ = try clutch.set(allocator, null, "");
     var input_failure: ?[]const u8 = null;
     const message = readMessage(allocator, file_path, &timer, timeout_ms) catch |err| blk: {
         if (err == error.FileTooBig) usageError("message exceeds 65536 bytes");
@@ -283,12 +295,17 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
             .block_id = bid,
             .draft_mode = mode,
             .draft_wait_ms = draft_wait_ms,
+            .clutch_file = clutch.path,
             .text = try std.fmt.allocPrint(allocator, "FROM {s}: {s}", .{ sender, message }),
         }, .{});
         encoded_argument_bytes = request.len;
-        // This smaller object is a lower bound on the paste RPC encoding. Reject
-        // before exec too: LF-heavy 64 KiB inputs exceed Linux's per-argument cap.
-        if (request.len > 60000) {
+        // Only paste text is a lower bound on RPC size; clutch metadata belongs
+        // to the local controller and must not shrink the existing paste budget.
+        const paste_lower_bound = try std.json.Stringify.valueAlloc(allocator, .{
+            .text = try std.fmt.allocPrint(allocator, "FROM {s}: {s}", .{ sender, message }),
+        }, .{});
+        // Reject before exec too: LF-heavy 64 KiB inputs exceed Linux's per-argument cap.
+        if (paste_lower_bound.len > 60000) {
             outcome = "refused";
             failure = "encoded_paste_exceeds_limit";
             break :work;
@@ -338,6 +355,7 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
         .failure_reason = failure orelse collector.reason orelse if (backend != null and !success) @as(?[]const u8, "rex_transport_incomplete") else null,
         .cancellation_signal = if (signal == 0) @as(?u8, null) else signal,
         .draft = collector.draft,
+        .clutch = .{ .cooperative = true, .state_file = clutch.path, .held_observed = collector.clutch.held_observed, .waited_ms = collector.clutch.waited_ms, .bound_reached = collector.clutch.bound_reached },
         .draft_warning = collector.draft_warning,
         .paste = .{ .attempted = collector.paste_attempted, .acknowledged = collector.paste_acknowledged },
         .enter = .{ .attempted = collector.enter_attempted, .acknowledged = collector.enter_acknowledged },
@@ -348,7 +366,7 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
         .exclusive_input_lease = false,
         .application_consumption = "not_assessed",
         .prompt_safety = "not_assessed",
-        .retry_safe = false,
+        .retry_safe = std.mem.eql(u8, collector.reason orelse "", "pane_held_by_human") and !collector.paste_attempted and collector.draft.cleared == null,
     }, .{ .whitespace = .indent_2 });
     try std.fs.File.stdout().writeAll(output);
     try std.fs.File.stdout().writeAll("\n");

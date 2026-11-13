@@ -32,11 +32,13 @@ class SendTest(unittest.TestCase):
         cls.socket = cls.root / "rex.sock"
         cls.endpoint = "unix://" + str(cls.socket)
         cls.base = [cls.rex, "--autostart=false", "--server", cls.endpoint, "--timeout", "3s"]
+        cls.config = cls.root / "init.lua"
+        cls.config.write_text("")
         cls.log = (cls.root / "server.log").open("w")
         cls.addClassCleanup(cls.log.close)
         cls.server = subprocess.Popen([
             cls.rex, "server", "run", "--listen", cls.endpoint, "--restore=false",
-            "--config", "/dev/null", "--state-dir", str(cls.root / "state"),
+            "--config", str(cls.config), "--state-dir", str(cls.root / "state"),
         ], stdout=cls.log, stderr=cls.log)
         cls.addClassCleanup(cls.stop_server)
         for _ in range(100):
@@ -75,7 +77,7 @@ class SendTest(unittest.TestCase):
         self.work.mkdir()
         (self.work / "inbox").mkdir()
         # Exact same TMPDIR lock namespace as agent-send; no test lock in /tmp root.
-        self.env = dict(os.environ, TMPDIR=str(self.work), AGENT_INBOX_DIR=str(self.work / "inbox"),
+        self.env = dict(os.environ, TEEREX_CLUTCH_DIR=str(self.work / "clutch"), TMPDIR=str(self.work), AGENT_INBOX_DIR=str(self.work / "inbox"),
                         REX_SERVER="unix:///tmp/never-this-server.sock", REX_BLOCK="block:wrong",
                         REX_SESSION="session:wrong", REX_CLIENT="client:wrong",
                         PATH=str(Path(self.rex).parent) + os.pathsep + os.environ.get("PATH", ""))
@@ -157,10 +159,37 @@ class SendTest(unittest.TestCase):
                     ("❯\xa0a\x1b[90msuggest\x1b[3Cgrey\x1b[0m\x1b[2Cb", "a  b"),
                     ("❯\xa0\x1b[2msuggest\x1b[Cgrey\x1b[0m", ""),
                     ("> old\n" + "other\n" * 15, ""), ("> first\n> last", "last")]
+        fixtures += [
+            ("\x1b[0m\x1b[1m\x1b[48;2;41;44;49m›\x1b[0m\x1b[48;2;41;44;49m \x1b[0m\x1b[2m\x1b[48;2;41;44;49mAsk Codex to do anything\x1b[0m\x1b[48;2;41;44;49m\x1b[54X\x1b[54C\x1b[0m", ""),
+            ("› \x1b[48;2;41;44;49mreal typed β\x1b[0m", "real typed β"),
+            ("› \x1b[48;5;2mAsk Codex to do anything\x1b[0m", "Ask Codex to do anything"),
+            ("> \x1b[7m\x1b[2mT\x1b[22m\x1b[27m\x1b[2mype a message\x1b[22m", ""),
+            ("> \x1b[48;2;2;2;2mtyped\x1b[0m", "typed"),
+        ]
         lua = Path(__file__).with_name("draft.lua").read_text() + "\nlocal out={} for _,v in ipairs(rex.args.cases) do table.insert(out,draft_from_vt(v)) end io.write(rex.json.encode(out))"
         target, _ = self.fixture()
         result = self.rex_json("do", "--session", target[0], "--block", target[1], "-e", lua, "--args", json.dumps(dict(cases=[f[0] for f in fixtures])))
         self.assertEqual(result, [f[1] for f in fixtures])
+
+    def test_codex_dim_placeholder_does_not_clear_and_real_text_is_restored(self):
+        target, log = self.prompt("Ask Codex to do anything", mode="codex-ignore-clear")
+        result, packet = self.send(target, b"placeholder regression")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertFalse(packet["draft"]["detected"])
+        self.assertIsNone(packet["draft"]["cleared"])
+        for _ in range(100):
+            if log.read_text():
+                break
+            time.sleep(.02)
+        self.assertEqual([json.loads(line) for line in log.read_text().splitlines()], ["FROM worker: placeholder regression"])
+        typed, typed_log = self.prompt("Ask Codex to do anything", mode="codex")
+        self.type_draft(typed, "Ask Codex to do anything")
+        result, packet = self.send(typed, b"typed draft regression")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue(packet["draft"]["detected"])
+        self.assertTrue(packet["draft"]["cleared"] and packet["draft"]["restore_verified"])
+        self.assertIn("Ask Codex to do anything", self.prompt_text(typed))
+        self.assertEqual([json.loads(line) for line in typed_log.read_text().splitlines()], ["FROM worker: typed draft regression"])
 
     def test_guard_restores_existing_unicode_draft_without_submitting_it(self):
         for text in ("OPERATOR_PRIVATE_DRAFT", "α😀 private café"):

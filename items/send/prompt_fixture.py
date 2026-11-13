@@ -11,7 +11,7 @@ tty.setraw(0)
 log = Path(sys.argv[1])
 suggestion = sys.argv[2] if len(sys.argv) > 2 else "suggestion"
 mode = sys.argv[3] if len(sys.argv) > 3 else "clear"
-ignore_clear = mode == "ignore-clear"
+ignore_clear = mode == "ignore-clear" or mode.endswith("-ignore-clear")
 submitted = 0
 draft, pending, pasting = b"", b"", False
 log.touch()
@@ -22,7 +22,15 @@ def draw():
     # Claude Code renders internal runs of spaces as cursor-forward movements.
     content = draft if draft else b"\x1b[90m" + suggestion.encode() + b"\x1b[0m"
     content = re.sub(rb" +", lambda m: b"\x1b[" + str(len(m[0])).encode() + b"C", content)
-    os.write(1, "\r\x1b[2K❯\xa0".encode() + content)
+    if mode.startswith("codex"):
+        # Captured Codex prompt: bold chevron, RGB background, reset, then a dim placeholder.
+        background = b"\x1b[48;2;41;44;49m"
+        content = background + draft if draft else b"\x1b[2m" + background + suggestion.encode()
+        content = re.sub(rb" +", lambda m: b"\x1b[" + str(len(m[0])).encode() + b"C", content)
+        prefix = b"\r\x1b[2K\x1b[0m\x1b[1m" + background + "›".encode() + b"\x1b[0m" + background + b" \x1b[0m"
+        os.write(1, prefix + content + b"\x1b[0m" + background + b"\x1b[54X\x1b[54C\x1b[0m")
+    else:
+        os.write(1, "\r\x1b[2K❯\xa0".encode() + content)
 
 
 draw()

@@ -50,6 +50,9 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     send.addImport("supervised_child", child);
+    const clutch = b.createModule(.{ .root_source_file = b.path("items/clutch/main.zig"), .target = target, .optimize = optimize });
+    clutch.addImport("rex_send", send);
+    exe.root_module.addImport("rex_clutch", clutch);
     exe.root_module.addImport("rex_send", send);
     const spawn = b.createModule(.{
         .root_source_file = b.path("items/spawn/main.zig"),

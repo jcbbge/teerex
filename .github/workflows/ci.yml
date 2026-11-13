@@ -210,7 +210,9 @@ jobs:
         env:
           TEEREX_BIN: ${{ github.workspace }}/zig-out/bin/teerex
           REX_BIN: ${{ runner.temp }}/rex-bin/rex
-        run: python3 items/send/test_send.py -v
+        run: |
+          python3 items/send/test_send.py -v
+          python3 items/clutch/test_clutch.py -v
 
       - name: Run disposable-Rex visible spawn regressions
         env:

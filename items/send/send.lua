@@ -44,23 +44,64 @@ local function read_draft()
     if type(text) ~= "string" or #text > 1048576 then return nil end
     return draft_from_vt(text)
 end
+-- Cooperative state is local to the command/Rex host. No server input lease is implied.
+local clutch = {held_observed=false, waited_ms=0, bound_reached=false}
+local clutch_reason
+local function gate()
+    while true do
+        local f = io.open(a.clutch_file, "r")
+        local held = false
+        if f then
+            local raw = f:read(8193); f:close()
+            local ok, state = pcall(rex.json.decode, raw)
+            if not ok or type(state) ~= "table" or type(state.held) ~= "boolean" or #raw > 8192 then
+                clutch_reason = "clutch_state_unavailable"; return false
+            end
+            held = state.held
+        else
+            clutch_reason = "clutch_state_unavailable"; return false
+        end
+        if not held then return true end
+        clutch.held_observed = true
+        if clutch.waited_ms >= a.draft_wait_ms then
+            clutch.bound_reached = true
+            clutch_reason = "pane_held_by_human"
+            emit({event="clutch", clutch=clutch})
+            return false
+        end
+        local delay = math.min(100, a.draft_wait_ms - clutch.waited_ms)
+        rex.sleep(delay / 1000)
+        clutch.waited_ms = clutch.waited_ms + delay
+        emit({event="clutch", clutch=clutch})
+    end
+end
+local function input_failure(reason)
+    refuse(clutch_reason or reason)
+    rex.stop()
+end
 local function key(name, mods, text, codepoint)
+    if not gate() then return false end
     return rex.call("block.event", {session_id=a.session_id, block_id=a.block_id,
         event={type="key", payload={key=name, mods=mods, consumed_mods="", text=text,
             unshifted_codepoint=codepoint, composing=false, action="press"}}})
 end
 local function paste_text(text)
+    if not gate() then return false end
     return rex.call("block.event", {session_id=a.session_id, block_id=a.block_id,
         event={type="paste", payload={text=text}}})
 end
 local function deliver()
+    if not gate() then input_failure("clutch_state_unavailable"); return end
     emit({event="attempt", stage="paste"})
     local ok = rex.call("block.event", paste)
     if not ok then emit({event="failed", reason="paste_call_failed"}); rex.stop(); return end
     emit({event="ack", stage="paste"})
     emit({event="attempt", stage="enter"})
     ok = key("enter", "", "\r", 13)
-    if not ok then emit({event="failed", reason="enter_call_failed"}); rex.stop(); return end
+    if not ok then
+        if clutch_reason then input_failure(clutch_reason) else emit({event="failed", reason="enter_call_failed"}); rex.stop() end
+        return
+    end
     emit({event="ack", stage="enter"})
     if saved ~= "" then
         rex.sleep(.4)
@@ -80,7 +121,7 @@ local function deliver()
             if restore_bound then restore_bound:cancel() end
             rex.stop()
         end
-        if not acknowledged then finish_restore("draft_restore_failed"); return end
+        if not acknowledged then finish_restore(clutch_reason or "draft_restore_failed"); return end
         local function verify(final)
             if read_draft() == saved then
                 draft.restored, draft.restore_verified = true, true
@@ -96,6 +137,7 @@ local function deliver()
     emit({event="finished"})
     rex.stop()
 end
+if not gate() then input_failure("clutch_state_unavailable"); return end
 if a.draft_mode == "ignore" then report("ready"); deliver(); return end
 local poll_timer, quiet_timer, bound_timer
 local proceeding = false
@@ -103,6 +145,7 @@ local function proceed(bound)
     if proceeding then return end
     proceeding = true
     -- Keep the polling timer alive until final publication; rex.stop owns teardown.
+    if not gate() then input_failure("clutch_state_unavailable"); return end
     local current = read_draft()
     if current == nil then refuse("draft_capture_unavailable"); rex.stop(); return end
     saved = current
@@ -117,7 +160,7 @@ local function proceed(bound)
         end
         draft.cleared = false
         for _ = 1, 2 do
-            if not key("u", "ctrl", "u", 117) then report("cleared"); refuse("draft_clear_call_failed"); rex.stop(); return end
+            if not key("u", "ctrl", "u", 117) then report("cleared"); refuse(clutch_reason or "draft_clear_call_failed"); rex.stop(); return end
             rex.sleep(.05)
             local remaining = read_draft()
             if remaining == "" then draft.cleared = true; break end

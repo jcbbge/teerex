@@ -20,6 +20,7 @@ local function prompt(s)
     end
     if s:sub(1, 1) == ">" then s = s:sub(2)
     elseif s:sub(1, #"❯") == "❯" then s = s:sub(#"❯" + 1)
+    elseif s:sub(1, #"›") == "›" then s = s:sub(#"›" + 1)
     else return nil end
     s = trim(s)
     for _, border in ipairs({"│", "┃", "|"}) do
@@ -59,7 +60,7 @@ local function draft_from_vt(text)
                     local parameters = escape:sub(3, -2) .. ";"
                     for code in parameters:gmatch("(.-);") do
                         local n = tonumber(code == "" and "0" or code)
-                        if not n then return "" end
+                        if not n then return nil end
                         table.insert(codes, n)
                     end
                     local i = 1
@@ -70,6 +71,11 @@ local function draft_from_vt(text)
                         elseif c == 22 then dim = false
                         elseif c == 90 then grey = true
                         elseif c == 39 or (c >= 30 and c <= 37) or (c >= 91 and c <= 97) then grey = false
+                        elseif (c == 48 or c == 58) and codes[i+1] == 2 and codes[i+4] then
+                            -- Background/underline RGB channels are not SGR attributes (notably 2=dim).
+                            i = i + 4
+                        elseif (c == 48 or c == 58) and codes[i+1] == 5 and codes[i+2] then
+                            i = i + 2
                         elseif c == 38 and codes[i+1] == 5 and codes[i+2] then
                             -- Rex VT captures normalize SGR90 into indexed colour8.
                             grey = codes[i+2] == 8 or (codes[i+2] >= 240 and codes[i+2] <= 250); i = i + 2
