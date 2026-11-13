@@ -2,6 +2,8 @@
 
 Joshua Gantt's personal, opinionated collection of Rex extensions, utilities, scripts, and helpers.
 
+**Agents start with [docs/agents.md](docs/agents.md)**: the one-page guide to every teerex verb an agent uses.
+
 Licensed under [Apache-2.0](LICENSE) for teerex's original material; third-party rights are in [RIGHTS.md](RIGHTS.md).
 
 **Alpha.5 adds tested operating-layer slices:** [visible surfaces and native palette plans](items/surfaces/README.md), [live boards/seat/inbox/decisions](items/boards/README.md), [profile/protocol launches and responsibility](items/agents/README.md), [structural recovery/manual update inventory](items/recovery/README.md), and [named-host fleet installation](docs/fleet-install.md). Read the [exact alpha.5 release guide](docs/releases/v0.1.0-alpha.5.md) and confirm its published assets before installing. The [larger milestone](docs/alpha5.md) remains incomplete: authoritative drafts, generic harness resume, exact mixed-host certification and consolidated agent-core cutover/deletions are not claimed. Alpha.4/history and host-safety blockers remain intact.
