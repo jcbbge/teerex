@@ -52,6 +52,7 @@ teerex run-visible --socket "$S" --session "$SES" --cwd "$PWD" --env-file env.js
 teerex surfaces open   --socket "$S" --session "$SES" --layout tiled --anchor "$ME" --label logs -- tail -f app.log
 teerex surfaces ensure --socket "$S" --session "$SES" --label "dev server" -- npm run dev        # reuse or create
 teerex surfaces session ensure --socket "$S" --label rivet                                      # find or create a session
+teerex surfaces ensure --socket "$S" --session any --label seat --create-session "$SES" -- seat   # one pane server-wide
 teerex surfaces rename|focus|move|close --socket "$S" --session "$SES" --pane "$P" …
 ```
 
@@ -68,6 +69,7 @@ teerex surfaces rename|focus|move|close --socket "$S" --session "$SES" --pane "$
 - **Send:** `agent-send SES PANE ME "message"`. This is `teerex send`.
   - The message arrives as `FROM ME: …` followed by Enter.
   - If someone is typing in that pane, send waits until they stop, then puts their draft back after the message.
+  - A pane Josh has taken control of (`teerex clutch take`) is never typed into: the send waits, then refuses `pane_held_by_human`. This is cooperative: it binds teerex callers only.
 - **Your report** is the last message of your turn. Do not also send it with `agent-send`; use `agent-send` only for a question while you are still working.
 - **Questions for Josh** go to the seat, never to an on-screen prompt in your own pane.
 - **Housekeeping:** dead launch records are archived automatically. To do it by hand: `teerex agents prune --registry DIR [--apply]`.
@@ -93,6 +95,14 @@ teerex cartridges run filter -- --sample a.json --sample b.json
 ```
 
 Every item is currently experimental, so a plain `--all` selects none (the plan lists them under `excluded_experimental`). Removing a cartridge keeps its data.
+
+## Inspect and repair state
+
+```sh
+teerex jobs doctor --registry "$REG" [--socket "$S"]     # read-only: stale, due, uncertain, orphaned registrations
+teerex cartridges doctor                                # read-only: stage leftovers, hash/state mismatches
+teerex cartridges repair --plan                         # only old orphaned stages; --apply to remove
+```
 
 ## Machine check
 
