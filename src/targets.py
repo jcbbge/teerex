@@ -13,7 +13,7 @@ NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}\Z")
 PATH_FIELDS = ("home", "socket", "rex", "teerex", "store")
 # Selectors belong to complete leaves, not command families. Offline leaves receive
 # no Rex target; board state/rendering still needs its selected command-host store.
-SELECTORS = {**{(verb,): ("socket",) for verb in
+SELECTORS = {("board", "feed"): ("socket",), **{(verb,): ("socket",) for verb in
                 ("observe", "watch", "spawn", "run", "run-visible", "doctor", "offstage", "snapshot", "restore", "update")},
              **{("surfaces", op): ("socket",) for op in ("open", "ensure", "resolve", "inspect", "rename", "move", "focus", "close")},
              ("surfaces", "session", "ensure"): ("socket",),
