@@ -223,6 +223,39 @@ class JobsTest(unittest.TestCase):
         self.assertFalse(p["mutation_attempt_frame_seen"])
         self.assertEqual(self.view(), after)
 
+    def test_native_owned_presentation_in_place_allows_label_and_focus_but_not_relocation(self):
+        self.assertIsNotNone(self.rpc("session.describe_block", session_id=self.session, block_id=self.block)["block"].get("owner"))
+        self.detached()
+        self.rpc("session.move_block", session_id=self.session, block_id=self.block, anchor_block_id=self.anchor)
+        anchor = self.block
+        self.block = self.anchor  # The native-owned pane created by `rex new`.
+        self.rpc("session.focus_block", session_id=self.session, block_id=anchor)
+        self.track()
+        before = self.view()
+        r, p = self.invoke("present", owner="operator α", generation=1, reason="in-place native presentation",
+                           anchor=anchor, focus="no", relocate="no", label="native review")
+        self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
+        self.assertEqual(p["outcome"], "verified")
+        self.assertTrue(p["mutation_attempt_frame_seen"])
+        after = self.view()
+        self.assertEqual(after["windows"][0]["layers"][0]["layout"], before["windows"][0]["layers"][0]["layout"])
+        self.assertEqual(after["windows"][0]["focused_block_id"], before["windows"][0]["focused_block_id"])
+        self.assertEqual(self.rpc("session.describe_block", session_id=self.session, block_id=self.block)["block"]["label"], "native review")
+        r, p = self.invoke("present", owner="operator α", generation=2, reason="focus native pane in place",
+                           anchor=anchor, focus="yes", relocate="no")
+        self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
+        self.assertEqual(p["outcome"], "verified")
+        focused = self.view()
+        self.assertEqual(focused["windows"][0]["focused_block_id"], self.block)
+        self.assertEqual(focused["windows"][0]["layers"], after["windows"][0]["layers"])
+        r, p = self.invoke("present", owner="operator α", generation=3, reason="no native relocation",
+                           anchor=anchor, focus="yes", relocate="yes", label="must not change")
+        self.assertEqual(r.returncode, 1, r.stderr + r.stdout)
+        self.assertEqual(p["failure_reason"], "resource_has_native_owner")
+        self.assertFalse(p["mutation_attempt_frame_seen"])
+        self.assertEqual(self.view(), focused)
+        self.assertEqual(self.rpc("session.describe_block", session_id=self.session, block_id=self.block)["block"]["label"], "native review")
+
     def test_native_ownership_and_hidden_agent_never_allow_takeover(self):
         # `rex new` retains a real native terminal owner, unlike our detached fixture.
         self.assertIsNotNone(self.rpc("session.describe_block", session_id=self.session, block_id=self.block)["block"].get("owner"))

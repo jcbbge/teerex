@@ -62,7 +62,9 @@ if a.operation ~= "present" then
     if a.operation == "adopt" and target.owner then refuse("resource_has_native_owner"); return end
     emit({event="verified"}); return
 end
-if target.owner then refuse("resource_has_native_owner"); return end
+if target.owner and (target.placement == "detached" or a.relocate) then
+    refuse("resource_has_native_owner"); return
+end
 if not anchor or anchor.block_id == target.block_id then refuse("invalid_anchor"); return end
 local anchor_window = visible(before, a.anchor)
 if not anchor_window then refuse("anchor_not_visible_in_view"); return end
