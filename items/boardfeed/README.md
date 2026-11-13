@@ -40,7 +40,7 @@ on both operating systems. Tests never use a personal Rex socket or registry.
 
 Agent rows start from the live Rex pane inventory, one row per block id.
 Launch records supply metadata only; a dead launch never creates a row.
-A live pane qualifies through a launch record or a `teerex-agent` status record.
+A live pane qualifies through a launch record, a `teerex-agent` status record, or a child/foreground executable matching `profiles.*.argv[0]` in the host’s `~/.config/teerex/profiles.json` (`--profiles ABS` overrides it; unavailable files add nothing), with process changes refreshing membership.
 Scratchpads join by the live pane’s session and block id, including idle/done
 panes. State comes only from OSC 7501 `program_status`; `blocked` remains
 `blocked`, and missing status is `unknown`.

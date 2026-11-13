@@ -179,6 +179,8 @@ Run the kept, read-only comparison against every host in the configured file:
 python3 items/board/check_one_source.py --config "$HOME/.config/teerex/hosts.json" --teerex "$PWD/zig-out/bin/teerex"
 ```
 
+Hand-started panes also qualify when their child/foreground executable matches the host’s `profiles.*.argv[0]`; the independent probe reads the same profiles file (`--profiles ABS` overrides it).
+
 It reads Rex pane/status inventory and launch metadata independently through
 the existing named-host transport, then reads `board --json`. It prints every
 missing/extra/duplicate pane, session/state mismatch and header discrepancy;

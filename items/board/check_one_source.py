@@ -19,7 +19,20 @@ spec.loader.exec_module(targets)
 # as board feed. The probe deliberately reads Rex independently of feed.State.
 PROBE = r'''
 import json, pathlib, subprocess, sys
-rex, socket = sys.argv[1:]
+rex, socket = sys.argv[1:3]
+profiles = pathlib.Path(sys.argv[3]) if len(sys.argv)>3 else pathlib.Path.home()/'.config/teerex/profiles.json'
+def canonical(value):
+    if not isinstance(value,str) or not value:return None
+    try:return str(pathlib.Path(value).resolve()) if pathlib.Path(value).exists() else value
+    except (OSError,RuntimeError):return value
+executables=set()
+try:
+    configured=json.loads(profiles.read_text())['profiles']
+    for profile in configured.values():
+        if isinstance(profile,dict) and isinstance(profile.get('argv'),list) and profile['argv']:
+            value=canonical(profile['argv'][0])
+            if value:executables.add(value)
+except (OSError,ValueError,UnicodeError,KeyError,TypeError,AttributeError):pass
 def call(*args):
     return json.loads(subprocess.check_output([rex, '--autostart=false', '--server', 'unix://'+socket, '--timeout', '2s', *args], timeout=3))
 launches=set()
@@ -38,16 +51,19 @@ for session in call('api','call','session.list','{}').get('sessions',[]):
         block=pane['block_id']
         reports=call('block','call','--session',sid,'--block',block,'program_status','{}').get('records',[])
         managed=[r for r in reports if r.get('app')=='teerex-agent']
-        if block not in launches and not managed:continue
+        process=call('block','call','--session',sid,'--block',block,'process','{}')
+        matched=any(canonical((process.get(role) or {}).get(field)) in executables
+                    for role in ('child','foreground') for field in ('argv0','path'))
+        if block not in launches and not managed and not matched:continue
         report=managed[-1] if managed else max(reports,key=lambda r:priority.get(r.get('state'),0),default={})
         rows.append(dict(block=block,session=sid,state=report.get('state','unknown')))
 print(json.dumps(rows))
 '''
 
 
-def rex_rows(config, host):
+def rex_rows(config, host, profiles=None):
     selected = targets.resolve_host(config, host)
-    argv = ['python3', '-c', PROBE, selected['rex'], selected['socket']]
+    argv = ['python3', '-c', PROBE, selected['rex'], selected['socket']] + ([profiles] if profiles else [])
     if selected['transport'] == 'ssh':
         argv = [*targets.ssh_argv(selected), shlex.join(argv)]
     return json.loads(subprocess.check_output(argv, timeout=60, stderr=subprocess.PIPE))
@@ -95,7 +111,7 @@ def check_run(args, hosts):
     def read_rex(phase):
         result = {}
         for host in hosts:
-            try: result[host] = rex_rows(args.config, host)
+            try: result[host] = rex_rows(args.config, host, args.profiles) if getattr(args,'profiles',None) else rex_rows(args.config, host)
             except (OSError, ValueError, subprocess.SubprocessError) as exc:
                 errors.append(f'{host}: Rex {phase} read failed ({type(exc).__name__})')
         return result
@@ -132,7 +148,9 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--config', default=os.path.expanduser('~/.config/teerex/hosts.json'))
     parser.add_argument('--teerex', default=os.environ.get('TEEREX_BIN', str(ROOT/'zig-out/bin/teerex')))
+    parser.add_argument('--profiles', help='absolute profiles file override on each host')
     args = parser.parse_args(argv)
+    if args.profiles and not os.path.isabs(args.profiles):parser.error('absolute --profiles required')
     hosts = list(targets.load_config(args.config)['hosts'])
     for run in range(3):
         errors, summaries, retry = check_run(args, hosts)

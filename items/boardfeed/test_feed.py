@@ -181,6 +181,33 @@ class FeedTests(unittest.TestCase):
             self.assertEqual(len(agents),3);self.assertEqual(agents[0]['total'],3);self.assertEqual(agents[-1]['state'],'gone')
             self.assertIn('message delivered',out.getvalue());self.assertNotIn('SECRET',out.getvalue());self.assertNotIn('DO NOT PRINT',out.getvalue())
 
+    def test_profile_process_changes_and_unclassified_rescan(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);profiles=root/'profiles.json'
+            profiles.write_text(json.dumps(dict(profiles=dict(example=dict(argv=['/example/runner'])))))
+            a=SimpleNamespace(host='fixture',profiles=profiles)
+            for key in ('agents_registry','jobs_registry','scratch','calls'):setattr(a,key,root/key)
+            state=feed.State(a);state.live={'b':dict(session='s',label='Seat')}
+            state.refresh_inventory=lambda:True
+            process={'child':dict(argv0='/bin/sh')}
+            state.rex_json=lambda *args: process if args[-2]=='process' else dict(records=[dict(state='waiting')])
+            with contextlib.redirect_stdout(io.StringIO()):
+                state.scan();self.assertEqual(state.rows,{})
+                process={'foreground':dict(path='/example/runner')}
+                state.scan();self.assertEqual(state.rows['b']['name'],'Seat')
+                self.assertEqual(state.rows['b']['state'],'waiting')
+                process={'child':dict(argv0='/bin/sh')}
+                state.rex_event(dict(type='block_event',payload=dict(block_id='b',name='process_changed')))
+                self.assertEqual(state.rows,{})
+                process={'child':dict(argv0='/example/runner')}
+                state.rex_event(dict(type='block_event',payload=dict(block_id='b',name='process_changed')))
+                self.assertIn('b',state.rows)
+                state.live['b']['label']='';state.scan()
+                self.assertEqual(state.rows['b']['name'],'runner')
+                for content in ('bad json','[]','{"profiles":null}'):
+                    profiles.write_text(content);state.scan();self.assertEqual(state.rows,{})
+                profiles.unlink();state.scan();self.assertEqual(state.rows,{})
+
     def test_status_and_title_projection(self):
         class Args:host='fixture'
         state=feed.State(Args());state.scan=lambda:None
@@ -266,6 +293,31 @@ class FeedTests(unittest.TestCase):
                 self.assertEqual(inventory.rows[block]['state'],'blocked')
                 self.assertEqual(inventory.rows[other_block]['now'],'Lua own work')
                 self.assertEqual(inventory.rows[other_block]['state'],'idle')
+                # A distinct, profile-owned executable with no managed launch or OSC record.
+                runner=root/'runner';shutil.copy2(shutil.which('sleep'),runner)
+                alias=root/'runner-link';alias.symlink_to(runner)
+                profiles=root/'profiles.json'
+                profiles.write_text(json.dumps(dict(profiles=dict(example=dict(argv=[str(alias)])))))
+                manual=subprocess.run([REX,'--autostart=false','-S',endpoint,'new','--json','manual','--',str(runner),'20'],capture_output=True,text=True,timeout=5)
+                self.assertEqual(manual.returncode,0,manual.stderr)
+                manual_block=json.loads(manual.stdout)['initial_windows'][0]['block_ids'][0]
+                (root/'jobs-registry'/'manual.json').write_text(json.dumps(dict(block_id=manual_block,name='decoy-job-name')))
+                profile_link=root/'profiles-link.json';profile_link.symlink_to(profiles)
+                args.profiles=profile_link
+                with contextlib.redirect_stdout(io.StringIO()):inventory.scan()
+                self.assertEqual(set(inventory.rows),{block,other_block,manual_block})
+                self.assertEqual(inventory.rows[manual_block]['state'],'unknown')
+                self.assertNotEqual(inventory.rows[manual_block]['name'],'decoy-job-name')
+                probe_spec=importlib.util.spec_from_file_location('check_one_source',SOURCE.parent.parent/'board/check_one_source.py')
+                probe=importlib.util.module_from_spec(probe_spec);probe_spec.loader.exec_module(probe)
+                def probe_rows(path):
+                    return json.loads(subprocess.check_output([sys.executable,'-c',probe.PROBE,REX,str(socket),str(path)],env=dict(os.environ,HOME=tmp),timeout=15))
+                self.assertEqual({r['block'] for r in probe_rows(profiles)},{other_block,manual_block})
+                args.profiles=root/'missing-profiles.json'
+                with contextlib.redirect_stdout(io.StringIO()):inventory.scan()
+                self.assertEqual(set(inventory.rows),{block,other_block})
+                self.assertEqual({r['block'] for r in probe_rows(args.profiles)},{other_block})
+
                 duplicate.unlink()
                 (root/'calls'/'calls.jsonl').write_text(json.dumps(dict(phase='start',call_id='x',verb='send'))+'\n'+json.dumps(dict(phase='end',call_id='x',exit=0))+'\n')
                 wait_for(lambda e:e['kind']=='stream' and e['text']=='message delivered')

@@ -245,10 +245,26 @@ class MacVitals:
         return dict(cpu=cpu,cpu_total=sum(cpu)/max(1,len(cpu)),load=list(os.getloadavg()),mem=dict(total=total,used=max(0,total-available)),swap=dict(total=byte_value('total'),used=byte_value('used')),disks=disks,net=net,top=group_processes(processes,roots))
 
 
+def executable_path(value):
+    if not isinstance(value,str) or not value:return None
+    try:return str(Path(value).resolve()) if Path(value).exists() else value
+    except (OSError,RuntimeError):return value
+
+
+def profile_executables(path):
+    try:
+        profiles=json.loads(read(path.resolve())).get('profiles',{})
+        return {executable_path(p['argv'][0]) for p in profiles.values()
+                if isinstance(p,dict) and isinstance(p.get('argv'),list) and p['argv']
+                and isinstance(p['argv'][0],str) and p['argv'][0]}
+    except (OSError,ValueError,UnicodeError,TypeError,AttributeError,RuntimeError):return set()
+
+
 class State:
     def __init__(self, a):
         self.a=a; self.rows={};self.calls={};self.call_starts={};self.roots={};self.pids={};self.status={};self.questions={};self.reports={};self.seeded=set();self.live={};self.reachable=None
         self.lock=threading.RLock()
+        self.processes={}
 
     def rex_json(self, *args):
         command=[self.a.rex,'--autostart=false','--server','unix://'+self.a.socket,'--timeout','2s',*args]
@@ -293,21 +309,25 @@ class State:
                             # Prefer named managed launches; duplicates can never add rows.
                             if block not in records:records[block]=dict(record,_managed=registry==self.a.agents_registry)
                     except (OSError,ValueError,UnicodeError,TypeError):continue
+            executables=profile_executables(self.a.profiles) if getattr(self.a,'profiles',None) else set()
             rows={}
             for block,pane in self.live.items():
                 session=pane['session']
+                if block not in self.rows or block not in self.processes:
+                    self.refresh_process(block,session)
                 if block not in self.seeded:
                     self.seeded.add(block)
                     try:
-                        process=self.rex_json('block','call','--session',session,'--block',block,'process','{}')
-                        root=process.get('child') or process.get('foreground') or {}
-                        if type(root.get('pid')) is int:self.pids[block]=root['pid']
                         status=self.rex_json('block','call','--session',session,'--block',block,'program_status','{}')
                         self.update_status(block,status)
                     except (OSError,ValueError,subprocess.SubprocessError):pass
                 record=records.get(block)
                 agent_reports=[r for r in self.reports.get(block,{}).values() if r.get('app') in ('teerex-agent',)]
-                if not (record or {}).get('_managed') and not agent_reports:continue
+                matched=next((value for role in ('child','foreground')
+                              for field in ('argv0','path')
+                              for value in [(self.processes.get(block,{}).get(role) or {}).get(field)]
+                              if executable_path(value) in executables),None)
+                if not (record or {}).get('_managed') and not agent_reports and not matched:continue
                 record=record or {}
                 # The pane address owns its scratchpad, regardless of record name/session.
                 pad=self.a.scratch/session/(block+'.md')
@@ -319,7 +339,10 @@ class State:
                             sections[section].append(line[6:] if line.startswith(('- [ ] ','- [x] ')) else line[2:])
                 except (OSError,ValueError,UnicodeError):pass
                 hook=record.get('last_hook') or {}
-                name=record.get('name') or pane.get('label') or (agent_reports[0].get('app') if agent_reports else None) or 'agent'
+                if not record.get('_managed') and not agent_reports:
+                    name=pane.get('label') or os.path.basename(matched)
+                else:
+                    name=record.get('name') or pane.get('label') or (agent_reports[0].get('app') if agent_reports else None) or 'agent'
                 row=dict(id=block,name=name,session=session,block=block,state=self.status.get(block,'unknown'),placement=pane.get('placement','placed'),now=next(iter(sections['Now']),None),done=len(sections['Done']),total=sum(map(len,sections.values())),question=self.questions.get(block),since=hook.get('at') or record.get('created_at') or record.get('registered_at_unix_ms') or 0,cpu=None,rss=None)
                 rows[block]=row
             for block,row in rows.items():
@@ -328,8 +351,19 @@ class State:
                 if block not in rows:emit(self.a.host,'agent',**dict(row,state='gone'))
             self.rows=rows
             self.seeded.intersection_update(self.live)
+            self.processes={b:p for b,p in self.processes.items() if b in self.live}
             self.roots={self.pids[row['block']]:row['name'] for row in rows.values() if row['block'] in self.pids}
             self.tail_calls()
+
+    def refresh_process(self,block,session):
+        self.processes.pop(block,None)
+        self.pids.pop(block,None)
+        try:
+            process=self.rex_json('block','call','--session',session,'--block',block,'process','{}')
+            self.processes[block]=process
+            root=process.get('child') or process.get('foreground') or {}
+            if type(root.get('pid')) is int:self.pids[block]=root['pid']
+        except (OSError,ValueError,subprocess.SubprocessError):pass
 
     def tail_calls(self):
         for path in self.a.calls.glob('*.jsonl') if self.a.calls.exists() else []:
@@ -395,8 +429,7 @@ class State:
             if name in ('session_view_changed','block_removed','block_closed','session_created','session_removed','window_created','window_closed'):
                 self.scan()
             if name=='process_changed':
-                process=payload.get('child') or payload.get('foreground') or {}
-                if block not in self.pids and type(process.get('pid')) is int:self.pids[block]=process['pid']
+                if block in self.live:self.refresh_process(block,self.live[block]['session'])
                 self.scan()
             elif name and 'status' in name:
                 self.update_status(block,payload)
@@ -520,7 +553,7 @@ def local(a):
         if held:held.poll()
         state.scan()
         return
-    watcher=Watcher([a.agents_registry,a.jobs_registry,a.scratch,a.calls])
+    watcher=Watcher([a.agents_registry,a.jobs_registry,a.scratch,a.calls,a.profiles])
     sample=LinuxVitals() if sys.platform=='linux' else MacVitals()
     thread=threading.Thread(target=rex_events,args=(a,state),daemon=True);thread.start()
     state.scan();deadline=time.monotonic();held_deadline=0
@@ -592,6 +625,7 @@ def main(argv=None):
     parser.add_argument('--host-name',dest='host',default=platform.node().split('.')[0])
     parser.add_argument('--socket',default=os.environ.get('TEEREX_BOARD_SOCKET', '/run/user/%d/rex/server.sock'%os.getuid() if sys.platform=='linux' else os.path.expanduser('~/Library/Application Support/rex/server.sock')))
     parser.add_argument('--rex',default=os.environ.get('TEEREX_INTERNAL_REX',os.environ.get('REX_BIN','rex')))
+    parser.add_argument('--profiles',type=Path,default=Path.home()/'.config/teerex/profiles.json',help='absolute read-only profiles file on this host')
     home=Path.home()/'.local/state'
     for flag,default in [('agents-registry',home/'teerex-agents'),('jobs-registry',home/'teerex-jobs'),('scratch',home/'teerex/scratch'),('calls',Path(os.environ.get('TEEREX_CALL_LOG_DIR',home/'teerex/calls')))]:
         parser.add_argument('--'+flag,type=Path,default=default,help='absolute read-only source directory on this host')
@@ -599,7 +633,7 @@ def main(argv=None):
     args.executable=EXECUTABLE
     if not os.path.isabs(args.config) or any(not re.fullmatch(r'[A-Za-z0-9_-]+',h) for h in args.hosts.split(',')):
         parser.error('absolute --config and valid host names required')
-    for path in (args.agents_registry,args.jobs_registry,args.scratch,args.calls):
+    for path in (args.agents_registry,args.jobs_registry,args.scratch,args.calls,args.profiles):
         if not path.is_absolute():parser.error('source paths must be absolute')
     if args.open_held or args.held_pane or args.held_open_json is not None:
         try:open_held(args)

@@ -372,6 +372,30 @@ class BoardTest(unittest.TestCase):
         self.assertEqual(result.returncode,1,result.stdout+result.stderr)
         self.assertIn('header total: rows=1 header=2',result.stdout)
         self.assertIn('1 differences',result.stdout)
+        # Profile-only rows and the independent checker agree without a launch record.
+        runner=self.root/'profile-runner';shutil.copy2(shutil.which('sleep'),runner)
+        profile_dir=self.root/'.config/teerex';profile_dir.mkdir(parents=True)
+        profiles=profile_dir/'profiles.json'
+        profiles.write_text(json.dumps(dict(profiles=dict(example=dict(argv=[str(runner)])))))
+        manual=subprocess.run([rex,'--autostart=false','--server','unix://'+hosts['hive']['socket'],'new','--json','manual','--',str(runner),'60'],capture_output=True,text=True,timeout=5)
+        self.assertEqual(manual.returncode,0,manual.stderr)
+        manual_created=json.loads(manual.stdout)
+        manual_block=manual_created['initial_windows'][0]['block_ids'][0]
+        snapshot=subprocess.run([BIN,'board','--config',str(config),'--json'],env=private_env,capture_output=True,text=True,timeout=20)
+        self.assertEqual(snapshot.returncode,0,snapshot.stderr)
+        host=next(h for h in json.loads(snapshot.stdout)['hosts'] if h['host']=='hive')
+        self.assertEqual({r['block'] for r in host['rows']},{targets['hive'][2],manual_block})
+        self.assertEqual(host['counts']['total'],2)
+        result=subprocess.run(['python3',str(check),'--config',str(config),'--teerex',BIN],env=private_env,capture_output=True,text=True,timeout=30)
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+        self.assertIn('0 differences',result.stdout)
+        profiles.unlink()
+        snapshot=subprocess.run([BIN,'board','--config',str(config),'--json'],env=private_env,capture_output=True,text=True,timeout=20)
+        self.assertEqual(snapshot.returncode,0,snapshot.stderr)
+        host=next(h for h in json.loads(snapshot.stdout)['hosts'] if h['host']=='hive')
+        self.assertEqual({r['block'] for r in host['rows']},{targets['hive'][2]})
+        self.assertEqual(host['counts']['total'],1)
+        subprocess.run([BIN,'surfaces','close','--socket',hosts['hive']['socket'],'--session',manual_created['session_id'],'--pane',manual_block],capture_output=True,timeout=5,check=True)
         # The normal entrypoint must start the integrated feed, receive vitals,
         # and reap its foreground feed children when the board exits.
         live=Pane(self.root,fixture=None,config=config)
