@@ -510,6 +510,7 @@ class AgentsTest(unittest.TestCase):
                          "for p in ['/usr','/bin','/sbin','/lib','/lib64','/etc']:\n" +
                          " if Path(p).exists(): cmd+=['--ro-bind',p,p]\n" +
                          "cmd+=['--dev','/dev','--proc','/proc','--tmpfs','/tmp','--tmpfs','/run','--tmpfs','/var']\n" +
+                         f"cmd+=['--ro-bind',{sys.prefix!r},{sys.prefix!r}]\n" +
                          f"cmd+=['--ro-bind',{BIN!r},\"/opt/teerex cli's\",'--bind',{str(compute)!r},'/work']\n" +
                          "os.execvp('bwrap',cmd+['--chdir','/work','--','/bin/sh','-c',os.environ['SSH_ORIGINAL_COMMAND']])\n")
         force.chmod(0o700)
@@ -687,6 +688,7 @@ class AgentsTest(unittest.TestCase):
                            "for p in ['/usr','/bin','/sbin','/lib','/lib64','/etc']:\n" +
                            " if Path(p).exists(): cmd+=['--ro-bind',p,p]\n" +
                            "cmd+=['--dev','/dev','--proc','/proc','--tmpfs','/tmp','--tmpfs','/run','--tmpfs','/var']\n" +
+                           f"cmd+=['--ro-bind',{sys.prefix!r},{sys.prefix!r}]\n" +
                            f"cmd+=['--ro-bind',{BIN!r},{BIN!r},'--bind',{str(fenced)!r},'/work']\n" +
                            "channel=str(Path(os.environ['AGENT_CHANNEL']).parent)\ncmd+=['--ro-bind',channel,channel]\n" +
                            f"probe={denial_probe!r}\n" +

@@ -78,6 +78,98 @@ class TargetsTest(unittest.TestCase):
         self.assertEqual(json.loads(self.output.read_text()),
                          ["--rex", self.host["rex"], "run-visible", "--socket", self.host["socket"], *command[1:]])
 
+    def test_nested_leaves_receive_only_their_supported_selectors(self):
+        socket = ["--socket", self.host["socket"]]
+        store = ["--store", self.host["store"]]
+        target = [*socket, "--host", "fixture", *store]
+        cases = []
+        for prefix in (("boards",), ()):
+            cases += [([*prefix, "state", op], store) for op in ("inspect", "remap-preview", "remap-apply") if prefix]
+            for verb, operations in (("seat", ("register", "inspect", "clear")),
+                                     ("inbox", ("append", "inspect", "clear")), ("fleet", ("report", "forget"))):
+                cases += [([*prefix, verb, op], target) for op in operations]
+            cases += [([*prefix, "inbox"], target), ([*prefix, "fleet"], store), ([*prefix, "ask"], target)]
+        cases += [(["boards", "probe"], socket), (["boards", "try-route"], target)]
+        cases += [(["surfaces", op], socket) for op in ("open", "inspect", "move", "focus", "close")]
+        cases += [(["surfaces", "palette"], []), (["surfaces", "palette", "install"], socket)]
+        cases += [(["jobs", op], [] if op == "list" else socket)
+                  for op in ("list", "track", "inspect", "adopt", "present", "forget")]
+        cases += [(["recovery", op], [] if op == "inspect" else socket)
+                  for op in ("inspect", "snapshot", "restore", "update")]
+        cases += [([op], socket) for op in ("snapshot", "restore", "update")]
+        cases += [(["adapters", op], socket) for op in ("generate", "call")]
+        cases += [(["agents", op], target if op == "launch" else []) for op in
+                  ("launch", "profiles", "shell", "exec", "channel", "ack", "exited", "deliver", "inspect", "present", "stop", "supervise")]
+        for path, selectors in cases:
+            with self.subTest(path=path):
+                # Public argv fixture tests placement without running a mutation or using help to bypass injection.
+                result = self.call("--config", str(self.config), "--host", "hive", *path, "--fixture", "literal α")
+                self.assertEqual(result.returncode, 7, result.stderr)
+                self.assertEqual(json.loads(self.output.read_text()),
+                                 ["--rex", self.host["rex"], *path, *selectors, "--fixture", "literal α"])
+        for command, expected in ((["boards", "state", "inspect", "--store=" + str(self.root)],
+                                   ["boards", "state", "inspect", "--store=" + str(self.root)]),
+                                  (["boards", "fleet", "--config", "/selected/board-config", "--hosts", "m5,m1"],
+                                   ["boards", "fleet", *store, "--config", "/selected/board-config", "--hosts", "m5,m1"]),
+                                  (["agents", "profiles", "--config", "/selected/profiles"],
+                                   ["agents", "profiles", "--config", "/selected/profiles"]),
+                                  (["surfaces", "open", "--help"], ["surfaces", "open", "--help"])):
+            result = self.call("--config", str(self.config), "--host", "hive", *command)
+            self.assertEqual(result.returncode, 7, result.stderr)
+            self.assertEqual(json.loads(self.output.read_text()), ["--rex", self.host["rex"], *expected])
+        self.output.unlink()
+        for selector in ("--socket=/wrong", "--server=unix:///wrong", "--host=wrong", "--rex=/wrong"):
+            result = self.call("--config", str(self.config), "--host", "hive", "boards", "seat", "inspect", selector)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertFalse(self.output.exists())
+
+    def test_named_nested_board_state_and_offline_jobs_use_real_leaf_parsers(self):
+        store = Path(self.host["store"])
+        store.mkdir(mode=0o700)
+        self.host["teerex"] = str(BIN.resolve())
+        rex = self.root / "must not invoke Rex"
+        rex.write_text("#!/bin/sh\nprintf called > '" + str(self.output) + "'\nexit 99\n")
+        rex.chmod(0o700)
+        self.host["rex"] = str(rex)
+        self.save()
+        ids = ["--session", "session:12345678-1234-1234-1234-123456789abc",
+               "--block", "block:abcdef12-1234-1234-1234-123456789abc"]
+        def invoke(*command, expected=0):
+            p = self.call("--config", str(self.config), "--host", "hive", *command)
+            self.assertEqual(p.returncode, expected, p.stderr + p.stdout)
+            return json.loads(p.stdout)
+        self.assertEqual(invoke("boards", "state", "inspect")["state"]["seats"], [])
+        invoke("boards", "seat", "register", *ids, "--owner", "operator")
+        self.assertTrue(invoke("boards", "seat", "inspect", *ids)["registered"])
+        report = self.root / "report.txt"
+        report.write_text("exact β\nlast line\n\n")
+        invoke("boards", "inbox", "append", *ids, "--from", "worker", "--message-file", str(report))
+        state = invoke("boards", "state", "inspect")["state"]
+        self.assertEqual(state["seats"][0]["records"][0]["body"], report.read_text())
+        invoke("boards", "inbox", "inspect", *ids)
+        # Remap a supplied address without any live server or mutation of the original pane.
+        old = state["seats"][0]["target"]
+        new = dict(old, block_id="block:fedcba98-7654-3210-fedc-ba9876543210")
+        mapping = self.root / "map.json"
+        mapping.write_text(json.dumps([dict(old=old, new=new)]))
+        preview = invoke("boards", "state", "remap-preview", "--map-file", str(mapping))
+        self.assertEqual(preview["outcome"], "preview_only")
+        applied = invoke("boards", "state", "remap-apply", "--map-file", str(mapping),
+                         "--generation", str(state["generation"]), "--reason", "explicit fixture remap")
+        self.assertEqual(applied["outcome"], "applied")
+        remapped = [*ids[:2], "--block", new["block_id"]]
+        invoke("boards", "inbox", "clear", *remapped, "--generation", str(applied["generation"]), "--reason", "reviewed")
+        state = invoke("boards", "state", "inspect")["state"]
+        invoke("boards", "seat", "clear", *remapped, "--generation", str(state["generation"]), "--reason", "reviewed")
+        invoke("boards", "fleet", "report", *ids, "--owner", "worker", "--purpose", "fixture", "--state", "unknown", "--detail", "no liveness claim")
+        state = invoke("boards", "state", "inspect")["state"]
+        invoke("boards", "fleet", "forget", *ids, "--generation", str(state["generation"]), "--reason", "reviewed")
+        self.assertEqual(invoke("boards", "state", "inspect")["state"]["fleet"], [])
+        jobs = self.root / "jobs"
+        jobs.mkdir(mode=0o700)
+        invoke("jobs", "list", "--registry", str(jobs))
+        self.assertFalse(self.output.exists(), "offline leaves must not invoke Rex")
+
     def test_named_seat_send_appends_once_and_corrupt_store_never_falls_back(self):
         store = Path(self.host["store"])
         store.mkdir(mode=0o700)

@@ -238,6 +238,14 @@ jobs:
           REX_BIN: ${{ runner.temp }}/rex-bin/rex
         run: python3 items/surfaces/test_surfaces.py -v
 
+      - name: Prepare disposable Linux SSH and fence acceptance
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y bubblewrap openssh-server
+          sudo install -d -m 755 /run/sshd
+          bwrap --ro-bind / / /bin/true
+
       - name: Run API13 boards, managed agent and recovery integration
         if: matrix.rex-api == 13
         env:
@@ -245,6 +253,8 @@ jobs:
           REX_BIN: ${{ runner.temp }}/rex-bin/rex
           TEEREX_AGENTS_INTEGRATION: '1'
           TEEREX_AGENTS_CROSS_SESSION: '1'
+          TEEREX_AGENTS_SSH: ${{ runner.os == 'Linux' && '1' || '0' }}
+          TEEREX_AGENTS_FENCE: ${{ runner.os == 'Linux' && '1' || '0' }}
         run: |
           zig build-exe --dep rex_boards -Mroot=items/boards/test_cli.zig \
             -Mrex_boards=items/boards/main.zig -O ReleaseSmall \

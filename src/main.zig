@@ -11,11 +11,12 @@ const usage =
     \\
     \\Operating-layer commands:
     \\  surfaces open|inspect|move|focus|close|palette  Visible terminals and native palette plans
-    \\  boards inbox|fleet|probe                      Live foreground boards and read-only probe
+    \\  boards inbox|fleet|probe|state                Live boards, typed store and remap plans
     \\  seat register|inspect|clear              Exact-address operator seat
     \\  inbox append|inspect|clear                    Private retained messages
     \\  ask                                          Complete typed decisions or explicit resolution
     \\  agents launch|profiles|shell|ack|deliver|inspect|stop|present
+    \\         exec|exited|channel                   Explicit compute callbacks / local scoped delivery
     \\  spawn --profile NAME --profiles ABS           Managed protocol-ACK-before-brief launch
     \\  recovery snapshot|inspect|restore|update      Private snapshots and reviewed restoration
     \\  snapshot|restore|update                       Recovery aliases; update is manual handoff

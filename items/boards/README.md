@@ -16,6 +16,10 @@
 
 **How:** use the commands below, inspect their JSON and exit status, and compose placement with the public `surfaces` command. Root aliases (`seat`, `inbox`, `ask`, `fleet`) are wired in alpha.5; explicit `boards` forms below retain the module's public contract. Root `fleet install/rollback` is the separate installation bridge, not board enumeration. Alpha.4 did not contain these commands.
 
+## Source-only named-host routing repair (#16)
+
+Published alpha.5's family-level selector insertion breaks named `boards state|seat|inbox OP`. Current source [routes by complete leaf](../../docs/alpha5.md#leaf-aware-named-host-routing-issue16): state inspect/remap gets store only; seat/inbox/fleet mutations get socket/host/store; inbox renderer is targeted; fleet renderer gets store only and accepts its own explicit fleet config/hosts. Root aliases retain the same contract and explicit store overrides still work. Real named-root register/inspect/inbox/remap/clear/forget tests pass without invoking Rex for offline state. This is not an updated alpha.5 archive or permission to act on personal state.
+
 ## Register and open a visible inbox
 
 Create the store deliberately on the command host. All following `$SOCKET`, `$SESSION`, `$SEAT`, `$HOST_ID`, `$STORE`, `$TEEREX` values must name the selected target and absolute executable; none is inferred from the active pane or environment.

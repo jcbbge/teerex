@@ -13,13 +13,13 @@
 
 ## Source-only follow-ons are not an alpha.5 upgrade
 
-Published alpha.5 is still the release selected below. Later source adds [`run-visible`](../../items/run/VISIBLE.md) and [`targets exec --tty`](../fleet-install.md#source-only-interactive-transport); neither exists in its immutable archives. A source build can still print `teerex 0.1.0-alpha.5`: record the exact source commit and built SHA256, not that string as release-byte proof. #14/#21, #16 nested routing, real Rivet harness/fence/service cutover and fallback deletion are not completed by these additions.
+Published alpha.5 is still the release selected below. Later source adds [`run-visible`](../../items/run/VISIBLE.md), [`targets exec --tty`](../fleet-install.md#source-only-interactive-transport), [unfenced SSH compute callbacks / independent local scoped delivery](../../items/agents/README.md#source-only-compute-routing-and-scoped-delivery-issues14-and21) (#14/#21), and [nested leaf selector routing](../alpha5.md#leaf-aware-named-host-routing-issue16) (#16). None exists in its immutable archives. A source build can still print `teerex 0.1.0-alpha.5`: record the exact source commit and built SHA256, not that string as release-byte proof. Remote compute plus scoped delivery refuses before creation. Real Rivet/paid-harness integration, physical-host/Mac fence certification, relay cutover and fallback deletion remain gated.
 
 - **Who:** an explicitly authorized source reviewer; this route does not install globally or authorize running commands on a personal server.
 - **What:** build a separate inspectable candidate and read its help. Existing managed release, launcher, profiles, Rex and live panes stay untouched.
 - **When:** deliberately evaluating newer source, not while following the published-release installation branch below.
 - **Where:** a new private checkout/output directory on Mac arm64 or Linux x86_64, with Git, Zig0.15.2 and Python3.9+ already available. Runtime run-visible requires an explicitly selected existing API13 server; child streams are noninteractive pipes.
-- **Why:** review the new visible argv/output/exit lifecycle without confusing it with frozen release bytes or prematurely applying the opt-in [Rivet adapter](../../items/run/MIGRATION.md).
+- **Why:** review visible argv/output/exit, compute callbacks, local scoped delivery and corrected nested routing without confusing source with frozen release bytes or prematurely applying the opt-in [Rivet adapter](../../items/run/MIGRATION.md).
 - **How:** substitute the exact reviewed pushed40-hex integration commit below. Leave the candidate separate, record its hash and use only its absolute path after any separately authorized runtime review. Missing tools or an unsupported API are blockers, not permission to install packages or restart Rex.
 
 ```sh
@@ -40,6 +40,10 @@ test "$(zig version)" = 0.15.2
 CANDIDATE="$WORK/build/bin/teerex"
 "$CANDIDATE" run-visible --help
 "$CANDIDATE" targets exec --help
+"$CANDIDATE" agents --help
+"$CANDIDATE" agents exec --help
+"$CANDIDATE" agents channel --help
+"$CANDIDATE" boards state inspect --help
 if [ "$(uname -s)" = Darwin ]; then shasum -a 256 "$CANDIDATE"; else sha256sum "$CANDIDATE"; fi
 ```
 

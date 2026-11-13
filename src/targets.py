@@ -11,7 +11,22 @@ import sys
 MAX_CONFIG = 1024 * 1024
 NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}\Z")
 PATH_FIELDS = ("home", "socket", "rex", "teerex", "store")
-REX_COMMANDS = {"observe", "watch", "send", "spawn", "run", "run-visible", "doctor", "offstage", "jobs", "adapters", "surfaces", "boards", "agents", "snapshot", "restore", "update", "recovery"}
+# Selectors belong to complete leaves, not command families. Offline leaves receive
+# no Rex target; board state/rendering still needs its selected command-host store.
+SELECTORS = {**{(verb,): ("socket",) for verb in
+                ("observe", "watch", "spawn", "run", "run-visible", "doctor", "offstage", "snapshot", "restore", "update")},
+             **{("surfaces", op): ("socket",) for op in ("open", "inspect", "move", "focus", "close")},
+             ("surfaces", "palette", "install"): ("socket",),
+             **{("adapters", op): ("socket",) for op in ("generate", "call")},
+             **{("jobs", op): ("socket",) for op in ("track", "inspect", "adopt", "present", "forget")},
+             **{("recovery", op): ("socket",) for op in ("snapshot", "restore", "update")},
+             **{("state", op): ("store",) for op in ("inspect", "remap-preview", "remap-apply")},
+             ("fleet",): ("store",), ("probe",): ("socket",),
+             **{(verb,): ("socket", "host", "store") for verb in ("send", "ask", "try-route", "inbox")},
+             **{(verb, op): ("socket", "host", "store") for verb, operations in
+                (("seat", ("register", "inspect", "clear")), ("inbox", ("append", "inspect", "clear")),
+                 ("fleet", ("report", "forget"))) for op in operations},
+             ("agents", "launch"): ("socket", "host", "store")}
 
 
 def absolute(value, field):
@@ -85,21 +100,27 @@ def command_argv(host, command):
         raise ValueError("a command is required")
     # Only parse options before the literal program-argv delimiter.
     options = command[:command.index("--")] if "--" in command else command
-    if any(option in options for option in ("--socket", "--server", "-S", "--host", "--rex")) or ("--config" in options and command[0] != "agents"):
+    flags = {option.split("=", 1)[0] for option in options if option.startswith("-")}
+    at = next((i for i, arg in enumerate(options) if arg.startswith("-")), len(options))
+    leaf = tuple(options[:at])
+    # The native board bridge accepts both boards seat OP and root seat OP,
+    # as well as boards inbox/fleet renderers. Preserve the user's spelling.
+    if leaf[:1] == ("boards",):
+        leaf = leaf[1:]
+    leaf_config = leaf[:1] == ("agents",) or leaf == ("fleet",)
+    if flags.intersection(("--socket", "--server", "-S", "--host", "--rex")) or ("--config" in flags and not leaf_config):
         raise ValueError("named host conflicts with explicit socket/server/host/config/rex")
     result = list(command)
-    verb = result[0]
-    if "--help" not in options:
-        if verb in {"seat", "inbox", "ask", "send"} or (verb == "spawn" and "--profile" in options) or (verb == "agents" and result[1:2] == ["launch"]):
-            at = 2 if verb in {"seat", "inbox", "agents"} else 1
-            supplied = ["--socket", host["socket"], "--host", host["host_id"]]
-            if "--store" not in options:
-                supplied += ["--store", host["store"]]
-            result[at:at] = supplied
-        elif verb in REX_COMMANDS and not ((verb == "surfaces" and result[1:2] == ["palette"]) or (verb == "recovery" and result[1:2] == ["inspect"]) or verb == "agents"):
-            # Existing nested commands expect their operation before options.
-            at = 2 if verb in {"jobs", "adapters", "surfaces", "boards", "agents", "recovery"} else 1
-            result[at:at] = ["--socket", host["socket"]]
+    if "--help" not in flags:
+        selectors = SELECTORS.get(leaf, ())
+        if leaf == ("spawn",) and "--profile" in flags:
+            selectors = ("socket", "host", "store")
+        supplied = []
+        for field in selectors:
+            if field == "store" and "--store" in flags:
+                continue  # Existing explicit command-host store override remains supported.
+            supplied += ["--" + field, host["host_id" if field == "host" else field]]
+        result[at:at] = supplied
     return [host["teerex"], "--rex", host["rex"], *result]
 
 

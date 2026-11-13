@@ -59,7 +59,11 @@ The source integration after alpha.5 adds `teerex targets exec --config ABS --ho
 - **Why:** reuse one explicit host resolver and lossless argv serializer rather than construct a second SSH route in a profile or wrapper.
 - **How:** use the `targets exec` form, placing `--tty` before the literal `--`. Strict pinned trust, batch authentication, disabled forwarding/reuse and one-shot execution remain; a transport failure does not prove a remote command had no effect and does not authorize a retry.
 
-Disposable Linux acceptance separately verified actual PTY allocation versus default non-TTY streams, exact asymmetric literal argv and exit status, plus unknown/changed-key refusal. This is transport evidence, not cross-host agent-callback, sandbox, native Mac or release certification. The opt-in does not enable reverse forwarding or complete issue #14/#21.
+Disposable Linux acceptance separately verified actual PTY allocation versus default non-TTY streams, exact asymmetric literal argv and exit status, plus unknown/changed-key refusal. This is transport evidence, not cross-host agent-callback, sandbox, native Mac or release certification. The opt-in does not enable reverse forwarding. The later [source-only agent extension](../items/agents/README.md#source-only-compute-routing-and-scoped-delivery-issues14-and21) uses it for unfenced compute and non-TTY callbacks; remote-fenced delivery still refuses and no relay cutover is authorized.
+
+## Source-only leaf routing repair (#16)
+
+[Complete selector contract](alpha5.md#leaf-aware-named-host-routing-issue16): named execution now inserts only selectors accepted by the full leaf. Nested boards state gets store only; seat/inbox/report/forget gets socket/host/store. Offline jobs list/recovery inspect and non-launch agents get no injected Rex selectors. Palette install receives socket after its full path; palette preparation gets none. Fleet rendering may select its own explicit config/hosts on the chosen command host. Literal argv after `--`, explicit store overrides, strict SSH and no-retry semantics remain. This repairs source, not frozen alpha.5 archives.
 
 ## Plans, apply, and PATH consent
 
