@@ -2,6 +2,8 @@
 
 Joshua Gantt's personal, opinionated collection of Rex extensions, utilities, scripts, and helpers.
 
+Licensed under [Apache-2.0](LICENSE) for teerex's original material; third-party rights are in [RIGHTS.md](RIGHTS.md).
+
 **Alpha.5 adds tested operating-layer slices:** [visible surfaces and native palette plans](items/surfaces/README.md), [live boards/seat/inbox/decisions](items/boards/README.md), [profile/protocol launches and responsibility](items/agents/README.md), [structural recovery/manual update inventory](items/recovery/README.md), and [named-host fleet installation](docs/fleet-install.md). Read the [exact alpha.5 release guide](docs/releases/v0.1.0-alpha.5.md) and confirm its published assets before installing. The [larger milestone](docs/alpha5.md) remains incomplete: authoritative drafts, generic harness resume, exact mixed-host certification and consolidated agent-core cutover/deletions are not claimed. Alpha.4/history and host-safety blockers remain intact.
 
 **Unreleased source follow-on:** [`run-visible`](items/run/VISIBLE.md) adds noninteractive argv execution in a visible tab/tiled pane on Mac/Linux API13, with exact cwd/env/stdin, bounded raw output, actual exit/signal and explicit owned-pane cleanup or retention. Legacy `run` is unchanged. The [Rivet adapter](items/run/MIGRATION.md) is opt-in with its fallback retained; real harness/fence/service cutover remains gated. Published alpha.5 does not contain this command or the source-only [`targets exec --tty` option](docs/fleet-install.md#source-only-interactive-transport). The visible-runner integration [passed all four exact-head CI lanes](https://github.com/jcbbge/teerex/actions/runs/43367904691).

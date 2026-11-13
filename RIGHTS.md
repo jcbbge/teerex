@@ -2,7 +2,7 @@
 
 teerex is an independent research and future-helper collection, not an official Rex or Superlogical project. Rex, Ghostty/libghostty, and Rivet belong to their respective owners.
 
-No license for teerex's original material has yet been chosen by Joshua. Do not infer an open-source license from GitHub visibility. Any later license must clearly distinguish original work from third-party material and respect each item's dependencies and permissions.
+teerex's original material (its source code, tests, tools and authored documentation) is licensed under the [Apache License, Version 2.0](LICENSE), chosen by Joshua on 13 November 2026. The license covers only that original work. It grants nothing in Rex, Ghostty/libghostty, Rivet or any other third-party material quoted, cited or referenced here; each keeps its own owner's terms, and the boundary below still applies.
 
 The research includes attributed links, short quotations used for analysis, API identifiers, and factual capture metadata. It does not grant rights to Rex, its documentation, installer, packaging, schemas, terminfo data, or application binaries. Public downloadability and a checksum are not redistribution permission.
 

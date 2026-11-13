@@ -2,6 +2,8 @@
 
 ## Current phased plan — 13 November 2026
 
+**Direction ruling (Joshua, 13 November 2026):** teerex is Joshua's personal software for his opinionated SDLC on his own machines (hive and the M5). It is not being reset into a generic product: Josh-specific material (his hosts, agent-core, Rivet, the seat) stays. Original material is now [Apache-2.0](../LICENSE). Every roadmap item below is selected for building, landing and installing, including those this plan previously marked proposed, deferred or "no user", because Joshua is the user. Only items that need a Rex API that does not exist are host-blocked; each gets one upstream request instead. Earlier "proposal, not approval" wording in this document is superseded by this ruling.
+
 **Recommended next product order: manual Rex park/resume, minimal cartridge discovery, explicit evidence attachments, then narrower presentation filters if measurements justify them.** Prepare read-only readiness criteria and a safe-subset failing-CLI baseline alongside the first selected feature. This order is a proposal, not approval to implement every item.
 
 **Joshua authorized publication of this planning and handoff package. He did not select manual park/resume or approve outside implementation by doing so.** All filed issues remain externally owned, including those not named here. Keep their overlaps as dependencies; do not redispatch them as phase work. Future implementation requires an explicit selected scope; planning/specification can proceed within the handoff's boundaries.
