@@ -1,4 +1,7 @@
 """Public board PTY contracts. No personal server, state, credentials or registry."""
+import contextlib
+import importlib.util
+import io
 import fcntl
 import json
 import os
@@ -15,6 +18,8 @@ import termios
 import time
 import unicodedata
 import unittest
+from unittest import mock
+from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[2]
 BIN = str(Path(os.environ.get('TEEREX_BIN', ROOT / 'zig-out/bin/teerex')).resolve())
@@ -334,6 +339,55 @@ class BoardTest(unittest.TestCase):
         self.assertTrue(all(row['host']=='hive' for row in snapshot['rows']))
         self.assertEqual(snapshot['counts'],dict(total=7,working=1,waiting=1,blocked=1,error_count=1,idle=1,done=1,unknown=1))
         self.assertEqual(snapshot['counts']['total'],len(snapshot['rows']))
+
+    def test_check_retries_in_flux_panes_and_reports_only_last_run(self):
+        spec=importlib.util.spec_from_file_location('check_one_source',Path(__file__).with_name('check_one_source.py'))
+        check=importlib.util.module_from_spec(spec);spec.loader.exec_module(check)
+        row=dict(block='changing',session='session',state='working')
+        def packet(rows):
+            counts=dict(total=len(rows),working=len(rows),waiting=0,blocked=0,error_count=0,idle=0,done=0,unknown=0)
+            return SimpleNamespace(returncode=0,stdout=json.dumps(dict(hosts=[dict(host='hive',rows=rows,counts=counts,reachable=True)])))
+        for before in ([], [dict(row,state='idle')]):
+            with self.subTest(before=before), mock.patch.object(check.targets,'load_config',return_value=dict(hosts=dict(hive={}))), mock.patch.object(check,'rex_rows',side_effect=[before,[row],[row],[row]]) as rex, mock.patch.object(check.subprocess,'run',side_effect=[packet(before),packet([row])]) as board:
+                out=io.StringIO()
+                with contextlib.redirect_stdout(out): code=check.main(['--config','/unused'])
+                self.assertEqual(code,0,out.getvalue())
+                self.assertEqual(rex.call_count,4)
+                self.assertEqual(board.call_count,2)
+                self.assertIn('1 reruns',out.getvalue())
+                self.assertIn('0 differences',out.getvalue())
+                self.assertNotIn('DIFF',out.getvalue())
+
+    def test_check_settled_mismatch_fails_without_retry(self):
+        spec=importlib.util.spec_from_file_location('check_one_source',Path(__file__).with_name('check_one_source.py'))
+        check=importlib.util.module_from_spec(spec);spec.loader.exec_module(check)
+        row=dict(block='settled',session='session',state='working')
+        snapshot=dict(host='hive',rows=[],counts=dict(total=0,working=0,waiting=0,blocked=0,error_count=0,idle=0,done=0,unknown=0),reachable=True)
+        with mock.patch.object(check.targets,'load_config',return_value=dict(hosts=dict(hive={}))), mock.patch.object(check,'rex_rows',side_effect=[[row],[row]]), mock.patch.object(check.subprocess,'run',return_value=SimpleNamespace(returncode=0,stdout=json.dumps(dict(hosts=[snapshot])))) as board:
+            out=io.StringIO()
+            with contextlib.redirect_stdout(out): code=check.main(['--config','/unused'])
+        self.assertEqual(code,1)
+        self.assertEqual(board.call_count,1)
+        self.assertIn('0 reruns',out.getvalue())
+        self.assertIn('DIFF hive: missing board row settled',out.getvalue())
+        self.assertIn('1 differences',out.getvalue())
+
+    def test_check_flux_is_bounded_and_keeps_settled_differences(self):
+        spec=importlib.util.spec_from_file_location('check_one_source',Path(__file__).with_name('check_one_source.py'))
+        check=importlib.util.module_from_spec(spec);spec.loader.exec_module(check)
+        settled=dict(block='settled',session='session',state='working')
+        changing=dict(block='changing',session='session',state='idle')
+        snapshot=dict(host='hive',rows=[],counts=dict(total=0,working=0,waiting=0,blocked=0,error_count=0,idle=0,done=0,unknown=0),reachable=True)
+        with mock.patch.object(check.targets,'load_config',return_value=dict(hosts=dict(hive={}))), mock.patch.object(check,'rex_rows',side_effect=[[settled],[settled,changing]]*3) as rex, mock.patch.object(check.subprocess,'run',return_value=SimpleNamespace(returncode=0,stdout=json.dumps(dict(hosts=[snapshot])))) as board:
+            out=io.StringIO()
+            with contextlib.redirect_stdout(out): code=check.main(['--config','/unused'])
+        self.assertEqual(code,1)
+        self.assertEqual(rex.call_count,6)
+        self.assertEqual(board.call_count,3)
+        self.assertIn('2 reruns',out.getvalue())
+        self.assertEqual(out.getvalue().count('missing board row settled'),1)
+        self.assertIn('missing board row changing',out.getvalue())
+        self.assertIn('2 differences',out.getvalue())
 
     def test_gone_removes_rows(self):
         events=[json.loads(line) for line in FIXTURE.read_text().splitlines()]

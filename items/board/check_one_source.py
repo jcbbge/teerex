@@ -56,19 +56,27 @@ def rex_rows(config, host):
 def differences(expected, snapshot):
     """Return every identity/state/count discrepancy, including duplicates."""
     errors = []
+    differing_blocks = set()
     actual = snapshot['rows']
     for label, rows in [('Rex', expected), ('board', actual)]:
         for block, count in Counter(r['block'] for r in rows).items():
-            if count != 1: errors.append(f'{label} duplicate {block}: {count} rows')
+            if count != 1:
+                errors.append(f'{label} duplicate {block}: {count} rows')
+                differing_blocks.add(block)
     want = {r['block']: r for r in expected}
     got = {r['block']: r for r in actual}
     for block in sorted(want.keys() | got.keys()):
-        if block not in got: errors.append(f'missing board row {block}')
-        elif block not in want: errors.append(f'extra board row {block}')
+        if block not in got:
+            errors.append(f'missing board row {block}')
+            differing_blocks.add(block)
+        elif block not in want:
+            errors.append(f'extra board row {block}')
+            differing_blocks.add(block)
         else:
             for field in ('session', 'state'):
                 if want[block][field] != got[block][field]:
                     errors.append(f'{block} {field}: Rex={want[block][field]} board={got[block][field]}')
+                    differing_blocks.add(block)
     counts = dict.fromkeys(('working', 'waiting', 'blocked', 'error_count', 'idle', 'done', 'unknown'), 0)
     for row in actual:
         state = row['state']
@@ -79,7 +87,45 @@ def differences(expected, snapshot):
         if counts.get(key) != snapshot['counts'].get(key):
             errors.append(f'header {key}: rows={counts.get(key)} header={snapshot["counts"].get(key)}')
     if snapshot.get('reachable') is not True: errors.append('board host is unavailable or unproven')
-    return errors
+    return errors, differing_blocks
+
+
+def check_run(args, hosts):
+    errors, summaries = [], []
+    def read_rex(phase):
+        result = {}
+        for host in hosts:
+            try: result[host] = rex_rows(args.config, host)
+            except (OSError, ValueError, subprocess.SubprocessError) as exc:
+                errors.append(f'{host}: Rex {phase} read failed ({type(exc).__name__})')
+        return result
+    before = read_rex('before')
+    snapshot = None
+    try:
+        board = subprocess.run([args.teerex, 'board', '--config', args.config, '--hosts', ','.join(hosts), '--json'], capture_output=True, text=True, timeout=90)
+        snapshot = json.loads(board.stdout)
+        if board.returncode: errors.append(f'board --json exited {board.returncode}')
+        if snapshot.get('invalid'): errors.append(f'board rejected {snapshot["invalid"]} events')
+        actual_hosts = [s['host'] for s in snapshot['hosts']]
+        if Counter(actual_hosts) != Counter(hosts): errors.append(f'host coverage: config={hosts} board={actual_hosts}')
+    except (OSError, ValueError, KeyError, subprocess.SubprocessError) as exc:
+        errors.append(f'board snapshot failed ({type(exc).__name__})')
+        snapshot = None
+    after = read_rex('after')
+    retry = False
+    if snapshot is not None:
+        for host_snapshot in snapshot['hosts']:
+            host = host_snapshot['host']
+            if host not in before or host not in after: continue
+            old = {r['block']: (r['session'], r['state']) for r in before[host]}
+            new = {r['block']: (r['session'], r['state']) for r in after[host]}
+            in_flux = {block for block in old.keys() | new.keys() if old.get(block) != new.get(block)}
+            for expected in (before[host], after[host]):
+                found, blocks = differences(expected, host_snapshot)
+                retry |= bool(blocks & in_flux)
+                errors.extend(f'{host}: {error}' for error in found)
+            summaries.append(f'{host}: Rex {len(before[host])} before / {len(after[host])} after agent panes; board {len(host_snapshot["rows"])} rows; header {host_snapshot["counts"]["total"]}')
+    return list(dict.fromkeys(errors)), summaries, retry
 
 
 def main(argv=None):
@@ -88,26 +134,11 @@ def main(argv=None):
     parser.add_argument('--teerex', default=os.environ.get('TEEREX_BIN', str(ROOT/'zig-out/bin/teerex')))
     args = parser.parse_args(argv)
     hosts = list(targets.load_config(args.config)['hosts'])
-    errors = []
-    expected = {}
-    for host in hosts:
-        try: expected[host] = rex_rows(args.config, host)
-        except (OSError, ValueError, subprocess.SubprocessError) as exc:
-            errors.append(f'{host}: Rex read failed ({type(exc).__name__})')
-    try:
-        board = subprocess.run([args.teerex, 'board', '--config', args.config, '--hosts', ','.join(hosts), '--json'], capture_output=True, text=True, timeout=90)
-        snapshot = json.loads(board.stdout)
-        if board.returncode: errors.append(f'board --json exited {board.returncode}')
-        if snapshot.get('invalid'): errors.append(f'board rejected {snapshot["invalid"]} events')
-        actual_hosts = [s['host'] for s in snapshot['hosts']]
-        if Counter(actual_hosts) != Counter(hosts): errors.append(f'host coverage: config={hosts} board={actual_hosts}')
-        for host_snapshot in snapshot['hosts']:
-            host = host_snapshot['host']
-            if host in expected:
-                errors.extend(f'{host}: {error}' for error in differences(expected[host], host_snapshot))
-                print(f'{host}: Rex {len(expected[host])} agent panes; board {len(host_snapshot["rows"])} rows; header {host_snapshot["counts"]["total"]}')
-    except (OSError, ValueError, KeyError, subprocess.SubprocessError) as exc:
-        errors.append(f'board snapshot failed ({type(exc).__name__})')
+    for run in range(3):
+        errors, summaries, retry = check_run(args, hosts)
+        if not retry: break
+    for summary in summaries: print(summary)
+    print(f'{run} reruns')
     for error in errors: print('DIFF '+error)
     print(f'{len(errors)} differences')
     return int(bool(errors))

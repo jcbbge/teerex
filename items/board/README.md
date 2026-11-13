@@ -182,8 +182,10 @@ python3 items/board/check_one_source.py --config "$HOME/.config/teerex/hosts.jso
 It reads Rex pane/status inventory and launch metadata independently through
 the existing named-host transport, then reads `board --json`. It prints every
 missing/extra/duplicate pane, session/state mismatch and header discrepancy;
-only zero differences exits 0. Reads are sequential snapshots, so a pane or
-status changing between reads can produce a real observed difference. Host
+only zero differences exits 0. The board snapshot is bracketed by two Rex reads. A presence, session or
+state change marks a pane as in flux. If a discrepancy touches such a pane,
+the entire check runs again, up to three runs total. Only the last run is
+printed, with its rerun count; settled discrepancies are always retained. Host
 read failures are differences, never empty inventories accepted as success.
 The disposable two-host test checks live JSON and injects an incorrect header
 total to prove the check fails and names the difference.
