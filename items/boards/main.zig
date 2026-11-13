@@ -65,6 +65,21 @@ pub const call_log = @import("calls.zig");
 /// PID/signal lifetime and terminal; no detached renderer or hidden service.
 /// args: inbox|fleet render args, seat OP, inbox OP, fleet report|forget, ask,
 /// try-route, or probe. Root aliases prepend their verb before invoking run.
+/// The path long-lived children (agent hooks, in-pane supervisors, board helpers) should call back into.
+/// An installed teerex runs from PREFIX/versions/V/teerex; recording that resolved path would pin every
+/// agent launched today to today's binary forever, so later fixes (the typing guard) never reach it.
+/// When the managed PREFIX/current/teerex link exists, use it instead so upgrades reach running agents.
+pub fn stableSelfPath(allocator: std.mem.Allocator) ![]const u8 {
+    const self = try std.fs.selfExePathAlloc(allocator);
+    const version_dir = std.fs.path.dirname(self) orelse return self;
+    const versions = std.fs.path.dirname(version_dir) orelse return self;
+    if (!std.mem.eql(u8, std.fs.path.basename(versions), "versions")) return self;
+    const prefix = std.fs.path.dirname(versions) orelse return self;
+    const current = try std.fs.path.join(allocator, &.{ prefix, "current", std.fs.path.basename(self) });
+    std.fs.accessAbsolute(current, .{}) catch return self;
+    return current;
+}
+
 pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
     var argv: std.ArrayList([]const u8) = .empty;
     defer argv.deinit(allocator);
@@ -82,7 +97,7 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
         for (args) |arg| if (std.mem.eql(u8, arg, "--teerex") or std.mem.startsWith(u8, arg, "--teerex=")) {
             explicit_self = true;
         };
-        if (!explicit_self) try argv.appendSlice(allocator, &.{ "--teerex", try std.fs.selfExePathAlloc(allocator) });
+        if (!explicit_self) try argv.appendSlice(allocator, &.{ "--teerex", try stableSelfPath(allocator) });
     }
     const err = std.process.execv(allocator, argv.items);
     std.debug.print("teerex boards: Python3.9+ foreground runtime unavailable: {s}\n", .{@errorName(err)});

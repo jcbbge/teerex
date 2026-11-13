@@ -17,6 +17,36 @@ import unittest
 BIN = Path(os.environ.get("TEEREX_BIN", Path(__file__).resolve().parents[1] / "zig-out/bin/teerex"))
 
 
+class StableRuntimeTest(unittest.TestCase):
+    """Agents launched today must call back through the managed current link, not today's versioned binary."""
+    def test_managed_install_records_current_link_for_long_lived_children(self):
+        import shutil
+        with tempfile.TemporaryDirectory(prefix="teerex-stable-") as root:
+            root = Path(root)
+            version = root / "managed" / "versions" / "vX"
+            version.mkdir(parents=True)
+            shutil.copy2(BIN, version / "teerex")
+            (root / "managed" / "current").symlink_to("versions/vX")
+            registry = root / "registry"
+            registry.mkdir(mode=0o700)
+            config = root / "profiles.json"
+            config.write_text(json.dumps(dict(schema_version=1, defaults=dict(
+                registry=str(registry), socket="/tmp/unused.sock", session="session:00000000-0000-0000-0000-000000000000",
+                cwd="/tmp", host="hive", owner="o", purpose="p"),
+                profiles=dict(claude=dict(argv=["/bin/true"], harness="claude", protocol_mode="argument")))))
+            out = subprocess.run([str(version / "teerex"), "agents", "shell", "--config", str(config)],
+                                 capture_output=True, text=True, timeout=20).stdout
+            self.assertIn(str(root / "managed" / "current" / "teerex"), out)
+            self.assertNotIn(str(version / "teerex"), out)
+            # Outside a managed layout the resolved path is still used.
+            plain = root / "plain"
+            plain.mkdir()
+            shutil.copy2(BIN, plain / "teerex")
+            out = subprocess.run([str(plain / "teerex"), "agents", "shell", "--config", str(config)],
+                                 capture_output=True, text=True, timeout=20).stdout
+            self.assertIn(str(plain / "teerex"), out)
+
+
 class TargetsTest(unittest.TestCase):
     def setUp(self):
         temp = tempfile.TemporaryDirectory(prefix="teerex-targets-")
