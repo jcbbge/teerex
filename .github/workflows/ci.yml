@@ -231,7 +231,10 @@ jobs:
       - name: Run explicit named-host and embedded fleet bridge contracts
         env:
           TEEREX_BIN: ${{ github.workspace }}/zig-out/bin/teerex
-        run: python3 src/test_targets.py -v
+        run: |
+          export TEEREX_CALL_LOG_DIR="$RUNNER_TEMP/teerex-call-history"
+          python3 src/test_targets.py -v
+          python3 items/boards/test_boards.py CallsTest -v
 
       - name: Run visible surfaces and native palette plan/apply contracts
         env:

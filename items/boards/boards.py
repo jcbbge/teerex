@@ -15,6 +15,8 @@ import subprocess
 import sys
 import textwrap
 import time
+import tempfile
+import secrets
 
 MAX_BYTES = 1048576
 MAX_SEATS = 32
@@ -167,6 +169,29 @@ class Store:
             self.close()
             raise
 
+    def archive(self, records):
+        name = "archive-%016d.json" % self.state["generation"]
+        raw = json.dumps(records, ensure_ascii=False).encode()
+        try:
+            fd = self.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL)
+        except FileExistsError:
+            fd = self.open(name, os.O_RDONLY)
+            try:
+                private(fd)
+                check(read_fd(fd, MAX_BYTES * 2).encode() == raw, "archive_generation_conflict_inspect_before_retry")
+            finally:
+                os.close(fd)
+            return
+        try:
+            private(fd)
+            with os.fdopen(os.dup(fd), "wb") as f:
+                f.write(raw)
+                f.flush()
+                os.fsync(f.fileno())
+            os.fsync(self.dir)
+        finally:
+            os.close(fd)
+
     def open(self, name, flags):
         return os.open(name, flags | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600, dir_fd=self.dir)
 
@@ -179,6 +204,33 @@ class Store:
             self.dir = None
 
     def save(self):
+        # Archive complete groups before replacing state. Immutable generation files
+        # make a crash between archive and state replacement recoverable on retry.
+        archived = []
+        def evict(seat, records):
+            archived.extend(dict(target=seat["target"], record=r) for r in records)
+            for r in records:
+                seat["records"].remove(r)
+        for seat in self.state["seats"]:
+            opened, done, activity = folded(seat)
+            groups = [[r] for r in activity] + [list(pair) for pair in done]
+            groups.sort(key=lambda group: group[0]["at"])
+            if len(seat["records"]) - len(opened) > MAX_RECORDS:
+                while len(seat["records"]) - len(opened) > 96 and groups:
+                    evict(seat, groups.pop(0))
+        def encoded_size():
+            return len(json.dumps(self.state, ensure_ascii=False, indent=2).encode()) + sum(len(folded(s)[0]) for s in self.state["seats"]) * 16384
+        while encoded_size() > MAX_BYTES - 64:
+            choices = []
+            for seat in self.state["seats"]:
+                _, done, activity = folded(seat)
+                choices.extend((r["at"], seat, [r]) for r in activity)
+                choices.extend((pair[0]["at"], seat, list(pair)) for pair in done)
+            check(choices, "open_decisions_exceed_store_capacity")
+            _, seat, records = min(choices, key=lambda choice: choice[0])
+            evict(seat, records)
+        if archived:
+            self.archive(archived)
         self.state["generation"] += 1
         validate_state(self.state)
         raw = json.dumps(self.state, ensure_ascii=False, indent=2).encode()
@@ -216,7 +268,7 @@ def validate_state(s):
         check(type(seat["registered_at"]) is int and seat["registered_at"] > 0, "invalid_timestamp")
         check(seat["target"] not in seen, "duplicate_seat")
         seen.append(seat["target"])
-        check(isinstance(seat["records"], list) and len(seat["records"]) <= MAX_RECORDS, "invalid_records_capacity")
+        check(isinstance(seat["records"], list) and len(seat["records"]) <= MAX_RECORDS + 32, "invalid_records_capacity")
         decisions = {}
         for r in seat["records"]:
             exact(r, ("kind", "at", "from", "body"))
@@ -317,10 +369,10 @@ def mutate(a):
                     store.state["seats"].remove(seat)
                 else:
                     check(not folded(seat)[0], "resolve_open_decisions_before_clear")
+                    store.archive([dict(target=t, record=r) for r in seat["records"]])
                     seat["records"] = []
             else:
                 text(a.sender, 128, False)
-                check(len(seat["records"]) < MAX_RECORDS, "inbox_full_resolve_and_clear_explicitly")
                 if a.command == "inbox":
                     body = text(read_input(a.message_file, 65536, getattr(a, "input_deadline", None)), 65536)
                     # Legacy typed message prefixes are rejected, never silently demoted to activity.
@@ -337,13 +389,8 @@ def mutate(a):
                     body = card(json_load(read_input(a.card_file, 49152)))
                     check(not any(r["kind"] == "decision" and r["body"]["id"] == body["id"] for r in seat["records"]),
                           "decision_id_already_used")
-                    # Reserve one future resolution record for every pinned card.
-                    check(len(seat["records"]) + len(folded(seat)[0]) + 2 <= MAX_RECORDS,
-                          "inbox_full_reserve_resolution_capacity")
+                    check(len(folded(seat)[0]) < 32, "open_decision_limit_32")
                     kind = "decision"
-                if kind == "message":
-                    check(len(seat["records"]) + len(folded(seat)[0]) + 1 <= MAX_RECORDS,
-                          "inbox_full_reserve_resolution_capacity")
                 seat["records"].append(dict(kind=kind, at=stamp(), **{"from": a.sender}, body=body))
         if getattr(a, "input_deadline", None) is not None and time.monotonic() >= a.input_deadline:
             raise Deadline("inbox_deadline_before_save_no_record_saved")
@@ -352,6 +399,103 @@ def mutate(a):
                generation=store.state["generation"], store=a.store, provenance="report", terminal_input_attempted=False,
                application_consumption="not_assessed", global_atomicity=False)
         return 0
+
+
+def decision_text(body):
+    lines = [f"DECISION [{body['id']}]: {body['title']}", f"Ask: {body['ask']}", f"Context: {body['context']}"]
+    for i, option in enumerate(body["options"], 1):
+        lines += [f"{i}. {option['label']}", f"   Gain: {option['gain']}", f"   Lose: {option['lose']}"]
+    return "\n".join(lines + ["Recommendation: " + body["recommend"]])
+
+
+def deliver_ask(a):
+    a.delivery_attempted = False
+    try:
+        return _deliver_ask(a)
+    except Cancelled as e:
+        result(kind="ask_result", outcome="cancelled", terminal_input_attempted=a.delivery_attempted,
+               retry_safe=False, recovery="inspect_target_and_history_before_retry")
+        return 128 + e.signum
+    except (Refused, OSError, ValueError, KeyError, TypeError) as e:
+        result(kind="ask_result", outcome="refused_or_unknown", reason=str(e)[:512],
+               terminal_input_attempted=a.delivery_attempted, retry_safe=False,
+               recovery="inspect_target_and_history_before_retry")
+        return 1
+
+
+def _deliver_ask(a):
+    selected(a)
+    text(a.sender, 128, False)
+    check(a.teerex and os.path.isabs(a.teerex), "absolute_native_teerex_required")
+    if a.resolve is not None:
+        check(not any((a.title, a.ask, a.context, a.option, a.recommend, a.id)), "resolution_conflicts_with_card_fields")
+        text(a.resolve, 128)
+        body = "DECISION RESOLVED [" + a.resolve + "]\nAnswer: " + text(a.answer)
+    else:
+        reply = text(a.answer) if a.answer is not None else None
+        a.answer = None
+        if a.card_file:
+            check(not any((a.title, a.ask, a.context, a.option, a.recommend, a.id)), "card_file_conflicts_with_card_fields")
+            value = card(json_load(read_input(a.card_file, 49152)))
+        else:
+            options = []
+            for option in a.option:
+                parts = [part.strip() for part in option.split("::")]
+                check(len(parts) == 3, "option_requires_label_gain_lose")
+                options.append(dict(zip(("label", "gain", "lose"), parts)))
+            value = card(dict(id=a.id or secrets.token_hex(3), title=a.title, ask=a.ask, context=a.context,
+                              options=options, recommend=a.recommend))
+        body = decision_text(value)
+        if reply is not None:
+            body += "\nReply: " + reply
+        # mutate must not read stdin twice when history was requested.
+        a.card_file = None
+    # Validate optional history before delivery, but never hold its lock while typing.
+    if a.store:
+        with contextlib.closing(Store(a.store)) as store:
+            seat = seat_for(store, selected(a))
+            check(seat is not None, "history_seat_not_registered")
+            if a.resolve is not None:
+                check(any(r["body"]["id"] == a.resolve for r in folded(seat)[0]), "open_decision_not_found")
+            else:
+                check(not any(r["kind"] == "decision" and r["body"]["id"] == value["id"] for r in seat["records"]), "decision_id_already_used")
+    argv = [a.teerex, "send", "--socket", a.socket, "--session", a.session, "--block", a.block,
+            "--from", a.sender, "--message-file", "-", "--draft", a.draft, "--draft-wait-ms", str(a.draft_wait_ms)]
+    # No store/host selectors: native send must type even into a registered seat.
+    a.delivery_attempted = True
+    proc = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+    try:
+        output, _ = proc.communicate(body.encode())
+    except Cancelled as e:
+        proc.send_signal(e.signum)
+        try:
+            proc.communicate(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.communicate()
+        raise
+    if proc.returncode:
+        sys.stdout.buffer.write(output)
+        return proc.returncode if proc.returncode > 0 else 128 - proc.returncode
+    if a.store:
+        try:
+            with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8") as f:
+                if a.resolve is None:
+                    json.dump(value, f)
+                    f.flush()
+                    a.card_file = f.name
+                # Suppress the storage receipt; delivery has its own native receipt.
+                with contextlib.redirect_stdout(__import__("io").StringIO()):
+                    mutate(a)
+        except (Refused, OSError, ValueError) as e:
+            result(kind="ask_result", outcome="delivered_history_failed", terminal_input_attempted=True,
+                   retry_safe=False, reason=str(e)[:512], recovery="do_not_resend_inspect_history")
+            return 1
+    receipt = json_load(output.decode())
+    receipt["decision_id"] = a.resolve if a.resolve is not None else value["id"]
+    receipt["history"] = "recorded" if a.store else "not_requested"
+    print(json.dumps(receipt), flush=True)
+    return 0
 
 
 def bounded_command(argv, timeout=5):
@@ -726,8 +870,46 @@ def state_command(a):
         return 0
 
 
+def calls_board(a):
+    import teerex_calls
+    check(a.once or sys.stdout.isatty(), "live_board_requires_visible_tty_use_once_for_capture")
+    check(bool(a.config) == bool(a.hosts), "calls_config_and_hosts_required_together")
+    while True:
+        sources, rows = [], []
+        if a.config:
+            hosts = a.hosts.split(",")
+            check(1 <= len(hosts) <= 16 and len(set(hosts)) == len(hosts), "one_to_sixteen_unique_hosts")
+            check(a.teerex and os.path.isabs(a.teerex), "absolute_native_teerex_required")
+            for host in hosts:
+                check(HOST.fullmatch(host), "invalid_host_name")
+                try:
+                    payload = bounded_command([a.teerex, "--config", a.config, "--host", host,
+                                                        "boards", "calls", "--once", "--json", "--limit", str(a.limit)], timeout=8)
+                    rows.extend(dict(row, command_host=host) for row in payload["calls"])
+                    sources.append(dict(host=host, outcome="observed"))
+                except (Refused, OSError, ValueError) as e:
+                    sources.append(dict(host=host, outcome="unknown", reason=str(e)[:512]))
+        else:
+            rows = teerex_calls.recent(a.limit)
+        rows.sort(key=lambda row: row["at"], reverse=True)
+        rows = rows[:a.limit]
+        payload = dict(schema_version=1, kind="calls_board", calls=rows, sources=sources,
+                       bypass_evidence="unknown_API13_creator_name_is_block_type_owner_is_current_client")
+        if a.json:
+            print(json.dumps(payload), flush=True)
+        else:
+            lines = ["RECENT TEEREX CALLS", "Bypasses: unknown (Rex does not identify the creating command)"]
+            for row in rows:
+                lines.append("{host} {verb} {subverb} {outcome} {elapsed_ms}ms exit={exit}".format(**dict(row, subverb=row.get("subverb") or "")))
+            lines.extend(source["host"] + ": " + source["outcome"] for source in sources)
+            print(("\x1b[2J\x1b[H" if sys.stdout.isatty() else "") + "\n".join(lines), flush=True)
+        if a.once:
+            return 0 if all(s["outcome"] == "observed" for s in sources) else 1
+        time.sleep(a.interval_ms / 1000)
+
+
 def parser():
-    p = argparse.ArgumentParser(prog="teerex", description="Explicit operator seats, bounded typed inboxes, and visible read-only boards. Python3 required; no daemon. Reports never certify liveness/completion.")
+    p = argparse.ArgumentParser(prog="teerex", description="Guarded decision delivery, private history and visible boards. Inbox history rotates above 128 non-open records to 96; open decisions pinned separately (max 32); immutable 0600 archives never deleted. Python3 required; no daemon. Reports never certify completion.")
     commands = p.add_subparsers(dest="command", required=True)
 
     def common(q, needs_target=True):
@@ -750,17 +932,21 @@ def parser():
         if op == "remap-apply":
             q.add_argument("--generation", required=True, type=int)
             q.add_argument("--reason", required=True)
+    history_policy = "Above 128 non-open records, archive oldest complete groups to 96; open decisions stay pinned (max 32). Immutable private archives retain all history, never deleted. Byte pressure also archives eligible records."
     for cmd, operations in (("seat", ("register", "inspect", "clear")), ("inbox", ("append", "inspect", "clear")), ("fleet", ("report", "forget"))):
-        c = commands.add_parser(cmd)
+        c = commands.add_parser(cmd, description=history_policy if cmd == "inbox" else None)
         ops = c.add_subparsers(dest="operation", required=True)
         for op in operations:
-            q = ops.add_parser(op)
+            q = ops.add_parser(op, description=history_policy if cmd == "inbox" else None)
             common(q)
             if op in ("register", "report"):
                 q.add_argument("--owner", required=True)
             if op in ("clear", "forget"):
                 q.add_argument("--generation", required=True, type=int)
                 q.add_argument("--reason", required=True)
+            if cmd == "inbox" and op == "inspect":
+                q.add_argument("--archive", action="store_true", help="read retained immutable archive segments, newest first; bounded by --limit")
+                q.add_argument("--limit", type=int, default=128, choices=range(1, 1025))
             if op == "append":
                 q.add_argument("--from", dest="sender", required=True)
                 q.add_argument("--message-file", required=True)
@@ -776,16 +962,35 @@ def parser():
     q.add_argument("--draft-wait-ms", type=int, default=30000, choices=range(55001), metavar="0..55000")
     q.add_argument("--timeout-ms", type=int, default=None, choices=range(100, 115001), metavar="100..115000",
                    help="registered stdin must reach EOF; native fallback guard defaults to draft wait+10000ms, ignore10000")
-    q = commands.add_parser("ask", help="complete typed card or explicit resolution; never terminal input")
-    common(q)
+    q = commands.add_parser("ask", help="type complete decision into target pane through native guarded send; optional store history")
+    q.add_argument("--store", help="optional existing private history store; seat must be registered")
+    for k in ("host", "socket", "session", "block"):
+        q.add_argument("--" + k, required=True)
+    q.add_argument("--teerex", help="absolute native CLI; supplied by compiled bridge")
+    q.add_argument("--draft", choices=("guard", "ignore"), default="guard")
+    q.add_argument("--draft-wait-ms", type=int, default=30000, choices=range(55001), metavar="0..55000")
     q.set_defaults(operation="ask")
     q.add_argument("--from", dest="sender", required=True)
     group = q.add_mutually_exclusive_group(required=True)
     group.add_argument("--card-file", help="absolute JSON file or -; id/title/ask/context/options/recommend required")
     group.add_argument("--resolve")
-    q.add_argument("--answer")
+    group.add_argument("--title", help="inline card title; requires --ask, --context, two --option entries and --recommend")
+    q.add_argument("--ask")
+    q.add_argument("--context")
+    q.add_argument("--option", action="append", default=[], help="Label :: gain :: loss (repeat 2..8 times)")
+    q.add_argument("--recommend")
+    q.add_argument("--id", help="inline decision id; default random hex")
+    q.add_argument("--answer", help="resolution answer, or optional Reply hint on a new card")
     c = commands.add_parser("boards", help="run in a visible Rex terminal; Ctrl+C stops; never starts a hidden watcher")
     views = c.add_subparsers(dest="view", required=True)
+    q = views.add_parser("calls", help="recent private invocation metadata", description="Private call metadata in ~/.local/state/teerex/calls (TEEREX_CALL_LOG_DIR overrides). Active log rotates at 1 MiB; immutable history segments never deleted. No message bodies, arbitrary argv or free-text errors. Live TTY transports retain exit-only evidence. No daemon.")
+    q.add_argument("--once", action="store_true")
+    q.add_argument("--json", action="store_true")
+    q.add_argument("--limit", type=int, default=32, choices=range(1, 129))
+    q.add_argument("--interval-ms", type=int, default=2000, choices=range(500, 60001))
+    q.add_argument("--config", help="shared named-host config for cross-host calls")
+    q.add_argument("--hosts", help="comma-separated command hosts, max 16; unavailable hosts visible")
+    q.add_argument("--teerex", help="absolute native CLI; supplied by compiled bridge")
     for v in ("inbox", "fleet"):
         q = views.add_parser(v)
         common(q, v == "inbox")
@@ -807,14 +1012,35 @@ def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     # Unlike argparse's default, reject duplicate options rather than accepting the last.
     options = [x.split("=", 1)[0] for x in argv if x.startswith("--")]
-    check(len([x for x in options if x != "--jobs-registry"]) == len(set(x for x in options if x != "--jobs-registry")), "duplicate_option")
+    check(len([x for x in options if x not in ("--jobs-registry", "--option")]) == len(set(x for x in options if x not in ("--jobs-registry", "--option"))), "duplicate_option")
     a = parser().parse_args(argv)
+    if a.command == "boards" and a.view == "calls":
+        return calls_board(a)
     if a.command == "try-route":
         a.timeout_ms = a.timeout_ms if a.timeout_ms is not None else (a.draft_wait_ms + 10000 if a.draft == "guard" else 10000)
         a.input_deadline = time.monotonic() + a.timeout_ms / 1000
     if a.command == "probe":
         check(options.count("--jobs-registry") <= 1, "duplicate_option")
         print(json.dumps(probe(a.socket, a.jobs_registry, a.teerex)), flush=True)
+        return 0
+    if a.command == "ask":
+        return deliver_ask(a)
+    if a.command == "inbox" and a.operation == "inspect" and a.archive:
+        t = selected(a)
+        records = []
+        with contextlib.closing(Store(a.store)) as store:
+            names = sorted(n for n in os.listdir(store.dir) if re.fullmatch(r"archive-[0-9]{16}\.json", n))
+            for name in reversed(names):
+                fd = store.open(name, os.O_RDONLY)
+                try:
+                    private(fd)
+                    batch = json_load(read_fd(fd, MAX_BYTES * 2))
+                finally:
+                    os.close(fd)
+                records.extend(r for r in reversed(batch) if r["target"] == t)
+                if len(records) >= a.limit:
+                    break
+        result(kind="inbox_archive", records=records[:a.limit], order="newest_segment_first")
         return 0
     if a.command == "state":
         return state_command(a)

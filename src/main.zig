@@ -11,7 +11,7 @@ const usage =
     \\
     \\Operating-layer commands:
     \\  surfaces resolve|session ensure|ensure|open|inspect|rename|move|focus|close|palette  Visible terminals and native palette plans
-    \\  boards inbox|fleet|probe|state                Live boards, typed store and remap plans
+    \\  boards inbox|fleet|calls|probe|state                Live boards, typed store and remap plans
     \\  seat register|inspect|clear              Exact-address operator seat
     \\  inbox append|inspect|clear                    Private retained messages
     \\  ask                                          Complete typed decisions or explicit resolution
@@ -42,6 +42,9 @@ const usage =
 pub fn main() void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
+    _ = @import("rex_boards").supervise(arena.allocator(), version) catch |err| {
+        std.debug.print("teerex: call history supervisor unavailable ({s}); running command\n", .{@errorName(err)});
+    };
     run(arena.allocator()) catch |err| {
         std.debug.print("teerex: {s}\n", .{@errorName(err)});
         std.process.exit(1);

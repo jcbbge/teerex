@@ -35,12 +35,20 @@ class BoardsTest(unittest.TestCase):
                                       dict(label="Wait", gain="Keep active sessions intact", lose="Delay the fix")],
                              recommend="Wait until sessions finish; preserve current work.")
         self.card.write_text(json.dumps(self.decision))
+        self.native = self.root / "native-fixture"
+        self.sent = self.root / "sent.txt"
+        self.native.write_text("#!/usr/bin/env python3\nimport sys,json\nfrom pathlib import Path\n"
+                               + "Path(" + repr(str(self.sent)) + ").write_text(sys.stdin.read())\n"
+                               + "print(json.dumps(dict(outcome='events_acknowledged',terminal_input_attempted=True)))\n")
+        self.native.chmod(0o700)
 
     def argv(self, command, operation=None, target=True, **options):
         argv = [BIN, "boards", command]
         if operation is not None:
             argv.append(operation)
         opts = dict(store=self.store)
+        if command == "ask":
+            opts["teerex"] = self.native
         if target:
             opts.update(self.target)
         opts.update(options)
@@ -147,17 +155,44 @@ class BoardsTest(unittest.TestCase):
         self.assertEqual((self.store / "state.next").read_text(), "private uncommitted intent")
         self.assertEqual(len(self.inspect()["seats"]), 1)
 
-    def test_resolution_capacity_reserved_and_message_full_not_evicted(self):
+    def test_rotation_retains_history_and_open_decisions(self):
         self.register()
         self.ask()
-        # Public appends fill the bounded record count; one slot stays reserved for the decision's resolution.
-        for _ in range(126):
+        self.assertIn("Recommendation:", self.sent.read_text())
+        for i in range(140):
+            self.message.write_text("message-%03d" % i)
             self.append()
-        self.append(code=1)
-        self.invoke("ask", **{"from": "operator", "resolve": "deploy-7", "answer": "Resolve at full capacity"})
         state = self.inspect()
-        self.assertEqual(len(state["seats"][0]["records"]), 128)
-        self.assertEqual(state["seats"][0]["records"][-1]["body"]["answer"], "Resolve at full capacity")
+        self.assertEqual(len(state["seats"][0]["records"]), 108)
+        self.assertEqual(state["seats"][0]["records"][0]["kind"], "decision")
+        history = self.invoke("inbox", "inspect", archive=True, limit=128)["records"]
+        self.assertEqual(len(history), 33)
+        self.assertEqual({r["record"]["body"] for r in history}, {"message-%03d" % i for i in range(33)})
+        self.invoke("ask", **{"from": "operator", "resolve": "deploy-7", "answer": "Resolve after rotation"})
+        self.assertLessEqual(len(self.inspect()["seats"][0]["records"]), 128)
+        for path in self.store.glob("archive-*.json"):
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+
+    def test_ask_without_history_and_failure_does_not_record(self):
+        args = self.argv("ask", store=None, **{"from": "worker", "card_file": self.card})
+        r = subprocess.run(args, capture_output=True, text=True, env=self.env)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("DECISION [deploy-7]:", self.sent.read_text())
+        self.assertFalse((self.store / "state.json").exists())
+        self.register()
+        self.native.write_text("#!/usr/bin/env python3\nimport json\nprint(json.dumps(dict(outcome='uncertain')))\nraise SystemExit(1)\n")
+        self.invoke("ask", code=1, **{"from": "worker", "card_file": self.card})
+        self.assertEqual(self.inspect()["seats"][0]["records"], [])
+
+    def test_inline_card_fields_share_validation_and_return_id(self):
+        command = self.argv("ask", store=None, **{"from": "worker", "title": "Inline", "ask": "Go?",
+                                                "context": "Context", "recommend": "Wait", "id": "inline-7"})
+        command += ["--option", "Go :: available :: interruption", "--option", "Wait :: preserve :: delay"]
+        result = subprocess.run(command, env=self.env, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(json.loads(result.stdout)["decision_id"], "inline-7")
+        self.assertIn("1. Go\n   Gain: available\n   Lose: interruption", self.sent.read_text())
+        self.assertNotEqual(subprocess.run(command[:-2], env=self.env, capture_output=True).returncode, 0)
 
     def test_remap_preview_generation_collision_and_record_preservation(self):
         self.register()
@@ -268,6 +303,91 @@ else:
                                 env=self.env, capture_output=True, text=True, timeout=20)
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertEqual([x["outcome"] for x in json.loads(result.stdout)["sources"]], ["observed", "unknown", "unknown"])
+
+class CallsTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(prefix="tcalls-")
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.log = self.root / "calls"
+        self.env = dict(os.environ, TEEREX_CALL_LOG_DIR=str(self.log))
+
+    def call(self, *args, **kw):
+        return subprocess.run([BIN, *args], env=self.env, capture_output=True, text=True, timeout=15, **kw)
+
+    def records(self):
+        return [json.loads(line) for line in (self.log / "calls.jsonl").read_text().splitlines()]
+
+    def test_success_usage_refusal_and_uncertain_metadata_never_store_payload(self):
+        self.assertEqual(self.call("--version").returncode, 0)
+        self.assertNotEqual(self.call("ask", "--SECRET_PAYLOAD").returncode, 0)
+        rex = self.root / "rex"
+        rex.write_text("#!" + sys.executable + "\nimport json,time\n"
+                       "def emit(v): print(json.dumps(v),flush=True)\n"
+                       "emit({'event':'source','source':{'rex_version':'injected','platform':'test','api_revision':13}})\n"
+                       "emit({'event':'attempt','stage':'paste'})\n"
+                       "emit({'event':'ack','stage':'paste'})\n"
+                       "emit({'event':'attempt','stage':'enter'})\n"
+                       "emit({'event':'failed','reason':'enter_call_failed'})\n")
+        rex.chmod(0o700)
+        message = self.root / "message"
+        message.write_text("SECRET_BODY")
+        send = ["--rex", str(rex), "send", "--socket", str(self.root / "fixture.sock"),
+                "--session", "session:" + ZERO, "--block", "block:" + ZERO, "--from", "worker",
+                "--message-file", str(message)]
+        result = self.call(*send)
+        self.assertEqual(json.loads(result.stdout)["outcome"], "uncertain", result.stdout + result.stderr)
+        records = self.records()
+        self.assertEqual(len(records), 3)
+        self.assertEqual(records[-1]["outcome"], "uncertain")
+        self.assertEqual(records[-1]["failure_reason"], "enter_call_failed")
+        self.assertEqual(records[-1]["exit"], 1)
+        self.assertEqual(records[-1]["target"]["block_id"], "block:" + ZERO)
+        self.assertTrue(all(type(r["elapsed_ms"]) is int for r in records))
+        raw = (self.log / "calls.jsonl").read_text()
+        for secret in ("SECRET_BODY", "SECRET_PAYLOAD", "--message-file"):
+            self.assertNotIn(secret, raw)
+        self.assertEqual(self.log.stat().st_mode & 0o777, 0o700)
+        self.assertEqual((self.log / "calls.jsonl").stat().st_mode & 0o777, 0o600)
+        board = self.call("boards", "calls", "--once", "--json", "--limit", "2")
+        self.assertEqual(board.returncode, 0, board.stderr)
+        self.assertEqual(len(json.loads(board.stdout)["calls"]), 2)
+
+    def test_rotation_and_private_file_refusal(self):
+        self.call("--version")
+        record = dict(self.records()[0], padding="x" * 1000)
+        # Seed a valid full segment rather than running thousands of commands.
+        raw = (json.dumps(record) + "\n").encode()
+        path = self.log / "calls.jsonl"
+        prefix = raw * ((1048576 - 8192) // len(raw))
+        filler = dict(record, padding="")
+        filler["padding"] = "x" * (1048576 - len(prefix) - len((json.dumps(filler) + "\n").encode()))
+        before = prefix + (json.dumps(filler) + "\n").encode()
+        self.assertEqual(len(before), 1048576)
+        path.write_bytes(before)
+        self.call("--version")
+        archive = list(self.log.glob("calls-*.jsonl"))
+        self.assertEqual(len(archive), 1)
+        self.assertTrue(archive[0].read_bytes().startswith(before))
+        self.assertLessEqual(path.stat().st_size, 1048576)
+        path.chmod(0o644)
+        result = self.call("--version")
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("call history unavailable", result.stderr)
+
+    def test_cross_host_calls_show_unavailable_sources(self):
+        fixture = self.root / "remote"
+        fixture.write_text("#!" + sys.executable + "\nimport json,sys\n"
+                           "host=sys.argv[sys.argv.index('--host')+1]\n"
+                           "if host=='m1': raise SystemExit(1)\n"
+                           "print(json.dumps(dict(calls=[dict(at=1,host=host,verb='send',subverb=None,outcome='uncertain',elapsed_ms=2,exit=1)])))\n")
+        fixture.chmod(0o700)
+        result = self.call("boards", "calls", "--once", "--json", "--config", str(self.root / "config"),
+                           "--hosts", "hive,m5,m1", "--teerex", str(fixture))
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertEqual([s["outcome"] for s in payload["sources"]], ["observed", "observed", "unknown"])
+        self.assertEqual({r["command_host"] for r in payload["calls"]}, {"hive", "m5"})
 
 
 class RexBoardsTest(unittest.TestCase):
@@ -458,7 +578,11 @@ class RexBoardsTest(unittest.TestCase):
         wait_for("DECISION · Live decision")
         subprocess.run([BIN, "boards", "ask"] + common + ["--from", "operator", "--resolve", "live-test", "--answer", "Wait and review"], check=True, capture_output=True)
         wait_for("Wait and review")
-        self.assertEqual(received.read_bytes(), b"")
+        received_text = received.read_bytes().decode()
+        self.assertIn("FROM worker: DECISION [live-test]: Live decision", received_text)
+        self.assertIn("Recommendation: Review", received_text)
+        self.assertIn("FROM operator: DECISION RESOLVED [live-test]", received_text)
+        self.assertIn("Answer: Wait and review", received_text)
 
 
 if __name__ == "__main__":

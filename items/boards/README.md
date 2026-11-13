@@ -6,7 +6,7 @@
 
 **Who:** Joshua operates the fleet; agents submit reports and complete questions. Responsibility labels are supplied claims, not authenticated people or permission. Only a deliberate operator answer should be recorded as a resolution. The tool checks schema, not who authorized that answer.
 
-**What:** `teerex boards inbox` renders pinned full decision cards and six recent activity reports; `teerex boards fleet` renders live read-only terminal inventory and saved agent reports. `teerex boards seat register` explicitly marks an exact pane as an operator seat. Messages append to its private inbox; they never become terminal input. `teerex boards ask` requires a complete typed card or an explicit resolution. `seat inspect`, `inbox inspect`, and `state inspect` expose the authoritative stored state.
+**What:** `teerex boards inbox` renders pinned full decision cards and six recent activity reports; `teerex boards fleet` renders live read-only terminal inventory and saved agent reports. `teerex boards seat register` explicitly marks an exact pane as an operator seat. Legacy inbox append/send routing retains private history. `teerex boards ask` types a complete decision card or resolution directly into the target pane through native guarded `send`; history is optional. `seat inspect`, `inbox inspect`, and `state inspect` expose the authoritative stored state.
 
 **When:** register a seat before agents send to it; run a board only as a visible foreground program in Rex. Resolve decisions explicitly, inspect/export before clearing, and preview remapping after a server restore. An unavailable read or quiet terminal never certifies idle, death, or completion.
 
@@ -20,7 +20,7 @@
 
 Published alpha.5's family-level selector insertion breaks named `boards state|seat|inbox OP`. Current source [routes by complete leaf](../../docs/alpha5.md#leaf-aware-named-host-routing-issue16): state inspect/remap gets store only; seat/inbox/fleet mutations get socket/host/store; inbox renderer is targeted; fleet renderer gets store only and accepts its own explicit fleet config/hosts. Root aliases retain the same contract and explicit store overrides still work. Real named-root register/inspect/inbox/remap/clear/forget tests pass without invoking Rex for offline state. This is not an updated alpha.5 archive or permission to act on personal state.
 
-## Register and open a visible inbox
+## Optional historical inbox registration and viewer
 
 Create the store deliberately on the command host. All following `$SOCKET`, `$SESSION`, `$SEAT`, `$HOST_ID`, `$STORE`, `$TEEREX` values must name the selected target and absolute executable; none is inferred from the active pane or environment.
 
@@ -70,9 +70,26 @@ The root send integration owns `teerex send --store ABS --host HOST_ID --socket 
 
 Registration and native terminal delivery across clients are **not a server-enforced transaction or input lease**. Every sending participant must use the same command-host store and declared tuple. A sender using another store, direct Rex, or a race with registration is outside that coordination boundary. The leaf does not claim global atomicity, draft detection/restoration, exactly-once remote delivery, or authentication.
 
-## Complete typed decisions
+## Decisions typed into the pane
 
-The card file is strict JSON with exactly these fields. Supply **2–8 options**, each with nonempty `label`, `gain`, and `lose`. Labels must differ. `id` is 1–128 bytes; other strings 1–4096 bytes. JSON input is capped at 49152 bytes; unknown/duplicate JSON keys, blank fields, controls, and duplicate retained decision IDs refuse.
+`ask` calls the current CLI's native `send` with **no store selector**, so a registered seat receives terminal input. The default draft guard applies; `--draft guard|ignore` and `--draft-wait-ms 0..55000` have native send semantics. Native delivery receipts, uncertainty and exit codes are preserved. There is no automatic resend. A failed/uncertain delivery does not create a history record. With optional `--store`, a registered seat retains the card **after** successful delivery; this is not atomic with terminal input. `delivered_history_failed` means delivery succeeded but history failed: inspect and never resend automatically. Cancellation reports attempted delivery and requires inspection.
+
+For an inline card, use the agent-core card fields directly (the same plain-text format):
+
+```sh
+teerex ask --host "$HOST_ID" --socket "$SOCKET" --session "$SESSION" --block "$SEAT" \
+  --from worker --id deploy-7 --title 'Choose deployment timing' \
+  --ask 'Deploy now?' --context 'Checks passed; restart interrupts active work.' \
+  --option 'Deploy now :: fix available today :: interrupt active work' \
+  --option 'Wait :: preserve active work :: delay the fix' \
+  --recommend 'Wait until sessions finish.'
+```
+
+`--id` defaults to random hex for inline cards; a successful receipt includes `decision_id` and whether history was recorded. Repeat `--option` 2–8 times as `Label :: gain :: loss`; all fields receive the same strict validation as JSON. `--card-file` and inline fields conflict. On a new card, optional `--answer TEXT` adds the agent-core `Reply:` hint (the strict history card schema retains the decision fields). A resolution needs only `--resolve ID --answer TEXT`; without history, no registration is required. `--host` labels the exact command-host target; it is not transport selection. The root named-host form supplies host/socket/store using the existing routing contract.
+
+### JSON cards and optional history
+
+The card file is strict JSON with exactly these fields. Supply **2–8 options**, each with nonempty `label`, `gain`, and `lose`. Labels must differ. `id` is 1–128 bytes; other strings 1–4096 bytes. JSON input is capped at 49152 bytes; unknown/duplicate JSON keys, blank fields, controls, and duplicate active decision IDs refuse.
 
 ```json
 {
@@ -97,7 +114,7 @@ teerex boards ask --store "$STORE" --host "$HOST_ID" \
   --from operator --resolve release-7 --answer 'Wait until sessions finish.'
 ```
 
-A decision pins above activity until its exact ID is resolved. Unknown/already-resolved IDs refuse; a resolution retains the reported answer and clears only that card. It does not send an answer back to an agent or execute an option. Send that answer deliberately if needed. Timestamp and sender are reports supplied by this command, not verified human identity. Seat clear refuses while any records remain; inbox clear refuses while a decision remains open.
+When `--store` is supplied, a decision pins in the historical board until its exact ID is resolved. Unknown/already-resolved IDs refuse; a resolution retains the reported answer and clears only that card. The resolution is typed into the selected pane; it does not execute an option. Select the original agent pane explicitly to send an answer there without history. Timestamp and sender are reports supplied by this command, not verified human identity. Seat clear refuses while any records remain; inbox clear refuses while a decision remains open.
 
 ## Fleet: observations, reports, unknown
 
@@ -124,13 +141,32 @@ The same bounded Rex/Lua probe connection reads each terminal's `program_status`
 
 A registration matches live presence only when session/block IDs, recorded server instance/host and block host match (`registration_matches_presence=true`). An exact-address registration from an older/different source remains separately displayed with `registration_matches_presence=false`; its identity is not silently adopted. Unmatched registrations remain visible; absence is reported only after a complete read of the same server instance/host, otherwise presence is unknown. Absence does not prove process death. Terminal report age is a **board-host wall-clock difference** from the server timestamp, not report freshness or measured task duration; unparseable, missing or future timestamps have null age. Records are capped at **128/terminal**, projected strings at **4096 bytes**, and the combined probe response including registrations retains the **1 MiB** transport limit. Exceeding a cap fails visibly. Max 16 selected hosts and existing sequential/deadline limits still apply; each selected registry read has the existing 5s command bound. No writes, daemon, mirror registry or completion inference is added.
 
-Probe is deliberately **API13 only**; API10/12 reads refuse as unknown, while local inbox/seat/ask operations do not require Rex. Max **16 configured names**, **32 sessions/server**, **128 terminals/server**, **1 MiB decoded response/output per transport** and **8192 diagnostic bytes**. A cap refuses visibly rather than truncating the fleet silently. Each resolver/local read has a 5s client deadline; routed host probe 8s, plus bounded owned-child cleanup and OS scheduling. Named servers are sampled sequentially, so refresh period includes their read time. This is not a performance/energy certification.
+Probe is deliberately **API13 only**; API10/12 reads refuse as unknown, while local inbox/seat storage operations do not require Rex; ask requires native terminal delivery. Max **16 configured names**, **32 sessions/server**, **128 terminals/server**, **1 MiB decoded response/output per transport** and **8192 diagnostic bytes**. A cap refuses visibly rather than truncating the fleet silently. Each resolver/local read has a 5s client deadline; routed host probe 8s, plus bounded owned-child cleanup and OS scheduling. Named servers are sampled sequentially, so refresh period includes their read time. This is not a performance/energy certification.
+
+## Recent invocation calls (#13)
+
+Every combined-CLI invocation uses a foreground supervisor and appends one metadata record on exit, including usage errors, refusals and uncertain native receipts. Default location is `~/.local/state/teerex/calls`; `TEEREX_CALL_LOG_DIR=/absolute/private/path` selects another command-host directory (also useful for isolated tests). The directory is created 0700; lock and log files must be owned single-link regular 0600 files, with final symlinks refused. Cooperating writers share a lock. Each **1 MiB** active `calls.jsonl` rotates to an immutable timestamp/PID segment; history is never deleted automatically. Total retained disk usage grows with calls. This is append-only cooperative history, not a tamper-proof audit boundary.
+
+Records contain time, command hostname, version, allowlisted verb/subverb, explicit target IDs/server, outcome, elapsed milliseconds and exit, PID, claimed agent name and parent program name. No message/card/brief bodies, arbitrary argv, environment dump or free-text errors are retained. Known safe failure codes are preserved; other failures become `reported_by_command`. Receipt outcomes are retained for ordinary commands; live renderers/explicit PTY transports preserve terminal stdout and report exit-only evidence. A log failure prints a warning and preserves the command exit, because retrying a successful action to repair logging is unsafe. Without Python the native command still runs with a supervisor-unavailable warning and cannot record history. No daemon is installed.
+
+```sh
+teerex boards calls --once --json --limit 32
+# Visible foreground board; Ctrl+C stops it.
+teerex boards calls --config /absolute/private/hosts.json --hosts hive,m5 --limit 32
+# Historical inbox records, newest segment first; bounded output.
+teerex inbox inspect --store "$STORE" --host "$HOST_ID" --socket "$SOCKET" \
+  --session "$SESSION" --block "$SEAT" --archive --limit 128
+```
+
+Calls supports `--once`, `--json`, `--limit 1..128`, `--interval-ms 500..60000`. Named-host reads use the existing explicit targets transport; unavailable sources stay visible and one-shot partial failure exits 1. Archive inspect supports `--limit 1..1024` (default 128), reads private immutable segments without deleting them, and can include records still active after an interrupted save.
+
+`rex api describe session.view --json` on API13 exposes `creator_name` as the **block type** (e.g. `com.superlogical.terminal`) and `owner` as the **current owning client**. Neither proves which shell command created a block. Bypass attribution is therefore **unknown**, not a false “not via teerex” label. Physical M5 execution and Mac suites are separate acceptance; Linux fixtures do not certify them.
 
 ## Private bounded state, inspect, clear, recovery
 
 Store directory: existing, owned by current UID, exact **0700**, final symlink refused. `lock`, `state.json`: owned, single-link regular files, exact **0600**, final symlinks refused. Trusted parents/local filesystem required; no ACL/root/same-account isolation guarantee. The stable advisory `flock` coordinates cooperating local invocations; busy fails immediately. It is not a distributed lock, and crash recovery does not steal/delete lock files.
 
-State schema1: `generation`, `seats:[{target,owner,registered_at,records:[{kind,at,from,body}]}]`, `fleet:[{target,owner,purpose,state,at,detail}]`. Kinds: message (body text), decision (full typed card), resolution (`{id,answer}`). All timestamps are command-host wall-clock Unix ms; negative/future age is labeled unknown. Bounded to **32 seats**, **128 records/seat**, **128 fleet reports**, **1 MiB total encoded state**. No automatic eviction. Each open card reserves one resolution slot and 16 KiB so capacity exhaustion cannot strand its resolution. No terminal output, argv, environment, ACK tokens, or implicit capture is retained; explicit message/decision text itself can still be sensitive.
+State schema1: `generation`, `seats:[{target,owner,registered_at,records:[{kind,at,from,body}]}]`, `fleet:[{target,owner,purpose,state,at,detail}]`. Kinds: message (body text), decision (full typed card), resolution (`{id,answer}`). All timestamps are command-host wall-clock Unix ms; negative/future age is labeled unknown. Bounded to **32 seats**, **128 non-open records/seat**, **32 open decisions/seat**, **128 fleet reports**, **1 MiB active encoded state**. Above 128 non-open records, complete resolved pairs and plain messages rotate oldest first until at most 96 remain. Open decisions stay pinned separately and reserve 16 KiB each for resolution. Byte pressure also archives oldest eligible groups across seats. Immutable `archive-GENERATION.json` segments retain every rotated record and exact target, owned 0600 in the store; nothing is automatically deleted. Explicit inbox clear also archives before clearing. Archives are fsynced before active state replacement; an interrupted save can expose the same records in active state and its archive. A conflicting or incomplete archive refuses instead of overwriting it. Archive disk history grows with usage. No terminal output, argv, environment, ACK tokens, or implicit capture is retained; explicit message/decision text itself can still be sensitive.
 
 ```sh
 teerex boards state inspect --store "$STORE"
@@ -169,6 +205,8 @@ TEEREX_BIN=/absolute/private/boards-cli REX_BIN=/absolute/test/rex python3 items
 # Combined CLI is the default test target; optional BOARDS_ROUTE_HELPER_BIN selects ABI scratch bridge.
 TEEREX_BIN="$PWD/zig-out/bin/teerex" REX_BIN=/absolute/test/rex python3 items/boards/test_boards.py -v
 ```
+
+The following dated evidence describes the earlier storage-only ask contract; current `ask` intentionally delivers terminal input.
 
 On **12 November 2026**, **12 tests passed** on disposable Debian/Linux x86_64 and Apple-silicon **macOS26.3.1**, Python3.13.5/Linux and Python3.14.3/Mac, checksum-pinned Rex preview.16/API13 commit aa2db1b21261b479a550559fb70e2c3a66c07ba2. Public contracts cover complete/incomplete cards, resolution and clear, capacity reservation, privacy/links/locking/staged-crash refusal, remap collisions/generations/retained card, exact routing, stdin size/EOF/deadline/signals, named-host partial-error contract fixtures, actual Rex terminal enumeration, unchanged layout, and a real raw terminal that receives **zero input bytes** while its displayed operator draft remains unchanged. The same live test ran an actual visible foreground inbox through empty → pinned decision → reported resolution refreshes. Additional disposable Mac checks passed actual preview.13/API10 and preview.14/API12 fleet refusal-as-unknown while local seat/inbox/ask/render remained functional; this is not API10/12 fleet support. Standalone ABI scratch validation additionally checks targeted parent INT/TERM forwarding and unchanged unregistered stdin (empty, multiline Unicode,65536 bytes). With combined CLI the helper-only check skips unless its bridge is supplied; root send integration tests belong to the integrator.
 
