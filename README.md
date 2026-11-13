@@ -44,3 +44,5 @@ uv run --with ziglang==0.15.2 python -m ziglang build -Doptimize=ReleaseSmall -D
 - [docs/releases/](docs/releases/): release notes, including the frozen alpha.1–alpha.5 history.
 - [research/](research/README.md): the original Rex research and its provenance.
 - Older long-form guides ([docs/alpha5.md](docs/alpha5.md), [docs/concierge/](docs/concierge/README.md), [docs/direction.md](docs/direction.md)) are kept as history. Where they disagree with this page or an item's README, the newer document wins.
+
+Python-backed command help uses public `teerex …` names, including `teerex targets`; `python3 src/test_help.py -v` checks the embedded CLI help without contacting Rex.

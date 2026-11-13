@@ -163,7 +163,7 @@ def run_fleet(resolved_hosts, options):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description=__doc__, epilog="No discovery, daemon, credential capture, host-key enrollment, profile/config edits, manual-folder adoption or Rex restart. --path verifies only transport PATH; configure shells separately. Partial success is retained, never silently retried.")
+    parser = argparse.ArgumentParser(prog='teerex fleet', description=__doc__, epilog="No discovery, daemon, credential capture, host-key enrollment, profile/config edits, manual-folder adoption or Rex restart. --path verifies only transport PATH; configure shells separately. Partial success is retained, never silently retried.")
     parser.add_argument("operation", choices=("install", "rollback"))
     parser.add_argument("--config", type=Path, required=True, help="absolute shared named-target configuration")
     parser.add_argument("--host", action="append", required=True, help="explicit named host; repeat for m5/hive/m1 or other configured names")

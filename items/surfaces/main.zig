@@ -217,10 +217,9 @@ const RawOutput = struct {
     }
 };
 fn paletteController(allocator: std.mem.Allocator, args: []const []const u8, script: []const u8) !u8 {
-    if (args.len > 0 and std.mem.eql(u8, args[args.len - 1], "--help")) {
-        try std.fs.File.stdout().writeAll(usage);
-        return 0;
-    }
+    const help = for (args) |arg| {
+        if (std.mem.eql(u8, arg, "--help")) break true;
+    } else false;
     var argv: std.ArrayList([]const u8) = .empty;
     try argv.appendSlice(allocator, &.{ "python3", "-I", "-c", try @import("rex_boards").call_log.python(allocator, script) });
     try argv.appendSlice(allocator, args);
@@ -240,6 +239,11 @@ fn paletteController(allocator: std.mem.Allocator, args: []const []const u8, scr
         if (result.?.term.Exited == 2) {
             try std.fs.File.stderr().writeAll(result.?.stderr);
             return 2;
+        }
+        if (help and result.?.term.Exited == 0) {
+            try std.fs.File.stdout().writeAll(output.bytes.items);
+            try std.fs.File.stderr().writeAll(result.?.stderr);
+            return 0;
         }
         const parsed = std.json.parseFromSlice(std.json.Value, allocator, output.bytes.items, .{}) catch null;
         if (parsed != null and parsed.?.value == .object) {

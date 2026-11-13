@@ -117,3 +117,5 @@ the retained control connection so the same explicit terminal options apply;
 the surfaces CLI currently has no non-login launch selector. New tabs retain
 `focus:false`. The record checks pin exact program bytes for both tab and
 offstage launch paths on Linux and macOS.
+
+`teerex replay --help` uses the public command name, including when launched through the embedded Python controller.

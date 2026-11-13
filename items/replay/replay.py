@@ -493,7 +493,7 @@ class Runner:
 
 
 def parse(argv):
-    parser = argparse.ArgumentParser(description="Capture Rex output, replay through Rex, or check a live program. Play and live are independent results. Python3.9+, explicit API13 Unix socket/session, same-host paths. No task completion inferred.")
+    parser = argparse.ArgumentParser(prog='teerex replay', description="Capture Rex output, replay through Rex, or check a live program. Play and live are independent results. Python3.9+, explicit API13 Unix socket/session, same-host paths. No task completion inferred.")
     parser.add_argument("mode", choices=["record", "play", "live"])
     parser.add_argument("--socket", required=True)
     parser.add_argument("--session", required=True)

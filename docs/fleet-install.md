@@ -144,3 +144,5 @@ Those versioned native fixtures are not final teerex binaries. Alpha.5 now ships
 ## agent-core migration
 
 There is no standalone agent-core fleet-install script to delete in the inspected stopgaps: the brief describes manual installation. The migration is to replace operator/agent hand-copy/install recipes with this named-host command **after** final bridge packaging and disposable transport acceptance. Leave `teerex-target`, Rex config, launch profiles, palette entries and messaging stopgaps to their respective capability owners. No deletion of those unrelated files, private profiles or personal setup is part of capability 10.
+
+Embedded fleet help uses `teerex fleet`, independent of its temporary support-file location.

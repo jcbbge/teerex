@@ -1466,7 +1466,7 @@ class SafeParser(argparse.ArgumentParser):
 
 
 def parser():
-    p = SafeParser(description=__doc__)
+    p = SafeParser(prog='teerex records', description=__doc__)
     sub = p.add_subparsers(dest="operation", required=True)
     for op in ("init", "new", "park", "add", "attach", "set", "close", "show", "resume", "navigate", "list", "lint", "export", "forget", "pin", "decide", "claim-status", "revalidate"):
         q = sub.add_parser(op, help={"resume": "read reasoning, historical evidence and live target; zero writes", "navigate": "one explicit verified focus; never relaunch", "park": "write private reasoning for an explicit Rex target"}.get(op, op + " private records"))

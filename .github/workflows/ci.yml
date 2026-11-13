@@ -276,6 +276,7 @@ jobs:
         env:
           TEEREX_BIN: ${{ github.workspace }}/zig-out/bin/teerex
         run: |
+          python3 src/test_help.py -v
           python3 src/test_targets.py -v
           python3 items/boards/test_boards.py CallsTest StatusTest -v
           python3 items/boards/test_friction.py -v

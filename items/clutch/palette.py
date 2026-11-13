@@ -17,7 +17,7 @@ def absolute(value):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(prog='teerex clutch palette', description=__doc__)
     parser.add_argument("--file", required=True)
     parser.add_argument("--socket", required=True)
     parser.add_argument("--teerex", default=sys.argv[1])

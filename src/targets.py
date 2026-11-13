@@ -154,7 +154,7 @@ def execute(host, command, *, tty=False):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(prog='teerex targets', description=__doc__)
     sub = parser.add_subparsers(dest="operation", required=True)
     for operation in ("resolve", "exec"):
         child = sub.add_parser(operation)

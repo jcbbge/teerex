@@ -119,3 +119,5 @@ requires the last stored revalidation to list that rejected option as due. An ex
 Lint adds L9 decision shape (because claims, rejected alternative with why and invalidators), L10 unresolved contradictions on concluded because claims, L11 changed protected claim text/basis, and L12 dangling dependencies. Close and export retain the existing lint gate. Decision records allow explicit applicability/status updates after conclusion. `attach` additionally accepts H02 `friction_report` packets. Export preserves decision reasoning, statuses, revisit conditions and public pin values; mark `pins` or `pins[].target|recorded_value|last_value` private when needed. The existing secret scan also covers decision text and revisit text.
 
 `python3 items/records/test_decisions.py -v` runs D1–D15 with temporary Git, program-version and fake-gh fixtures, alongside the original records suite in API13 CI lanes. No real issue, store or configuration is changed.
+
+`teerex records --help` and subcommand help use the public `teerex records` command name.

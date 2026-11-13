@@ -151,7 +151,7 @@ def execute(args, result):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(prog='teerex surfaces palette install', description=__doc__)
     for option in ("init", "file", "socket", "plan"):
         parser.add_argument("--" + option, required=True)
     parser.add_argument("--apply", metavar="PLAN_SHA256", help="approve the exact previously printed plan hash")

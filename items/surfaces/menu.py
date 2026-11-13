@@ -157,7 +157,7 @@ return invoke(argv)'''
 
 
 def main():
-    p = argparse.ArgumentParser(description=__doc__)
+    p = argparse.ArgumentParser(prog='teerex surfaces palette', description=__doc__)
     p.add_argument("operation", choices=("agents", "hosts"))
     p.add_argument("--file", required=True)
     p.add_argument("--profiles", default=str(Path.home() / ".config/teerex/profiles.json"))
