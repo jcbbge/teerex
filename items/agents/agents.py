@@ -559,41 +559,13 @@ def source_bytes(path):
         require(len(raw) <= 32768, "input_too_large")
 
 
-def frame_read(connection, budget=.5):
-    raw = bytearray()
-    end = time.monotonic() + budget
-    # One bounded JSON line per connection. Newlines inside strings are JSON escaped.
-    while b"\n" not in raw:
-        remaining = end - time.monotonic()
-        require(remaining > 0, "channel_frame_deadline")
-        connection.settimeout(remaining)
-        part = connection.recv(min(4096, 49153 - len(raw)))
-        require(part, "incomplete_channel_frame")
-        raw.extend(part)
-        require(len(raw) <= 49152, "channel_frame_too_large")
-    require(raw.endswith(b"\n") and raw.count(b"\n") == 1, "one_channel_frame_required")
-    def unique(pairs):
-        value = {}
-        for key, item in pairs:
-            require(key not in value, "duplicate_channel_field")
-            value[key] = item
-        return value
-    value = json.loads(raw, object_pairs_hook=unique)
-    require(isinstance(value, dict), "invalid_channel_frame")
-    return value
-
-
-def channel_failure(reason, outcome="refused_or_uncertain"):
-    return dict(schema_version=1, kind="agent_channel_result", outcome=outcome,
-                failure_reason=str(reason), retry_safe=False)
-
-
-class Channel:
+class Channel(ChannelService):
     """A launch-owned socket; the visible supervisor is its only servicing process.
 
     The directory is the only fence mount. No filesystem paths supplied by a peer are opened.
     Bearer authority is cooperative outside a fence, not authentication against the same account.
     """
+    errors = ChannelService.errors + (Refusal,)
     def __init__(self, root, state):
         self.root, self.state = root, state
         self.policy = state["delivery"]
@@ -648,24 +620,11 @@ class Channel:
         os.close(self.parent)
 
     def dispatch(self, request):
-        require(set(request) <= {"launch_id", "token", "request_id", "operation", "to", "body", "session", "block", "event"},
-                "unknown_channel_field")
-        require(request.get("launch_id") == self.state["launch_id"], "channel_launch_mismatch")
-        require(isinstance(request.get("token"), str) and secrets.compare_digest(request["token"], self.token),
-                "channel_token_mismatch")
-        event_id = identifier(request.get("request_id"))
-        operation = request.get("operation")
-        require(operation in self.policy["grants"], "channel_operation_not_granted")
-        required = {"launch_id", "token", "request_id", "operation"}
-        required |= {"send": {"to", "body"}, "ack": {"session", "block"}, "stop": {"event"}}[operation]
-        require(set(request) == required, "invalid_channel_operation_fields")
-        if operation == "send":
-            require(request["to"] in ("starter", "report-to"), "fixed_channel_destination_required")
-            message(request["body"].encode())
-        elif operation == "ack":
+        event_id, operation = channel_request(request, self.state["launch_id"], self.token, self.policy["grants"])
+        if operation == "ack":
             address_id(request["session"], "session")
             address_id(request["block"], "block")
-        else:
+        elif operation == "stop":
             validate_hook_event(request["event"], allow_transcript=False)
         def intent(s):
             require(s["immediate_child_term"] is None, "channel_child_already_exited")
@@ -691,42 +650,8 @@ class Channel:
             outcome=result["outcome"], client_exit=code, receipt=result.get("receipt") if operation == "send" else None))
         return code, result
 
-    def service(self):
-        if self.closed:
-            time.sleep(.05)
-            return
-        if time.monotonic() >= self.deadline or self.count >= self.policy["max_requests"]:
-            self.close()
-            update(self.root, self.state["launch_id"], lambda s: s.update(channel_status="revoked"))
-            return
-        remaining = self.next_accept - time.monotonic()
-        if remaining > 0:
-            time.sleep(min(.05, remaining))
-            return
-        try:
-            connection, unused = self.listener.accept()
-        except socket.timeout:
-            return
-        except OSError:
-            if self.closed:  # INT/TERM can revoke while accept is waiting.
-                return
-            raise
-        self.count += 1
-        self.next_accept = time.monotonic() + .05
-        with connection:
-            connection.settimeout(.5)
-            try:
-                request = frame_read(connection)
-                # Recheck after the bounded read, not just at accept.
-                require(time.monotonic() < self.deadline, "channel_expired")
-                code, result = self.dispatch(request)
-            except (Refusal, OSError, ValueError, KeyError, TypeError, AttributeError, RecursionError, subprocess.SubprocessError) as exc:
-                code, result = 1, channel_failure(exc)
-            response = json.dumps(dict(code=code, result=result), ensure_ascii=False).encode() + b"\n"
-            if len(response) > 49152:
-                response = json.dumps(dict(code=1, result=channel_failure("receipt_too_large_inspect_registry", "delivery_uncertain_no_retry"))).encode() + b"\n"
-            with contextlib.suppress(OSError):
-                connection.sendall(response)
+    def revoked(self):
+        update(self.root, self.state["launch_id"], lambda s: s.update(channel_status="revoked"))
 
 
 def channel(o):

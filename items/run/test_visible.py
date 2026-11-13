@@ -110,6 +110,199 @@ class VisibleTest(unittest.TestCase):
         self.anchor = json.loads(r.stdout)["created"]["block_id"]
         return self.anchor
 
+    def channel_options(self, directory, block):
+        return ["--channel-dir", str(directory), "--report-to-session", self.session, "--report-to-block", block]
+
+    def receiver(self):
+        log, ready = self.work / "receiver.jsonl", self.work / "receiver.ready"
+        code = ("import os,tty,termios,json\nfrom pathlib import Path\n"
+                "tty.setraw(0,termios.TCSANOW);os.write(1,b'\\x1b[?2004h')\n"
+                f"Path({str(ready)!r}).touch()\nbuf=b''\n"
+                "while True:\n"
+                " part=os.read(0,65536)\n if not part: break\n buf+=part\n"
+                " while b'\\x1b[201~\\r' in buf:\n"
+                "  raw,buf=buf.split(b'\\x1b[201~\\r',1)\n"
+                f"  with open({str(log)!r},'a') as f:f.write(json.dumps(raw.removeprefix(b'\\x1b[200~').decode())+'\\n')\n")
+        command = [BIN, "--rex", self.rex, "surfaces", "open", "--socket", str(self.socket), "--session", self.session,
+                   "--layout", "tab", "--label", "channel recipient", "--", sys.executable, "-c", code]
+        result = subprocess.run(command, capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        block = json.loads(result.stdout)["created"]["block_id"]
+        for _ in range(100):
+            if ready.exists():
+                break
+            time.sleep(.02)
+        self.assertTrue(ready.exists())
+        return block, log
+
+    def channel_round_trip(self, fenced):
+        directory = self.root / ("channel-" + self.work.name)
+        directory.mkdir(mode=0o700)
+        registry = self.root / ("registry-" + self.work.name)
+        registry.mkdir(mode=0o700)
+        block, log = self.receiver()
+        gate, sent = self.work / "gate", self.work / "sent"
+        script = f'''import json,os,socket,subprocess,time
+from pathlib import Path
+handle=os.environ['AGENT_CHANNEL']
+assert handle==os.environ['LC_AGENT_CHANNEL']=={str(directory / 'handle.json')!r}
+assert Path(handle).with_name('receipts.jsonl').read_bytes()==b''
+for i,body in enumerate(['first β\\n', 'second report']):
+ p=subprocess.run([{BIN!r},'agents','channel','--handle',handle,'--request-id',str(i)*32,'--operation','send','--to','report-to','--message-file','-'],input=body,text=True,capture_output=True)
+ assert p.returncode==0,(p.stdout,p.stderr)
+Path('/work/sent' if {fenced!r} else {str(sent)!r}).touch()
+while not Path('/work/gate' if {fenced!r} else {str(gate)!r}).exists():time.sleep(.02)
+h=json.loads(Path(handle).read_text())
+def request(event_id,**changes):
+ r=dict(launch_id=h['launch_id'],token=h['token'],request_id=event_id,operation='send',to='report-to',body='refused body');r.update(changes)
+ with socket.socket(socket.AF_UNIX) as s:
+  s.settimeout(5);s.connect(h['socket']);s.sendall(json.dumps(r).encode()+b'\\n');data=b''
+  while b'\\n' not in data:data+=s.recv(65536)
+ assert json.loads(data)['code']==1,data
+request('2'*32,to='arbitrary-pane')
+request('3'*32,token='wrong')
+request('0'*32)
+request('4'*32,operation='ack',session={self.session!r},block={block!r})
+if {fenced!r}:
+ for path,kind in [({str(self.socket)!r},'rex'),({str(registry)!r},'registry'),(str(Path(handle).parent/'receipts.jsonl'),'receipt')]:
+  try:
+   if kind=='rex':socket.socket(socket.AF_UNIX).connect(path)
+   else:os.open(path,os.O_WRONLY if kind=='receipt' else os.O_RDONLY)
+  except OSError:pass
+  else:raise AssertionError('fence exposed '+kind)
+'''
+        argv = [sys.executable, "-c", script]
+        if fenced:
+            command = [shutil.which("bwrap"), "--die-with-parent", "--unshare-net"]
+            for path in ("/usr", "/bin", "/sbin", "/lib", "/lib64", "/etc"):
+                if Path(path).exists():
+                    command += ["--ro-bind", path, path]
+            command += ["--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp", "--tmpfs", "/run", "--tmpfs", "/var",
+                        "--ro-bind", sys.prefix, sys.prefix, "--ro-bind", BIN, BIN,
+                        "--bind", str(self.work), "/work", "--ro-bind", str(directory), str(directory), "--chdir", "/work", "--"]
+            # A separate cwd mount must not expose the registry or Rex socket.
+            argv = command + argv
+        options = self.channel_options(directory, block) + ["--timeout-ms", "60000"]
+        if fenced:
+            options += ["--registry", str(registry), "--owner", "rivet", "--purpose", "fenced channel"]
+        process = subprocess.Popen(self.command(argv=argv, extra=options),
+                                   env=self.runtime_env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            for _ in range(700):
+                if sent.exists() or process.poll() is not None:
+                    break
+                time.sleep(.02)
+            self.assertTrue(sent.exists(), "child stopped before both sends")
+            self.assertIsNone(process.poll())
+            receipts = directory / "receipts.jsonl"
+            live = [json.loads(line) for line in receipts.read_text().splitlines()]
+            self.assertEqual([line["body"] for line in live], ["first β\n", "second report"])
+            self.assertEqual([line["outcome"] for line in live], ["delivered", "delivered"])
+            self.assertEqual(stat.S_IMODE(receipts.stat().st_mode), 0o600)
+            (directory / "caller-owned").write_text("keep")
+            gate.touch()
+            stdout, stderr = process.communicate(timeout=15)
+            packet = json.loads(stdout)
+            self.assertEqual(process.returncode, 0, stderr + stdout)
+            if fenced:
+                self.assertEqual(packet["jobs"]["track_outcome"], "tracked")
+                self.assertEqual(packet["jobs"]["forget_outcome"], "forgotten")
+            self.assertEqual(packet["channel"]["count"], 6)
+            self.assertEqual(packet["channel"]["outcomes"], {"delivered": 2, "refused": 4})
+            lines = [json.loads(line) for line in receipts.read_text().splitlines()]
+            self.assertEqual([line["outcome"] for line in lines], ["delivered"] * 2 + ["refused"] * 4)
+            self.assertIn("fixed_channel_destination", lines[2]["failure_reason"])
+            self.assertIn("token_mismatch", lines[3]["failure_reason"])
+            self.assertIn("already_attempted", lines[4]["failure_reason"])
+            self.assertIn("not_granted", lines[5]["failure_reason"])
+            self.assertTrue(all("token" not in line for line in lines))
+            self.assertEqual([json.loads(line) for line in log.read_text().splitlines()],
+                             ["FROM teerex-test: first β\n", "FROM teerex-test: second report"])
+            self.assertTrue(directory.is_dir())
+            self.assertEqual({p.name for p in directory.iterdir()}, {"receipts.jsonl", "caller-owned"})
+        finally:
+            if process.poll() is None:
+                process.terminate()
+                process.communicate(timeout=10)
+
+    def test_optional_channel_live_receipts_and_refusals(self):
+        self.channel_round_trip(False)
+
+    @unittest.skipUnless(os.environ.get("TEEREX_AGENTS_FENCE") == "1", "explicit real Linux bubblewrap acceptance gate")
+    def test_channel_through_real_read_only_bubblewrap_bind(self):
+        self.assertEqual(sys.platform, "linux")
+        self.assertIsNotNone(shutil.which("bwrap"))
+        self.channel_round_trip(True)
+
+    def test_channel_receipt_cap_and_cancellation_cleanup(self):
+        block = self.anchor_pane()
+        directory = self.work / "capped"
+        directory.mkdir(mode=0o700)
+        script = """import json,os,socket
+from pathlib import Path
+h=json.loads(Path(os.environ['AGENT_CHANNEL']).read_text())
+for i in range(256):
+ r=dict(launch_id=h['launch_id'],token='wrong',request_id=format(i,'032x'),operation='send',to='report-to',body='never delivered')
+ with socket.socket(socket.AF_UNIX) as s:
+  s.settimeout(5);s.connect(h['socket']);s.sendall(json.dumps(r).encode()+b'\\n');data=b''
+  while b'\\n' not in data:data+=s.recv(65536)
+ assert json.loads(data)['code']==1
+assert json.loads(data)['result']['failure_reason']=='channel_request_limit'
+"""
+        result, packet = self.invoke(script, extra=self.channel_options(directory, block) + ["--timeout-ms", "60000"])
+        self.assert_good(result, packet)
+        lines = [json.loads(line) for line in (directory / "receipts.jsonl").read_text().splitlines()]
+        self.assertEqual(len(lines), 256)
+        self.assertEqual(lines[-1]["failure_reason"], "channel_request_limit")
+        self.assertEqual(packet["channel"]["count"], len(lines))
+        self.assertEqual(packet["channel"]["outcomes"], {"refused": 256})
+        self.assertEqual({p.name for p in directory.iterdir()}, {"receipts.jsonl"})
+        directory = self.work / "cancelled-channel"
+        directory.mkdir(mode=0o700)
+        marker = self.work / "running"
+        command = self.command(f"from pathlib import Path;import time;Path({str(marker)!r}).touch();time.sleep(60)",
+                               extra=self.channel_options(directory, block) + ["--no-deadline"])
+        process = subprocess.Popen(command, env=self.runtime_env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            for _ in range(250):
+                if marker.exists() or process.poll() is not None:
+                    break
+                time.sleep(.02)
+            self.assertTrue(marker.exists())
+            process.terminate()
+            stdout, stderr = process.communicate(timeout=10)
+            self.assertEqual(process.returncode, 143, stdout + stderr)
+            self.assertEqual(json.loads(stdout)["channel"]["count"], 0)
+            self.assertEqual({p.name for p in directory.iterdir()}, {"receipts.jsonl"})
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.communicate(timeout=5)
+
+    def test_channel_refuses_invalid_directories_before_argv(self):
+        block = self.anchor_pane()
+        marker = self.work / "must-not-start"
+        directory = self.work / "channel"
+        directory.mkdir(mode=0o700)
+        occupied = directory / "existing"
+        occupied.write_text("leave me")
+        for mode in ("occupied", "mode", "symlink"):
+            path = directory
+            if mode == "mode":
+                occupied.unlink()
+                directory.chmod(0o755)
+            if mode == "symlink":
+                directory.chmod(0o700)
+                path = self.work / "link"
+                path.symlink_to(directory)
+            result, packet = self.invoke(f"from pathlib import Path;Path({str(marker)!r}).touch()", extra=self.channel_options(path, block))
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIsNone(packet.get("created"))
+            self.assertFalse(marker.exists())
+        self.assertTrue(directory.is_dir())
+        result = subprocess.run(self.command(extra=["--channel-dir", str(directory)]), capture_output=True, text=True, env=self.runtime_env)
+        self.assertEqual(result.returncode, 2)
+
     def test_optional_jobs_track_during_run_and_forget_after(self):
         registry = self.work / "jobs"
         registry.mkdir(mode=0o700)

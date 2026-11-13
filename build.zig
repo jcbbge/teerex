@@ -118,6 +118,9 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     exe.root_module.addImport("rex_agents", agents);
+    const channel = b.createModule(.{ .root_source_file = b.path("src/scoped_channel.zig"), .target = target, .optimize = optimize });
+    agents.addImport("scoped_channel", channel);
+    rex_run.addImport("scoped_channel", channel);
     b.installArtifact(exe);
 
     const run = b.addRunArtifact(exe);

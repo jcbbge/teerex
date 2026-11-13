@@ -22,7 +22,7 @@ const usage =
 pub fn runVisible(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
     const self = try std.fs.selfExePathAlloc(allocator);
     var argv: std.ArrayList([]const u8) = .empty;
-    try argv.appendSlice(allocator, &.{ "python3", "-c", @embedFile("visible.py"), self, @embedFile("visible.py") });
+    try argv.appendSlice(allocator, &.{ "python3", "-c", @import("scoped_channel").source ++ "\n" ++ @embedFile("visible.py"), self, @import("scoped_channel").source ++ "\n" ++ @embedFile("visible.py") });
     try argv.appendSlice(allocator, args);
     return std.process.execv(allocator, argv.items);
 }

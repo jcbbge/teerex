@@ -21,6 +21,7 @@ INPUT_LIMIT = 1048576
 FILE_LIMIT = 64 * 1024 * 1024
 STOP = 0
 RECEIPT = None
+BROKER = None
 
 
 def stopped(sig, unused):
@@ -210,7 +211,7 @@ def supervise(root):
     return 0
 
 
-def invoke(runtime, pin, args, budget=5):
+def invoke(runtime, pin, args, budget=5, interruptible=False):
     """Bounded receipts/diagnostics, one mutation attempt; no retry on lost evidence."""
     env = dict(os.environ)
     for key in ("REX_SERVER", "REX_SESSION", "REX_BLOCK", "REX_CLIENT"):
@@ -219,7 +220,7 @@ def invoke(runtime, pin, args, budget=5):
     with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
         child = subprocess.Popen(command, stdout=out, stderr=err, stdin=subprocess.DEVNULL, env=env, start_new_session=True)
         end = time.monotonic() + budget
-        while child.poll() is None and time.monotonic() < end:
+        while child.poll() is None and time.monotonic() < end and not (interruptible and STOP):
             time.sleep(.02)
         if child.poll() is None:
             with contextlib.suppress(ProcessLookupError):
@@ -281,19 +282,128 @@ def forget_job(runtime, pin, packet):
         jobs.update(forget_outcome="failed_or_uncertain", failure_reason=str(exc)[:600])
 
 
+class VisibleChannel(ChannelService):
+    """Foreground, send-only authority; the caller owns the directory and receipts."""
+    reserve_refusal = True
+
+    def __init__(self, directory, runtime, pin, options):
+        self.fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        self.listener = None
+        self.log = None
+        self.created = []
+        self.closed = False
+        self.count = 0
+        self.next_accept = 0
+        self.policy = dict(max_requests=256, grants=["send"])
+        self.launch_id, self.token = secrets.token_hex(16), secrets.token_hex(32)
+        self.seen = set()
+        self.runtime, self.pin, self.options = runtime, pin, options
+        self.path, self.handle = str(Path(directory) / "channel.sock"), str(Path(directory) / "handle.json")
+        self.expires = int(time.time() * 1000) + 86400000
+        self.deadline = time.monotonic() + 86400
+        self.summary = dict(directory=directory, handle=self.handle, grants=["send"], expires_at=self.expires,
+                            receipts_path=str(Path(directory) / "receipts.jsonl"), count=0, outcomes={}, requests=[])
+        try:
+            info = os.fstat(self.fd)
+            channel_require(info.st_uid == os.getuid() and stat.S_IMODE(info.st_mode) == 0o700, "channel_directory_requires_owned_0700")
+            channel_require(not os.listdir(self.fd), "channel_directory_must_be_empty")
+            channel_require(len(os.fsencode(self.path)) < 100, "channel_socket_path_too_long")
+            self.log = os.open("receipts.jsonl", os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_APPEND | os.O_NOFOLLOW, 0o600, dir_fd=self.fd)
+            self.listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            self.listener.bind(self.path)
+            self.created.append("channel.sock")
+            os.chmod(self.path, 0o600)
+            self.listener.listen(4)
+            self.listener.settimeout(.05)
+            handle = dict(schema_version=1, launch_id=self.launch_id, token=self.token, socket=self.path,
+                          expires_at=self.expires, grants=["send"])
+            descriptor = os.open("handle.json", os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=self.fd)
+            self.created.append("handle.json")
+            with os.fdopen(descriptor, "w") as f:
+                json.dump(handle, f)
+            current = os.stat(directory, follow_symlinks=False)
+            channel_require((info.st_dev, info.st_ino) == (current.st_dev, current.st_ino), "channel_directory_replaced")
+        except BaseException:
+            self.close()
+            raise
+
+    def close(self):
+        if self.closed:
+            return
+        self.closed = True
+        if self.listener is not None:
+            self.listener.close()
+        for name in self.created:
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(name, dir_fd=self.fd)
+        if self.log is not None:
+            os.close(self.log)
+        os.close(self.fd)
+
+    def revoked(self):
+        self.summary["status"] = "revoked"
+
+    def dispatch(self, request):
+        event_id, operation = channel_request(request, self.launch_id, self.token, ["send"])
+        channel_require(event_id not in self.seen, "channel_request_already_attempted_no_retry")
+        self.seen.add(event_id)  # Admission precedes the only delivery attempt; never replay after a lost ACK.
+        o = self.options
+        # Keep message data outside the read-only channel mount, in controller-owned storage.
+        with tempfile.TemporaryDirectory(prefix="teerex-channel-send-") as temp:
+            message_path = Path(temp) / "message"
+            private_write(message_path, request["body"].encode())
+            transport = invoke(self.runtime, self.pin, ["send", "--socket", o.socket,
+                               "--session", o.report_to_session, "--block", o.report_to_block,
+                               "--from", o.app, "--message-file", str(message_path)], budget=120, interruptible=True)
+        packet = transport["receipt"]
+        outcome = packet.get("outcome", "uncertain") if isinstance(packet, dict) else "uncertain"
+        delivered = transport["code"] == 0 and outcome == "events_acknowledged"
+        return transport["code"], dict(schema_version=1, kind="agent_channel_result", request_id=event_id,
+                                      outcome="transport_acknowledged" if delivered else outcome,
+                                      retry_safe=False, client_exit=transport["code"], receipt=packet)
+
+    def record_request(self, request, code, result):
+        # Log bounded fields only; never serialize the capability token or untrusted error text.
+        packet = result.get("receipt")
+        outcome = packet.get("outcome", "uncertain") if isinstance(packet, dict) else "refused" if result.get("failure_reason") else "uncertain"
+        if code == 0 and outcome == "events_acknowledged":
+            outcome = "delivered"
+        body = request.get("body")
+        body = body if isinstance(body, str) and len(body.encode("utf-8", errors="surrogatepass")) <= 32768 else None
+        event_id = request.get("request_id")
+        event_id = event_id if isinstance(event_id, str) and re.fullmatch(r"[0-9a-f]{32}", event_id) else None
+        operation = request.get("operation")
+        operation = operation if operation in ("send", "ack", "stop") else None
+        to = request.get("to")
+        to = "report_to" if to == "report-to" else "starter" if to == "starter" else None
+        reason = result.get("failure_reason") or (packet.get("failure_reason") if isinstance(packet, dict) else None)
+        line = dict(schema_version=1, at_unix_ms=int(time.time() * 1000), request_id=event_id,
+                    operation=operation, to=to, body=body, outcome=outcome, failure_reason=reason)
+        raw = json.dumps(line, ensure_ascii=True).encode() + b"\n"
+        channel_require(os.write(self.log, raw) == len(raw), "channel_receipt_short_write")
+        os.fsync(self.log)
+        self.summary["count"] += 1
+        totals = self.summary["outcomes"]
+        totals[outcome] = totals.get(outcome, 0) + 1
+        self.summary["requests"].append(dict(request_id=event_id, operation=operation, outcome=outcome))
+
+
 def controller(runtime, source, args):
-    global RECEIPT
+    global RECEIPT, BROKER
     parser = argparse.ArgumentParser(prog="teerex run-visible", description=(
         "Run literal noninteractive argv in a verified visible Rex terminal on this command host. "
         "API13 only; Python3.9+. No retries, autostart, implicit shell, hidden worker or daemon. "
         "Child stdout/stderr are pipes teed live to the terminal, not TTYs. Exact env replaces inherited env "
-        "except actual REX_SESSION/REX_BLOCK. Stdin is a regular file (max1MiB) or /dev/null. "
+        "except actual REX_SESSION/REX_BLOCK and opted-in AGENT_CHANNEL/LC_AGENT_CHANNEL. Stdin is a regular file (max1MiB) or /dev/null. "
         "Closing a pane does not prove descendant/remote death; SIGKILL/controller loss cannot guarantee cleanup."))
     for name in ("socket", "session", "cwd", "env-file", "stdin-file", "app", "title"):
         parser.add_argument("--" + name, required=True)
     parser.add_argument("--registry", help="opt-in existing private jobs registry; requires --owner and --purpose")
     parser.add_argument("--owner", help="jobs responsibility label (requires --registry and --purpose)")
     parser.add_argument("--purpose", help="jobs purpose text (requires --registry and --owner)")
+    parser.add_argument("--channel-dir", help="opt-in caller-created empty owned0700 directory; send-only socket, handle and persistent receipts.jsonl")
+    parser.add_argument("--report-to-session", help="fixed channel destination session; requires --channel-dir and --report-to-block")
+    parser.add_argument("--report-to-block", help="fixed channel destination block; starter is the same address")
     parser.add_argument("--layout", choices=("tab", "tiled"), default="tab")
     parser.add_argument("--anchor")
     parser.add_argument("--direction", choices=("left", "right", "up", "down"))
@@ -310,12 +420,18 @@ def controller(runtime, source, args):
     o.timeout_ms = None if o.no_deadline else (o.timeout_ms if o.timeout_ms is not None else 10000)
     if not o.argv or o.argv[0] != "--" or len(o.argv) < 2 or not o.argv[1]:
         parser.error("-- and nonempty argv required")
-    for name in ("socket", "cwd", "env_file", "stdin_file", "output_dir", "registry"):
+    for name in ("socket", "cwd", "env_file", "stdin_file", "output_dir", "registry", "channel_dir"):
         path = getattr(o, name)
         if path is not None and not os.path.isabs(path):
             parser.error(name + " must be absolute")
     if any(v is not None for v in (o.registry, o.owner, o.purpose)) and not all(v is not None for v in (o.registry, o.owner, o.purpose)):
         parser.error("--registry, --owner and --purpose require all three or none")
+    if any(v is not None for v in (o.channel_dir, o.report_to_session, o.report_to_block)):
+        if not all(v is not None for v in (o.channel_dir, o.report_to_session, o.report_to_block)):
+            parser.error("--channel-dir, --report-to-session and --report-to-block require all three or none")
+        for kind, value in (("session", o.report_to_session), ("block", o.report_to_block)):
+            if not re.fullmatch(kind + r":[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}", value):
+                parser.error("full lowercase channel destination IDs required")
     if not re.fullmatch(r"session:[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}", o.session):
         parser.error("full lowercase session ID required")
     if (o.layout == "tiled") != bool(o.anchor) or (o.layout == "tab" and (o.direction or o.ratio is not None)):
@@ -345,6 +461,9 @@ def controller(runtime, source, args):
                               success=False, cancellation_signal=STOP, retry_safe=False)), flush=True)
         return 128 + STOP
     identity = machine()
+    if o.channel_dir:
+        BROKER = VisibleChannel(o.channel_dir, runtime, pin, o)
+        request_env.update(AGENT_CHANNEL=BROKER.handle, LC_AGENT_CHANNEL=BROKER.handle)
     if o.output_dir:
         root = Path(o.output_dir)
         root.mkdir(mode=0o700)
@@ -378,6 +497,8 @@ def controller(runtime, source, args):
         packet["timeout_ms"] = None
     if o.registry:
         packet["jobs"] = dict(registry=o.registry, owner=o.owner, purpose=o.purpose, track_outcome="not_attempted", generation=None, forget_outcome="not_attempted")
+    if BROKER is not None:
+        packet["channel"] = BROKER.summary
     RECEIPT = packet
     started = time.monotonic()
     end = started + o.startup_ms / 1000
@@ -431,9 +552,15 @@ def controller(runtime, source, args):
             result = load(root / "result.json")
             if result:
                 break
-            time.sleep(.02)
+            if BROKER is not None:
+                BROKER.service()
+            else:
+                time.sleep(.02)
         if result is None:
             reason = "cancel_requested" if STOP else "controller_deadline_exceeded"
+    if BROKER is not None:
+        BROKER.close()
+        BROKER.revoked()
     if STOP:
         reason = "cancel_requested"
     if reason:
@@ -488,7 +615,12 @@ def main():
     try:
         return controller(sys.argv[1], sys.argv[2], sys.argv[3:])
     except (OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError) as exc:
+        if BROKER is not None:
+            BROKER.close()
+            BROKER.revoked()
         packet = RECEIPT or dict(schema_version=1, kind="run_visible_result", outcome="refused", retry_safe=False)
+        if BROKER is not None:
+            packet["channel"] = BROKER.summary
         packet.update(success=False, failure_reason=str(exc)[:600])
         if RECEIPT is not None:
             packet["outcome"] = "controller_error_unknown"

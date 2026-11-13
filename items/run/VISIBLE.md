@@ -4,7 +4,7 @@
 
 ## Who
 
-Operators and automation such as Rivet that need **one visible, noninteractive command** plus raw output and actual immediate-child exit evidence. This is not an interactive agent harness, general remote executor, hidden/headless worker, mailbox relay, daemon, sandbox or permission system. A managed agent's protocol, scoped worker channel and callbacks remain owned by `agents`, not this runner.
+Operators and automation such as Rivet that need **one visible, noninteractive command** plus raw output and actual immediate-child exit evidence. This is not an interactive agent harness, general remote executor, hidden/headless worker, mailbox relay, daemon, sandbox or permission system. Managed protocol/ACK/brief delivery and callbacks remain owned by `agents`; the optional send-only channel below shares its transport without enrolling the command as a managed agent.
 
 ## What
 
@@ -56,6 +56,23 @@ Supply `--registry ABS --owner LABEL --purpose TEXT` together, or omit all three
 
 On exit, deadline or cancellation, the controller lists the selected registry to obtain the current generation, then makes at most one `jobs forget` attempt under the original owner label. Adoption/owner changes, contention or transport failure remain visible rather than authorizing an overwrite. An opted-in receipt adds `jobs` with track outcome, generation, forget outcome and bounded operation receipts. Failed forget retains the program's actual exit evidence and success calculation; inspect the registry and reconcile it explicitly. No registry format is duplicated. No jobs field or registry call is added when these flags are absent.
 
+### Optional send-only channel
+
+Supply `--channel-dir ABS --report-to-session session:UUID --report-to-block block:UUID` together, or omit all three. Starter aliases this same fixed report-to address. There is no ACK gate, typed brief, arbitrary destination, or `ack`/`stop` grant. Before constructing its fence, the caller creates an **empty, owned, exactly0700, nonsymlink per-launch directory**. Validation refuses before pane creation/argv. No random subdirectory is created. Use a trusted parent: the handle is bearer authority, not authentication against other same-account code.
+
+The foreground controller creates `<dir>/channel.sock`, `<dir>/handle.json` and `<dir>/receipts.jsonl`, all0600. It injects `AGENT_CHANNEL=<dir>/handle.json` and `LC_AGENT_CHANNEL=<dir>/handle.json`, overriding those two exact-env keys only when opted in. Mount **only** `--ro-bind <dir> <dir>` into bubblewrap; no Rex socket or registry is needed inside. Do not expose this directory through another writable cwd/parent bind. The fenced program uses the existing CLI:
+
+```sh
+teerex agents channel --handle "$AGENT_CHANNEL" --request-id HEX32_UNIQUE_PER_ATTEMPT \
+  --operation send --to report-to --message-file -
+```
+
+Supply UTF-8 message bytes on stdin, then EOF. `--to starter` reaches the same fixed address. There are no new client flags or file-drop transport. Framing, request validation, token checks and the service loop are shared with managed agents. Limits: one JSON line/connection,49152-byte frame,32768-byte body,20 admissions/second,500ms frame-read budget, and a24-hour capability lease (even with unlimited execution). Admitted requests can finish their bounded send after expiry. A unique32-lowercase-hex ID is consumed before the single send attempt; duplicates refuse. Lost receipts never authorize replay. Native send uses its draft guard; an in-flight send can delay result collection within its120s transport budget, while the helper independently enforces execution deadlines. INT/TERM interrupts that transport and preserves uncertain delivery without retry.
+
+The parent exclusively creates the no-follow append-only receipt file before argv. It writes/fsyncs **one complete JSON line in one write before the next admission**. Live lines contain `schema_version:1`, `at_unix_ms`, `request_id`, `operation`, `to` (`report_to` or `starter`), `body`, `outcome` and nullable `failure_reason`; invalid/unavailable fields are null. `delivered` means native send returned `events_acknowledged`; other native outcomes keep their names. Protocol refusals are `refused`; lost delivery evidence is `uncertain`. No token field is logged. The receipts deliberately retain message bodies: keep them private and delete them explicitly when consumed.
+
+At most256 lines:255 ordinary admissions plus a reserved final `channel_request_limit` refusal. Malformed/authentication-failed requests also consume admissions. The channel closes on child exit/cancellation or lease/cap exhaustion. Final `channel` metadata summarizes these same lines with `count`, outcome totals, request IDs/operations/outcomes and `receipts_path`. Channel refusal/failure does not rewrite the command's exit evidence. Teardown removes **only socket and handle**; the caller's directory, receipts and other caller files survive. Crash/SIGKILL cannot promise teardown. Omit the flags to retain the original environment/receipt shape and create no channel files.
+
 ### Budgets and raw output
 
 - `--max-bytes`: combined raw **first-arrival prefix** retention across stdout/stderr, default4096, range1..65536. Per-stream ordering is preserved; cross-stream read order is not original write ordering. UTF-8 is decoded only after collection; an invalid/split retained prefix is base64, preserving exact bytes including binary/NUL/trailing newlines.
@@ -99,10 +116,12 @@ The standalone acceptance executable dispatches only `run-visible`, `run` and pu
 
 ```sh
 zig build-exe --dep rex_run --dep rex_surfaces -Mroot=items/run/test_visible_cli.zig \
-  --dep supervised_child -Mrex_run=items/run/main.zig \
+  --dep supervised_child --dep scoped_channel -Mrex_run=items/run/main.zig \
   --dep supervised_child -Mrex_surfaces=items/surfaces/main.zig \
-  -Msupervised_child=src/child.zig -lc -O ReleaseSmall -femit-bin=/absolute/teerex-visible
-TEEREX_BIN=/absolute/teerex-visible REX_BIN=/absolute/test-rex python3 items/run/test_visible.py -v
+  -Msupervised_child=src/child.zig -Mscoped_channel=src/scoped_channel.zig -lc -O ReleaseSmall -femit-bin=/absolute/teerex-visible
+# Full optional jobs/channel acceptance needs the combined CLI, not this core-only entry:
+zig build -Doptimize=ReleaseSmall
+TEEREX_BIN="$PWD/zig-out/bin/teerex" REX_BIN=/absolute/test-rex TEEREX_AGENTS_FENCE=1 python3 items/run/test_visible.py -v
 ```
 
-Integrator adds root `run-visible` dispatch to `rex_run.runVisible`, root help and named-host socket injection immediately after this verb; no new Zig module dependency or host/config schema is needed. Root routing/combined CI/release and Rivet fleet cutover remain separate delivery steps. Do not remove `rex-tab.ts`, restart Rex, touch personal M5/hive, or delete existing relay/guards based on these disposable tests.
+Integrator adds root `run-visible` dispatch to `rex_run.runVisible`, root help and named-host socket injection immediately after this verb; run and agents import the shared `scoped_channel` embedded Python module; no host/config schema is added. Root routing/combined CI/release and Rivet fleet cutover remain separate delivery steps. Do not remove `rex-tab.ts`, restart Rex, touch personal M5/hive, or delete existing relay/guards based on these disposable tests.
