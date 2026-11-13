@@ -4,14 +4,14 @@ const supervised = @import("supervised_child");
 
 const usage =
     \\Usage: teerex offstage --socket /absolute/path --session session:UUID --cwd /absolute/path --purpose TEXT --timeout-ms N [--max-bytes N] -- ARGV...
-    \\Create ONE detached terminal on the explicitly selected existing Apple-silicon Mac Rex server.
+    \\Create ONE detached terminal on the explicitly selected existing API13 Rex server (macOS or Linux).
     \\A foreground owner waits for terminal-program exit, deadline or cancellation, then requests block close.
     \\No existing block is adopted/closed, no window/layout/focus is changed, and no input is typed.
     \\NDJSON: offstage_started gives the target for concurrent observe/watch; offstage_result is the final receipt.
     \\Required deadline: 100..60000 ms; cleanup adds up to 5500 ms plus scheduling/output time.
     \\Capture defaults to 4096 (256..65536) JSON-encoded text bytes; partial text is a screen/scrollback PREFIX.
     \\Execution uses the SELECTED SERVER'S terminal host/environment, unlike local teerex run.
-    \\Select a known LOCAL Mac server; a Unix socket alone does not establish physical locality.
+    \\Select a known LOCAL macOS or Linux server; a Unix socket alone does not establish physical locality.
     \\This is NOT a sandbox. Closing a block is not process-tree verification; resistant descendants may survive.
     \\SIGKILL/crash or lost create acknowledgement can leave a block; inspect the reported target/label manually.
     \\No persistent registry, background daemon, process-tree kill guarantee, installer or automatic presentation.
@@ -75,7 +75,7 @@ const Collector = struct {
             const f = parsed.value;
             if (std.mem.eql(u8, f.event, "source") and self.source == null and !self.creating) {
                 const source = f.source orelse return error.InvalidOffstageFrame;
-                if (source.api_revision != 13 or !std.mem.eql(u8, source.platform, "darwin_arm64") or source.instance_id.len == 0 or source.host_id.len == 0) return error.InvalidOffstageSource;
+                if (source.api_revision != 13 or (!std.mem.eql(u8, source.platform, "darwin_arm64") and !std.mem.eql(u8, source.platform, "linux_amd64")) or source.instance_id.len == 0 or source.host_id.len == 0) return error.InvalidOffstageSource;
                 self.source = .{ .rex_version = try self.allocator.dupe(u8, source.rex_version), .platform = try self.allocator.dupe(u8, source.platform), .api_revision = source.api_revision, .instance_id = try self.allocator.dupe(u8, source.instance_id), .host_id = try self.allocator.dupe(u8, source.host_id) };
             } else if (std.mem.eql(u8, f.event, "creating") and self.source != null and !self.creating) {
                 self.creating = true;
@@ -157,7 +157,7 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
     const budget = timeout orelse usageError();
     const max_bytes = limit orelse 4096;
     if (!std.fs.path.isAbsolute(path) or !fullId(sid, "session:") or !std.fs.path.isAbsolute(directory) or why.len == 0 or why.len > 256 or !std.unicode.utf8ValidateSlice(why) or budget < 100 or budget > 60000 or max_bytes < 256 or max_bytes > 65536 or i + 1 >= args.len or args[i + 1].len == 0) usageError();
-    if (builtin.os.tag != .macos) return error.OffstageRequiresMacOS;
+    if (builtin.os.tag != .macos and builtin.os.tag != .linux) return error.OffstageRequiresMacOSOrLinux;
     const endpoint = try std.fmt.allocPrint(allocator, "unix://{s}", .{path});
     var random: [16]u8 = undefined;
     std.crypto.random.bytes(&random);

@@ -5,7 +5,7 @@ const supervised = @import("supervised_child");
 const usage =
     \\Usage: teerex run --socket /absolute/path --cwd /absolute/path [--timeout-ms N] [--max-bytes N] -- ARGV...
     \\Run argv LOCALLY through Rex Lua exec; never type into a terminal or run on the selected server.
-    \\Requires macOS, Rex on PATH, and an existing API-10..13 server with the consumed exec bindings.
+    \\Requires macOS or Linux, Rex on PATH, and an existing API-10..13 server with the consumed exec bindings.
     \\Accepted revision is not behavior certification. No server update, autostart or implicit target.
     \\Explicit cwd and -- are required; no implicit shell. Stdin is EOF; no interactive input.
     \\Timeout defaults to 10000 ms (100..60000); combined stdout/stderr retention defaults to 4096 bytes (1..65536).
@@ -18,7 +18,7 @@ const usage =
     \\
 ;
 
-// Explicit new capability; legacy run remains Mac-local exec with its original contract.
+// Explicit new capability; legacy run remains CLI-local exec with its original contract.
 pub fn runVisible(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
     const self = try std.fs.selfExePathAlloc(allocator);
     var argv: std.ArrayList([]const u8) = .empty;
@@ -165,7 +165,7 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
     if (!std.fs.path.isAbsolute(path) or !std.fs.path.isAbsolute(directory)) usageError("socket and cwd must be absolute paths");
     if (timeout_ms < 100 or timeout_ms > 60000 or max_bytes < 1 or max_bytes > 65536) usageError("timeout or byte limit out of range");
     if (i + 1 >= args.len or args[i + 1].len == 0) usageError("-- and a nonempty executable are required");
-    if (builtin.os.tag != .macos) return error.RunRequiresMacOS;
+    if (builtin.os.tag != .macos and builtin.os.tag != .linux) return error.RunRequiresMacOSOrLinux;
     return supervise(allocator, path, directory, args[i + 1 ..], timeout_ms, max_bytes);
 }
 

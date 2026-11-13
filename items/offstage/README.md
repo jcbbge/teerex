@@ -1,12 +1,17 @@
 # offstage
 
+**Unreleased U06 source:** `offstage` now supports Linux x86_64 and macOS on
+API13, with the same hidden-terminal lifecycle and JSON contract. Linux catalogs
+include its experimental native payload. Published alpha.5 assets are unchanged.
+
+
 [Operator/agent addendum: Who, What, When, Where, Why, How](../../docs/concierge/features.md#9-offstage-invocation-owned-command-terminal-not-an-agent) covers current alpha.5 use, platform/API support, verification, privacy and lifecycle. [Install/upgrade current alpha.5](../../docs/concierge/setup.md); runtime remains Mac/API13 only. The [independent experimental offstage cartridge](../../docs/cartridges.md) is shipped on Mac, not marked ready. Separate jobs records do not transfer this invocation's cleanup ownership.
 
 **Experimental Phase 3 #4 lifecycle slice: run one explicitly owned terminal outside the selected session's layouts, collect its exit evidence, then close only that created block.** This implements C12 and a bounded foreground-owner subset of C13. Offstage itself does not implement a durable registry, daemon, automatic presentation/C14 or sandbox/C15. Its experimental independent packaging and separate jobs/presentation commands do not widen that lifecycle contract. Historical scores and deferred non-Rex work remain unchanged.
 
 ## Use
 
-Build the combined CLI with Zig **0.15.2**, put your deliberately selected Rex executable on `PATH`, and select an already-running, known local Apple-silicon Mac server and existing session:
+Build the combined CLI with Zig **0.15.2**, put your deliberately selected Rex executable on `PATH`, and select an already-running, known local macOS or Linux API13 server and existing session:
 
 ```sh
 zig build -Doptimize=ReleaseSmall
@@ -17,7 +22,7 @@ zig build -Doptimize=ReleaseSmall
   --timeout-ms 10000 --max-bytes 4096 -- /usr/bin/git status --short
 ```
 
-This is an invocation example, not permission to execute arbitrary programs. Commands inherit the terminal host account's filesystem, network, environment and credential authority. Nothing is isolated. Unlike [run](../run/README.md), execution is on the **selected Rex terminal creator's host**, not necessarily the CLI machine. A Unix socket can be forwarded; endpoint and reported host labels are not authentication or proof of physical locality. Do not point this initial local-Mac workflow at a VPS or an unknown forwarded server.
+This is an invocation example, not permission to execute arbitrary programs. Commands inherit the terminal host account's filesystem, network, environment and credential authority. Nothing is isolated. Unlike [run](../run/README.md), execution is on the **selected Rex terminal creator's host**, not necessarily the CLI machine. A Unix socket can be forwarded; endpoint and reported host labels are not authentication or proof of physical locality. Select the execution host deliberately; a local socket or reported host name does not authenticate a remote or forwarded endpoint.
 
 One foreground teerex invocation owns one new block. There is no implicit focus/environment target, existing-block adoption or typing into another program. The command requires an absolute socket, full session UUID, absolute cwd, nonempty UTF-8 purpose (at most 256 bytes), and a **100–60000 ms** collection deadline. `--max-bytes` defaults to **4096**, range **256–65536 JSON-encoded content bytes including quotes**. Unknown/repeated/missing options fail. Child environments discard `REX_SERVER`, `REX_SESSION`, `REX_BLOCK` and `REX_CLIENT`; every Rex call disables autostart and selects the explicit endpoint/session. Rex itself and its configuration/executable must be trusted.
 
@@ -62,3 +67,22 @@ Seven public-CLI checks pass on a disposable **arm64 macOS 27.2**, checksum-veri
 The first combined run passed **7 offstage checks in 3.980 s**, alongside **27 observe/compare/watch**, **11 run**, **8 executed doctor** (one non-Mac guard skipped) and **10 maneuver** checks. Native and Apple-silicon cross-builds use Zig **0.15.2**; native offline checks cover the shared comparison, doctor and maneuver contracts. Later combined results are recorded separately in the direction/evidence record. These are executable/interface checks, not M5 benchmarks, whole-system memory/energy measurements, sandbox/input-safety certification or completion of all Phase 3 #4 requirements.
 
 Source mapping: original PDF P2 physical **p4**, C12/C13 and V07; C14 presentation and C15 isolation remain separate in the immutable [historical review](../../docs/planning/teerex-pdf-work-inventory.md).
+
+## Linux lifecycle boundary (U06)
+
+The CLI's Rex transport uses the existing Linux `waitid(...WNOWAIT)`/`poll`
+supervisor. Terminal creation, canonical-cwd shim, bounded screen capture,
+instance/host identity check, one acknowledged-block close and absence
+verification use the same API13 Lua source on both platforms. No platform-specific
+terminal or process-tree emulation is added.
+
+The seven public lifecycle tests now run on Linux and Mac private servers.
+Deadline/cancellation still close only the invocation's acknowledged block;
+owner SIGKILL/lost creation acknowledgement may leave that terminal, and resistant
+descendants can survive close. The test harness inspects and removes its known
+survivors. `all_processes_verified_gone:false` and `process_effect:not_verified`
+remain deliberate contract fields; Linux support does not widen those guarantees.
+
+Run `REX_BIN=/absolute/rex python3 items/offstage/test_offstage.py -v` with its
+parent directory on PATH. API13 CI selects both platforms, and fresh native
+Linux catalogs exercise the same public suite through the installed payload.

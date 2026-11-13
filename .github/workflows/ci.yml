@@ -328,8 +328,7 @@ jobs:
           REX_BIN: ${{ runner.temp }}/rex-bin/rex
         run: python3 items/run/test_visible.py VisibleTest.test_observed_api_gate_precedes_creation -v
 
-      - name: Run disposable-Mac execution and cleanup regressions
-        if: runner.os == 'macOS'
+      - name: Run disposable execution and cleanup regressions
         env:
           TEEREX_BIN: ${{ github.workspace }}/zig-out/bin/teerex
         run: python3 items/run/test_run.py -v
@@ -339,8 +338,8 @@ jobs:
           TEEREX_BIN: ${{ github.workspace }}/zig-out/bin/teerex
         run: python3 items/doctor/test_doctor.py -v
 
-      - name: Run disposable-Mac API13 offstage regressions
-        if: runner.os == 'macOS' && matrix.rex-api == 13
+      - name: Run disposable API13 offstage regressions
+        if: matrix.rex-api == 13
         env:
           TEEREX_BIN: ${{ github.workspace }}/zig-out/bin/teerex
         run: python3 items/offstage/test_offstage.py -v

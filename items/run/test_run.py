@@ -1,4 +1,4 @@
-"""Public run contract on disposable macOS Rex; never use a default/personal server."""
+"""Public run contract on disposable macOS/Linux Rex; never use a default/personal server."""
 
 import base64
 import json
@@ -23,9 +23,9 @@ def content(node):
 class RunTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        if sys.platform != "darwin":
-            raise RuntimeError("Execution/lifetime validation requires macOS, not Linux target support")
-        cls.rex = shutil.which("rex")
+        if sys.platform not in ("darwin", "linux"):
+            raise RuntimeError("Execution/lifetime validation requires macOS or Linux")
+        cls.rex = os.environ.get("REX_BIN") or shutil.which("rex")
         if not cls.rex or not BIN.is_file():
             raise RuntimeError("Build teerex and put the test Rex binary on PATH first")
         tmp = tempfile.TemporaryDirectory(prefix="trun-", dir="/tmp")

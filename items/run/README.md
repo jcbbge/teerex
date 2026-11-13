@@ -1,5 +1,10 @@
 # run
 
+**Unreleased U06 source:** legacy `run` now supports Linux x86_64 as well as
+macOS, using the existing native supervisor and the same CLI/result contract.
+No flags or output fields change. This does not rebuild published alpha.5 assets.
+Linux catalogs now include the experimental `run` payload.
+
 **New, separate source capability:** [`run-visible`](VISIBLE.md) adds visible argv execution for disposable Mac/Linux/API13, including opt-in [`--detach` and final receipt reads](VISIBLE.md#detached-visible-execution), with [acceptance](ACCEPTANCE.md) and an [opt-in Rivet migration patch](MIGRATION.md). It is not in published alpha.5 and does not change the legacy `run` contract below. Combined source now wires the root verb and named-host socket selection; publication does not rebuild alpha.5.
 
 [Operator/agent addendum: Who, What, When, Where, Why, How](../../docs/concierge/features.md#5-run-local-argv-and-actual-exit-evidence) covers current alpha.5 use, platform/API support, verification, privacy and lifecycle. [Install/upgrade current alpha.5](../../docs/concierge/setup.md); runtime remains Mac-only/API10–13. The [independent experimental run cartridge](../../docs/cartridges.md) is available on Mac, not marked ready. Dated increment evidence below is historical.
@@ -16,7 +21,7 @@ API10–13 acceptance with consumed exec bindings first shipped in the compatibi
 | C09: `run_and_collect`, `capture_on_exit` | Capture bytes until Rex's process handle returns and drain its final transport output. Preserve code, signal and timeout separately. Silence, an empty stream and pipe EOF do not establish exit. No separate capture-on-exit cartridge is necessary. |
 | C09/C11: owned `cancel_and_collect` portion | SIGINT/SIGTERM requests cancellation of **this invocation**, retains already received output and cleans up its owned process group. No registry or cancellation of an arbitrary PID, terminal or previous job is exposed. Unknown actual exit remains null. |
 | C10: split chunks | Buffer framed transport and join bytes per stream before UTF-8 validation. Callback boundaries are neither complete lines nor complete Unicode characters; arbitrary binary output is preserved as base64. This remains support code, not a new non-Rex library. |
-| C11/C24: lifetime and terminal conditions | Rex's timeout/handler cleanup did not reliably kill grandchildren in probes. The wrapper owns a process group, observes CLI exit with macOS kqueue **without reaping the group leader**, then signals the group before reaping. This reserves the group ID against PID reuse. It reports scoped signals, not unverified whole-tree cleanup or task completion. |
+| C11/C24: lifetime and terminal conditions | Rex's timeout/handler cleanup did not reliably kill grandchildren in probes. The wrapper owns a process group, observes CLI exit with macOS kqueue or Linux `waitid(WEXITED|WNOHANG|WNOWAIT)` **without reaping the group leader**, then signals the group before reaping. This reserves the group ID against PID reuse. It reports scoped signals, not unverified whole-tree cleanup or task completion. |
 
 Source mapping: [definitive historical review](../../docs/planning/teerex-pdf-work-inventory.md), Phase 3 #3/#8 and C06/C08–C11/C24, P2 PDF pages 3–4 and 6. The historical review, scores, raw-source selection and non-Rex H01–H08 remain unchanged and unassigned. C09's `observe_until_changed` and selected `wait_for_program_status` evidence now have a separate read-only [foreground watch](../observe/README.md#what-c09s-bounded-observation-wait-adds-and-teaches); `verify_then_write` remains unimplemented. A wait result never grants terminal-input authority or means task completion.
 
@@ -41,7 +46,7 @@ Use a deliberately identified **existing** server socket and a deliberate workin
   -- /bin/pwd
 ```
 
-**Execution is local to the CLI machine.** The socket selects Rex coordination/version evidence, not an execution host or terminal. Even a forwarded socket does not make `rex.exec` execute on its server. No session/block is selected, created or typed into. This increment targets macOS; other OS builds reject `run` before launching Rex. No support for Joshua's particular M5, installed Rex version, or VPS is claimed.
+**Execution is local to the CLI machine.** The socket selects Rex coordination/version evidence, not an execution host or terminal. Even a forwarded socket does not make `rex.exec` execute on its server. No session/block is selected, created or typed into. Current source supports macOS and Linux; other OS builds reject `run` before launching Rex. Execution remains on the CLI machine, even when the selected socket is forwarded.
 
 An explicit absolute socket, absolute cwd, `--` and nonempty executable are required. Bare executables resolve through inherited `PATH`; supplying an absolute executable is more explicit. There is no implicit shell. To run a shell intentionally, the caller must explicitly supply that shell and its arguments. Stdin is immediate EOF, not an interactive TTY. The command inherits the environment except `REX_SERVER`, `REX_SESSION`, `REX_BLOCK`, `REX_CLIENT`; these hints cannot redirect this invocation. No custom environment/stdin/config interfaces are added.
 
@@ -98,3 +103,26 @@ Cases include literal/injection-looking argv, Unicode/quotes/newlines, explicit 
 The tested ReleaseSmall arm64 Mac executable is **265304 bytes**, **24080 bytes larger** than C03. SHA-256: `948b58a15cc0d7e595c415bb0f67588b6eaab50e13878accdb6c3c7154c8a5d4`. Native build, Mac cross-build, Zig formatting and seven offline comparison checks also pass. Small-command sampling (20 `/usr/bin/true` invocations) gave **18.12 ms median wall time**, min 17.17/max 53.10 ms. Two post-output RSS samples at 1 MB/64 MB emitted retained exactly **257 bytes**: teerex 1776/1776 KiB and Rex CLI 36768/42048 KiB, elapsed 355/387 ms including a 300 ms fixture hold. These are synthetic samples, **not peak-memory bounds, M5 results, productivity benchmarks or a guarantee of constant memory**.
 
 Current scope excludes live-input/guarded-write authority, remote execution, background registries, arbitrary-job cancellation, whole-tree sandboxing, installed-M5 validation, an installer and non-Rex assignments. The selected CLI is shipped as an experimental prerelease, not a guarantee that those excluded capabilities exist.
+
+## Linux supervision boundary (U06)
+
+Linux uses the existing `src/child_linux.zig` event source: `waitid` with `WNOWAIT`
+observes the Rex CLI's termination while retaining its zombie PID to reserve the
+owned process-group ID. `poll` drains stdout/stderr, including unread bytes on
+HUP; pipe EOF alone is not an exit. Cleanup sends TERM/KILL to that owned group
+before reaping its leader, with the existing deadlines and bounded drain.
+The public suite checks actual same-group fixture processes stopped after timeout,
+cancellation, normal exit and abnormal backend death, while an unrelated sentinel
+survives rapid exits. It also demonstrates and cleans an escaped `setsid` child.
+
+No subreaper, parent-death signal or `/proc` tree killer is added: the contract is
+owned-group signalling, not descendant adoption, owner-SIGKILL recovery or an
+arbitrary process-tree boundary. Detached/re-grouped descendants remain explicitly
+`not_covered`, and `all_descendants_verified_gone` remains false. Linux zombie
+fixtures count as stopped, not as executing processes; the tests still inspect
+known fixture PIDs and do not treat a signal request as proof of whole-tree exit.
+
+Run `REX_BIN=/absolute/rex python3 items/run/test_run.py -v` with that Rex's
+parent directory on PATH. Linux and Mac run the same 11 public tests on private
+servers; installed-payload runtime acceptance repeats them through the fresh
+platform catalog. The separate `run-visible` implementation is unchanged.

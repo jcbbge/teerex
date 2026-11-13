@@ -10,8 +10,8 @@ local function emit(value)
     io.write(rex.json.encode(value), "\n"); io.flush()
 end
 local version = call("server.version")
-if version.api_revision ~= 13 or version.platform ~= "darwin_arm64" then
-    error("offstage requires tested API-13 Apple-silicon Mac server")
+if version.api_revision ~= 13 or (version.platform ~= "darwin_arm64" and version.platform ~= "linux_amd64") then
+    error("offstage requires API-13 macOS arm64 or Linux x86_64 server")
 end
 local server = call("server.status")
 if not server.instance_id or not server.host_id then error("missing server identity") end

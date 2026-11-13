@@ -1,4 +1,4 @@
-"""Public offstage lifecycle on disposable Mac Rex; never a personal server."""
+"""Public offstage lifecycle on disposable macOS/Linux Rex; never a personal server."""
 import json
 import os
 from pathlib import Path
@@ -59,9 +59,9 @@ def alive(pid):
 class OffstageTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        if sys.platform != "darwin":
-            raise RuntimeError("Offstage integration requires macOS")
-        cls.rex = shutil.which("rex")
+        if sys.platform not in ("darwin", "linux"):
+            raise RuntimeError("Offstage integration requires macOS or Linux")
+        cls.rex = os.environ.get("REX_BIN") or shutil.which("rex")
         if not cls.rex or not BIN.is_file():
             raise RuntimeError("Build teerex and put test Rex on PATH")
         cls.tmp = tempfile.TemporaryDirectory(prefix="toff-", dir="/tmp")
