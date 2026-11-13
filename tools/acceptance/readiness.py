@@ -28,7 +28,7 @@ def now():
     return datetime.now(timezone.utc).isoformat()
 
 
-def suite_outcomes(binary, server):
+def suite_outcomes(binary, server, combined):
     """Reuse the whole public suite; record each method's actual pass/skip/failure."""
     path = ROOT / "items/observe/test_observe.py"
     spec = importlib.util.spec_from_file_location("readiness_observe_contract", path)
@@ -42,6 +42,10 @@ def suite_outcomes(binary, server):
             self.outcomes = {}
         def name(self, test):
             return ".".join(test.id().split(".")[-2:])
+        def startTest(self, test):
+            super().startTest(test)
+            root_only = self.name(test) in {"ObserveTest.test_default_socket_decoding_and_explicit_override", "ObserveTest.test_platform_socket_default_is_reported_without_contact"}
+            module.BIN = Path(combined) if root_only else binary
         def addSuccess(self, test):
             super().addSuccess(test)
             self.outcomes[self.name(test)] = "pass"
@@ -131,14 +135,14 @@ def run_one(args, payload, version, index):
                     found = sorted(set(re.findall(rb"--[a-z][a-z-]*", result.stdout)))
                     if result.returncode or found != [x.encode() for x in sorted(expected)]:
                         raise ValueError("help_options_mismatch_" + verb)
-                outcomes, successful, count = suite_outcomes(installed, server)
+                outcomes, successful, count = suite_outcomes(installed, server, args.teerex)
                 named = {name for claim in mapping["claims"] for name in claim["tests"]}
                 if not mapping["claims"] or any(not claim["tests"] for claim in mapping["claims"]):
                     raise ValueError("empty_contract_claim")
                 if not successful or any(outcomes.get(name) != "pass" for name in named):
                     failed = sorted(name for name in named if outcomes.get(name) != "pass")
                     raise ValueError("public_contract_failed:" + ",".join(failed)[:140])
-                return "help_exact;public_tests=" + str(count) + ";all_claim_tests_passed"
+                return "help_exact;root_only_controls=2;public_tests=" + str(count) + ";all_claim_tests_passed"
             row("R1", R1)
             revision = identity.get("api_revision")
             rows["R2"] = dict(pass_=type(revision) is int and 10 <= revision <= 13, detail="observed_api=" + str(revision))

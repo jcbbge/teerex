@@ -9,6 +9,8 @@ python3 tools/acceptance/readiness.py --item observe --catalog ABS --rex ABS \
   --out ABS
 ```
 
+Two existing root-only tests (socket defaults and doctor routing) execute the combined CLI, as their test guards and README explicitly scope them to that root. All observation/compare/watch payload tests execute installed bytes.
+
 The catalog must identify the current clean source commit. `--merge OLD` accepts only matching source, payload and rubric identities. Missing or author-identical executor labels remain `not_ready` (R12); labels attribute an execution and do not authenticate it. Public records contain sanitized row details and hashes. Packet evidence is private and discarded after each run. Manager lease/data/retired paths are seeded before the exact N6 file-listing control.
 
 `package.py` validates records in `tools/cartridges/readiness/<id>-<platform>.json`. Absent, non-ready or stale evidence ships experimental; malformed records refuse packaging. Ready manifests narrow API revisions to the measured list and link the proving record through `compatibility.readiness`. Source ancestry, covered inputs, rubric and payload bytes must still match.
