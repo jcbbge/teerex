@@ -177,6 +177,8 @@ class SendTest(unittest.TestCase):
         self.assertEqual(record["state"], "done")
         self.assertEqual(record["title"], "FROM worker")
         self.assertEqual(record["msg"], ("firstline " + "β" * 190)[:180])
+        if Path(BIN).name != "teerex":
+            return  # ask cards are a combined-CLI verb; a standalone send cartridge proves the message record only.
         card = dict(id="card-1", title="Choose", ask="Continue now?", context="Disposable test",
                     options=[dict(label="Yes", gain="Continue", lose="Time"), dict(label="No", gain="Time", lose="Delay")],
                     recommend="Yes")
