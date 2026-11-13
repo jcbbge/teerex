@@ -618,6 +618,9 @@ assert json.loads(data)['result']['failure_reason']=='channel_request_limit'
 from pathlib import Path
 expected=json.loads(Path(sys.argv[1]).read_text())
 actual=dict(os.environ)
+# Apple Python mutates its environment during startup; this key is not added by the runner.
+if sys.platform=='darwin' and '__CF_USER_TEXT_ENCODING' not in expected:
+ actual.pop('__CF_USER_TEXT_ENCODING',None)
 assert actual.pop('REX_SESSION').startswith('session:')
 assert actual.pop('REX_BLOCK').startswith('block:')
 assert actual==expected,'environment was not delivered exactly'
@@ -649,6 +652,25 @@ print('exact environment received')
 
     def test_detached_env_values_not_retained_at_launch_or_exit(self):
         self.env_privacy_run(True)
+
+    def test_native_child_receives_exact_env_including_apple_runtime_key(self):
+        # Native env observes the exec map without Apple's Python startup mutation.
+        expected = json.loads(self.envfile.read_text())
+        expected["__CF_USER_TEXT_ENCODING"] = "0x0:0:0"
+        self.envfile.write_text(json.dumps(expected))
+        for detached in (False, True):
+            with self.subTest(detached=detached):
+                result, packet = self.invoke(argv=["/usr/bin/env", "-0"], extra=["--detach"] if detached else [])
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                if detached:
+                    packet = self.receipt(packet, 10000)
+                    self.assertEqual(packet["exit_report"]["exit_code"], 0)
+                else:
+                    self.assert_good(result, packet)
+                actual = dict(item.decode().split("=", 1) for item in raw(packet["stdout"]).split(b"\0") if item)
+                self.assertEqual(actual.pop("REX_SESSION"), self.session)
+                self.assertEqual(actual.pop("REX_BLOCK"), packet["created"]["block_id"])
+                self.assertEqual(actual, expected)
 
     def test_exact_argv_cwd_env_binary_stdin_and_owned_close(self):
         anchor = self.anchor_pane()

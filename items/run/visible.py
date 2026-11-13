@@ -497,7 +497,7 @@ def controller(runtime, source, args):
         "Closing a pane does not prove descendant/remote death; supervisor loss cannot guarantee cleanup."))
     for name in ("socket", "session", "cwd", "env-file", "stdin-file", "app", "title"):
         parser.add_argument("--" + name, required=True,
-                            help="exact JSON map; values handed off through private FIFO, only sorted keys/canonical SHA-256 persist" if name == "env-file" else None)
+                            help="exact exec-time JSON map; runtimes may mutate their environment; values use private FIFO, only sorted keys/canonical SHA-256 persist" if name == "env-file" else None)
     parser.add_argument("--registry", help="opt-in existing private jobs registry; requires --owner and --purpose")
     parser.add_argument("--owner", help="jobs responsibility label (requires --registry and --purpose)")
     parser.add_argument("--purpose", help="jobs purpose text (requires --registry and --owner)")
