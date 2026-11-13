@@ -1,4 +1,25 @@
 {
+  "covered_files_sha256": {
+    "items/observe/README.md": "b8197a72247cda9a823c419ff4458156ebbf2941cc41add543e32a2d497b4a54",
+    "items/observe/collect.lua": "80a0945ba1f2f449de4d22e1ad1abdab9693e297874236b86b019aac3dd152e0",
+    "items/observe/main.zig": "d83f8b3b2d961396ac4893aa3e426894017b22dd75d1bc9954137bc39a797a29",
+    "items/observe/state.py": "ad1abc2d7e7cb22532d9c9e22337aa21846815dc57095abdd0d48db5bb8bcc9c",
+    "items/observe/state.zig": "321d308fafc6803806c05462494edae17a2d55edf9c772649ec0df72b2d9213a",
+    "items/observe/state_collect.lua": "cfaf933347b3e83b0e0b1e9498073f380a76ceef89c902c2961290cc39cdb968",
+    "items/observe/test_observe.py": "ce440dda98babd87e8699ab332af144fde1b72bdff2d4c806609159314d81a99",
+    "items/observe/test_state.py": "fb8d9aa25cb6ef9058b4d52c3e8cb002ea4b4c9b1b9631b64e932a68a209ef67",
+    "items/observe/view.zig": "19a4dfd29dae7d843577dde934441bed57fae56a5823c08970923928696e7ced",
+    "items/send/draft.lua": "a685aee6e0b8fb351a25320d6b3919ab5a9611220f797ac778a11d630141e2f1",
+    "src/child.zig": "a71b45dc2823965cf050d75985f391be4339a58d051633859d8855cecfd9b229",
+    "src/child_linux.zig": "3bdd456196033032dad22f2798a7c87503ad185f01ca0c5329b083076d3447f3",
+    "tools/acceptance/contracts/observe.json": "f23c2b875d76f6be59b46ede1411156a2080f3a2761cb26865ed836cc6601b74",
+    "tools/cartridges/build.zig": "99724fa563b1ce5274c50a9059a88fb7b6469dc09b541ef670f4170fdd7f805b",
+    "tools/cartridges/cartridges.py": "e4394971b446d020b6168080f5dd5f99091213959eb8bb3987936125535004f1",
+    "tools/cartridges/entry.zig": "158f115b791f08d47dd5e5ebaa445c64c2521229b64755fd9c6f5e44d6c45e94",
+    "tools/cartridges/manifests/source.json": "4a0926665bc3eb4f193e31a7c71dc05c69b8f8c99f2e575595905a64c39315ff",
+    "tools/cartridges/package.py": "9f96c1f8e50311ce6b7d103ae270e69e8a05ee077a8ffdea8a471d451f66245b"
+  },
+  "covered_inputs_sha256": "567f2fde8babb4efb81f61e9310f27f78904663bd9e9e8557401435dd94d6312",
   "covered_paths": [
     "items/observe",
     "src/child.zig",
@@ -6,7 +27,10 @@
     "tools/cartridges/entry.zig",
     "tools/cartridges/build.zig",
     "tools/acceptance/contracts/observe.json",
-    "items/send/draft.lua"
+    "items/send/draft.lua",
+    "tools/cartridges/cartridges.py",
+    "tools/cartridges/package.py",
+    "tools/cartridges/manifests/source.json"
   ],
   "evidenced_api_revisions": [
     13
@@ -14,7 +38,7 @@
   "failed_rows": [],
   "id": "observe",
   "kind": "cartridge_readiness",
-  "payload_sha256": "af9369915b1aec11bbcaa1e4fae87f6f8a5eed73c949bab19a4bafb3a24cee99",
+  "payload_sha256": "8868a6df9350a762131dd65cc5d6e414c2b525a8233ca88bc34d279de5a21410",
   "platform": "aarch64-macos",
   "rubric": "docs/planning/workloads/readiness-acceptance.md",
   "rubric_sha256": "5b33e17c9b5298ab81e6916efb210811b571f3d835dae36be348fa316506f338",
@@ -22,7 +46,7 @@
     {
       "arch": "arm64",
       "executor": "local:m5:teerex",
-      "finished_at": "2026-11-13T13:30:41.697665+00:00",
+      "finished_at": "2026-11-13T15:25:14.083518+00:00",
       "independent_executor": true,
       "os": "Darwin 25.6.0",
       "rex": {
@@ -73,17 +97,17 @@
           "pass": true
         },
         "R9": {
-          "detail": "quiet_wait=60000ms;rss_growth_kib=32",
+          "detail": "quiet_wait=60000ms;rss_growth_kib=0",
           "pass": true
         }
       },
-      "server_instance_sha256": "a921c86b8de43843a364df383dee48b4bd81de88805528b10bfb72aad947829b",
-      "started_at": "2026-11-13T13:29:01.956703+00:00"
+      "server_instance_sha256": "2125d626dbbccab2af508dd908158cdc0dcab8d440dcd341aa42b2399c70d643",
+      "started_at": "2026-11-13T15:23:34.496392+00:00"
     },
     {
       "arch": "arm64",
       "executor": "local:m5:teerex",
-      "finished_at": "2026-11-13T13:31:20.063547+00:00",
+      "finished_at": "2026-11-13T15:25:52.480678+00:00",
       "independent_executor": true,
       "os": "Darwin 25.6.0",
       "rex": {
@@ -138,13 +162,13 @@
           "pass": true
         }
       },
-      "server_instance_sha256": "befaa8c58bd10efca297381ca7d502ecd1f256b2e8f144c4c23e54bb46ad6591",
-      "started_at": "2026-11-13T13:30:41.708728+00:00"
+      "server_instance_sha256": "11e80bd5633daa7a5e61f90361d39d26c6657a9d88a817f7bf9b7b7429b45e00",
+      "started_at": "2026-11-13T15:25:14.093341+00:00"
     },
     {
       "arch": "arm64",
       "executor": "local:m5:teerex",
-      "finished_at": "2026-11-13T13:31:58.721074+00:00",
+      "finished_at": "2026-11-13T15:26:30.928037+00:00",
       "independent_executor": true,
       "os": "Darwin 25.6.0",
       "rex": {
@@ -199,12 +223,12 @@
           "pass": true
         }
       },
-      "server_instance_sha256": "778e08571329a96dad2fc42db2a0cfe589d87a4663811e865402d239af2f68d6",
-      "started_at": "2026-11-13T13:31:20.074645+00:00"
+      "server_instance_sha256": "aaadc70b9c1ef363b1eb1e61c718961e61a1962827579d0e839c2a4985e04aea",
+      "started_at": "2026-11-13T15:25:52.490522+00:00"
     }
   ],
   "schema_version": 1,
-  "source_commit": "1e68adb92bd224c6a7b043a78644c82da782ae0e",
+  "source_commit": "9c8f1c2918daa0bed1bd177168a82d7ff1e2df71",
   "source_tree_dirty": false,
   "verdict": "ready"
 }

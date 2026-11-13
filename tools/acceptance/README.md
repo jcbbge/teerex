@@ -33,3 +33,5 @@ The U05 state interpretation is part of the current whole-cartridge contract. It
 
 
 Records without measured content hashes remain stale until fresh independent evidence is acquired; old evidence is never enrolled retrospectively.
+
+The current [content-pinned independent records and SHA256s](results/observe-content-independent.sha256) were executed by teerex on hive and M5 at `9c8f1c2`: three fresh API13 runs per platform, both verdicts ready with no failed rows. The records measure covered input hash `567f2fde8babb4efb81f61e9310f27f78904663bd9e9e8557401435dd94d6312`; later record and documentation commits preserve that content. Historical independent records remain unchanged.

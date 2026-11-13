@@ -1,4 +1,25 @@
 {
+  "covered_files_sha256": {
+    "items/observe/README.md": "b8197a72247cda9a823c419ff4458156ebbf2941cc41add543e32a2d497b4a54",
+    "items/observe/collect.lua": "80a0945ba1f2f449de4d22e1ad1abdab9693e297874236b86b019aac3dd152e0",
+    "items/observe/main.zig": "d83f8b3b2d961396ac4893aa3e426894017b22dd75d1bc9954137bc39a797a29",
+    "items/observe/state.py": "ad1abc2d7e7cb22532d9c9e22337aa21846815dc57095abdd0d48db5bb8bcc9c",
+    "items/observe/state.zig": "321d308fafc6803806c05462494edae17a2d55edf9c772649ec0df72b2d9213a",
+    "items/observe/state_collect.lua": "cfaf933347b3e83b0e0b1e9498073f380a76ceef89c902c2961290cc39cdb968",
+    "items/observe/test_observe.py": "ce440dda98babd87e8699ab332af144fde1b72bdff2d4c806609159314d81a99",
+    "items/observe/test_state.py": "fb8d9aa25cb6ef9058b4d52c3e8cb002ea4b4c9b1b9631b64e932a68a209ef67",
+    "items/observe/view.zig": "19a4dfd29dae7d843577dde934441bed57fae56a5823c08970923928696e7ced",
+    "items/send/draft.lua": "a685aee6e0b8fb351a25320d6b3919ab5a9611220f797ac778a11d630141e2f1",
+    "src/child.zig": "a71b45dc2823965cf050d75985f391be4339a58d051633859d8855cecfd9b229",
+    "src/child_linux.zig": "3bdd456196033032dad22f2798a7c87503ad185f01ca0c5329b083076d3447f3",
+    "tools/acceptance/contracts/observe.json": "f23c2b875d76f6be59b46ede1411156a2080f3a2761cb26865ed836cc6601b74",
+    "tools/cartridges/build.zig": "99724fa563b1ce5274c50a9059a88fb7b6469dc09b541ef670f4170fdd7f805b",
+    "tools/cartridges/cartridges.py": "e4394971b446d020b6168080f5dd5f99091213959eb8bb3987936125535004f1",
+    "tools/cartridges/entry.zig": "158f115b791f08d47dd5e5ebaa445c64c2521229b64755fd9c6f5e44d6c45e94",
+    "tools/cartridges/manifests/source.json": "4a0926665bc3eb4f193e31a7c71dc05c69b8f8c99f2e575595905a64c39315ff",
+    "tools/cartridges/package.py": "9f96c1f8e50311ce6b7d103ae270e69e8a05ee077a8ffdea8a471d451f66245b"
+  },
+  "covered_inputs_sha256": "567f2fde8babb4efb81f61e9310f27f78904663bd9e9e8557401435dd94d6312",
   "covered_paths": [
     "items/observe",
     "src/child.zig",
@@ -6,7 +27,10 @@
     "tools/cartridges/entry.zig",
     "tools/cartridges/build.zig",
     "tools/acceptance/contracts/observe.json",
-    "items/send/draft.lua"
+    "items/send/draft.lua",
+    "tools/cartridges/cartridges.py",
+    "tools/cartridges/package.py",
+    "tools/cartridges/manifests/source.json"
   ],
   "evidenced_api_revisions": [
     13
@@ -22,7 +46,7 @@
     {
       "arch": "x86_64",
       "executor": "local:hive:teerex",
-      "finished_at": "2026-11-13T13:27:40.426020+00:00",
+      "finished_at": "2026-11-13T15:22:12.179331+00:00",
       "independent_executor": true,
       "os": "Linux 5.15.0-202-generic",
       "rex": {
@@ -77,13 +101,13 @@
           "pass": true
         }
       },
-      "server_instance_sha256": "1bbd0f88d8b4affe190a878630a3d328bc65f6a087ef0082cdd4406bdb416ba0",
-      "started_at": "2026-11-13T13:25:59.649845+00:00"
+      "server_instance_sha256": "14ec65b167232d95e4367f552250daaee504bb7dbc9d14e273293a520c56fc88",
+      "started_at": "2026-11-13T15:20:29.927217+00:00"
     },
     {
       "arch": "x86_64",
       "executor": "local:hive:teerex",
-      "finished_at": "2026-11-13T13:28:20.554531+00:00",
+      "finished_at": "2026-11-13T15:22:53.097298+00:00",
       "independent_executor": true,
       "os": "Linux 5.15.0-202-generic",
       "rex": {
@@ -138,13 +162,13 @@
           "pass": true
         }
       },
-      "server_instance_sha256": "7cda472f09def919eedb836ac585dd6b0e408b25788728e102223d1baaef5a56",
-      "started_at": "2026-11-13T13:27:40.447416+00:00"
+      "server_instance_sha256": "3fd5d9f88935ad01f306290e847007f26a3a0caf5d5f51dce58e1ea15d77554e",
+      "started_at": "2026-11-13T15:22:12.190557+00:00"
     },
     {
       "arch": "x86_64",
       "executor": "local:hive:teerex",
-      "finished_at": "2026-11-13T13:29:01.758440+00:00",
+      "finished_at": "2026-11-13T15:23:33.983597+00:00",
       "independent_executor": true,
       "os": "Linux 5.15.0-202-generic",
       "rex": {
@@ -199,12 +223,12 @@
           "pass": true
         }
       },
-      "server_instance_sha256": "701809bb2620b6be6c64f64df55d41985b2a67dbc328d776b7d1eb1a8a4dd085",
-      "started_at": "2026-11-13T13:28:20.574798+00:00"
+      "server_instance_sha256": "911dd22799e117d5e444508b0fb81927048f3d6b6e258ac8696ea885927f4739",
+      "started_at": "2026-11-13T15:22:53.117781+00:00"
     }
   ],
   "schema_version": 1,
-  "source_commit": "1e68adb92bd224c6a7b043a78644c82da782ae0e",
+  "source_commit": "9c8f1c2918daa0bed1bd177168a82d7ff1e2df71",
   "source_tree_dirty": false,
   "verdict": "ready"
 }
