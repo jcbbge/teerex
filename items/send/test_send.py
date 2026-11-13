@@ -221,8 +221,7 @@ class SendTest(unittest.TestCase):
                   "--host", "test", "--from", "worker", "--draft", "ignore"]
         r = subprocess.run(common + ["--card-file", str(path)], env=self.env, capture_output=True, text=True)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-        record = next(r for r in records() if r.get("id") == "ask/card-1")
-        self.assertEqual((record["state"], record["kind"], record["msg"]), ("blocked", "question", "Continue now?"))
+        self.assertFalse(any(r.get("id") == "ask/card-1" and r.get("state") in ("blocked", "error") for r in records()))
         r = subprocess.run(common + ["--resolve", "card-1", "--answer", "Yes"], env=self.env, capture_output=True, text=True)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertFalse(any(r.get("id") == "ask/card-1" for r in records()))
@@ -250,7 +249,7 @@ class SendTest(unittest.TestCase):
             path.write_text(json.dumps(dict(id=card_id, title='Choose', ask='Proceed?', context='fixture',
                 options=[dict(label='Yes', gain='Go', lose='Time'), dict(label='No', gain='Wait', lose='Delay')], recommend='Yes')))
             run(common + ['--card-file', str(path)], asker_env)
-            self.assertTrue(any(r.get('id') == 'ask/' + card_id for r in records()))
+            self.assertFalse(any(r.get('id') == 'ask/' + card_id and r.get('state') in ('blocked', 'error') for r in records()))
             before_seat, before_asker = seat_raw.read_bytes(), asker_raw.read_bytes()
             if route in ('resolve', 'self_resolve', 'clear_only'):
                 command = common + ['--resolve', card_id]

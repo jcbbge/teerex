@@ -158,6 +158,9 @@ pub fn build(b: *std.Build) void {
     exe.root_module.addImport("rex_records", records);
     exe.root_module.addImport("rex_board", b.createModule(.{ .root_source_file = b.path("items/board/main.zig"), .target = target, .optimize = optimize }));
     exe.root_module.addImport("rex_boardfeed", b.createModule(.{ .root_source_file = b.path("items/boardfeed/main.zig"), .target = target, .optimize = optimize }));
+    const decide = b.createModule(.{ .root_source_file = b.path("items/decide/main.zig"), .target = target, .optimize = optimize });
+    decide.addImport("rex_boards", boards);
+    exe.root_module.addImport("rex_decide", decide);
     b.installArtifact(exe);
 
     const run = b.addRunArtifact(exe);

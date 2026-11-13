@@ -72,6 +72,8 @@ Registration and native terminal delivery across clients are **not a server-enfo
 
 ## Decisions typed into the pane
 
+`ask` never writes blocked/error status records for a question. Reply addresses are tracked separately in the private ask ledger, so resolution still reaches the original asker. For pull-only default-with-veto decisions, use [`decide`](../decide/README.md).
+
 `ask` calls the current CLI's native `send` with **no store selector**, so a registered seat receives terminal input. The default draft guard applies; `--draft guard|ignore` and `--draft-wait-ms 0..55000` have native send semantics. Native delivery receipts, uncertainty and exit codes are preserved. There is no automatic resend. A failed/uncertain delivery does not create a history record. With optional `--store`, a registered seat retains the card **after** successful delivery; this is not atomic with terminal input. `delivered_history_failed` means delivery succeeded but history failed: inspect and never resend automatically. Cancellation reports attempted delivery and requires inspection.
 
 For an inline card, use the agent-core card fields directly (the same plain-text format):

@@ -553,10 +553,6 @@ def _deliver_ask(a):
                 check(not any(r["kind"] == "decision" and r["body"]["id"] == value["id"] for r in seat["records"]), "decision_id_already_used")
     argv = [a.teerex, "send", "--socket", a.socket, "--session", a.session, "--block", a.block,
             "--from", a.sender, "--message-file", "-", "--draft", a.draft, "--draft-wait-ms", str(a.draft_wait_ms)]
-    if not answer_only:
-        argv += ["--status-id", "ask/" + (a.resolve if a.resolve is not None else value["id"]),
-             "--status-state", "clear" if a.resolve is not None else "blocked",
-             "--status-message", "" if a.resolve is not None else value["ask"]]
     # No store/host selectors: native send must type even into a registered seat.
     a.delivery_attempted = True
     proc = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE)
@@ -573,6 +569,14 @@ def _deliver_ask(a):
     if proc.returncode:
         sys.stdout.buffer.write(output)
         return proc.returncode if proc.returncode > 0 else 128 - proc.returncode
+    if not answer_only:
+        # Track the reply address without making the question a blocked status.
+        import teerex_seat_status
+        try:
+            teerex_seat_status.register(dict(socket=a.socket, session=a.session, block=a.block,
+                sender=a.sender, id='ask/' + value['id'], origin=teerex_seat_status.origin()))
+        except (OSError, ValueError, subprocess.SubprocessError):
+            pass  # Best-effort reply lookup, as with the native status helper.
     if a.store and not answer_only:
         try:
             with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8") as f:
@@ -1170,7 +1174,7 @@ def parser():
     q.add_argument("--draft-wait-ms", type=bounded_int(0, 55000), default=30000, metavar="0..55000")
     q.add_argument("--timeout-ms", type=bounded_int(100, 115000), default=None, metavar="100..115000",
                    help="registered stdin must reach EOF; native fallback guard defaults to draft wait+10000ms, ignore10000")
-    q = commands.add_parser("ask", help="type complete decision through guarded send; seat child status stays blocked until resolution; optional store history")
+    q = commands.add_parser("ask", help="type complete decision through guarded send; questions never mark panes blocked; optional store history")
     q.add_argument("--store", help="optional existing private history store; seat must be registered")
     for k in ("host", "socket", "session", "block"):
         q.add_argument("--" + k, required=True)

@@ -247,6 +247,13 @@ jobs:
           REX_BIN: ${{ runner.temp }}/rex-bin/rex
         run: python3 items/adapters/test_adapters.py -v
 
+      - name: Run pull-only decision contracts
+        if: matrix.rex-api == 13
+        env:
+          TEEREX_BIN: ${{ github.workspace }}/zig-out/bin/teerex
+          REX_BIN: ${{ runner.temp }}/rex-bin/rex
+        run: python3 items/decide/test_decide.py -v
+
       - name: Run cross-host waiting on two disposable servers
         env:
           TEEREX_BIN: ${{ github.workspace }}/zig-out/bin/teerex
