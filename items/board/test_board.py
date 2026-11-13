@@ -307,7 +307,7 @@ class BoardTest(unittest.TestCase):
         events.append(dict(v=1,t=200000000,host='hive',kind='held',available=True,items=held_rows))
         path=self.root/'jump.jsonl';path.write_text('\n'.join(map(json.dumps,events)))
         _,board_sid,board_anchor,_=targets['hive']
-        p=self.pane(fixture=path,config=config,extra_env=dict(REX_SESSION=board_sid,REX_BLOCK=board_anchor,REX_SERVER='unix://'+hosts['hive']['socket']))
+        p=self.pane(fixture=path,config=config,extra_env=dict(REX_SESSION=board_sid,REX_BLOCK=board_anchor,REX_SERVER='unix://'+hosts['hive']['socket'],TEEREX_INTERNAL_REX='rex',REX_BIN='rex'))
         # Switch away first so Enter must change the server's active window.
         p.key(b'm')
         p.key(b'\r')
@@ -333,14 +333,14 @@ class BoardTest(unittest.TestCase):
         try:
             end=time.monotonic()+5
             while True:
-                observed=subprocess.run([BIN,'observe','--socket',hosts['hive']['socket'],'--session',board_sid,'--block',held_block,'--tail'],capture_output=True,text=True,timeout=5)
+                observed=subprocess.run([BIN,'--rex',rex,'observe','--socket',hosts['hive']['socket'],'--session',board_sid,'--block',held_block,'--tail'],capture_output=True,text=True,timeout=5)
                 content=json.loads(observed.stdout)['capture']['content']
                 if 'Press Enter to close' in content:break
                 if time.monotonic()>end:self.fail(content)
                 time.sleep(.05)
             self.assertIn('opened held-old',content)
         finally:
-            subprocess.run([BIN,'surfaces','close','--socket',hosts['hive']['socket'],'--session',board_sid,'--pane',held_block],capture_output=True,timeout=5,check=True)
+            subprocess.run([BIN,'--rex',rex,'surfaces','close','--socket',hosts['hive']['socket'],'--session',board_sid,'--pane',held_block],capture_output=True,timeout=5,check=True)
         # Finite live JSON and the independent kept check use these disposable
         # servers and a private launch registry, never the operator's state.
         registry=self.root/'.local/state/teerex-agents';registry.mkdir(parents=True)

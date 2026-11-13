@@ -14,6 +14,7 @@ import sys
 import threading
 import tempfile
 import time
+from urllib.parse import unquote
 
 LOCK = threading.Lock()
 STOP = threading.Event()
@@ -493,7 +494,21 @@ def open_held(a):
         session=os.environ.get('REX_SESSION') or os.environ.get('LC_REX_SESSION')
         block=os.environ.get('REX_BLOCK') or os.environ.get('LC_REX_BLOCK')
         if not session or not block:raise ValueError('board pane address unavailable')
-        result=subprocess.run([a.executable,'surfaces','open','--session',session,'--layout','tiled','--anchor',block,'--direction','right','--label','Held work','--',
+        # The source host may be remote; the adjacent pane belongs to the board.
+        # Keep an explicit local Rex selection, otherwise resolve its socket's
+        # local host entry instead of depending on rex being on PATH.
+        command=[a.executable]
+        if a.rex != 'rex':
+            command+=['--rex',a.rex]
+        else:
+            server=os.environ.get('REX_SERVER')
+            if server is not None and not server.startswith('unix://'):raise ValueError('board server must be Unix')
+            socket=unquote(server[7:]) if server is not None else a.socket
+            hosts=json.loads(read(a.config,1024*1024))['hosts']
+            names=[name for name,entry in hosts.items() if isinstance(entry,dict) and entry.get('transport')=='local' and entry.get('socket')==socket]
+            if len(names)!=1:raise ValueError('board local host unavailable or ambiguous')
+            command+=['--config',a.config,'--host',names[0]]
+        result=subprocess.run([*command,'surfaces','open','--session',session,'--layout','tiled','--anchor',block,'--direction','right','--label','Held work','--',
                                a.executable,'board','feed','--held-pane','--config',a.config,'--host-name',a.host,'--held-id',identifier],stdout=subprocess.DEVNULL,timeout=15)
         if result.returncode:raise ValueError('held pane unavailable')
 

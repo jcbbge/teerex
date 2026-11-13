@@ -80,12 +80,12 @@ class FeedTests(unittest.TestCase):
         execute.assert_not_called()
 
     def test_held_enter_routes_host_and_opens_tiled_beside_board(self):
-        a=SimpleNamespace(held_id='item-1',held_open_json=None,held_pane=False,executable='/teerex',config='/hosts.json',host='remote')
+        a=SimpleNamespace(held_id='item-1',held_open_json=None,held_pane=False,executable='/teerex',config='/hosts.json',host='remote',rex='/board/rex')
         source=dict(held_open=['/show','{id}'])
         with mock.patch.object(feed,'selected_host',return_value=source),mock.patch.dict(os.environ,REX_SESSION='session:test',REX_BLOCK='block:test'),mock.patch.object(feed.subprocess,'run',return_value=SimpleNamespace(returncode=0)) as run:
             feed.open_held(a)
             argv=run.call_args.args[0]
-            self.assertEqual(argv[:4],['/teerex','surfaces','open','--session'])
+            self.assertEqual(argv[:6],['/teerex','--rex','/board/rex','surfaces','open','--session'])
             self.assertEqual(argv[argv.index('--anchor')+1],'block:test')
             self.assertEqual(argv[argv.index('--direction')+1],'right')
             self.assertEqual(argv[argv.index('--layout')+1],'tiled')
@@ -97,6 +97,28 @@ class FeedTests(unittest.TestCase):
             argv=run.call_args.args[0]
             self.assertEqual(argv[:8],['/teerex','targets','exec','--config','/hosts.json','--host','remote','--'])
             self.assertEqual(argv[-2:],['--held-id','item-1'])
+
+    def test_held_enter_resolves_board_host_separately_from_source(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config=Path(tmp)/'hosts.json'
+            hosts=dict(board=dict(transport='local',socket='/board socket'),remote=dict(transport='ssh',socket='/remote'))
+            config.write_text(json.dumps(dict(hosts=hosts)))
+            a=SimpleNamespace(held_id='item-1',held_open_json=None,held_pane=False,executable='/teerex',config=str(config),host='remote',rex='rex',socket='/default')
+            env=dict(LC_REX_SESSION='session:board',LC_REX_BLOCK='block:board',REX_SERVER='unix:///board%20socket')
+            with mock.patch.object(feed,'selected_host',return_value=dict(held_open=['/show','{id}'])),mock.patch.dict(os.environ,env,clear=True),mock.patch.object(feed.subprocess,'run',return_value=SimpleNamespace(returncode=0)) as run:
+                feed.open_held(a)
+                argv=run.call_args.args[0]
+                self.assertEqual(argv[:7],['/teerex','--config',str(config),'--host','board','surfaces','open'])
+                self.assertEqual(argv[argv.index('--session')+1],'session:board')
+                self.assertEqual(argv[argv.index('--anchor')+1],'block:board')
+                self.assertEqual(argv[argv.index('--host-name')+1],'remote')
+                hosts['duplicate']=hosts['board'];config.write_text(json.dumps(dict(hosts=hosts)))
+                run.reset_mock()
+                with self.assertRaises(ValueError):feed.open_held(a)
+                run.assert_not_called()
+                hosts.pop('duplicate');hosts.pop('board');config.write_text(json.dumps(dict(hosts=hosts)))
+                with self.assertRaises(ValueError):feed.open_held(a)
+                run.assert_not_called()
 
     def test_native_watcher_existing_and_new_directories(self):
         with tempfile.TemporaryDirectory() as tmp:
