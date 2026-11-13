@@ -70,7 +70,7 @@ def scratch_read(path):
         raw = stream.read(262145)
     if len(raw.encode()) > 262144:
         raise ScratchError("scratchpad_too_large")
-    result = dict(name="Scratchpad", purpose="", intent="", updated="", now=None, todo=[], done=[])
+    result = dict(name="Scratchpad", purpose="", intent="", updated="", now=None, todo=[], done=[], waiting="")
     section = None
     current = []
     for line in raw.splitlines():
@@ -79,7 +79,7 @@ def scratch_read(path):
             result["name"] = line[2:].strip()
         elif line.startswith("## "):
             section = {"Now": current, "To-do": result["todo"], "Done": result["done"]}.get(line[3:].strip())
-        elif any(line.startswith(k + ":") for k in ("Purpose", "Intent", "Updated")):
+        elif any(line.startswith(k + ":") for k in ("Purpose", "Intent", "Updated", "Waiting")):
             key, value = line.split(":", 1)
             result[key.lower()] = value.strip()
         elif section is not None:
@@ -97,7 +97,8 @@ def scratch_write(path, data):
     raw = (f"# {data['name']}\nPurpose: {data['purpose']}\nIntent: {data['intent']}\nUpdated: {data['updated']}\n\n## Now\n" +
            (f"- [ ] {data['now']}\n" if data["now"] else "") + "\n## To-do\n" +
            "".join(f"- [ ] {v}\n" for v in data["todo"]) + "\n## Done\n" +
-           "".join(f"- [x] {v}\n" for v in data["done"]))
+           "".join(f"- [x] {v}\n" for v in data["done"]) +
+           ("\nWaiting: " + data["waiting"] + "\n" if data.get("waiting") else ""))
     if len(raw.encode()) > 262144:
         raise ScratchError("scratchpad_too_large")
     fd, stage = tempfile.mkstemp(prefix=".scratch-", dir=path.parent)
@@ -126,7 +127,7 @@ def scratch_init(session, block, name, purpose, intent):
             # Repeated init preserves the pane's working list, including hand-written notes.
             scratch_write(path, scratch_read(path))
         else:
-            scratch_write(path, dict(name=name, purpose=purpose, intent=intent, now=None, todo=[], done=[]))
+            scratch_write(path, dict(name=name, purpose=purpose, intent=intent, now=None, todo=[], done=[], waiting=""))
     return str(path)
 
 
@@ -167,6 +168,8 @@ def scratch_render(data, width=40):
     except (ValueError, TypeError):
         add("updated time unknown")
     lines.append("")
+    if data.get("waiting"):
+        add("Waiting: " + data["waiting"])
     if data["now"]:
         add("▶ " + data["now"])
     for item in data["todo"]:
@@ -279,6 +282,7 @@ def scratch_main(argv=None):
         if op in ("now", "todo"):
             p.add_argument("text")
         if op == "now":
+            p.add_argument("--waiting", help="scratchpad Waiting text; empty text clears it")
             p.add_argument("--done", action="store_true", help="finish the previous Now instead of returning it to To-do")
         if op == "show":
             p.add_argument("--json", action="store_true")
@@ -303,7 +307,7 @@ def scratch_main(argv=None):
         elif o.operation == "show":
             data = scratch_read(path)
             if o.json:
-                print(json.dumps({k: data[k] for k in ("purpose", "intent", "now", "todo", "done", "updated")}, ensure_ascii=False))
+                print(json.dumps({k: data[k] for k in ("purpose", "intent", "now", "todo", "done", "updated", "waiting")}, ensure_ascii=False))
             else:
                 print(scratch_render(data), end="")
         elif o.operation == "watch":
@@ -331,6 +335,8 @@ def scratch_main(argv=None):
                     if value in data["todo"]:
                         data["todo"].remove(value)
                     data["now"] = value
+                    if o.waiting is not None:
+                        data["waiting"] = scratch_line(o.waiting) if o.waiting else ""
                 elif data["now"]:
                     data["done"].insert(0, data["now"])
                     data["now"] = None

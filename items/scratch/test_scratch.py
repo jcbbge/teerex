@@ -83,6 +83,17 @@ class ScratchTest(unittest.TestCase):
         self.assertEqual(self.data()["now"], "Keep this")
         self.assertIn("# worker β\nPurpose: Build scratchpad\nIntent: All gates pass\nUpdated: ", self.path.read_text())
 
+    def test_waiting_round_trip_render_and_clear(self):
+        self.init()
+        self.cli("now", "Review", "--waiting", "reviewer · approval")
+        self.assertEqual(self.data()["waiting"], "reviewer · approval")
+        self.assertIn("Waiting: reviewer", self.cli("show").stdout)
+        self.cli("todo", "Later")
+        self.assertEqual(self.data()["waiting"], "reviewer · approval")
+        self.cli("now", "Resume", "--waiting", "")
+        self.assertEqual(self.data()["waiting"], "")
+        self.assertNotIn("Waiting:", self.path.read_text())
+
     def test_now_todo_done_and_previous_disposition(self):
         self.init()
         self.cli("todo", "Later")
@@ -97,7 +108,7 @@ class ScratchTest(unittest.TestCase):
         self.assertEqual(self.data()["done"], ["Third", "Second"])
         self.cli("now", "Later")
         self.assertEqual(self.data()["todo"], ["First"])
-        self.assertEqual(set(self.data()), {"purpose", "intent", "now", "todo", "done", "updated"})
+        self.assertEqual(set(self.data()), {"purpose", "intent", "now", "todo", "done", "updated", "waiting"})
 
     def test_handwritten_missing_sections_blank_lines_round_trip(self):
         self.init()

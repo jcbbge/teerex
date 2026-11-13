@@ -1762,6 +1762,32 @@ Path('/work/network-harness').touch()
                                                                 "program_status", "{}"], timeout=5))
         return next((r["state"] for r in result.get("records", []) if r.get("app") == "teerex-agent"), None)
 
+    def test_scratch_waiting_blocks_with_text_and_clears_for_all_harnesses(self):
+        for harness in ("claude", "codex", "pi"):
+            self.settings["profiles"]["probe"].update(harness=harness, hook_events=True)
+            p, launched = self.launch()
+            self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+            state = self.record(launched["launch_id"])
+            block = state["target"]["block_id"]
+            wait_for(lambda: self.program_state(block) == "working")
+            def waiting(text):
+                p = subprocess.run([BIN, "scratch", "now", "review", "--waiting", text,
+                    "--session", self.session, "--block", block], env=self.env, capture_output=True, text=True)
+                self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+            waiting("reviewer · approval")
+            wait_for(lambda: self.program_state(block) == "blocked")
+            result = self.rpc("com.superlogical.terminal.program_status", dict(session_id=self.session, block_id=block, args={}))
+            record = next(r for r in result["records"] if r.get("app") == "teerex-agent")
+            self.assertIn("reviewer", json.dumps(record))
+            waiting("")
+            wait_for(lambda: self.program_state(block) == "working")
+            # Hand edits are the same source as CLI writes.
+            pad = Path(state["scratchpad"])
+            pad.write_text(pad.read_text() + "\nWaiting: external result\n")
+            wait_for(lambda: self.program_state(block) == "blocked")
+            pad.write_text(pad.read_text().replace("Waiting: external result", ""))
+            wait_for(lambda: self.program_state(block) == "working")
+
     def test_codex_delivery_notify_and_failure_share_pane_state(self):
         for tint in (False, None):
             self.settings["profiles"]["probe"].update(harness="codex", hook_events=True, tint=tint)

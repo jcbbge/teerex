@@ -1501,6 +1501,7 @@ def supervise_child(o):
         signal.signal(signal.SIGTERM, forward)
         signal.signal(signal.SIGINT, forward)
         last_hook = None
+        last_status = None
         last_input_ns = 0
         channel_closed_reported = False
         while child.poll() is None:
@@ -1516,8 +1517,17 @@ def supervise_child(o):
                 delivered_input(o.registry, o.launch_id, incoming)
                 last_input_ns = incoming["at_ns"]
             current = load(o.registry, o.launch_id).get("last_hook")
+            try:
+                waiting = scratch_read(Path(state["scratchpad"])).get("waiting", "")
+            except (OSError, ValueError):
+                waiting = ""
+            status = ("blocked", waiting[:300]) if waiting else (
+                (current.get("state") or {"Stop": "idle", "StopFailure": "error", "UserPromptSubmit": "working"}[current["kind"]], current["text"])
+                if current else ("working", "visible agent process starting; readiness not assessed"))
+            if status != last_status:
+                program_status(state, *status)
+                last_status = status
             if current is not None and current != last_hook:
-                program_status(state, current.get("state") or {"Stop": "idle", "StopFailure": "error", "UserPromptSubmit": "working"}[current["kind"]], current["text"])
                 if current["kind"] in ("Stop", "StopFailure"):
                     come_forward(state, current["kind"])
                 last_hook = current
