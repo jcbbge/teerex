@@ -10,7 +10,7 @@ const usage =
     \\Usage: teerex board [--config ABS] [--hosts hive,m5] [--replay FILE]
     \\                    [--no-graphics] [--once] [--benchmark N]
     \\Live Rex/teerex events and machine vitals. Event-driven; no screen timer.
-    \\Feed: teerex board feed --help
+    \\Feed: teerex board feed --help; feed --once prints a JSONL fleet snapshot.
     \\Replay is JSONL v1; EOF holds the final frame, q exits. --once prints it and exits.
     \\Keys: j/k or arrows select; Enter jump; Space expand; d decisions; m machine;
     \\      ? keys; q quit. Mouse selects; double-click jumps; wheel scrolls.

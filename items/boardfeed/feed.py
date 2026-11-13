@@ -258,9 +258,10 @@ class MacVitals:
 
 
 def scratch_projection(contents):
-    sections={'Now':[], 'To-do':[], 'Done':[]}; section=None; waiting=None
+    sections={'Now':[], 'To-do':[], 'Done':[]}; section=None; waiting=None; updated=None
     for line in contents.splitlines():
         if line.startswith(('## ', '# ')): section=line.lstrip('# ').strip()
+        elif line.startswith('Updated: '):updated=line[9:].strip() or None
         elif line.startswith('Waiting: '):
             parts=line[9:].split(' · ',2)
             if len(parts)==3: waiting=dict(on=parts[0],what=parts[1],since=(parts[2][6:] if parts[2].startswith('since ') else parts[2]))
@@ -275,7 +276,7 @@ def scratch_projection(contents):
                 elif part.startswith('⇥ '):step['handoff']=part[2:]
                 else:step['by']=part
             steps.append(step)
-    return dict(now=next((x['text'] for x in steps if x['state']=='now'),None), steps=steps, waiting=waiting,
+    return dict(updated=updated,now=next((x['text'] for x in steps if x['state']=='now'),None), steps=steps, waiting=waiting,
                 todo=[x['text'] for x in steps if x['state']=='todo'],done=[x['text'] for x in steps if x['state']=='done'])
 
 
@@ -315,6 +316,7 @@ class State:
                             phase=record.get('phase','working')
                             state={'exited':'gone','archived':'gone','failed':'error','turn_stopped':'idle','reported':'idle','awaiting_protocol_ack':'waiting'}.get(phase,'working')
                             pad=self.a.scratch/session/(block+'.md')
+                            stamp=None
                             try:
                                 stamp=pad.stat().st_mtime_ns
                                 cached=self.pads.get(str(pad))
@@ -347,7 +349,7 @@ class State:
                                     self.update_status(block,status)
                                 except (OSError,ValueError,subprocess.SubprocessError):pass
                             if state not in ('gone','idle','error'):state=self.status.get(block,state)
-                            row=dict(id=identifier,name=record.get('name') or record.get('owner') or 'agent',session=session,block=block,state=state,placement=self.placements.get(block,'detached' if record.get('placement')=='detached' else 'placed'),now=projection.get('now'),done=len(projection.get('done',[])),total=len(projection.get('steps',[])),steps=projection.get('steps',[]),waiting=projection.get('waiting'),executor=executor(record),question=self.questions.get(block),since=hook.get('at') or record.get('created_at') or record.get('registered_at_unix_ms') or 0,cpu=None,rss=None)
+                            row=dict(id=identifier,name=record.get('name') or record.get('owner') or 'agent',session=session,block=block,state=state,placement=self.placements.get(block,'detached' if record.get('placement')=='detached' else 'placed'),now=projection.get('now'),done=len(projection.get('done',[])),total=len(projection.get('steps',[])),steps=projection.get('steps',[]),waiting=projection.get('waiting'),executor=executor(record),scratch_updated_at=projection.get('updated') or None,scratch_mtime_ms=stamp//1000000 if stamp is not None else None,question=self.questions.get(block),since=hook.get('at') or record.get('created_at') or record.get('registered_at_unix_ms') or 0,cpu=None,rss=None)
                             deadline=record.get('review_at')
                             row['stalled']=isinstance(deadline,(int,float)) and deadline>0 and deadline<time.time()*1000 and state!='gone'
                             if isinstance(deadline,(int,float)) and deadline>time.time()*1000 and state!='gone':
@@ -363,17 +365,18 @@ class State:
                     except (OSError,ValueError,UnicodeError,TypeError): continue
             for identifier,row in rows.items():
                 if self.rows.get(identifier)!=row:
+                    if getattr(self.a,'once',False) and row['state']=='gone':continue
                     emit(self.a.host,'agent',**row)
                     previous=self.rows.get(identifier)
                     text=(row['name']+' started') if previous is None else row['name']+' '+({'gone':'exited','idle':'turn ended','waiting':'needs attention','error':'reported a problem'}.get(row['state'],'updated their work'))
-                    emit(self.a.host,'stream',agent=row['name'],text=text,role='problem' if row['state']=='error' else 'words')
+                    if not getattr(self.a,'once',False):emit(self.a.host,'stream',agent=row['name'],text=text,role='problem' if row['state']=='error' else 'words')
             for identifier,row in self.rows.items():
                 if identifier not in rows:
                     emit(self.a.host,'agent',**dict(row,state='gone'))
             self.rows=rows
             self.roots={self.pids[row['block']]:row['name'] for row in rows.values() if row['block'] in self.pids}
             directory=getattr(self.a,'decisions',None)
-            if directory is not None and getattr(self.a,'executable',None):
+            if not getattr(self.a,'once',False) and directory is not None and getattr(self.a,'executable',None):
                 stamps=[]
                 for path in directory.glob('*.json'):
                     try:stamps.append((str(path),path.stat().st_mtime_ns))
@@ -385,7 +388,7 @@ class State:
                         result=projection_command([self.a.executable,'decide','list','--json'],5)
                         emit(self.a.host,'decisions',decisions=result['decisions'],complete=result.get('complete',False))
                     except (OSError,ValueError,KeyError,subprocess.SubprocessError):pass
-            self.tail_calls()
+            if not getattr(self.a,'once',False):self.tail_calls()
 
     def refresh_view(self,session):
         try:
@@ -481,7 +484,19 @@ def rex_events(a,state):
     except OSError:emit(a.host,'host',reachable=False,error='Cannot start Rex event subscription')
 
 
+def snapshot(a):
+    # One bounded read, without event subscribers, filesystem watchers or vitals.
+    command=[a.rex,'--autostart=false','--server','unix://'+a.socket,'--timeout','2s','api','call','session.list','{}']
+    try:
+        json.loads(subprocess.check_output(command,stderr=subprocess.DEVNULL,timeout=3))
+        reachable=True
+    except (OSError,ValueError,subprocess.SubprocessError):reachable=False
+    emit(a.host,'host',reachable=reachable,error=None if reachable else 'Rex unavailable')
+    State(a).scan()
+
+
 def local(a):
+    if a.once:return snapshot(a)
     state=State(a)
     watcher=Watcher([a.agents_registry,a.jobs_registry,a.scratch,a.calls,a.decisions])
     sample=LinuxVitals() if sys.platform=='linux' else MacVitals()
@@ -510,6 +525,8 @@ def merge(a):
     decisions={}
     def host_feed(host):
         command=[a.executable,'targets','exec','--config',a.config,'--host',host,'--','board','feed','--local','--host-name',host]
+        if getattr(a,'once',False):command.append('--once')
+        received=False
         try:
             p=subprocess.Popen(command,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,text=True);CHILDREN.append(p)
             for line in p.stdout:
@@ -518,13 +535,16 @@ def merge(a):
                     event=json.loads(line)
                     if event.get('v')!=1 or event.get('kind') not in ('host','agent','stream','vitals','decisions'):continue
                     event['host']=host
+                    if event['kind']=='host':received=True
                     with LOCK:
                         if event['kind']=='decisions':
                             decisions[host]=[dict(d,host=host) for d in event.get('decisions',[])]
                             event['decisions']=sorted([d for batch in decisions.values() for d in batch],key=lambda d:d.get('opened_at_ms',0))
                         print(json.dumps(event,separators=(',',':')),flush=True)
                 except (ValueError,TypeError):continue
-            if not STOP.is_set():emit(host,'host',reachable=False,error='Host feed disconnected')
+            p.stdout.close()
+            p.wait()
+            if not STOP.is_set() and (not getattr(a,'once',False) or not received):emit(host,'host',reachable=False,error='Host feed disconnected')
         except OSError:emit(host,'host',reachable=False,error='Host feed unavailable')
     for host in a.hosts.split(','):
         t=threading.Thread(target=host_feed,args=(host,),daemon=True);t.start();threads.append(t)
@@ -535,6 +555,7 @@ def main(argv=None):
     parser=argparse.ArgumentParser(prog='teerex board feed',description=__doc__)
     parser.add_argument('--config',default=os.path.expanduser('~/.config/teerex/hosts.json'),help='absolute named-host configuration')
     parser.add_argument('--hosts',default='hive,m5',help='comma-separated configured hosts; both by default')
+    parser.add_argument('--once',action='store_true',help='emit one JSONL snapshot of host reachability and current agents, then exit; no watchers or vitals')
     parser.add_argument('--local',action='store_true',help='read this host only (transport worker)')
     parser.add_argument('--host-name',dest='host',default=platform.node().split('.')[0])
     parser.add_argument('--socket',default=os.environ.get('TEEREX_BOARD_SOCKET', '/run/user/%d/rex/server.sock'%os.getuid() if sys.platform=='linux' else os.path.expanduser('~/Library/Application Support/rex/server.sock')))

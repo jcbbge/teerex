@@ -6,6 +6,27 @@ default. Each runs its own foreground feed through `targets exec`; no daemon,
 installation, retry, or SSH fallback is started. Disconnects produce `host`
 events while the other host continues.
 
+`teerex board feed --once [--config ABS --hosts hive,m5]` is the finite fleet
+read API, usable without a terminal. It reads each configured host once, emits
+JSON Lines, then exits and reaps its transport children. It starts no event
+subscriptions, watchers or vitals sampling. Normal end-of-snapshot is not a
+host disconnect. Hosts may interleave; each host emits reachability before its
+agent rows. An unavailable source emits `kind: "host", reachable: false`;
+partial availability is represented in the data and does not change exit 0.
+
+Snapshots use the same version 1 `host` and current `agent` events as the live
+feed, without stream/decision/vitals events or `gone` tombstones. Agent rows
+include `host`, `id`, `name`, `session`, `block`, `state`, `placement`, `now`,
+`done`/`total` progress, ordered `steps`, executor and waiting fields. Both live
+and snapshot rows add `scratch_updated_at` (the scratchpad's `Updated:` value,
+or null) and `scratch_mtime_ms` (filesystem modification time in Unix
+milliseconds, or null). These distinguish declared update time from file time.
+The existing `waiting`, `wait_since_ms` and `wait_age_ms` describe the wait edge.
+
+```sh
+teerex board feed --once --config /absolute/hosts.json --hosts hive,m5
+```
+
 `--local --host-name NAME --socket ABS --rex ABS` runs a transport worker on
 one host. Read-only source overrides: `--agents-registry ABS`,
 `--jobs-registry ABS`, `--scratch ABS`, `--calls ABS`. Defaults are the host's

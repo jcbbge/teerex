@@ -148,6 +148,33 @@ class FeedTests(unittest.TestCase):
         finally:
             feed.CHILDREN.remove(child);feed.STOP.clear()
 
+    def test_once_merges_hosts_and_exits_without_disconnect_events(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);fake=root/'teerex'
+            fake.write_text('#!'+sys.executable+"\nimport json,sys\nassert '--once' in sys.argv\nhost=sys.argv[sys.argv.index('--host-name')+1]\nfor kind in ['host','agent']:print(json.dumps(dict(v=1,t=1,host=host,kind=kind,reachable=True,id=host,name='worker-'+host)))\n")
+            fake.chmod(0o700)
+            class Args:pass
+            a=Args();a.executable=str(fake);a.config=str(root/'hosts.json');a.hosts='first,second';a.once=True
+            out=io.StringIO()
+            with contextlib.redirect_stdout(out):feed.merge(a)
+            events=[json.loads(line) for line in out.getvalue().splitlines()]
+            self.assertEqual(len(events),4)
+            self.assertEqual({e['host'] for e in events},{'first','second'})
+            self.assertTrue(all(e['reachable'] for e in events if e['kind']=='host'))
+            self.assertTrue(all(p.poll() is not None for p in feed.CHILDREN))
+            feed.CHILDREN.clear()
+
+    def test_once_unavailable_local_rex_is_explicit(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)
+            command=([os.environ['TEEREX_BIN'],'board','feed'] if os.environ.get('TEEREX_BIN') else [sys.executable,str(SOURCE),'/not-used'])
+            command+=['--once','--local','--host-name','fixture','--rex','/missing-rex','--socket',str(root/'missing.sock')]
+            for flag in ('agents-registry','jobs-registry','scratch','calls'):command+=['--'+flag,str(root/flag)]
+            result=subprocess.run(command,capture_output=True,text=True,timeout=5,env=dict(os.environ,HOME=tmp,TEEREX_CALL_LOG_DIR=str(root/'call-log')))
+            self.assertEqual(result.returncode,0,result.stderr)
+            events=[json.loads(line) for line in result.stdout.splitlines()]
+            self.assertEqual(len(events),1);self.assertEqual(events[0]['kind'],'host');self.assertFalse(events[0]['reachable'])
+
     def test_unreachable_host_is_event(self):
         with tempfile.TemporaryDirectory() as tmp:
             fake=Path(tmp)/'exec';fake.write_text('#!/bin/sh\nexit 1\n');fake.chmod(0o700)
@@ -194,8 +221,18 @@ class FeedTests(unittest.TestCase):
                 self.assertEqual(row['placement'],'placed')
                 wait_for(lambda e:e['kind']=='agent' and e['state']=='waiting' and e['question']=='Choose?')
                 (root/'scratch'/session).mkdir()
-                (root/'scratch'/session/(block+'.md')).write_text('## Now\n- [ ] Test push\n')
+                (root/'scratch'/session/(block+'.md')).write_text('Updated: 2026-11-13T19:00:00Z\n## Now\n- [ ] Test push · computer\n## Done\n- [x] Read · computer · ■ ready\nWaiting: peer · review · since 2026-11-13T18:59:00Z\n')
                 wait_for(lambda e:e['kind']=='agent' and e['now']=='Test push')
+                snapshot=subprocess.run(command+['--once'],capture_output=True,text=True,timeout=8,env=dict(os.environ,HOME=tmp,TEEREX_CALL_LOG_DIR=str(root/'call-log')))
+                self.assertEqual(snapshot.returncode,0,snapshot.stderr)
+                snapshot_events=[json.loads(line) for line in snapshot.stdout.splitlines()]
+                self.assertEqual([e['kind'] for e in snapshot_events],['host','agent'])
+                self.assertTrue(snapshot_events[0]['reachable'])
+                agent=snapshot_events[1]
+                self.assertEqual(agent['now'],'Test push');self.assertEqual(agent['done'],1);self.assertEqual(agent['total'],2)
+                self.assertEqual([s['state'] for s in agent['steps']],['done','now'])
+                self.assertEqual(agent['waiting']['on'],'peer');self.assertEqual(agent['placement'],'placed')
+                self.assertEqual(agent['scratch_updated_at'],'2026-11-13T19:00:00Z');self.assertIsInstance(agent['scratch_mtime_ms'],int)
                 (root/'calls'/'calls.jsonl').write_text(json.dumps(dict(phase='start',call_id='x',verb='send'))+'\n'+json.dumps(dict(phase='end',call_id='x',exit=0))+'\n')
                 wait_for(lambda e:e['kind']=='stream' and e['text']=='message delivered')
                 closed=subprocess.run([REX,'--autostart=false','-S',endpoint,'block','close','--session',session,block],capture_output=True,text=True,timeout=5)
@@ -204,6 +241,10 @@ class FeedTests(unittest.TestCase):
                 if os.environ.get('TEEREX_BIN'):
                     config=root/'hosts.json'
                     config.write_text(json.dumps(dict(schema_version=1,hosts=dict(hive=dict(host_id='hive',platform='linux-x86_64' if sys.platform=='linux' else 'macos-arm64',transport='local',home=tmp,socket=str(socket),rex=REX,teerex=os.environ['TEEREX_BIN'],store=str(root/'store'))))))
+                    once=subprocess.run([os.environ['TEEREX_BIN'],'board','feed','--once','--config',str(config),'--hosts','hive,absent'],capture_output=True,text=True,timeout=8,env=dict(os.environ,HOME=tmp,TEEREX_CALL_LOG_DIR=str(root/'call-log')))
+                    self.assertEqual(once.returncode,0,once.stderr)
+                    availability={e['host']:e['reachable'] for e in map(json.loads,once.stdout.splitlines()) if e['kind']=='host'}
+                    self.assertEqual(availability,dict(hive=True,absent=False))
                     merged=subprocess.Popen([os.environ['TEEREX_BIN'],'board','feed','--config',str(config),'--hosts','hive,absent'],stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,env=dict(os.environ,HOME=tmp))
                     try:
                         received=queue.Queue()
