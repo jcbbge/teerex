@@ -46,9 +46,7 @@ def invoke(argv, stats, env, rex=0, **kwargs):
     return result
 
 
-def teerex_task(args, server, session, anchor, root, mode, keep=True, controller_signal=None, close_owned=True):
-    root.mkdir(mode=0o700)
-    began = time.monotonic_ns()
+def counted_rex(rex, root):
     # Count actual Rex execs, including nested surface/collector calls. The
     # wrapper records one byte then execs; it never stores command arguments.
     count = root / "rex-execs"
@@ -56,12 +54,23 @@ def teerex_task(args, server, session, anchor, root, mode, keep=True, controller
     shim = root / "bin"
     shim.mkdir(mode=0o700)
     wrapper = shim / "rex"
-    save(wrapper, ("#!" + sys.executable + "\nimport os,sys\nf=os.open(" + repr(str(count)) + ",os.O_WRONLY|os.O_APPEND);os.write(f,b'x');os.close(f)\nos.execv(" + repr(str(args.rex)) + ",[" + repr(str(args.rex)) + "]+sys.argv[1:])\n").encode(), 0o700)
+    save(wrapper, ("#!" + sys.executable + "\nimport os,sys\nf=os.open(" + repr(str(count)) + ",os.O_WRONLY|os.O_APPEND);os.write(f,b'x');os.close(f)\nos.execv(" + repr(str(rex)) + ",[" + repr(str(rex)) + "]+sys.argv[1:])\n").encode(), 0o700)
+    return wrapper, count
+
+
+def teerex_task(args, server, session, anchor, root, mode, keep=True, controller_signal=None, close_owned=True):
+    root.mkdir(mode=0o700)
+    began = time.monotonic_ns()
+    wrapper, count = counted_rex(args.rex, root)
     args = copy.copy(args)
     args.rex = str(wrapper)
     server = copy.copy(server)
-    server.env = dict(server.env, PATH=str(shim) + os.pathsep + server.env["PATH"])
+    server.env = dict(server.env, PATH=str(wrapper.parent) + os.pathsep + server.env["PATH"])
+    server.base = [str(wrapper), *server.base[1:]]
     stats = fresh_metrics()
+    def measured_command(*argv, **kwargs):
+        return invoke([*server.base, *argv], stats, server.env, **kwargs)
+    server.command = measured_command
     envfile = root / "env.json"
     gate = root / "release"
     save(envfile, dict(PATH=os.defpath, FIXTURE_DIR=str(root), FIXTURE_GATE=str(gate)))
@@ -164,8 +173,10 @@ def reference_task(args, server, session, anchor, root, mode):
     root.mkdir(mode=0o700)
     stats = fresh_metrics()
     began = time.monotonic_ns()
+    wrapper, count = counted_rex(args.rex, root)
+    base = [str(wrapper), *server.base[1:]]
     def rpc(method, payload):
-        result = invoke([*server.base, "api", "call", method, json.dumps(payload)], stats, server.env, 1)
+        result = invoke([*base, "api", "call", method, json.dumps(payload)], stats, server.env, 1)
         if result.returncode:
             raise ValueError("reference_rpc_failed:" + method)
         return json.loads(result.stdout)
@@ -196,6 +207,8 @@ def reference_task(args, server, session, anchor, root, mode):
         return dict(code=code, measurements=stats)
     finally:
         rpc("block.close", dict(session_id=session, block_id=block))
+        stats["rex_client_launches"] = count.stat().st_size
+        stats["wall_ms"] = (time.monotonic_ns() - began) / 1e6
 
 
 def check_rows(args, server, session, anchor, evidence):
