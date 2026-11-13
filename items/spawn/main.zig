@@ -10,8 +10,9 @@ const usage =
     \\Exports agent-core address/name/report-to and LC_ metadata through a fixed sh shim; argv is never interpolated.
     \\Creation ACK is not agent readiness/completion. This is not a sandbox or an input lease.
     \\Timeout defaults to 5000 ms (100..60000), plus bounded transport cleanup. No creation retry or automatic close.
+    \\Pre-creation backend failures return backend_error; named preflight refusals return refused.
     \\After an uncertain result, inspect the session before retrying: a terminal may already exist and keep running.
-    \\Exit: 0 created and attached location verified, 1 refusal/uncertain/error, 2 usage, 124 deadline, 130/143 cancellation.
+    \\Exit: 0 created and attached location verified, 1 refused/backend_error/uncertain, 2 usage, 124 deadline, 130/143 cancellation.
     \\
 ;
 
@@ -139,15 +140,25 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
     var timer = try std.time.Timer.start();
     var c: Collector = .{ .allocator = allocator };
     var failure: ?[]const u8 = null;
+    var launch_failed = false;
     const result: ?supervised.Result = supervised.collect(allocator, &argv, &env, budget, &c) catch |err| blk: {
         failure = @errorName(err);
+        launch_failed = switch (err) {
+            error.FileNotFound, error.AccessDenied, error.InvalidExe, error.RexExecutableMustBeAbsolute => true,
+            else => false,
+        };
         break :blk null;
     };
     const signal = supervised.requestedSignal();
     const deadline = result != null and result.?.deadline_exceeded;
     const transport_ok = result != null and !result.?.stopped and result.?.term == .Exited and result.?.term.Exited == 0 and c.pending.items.len == 0;
     const success = transport_ok and c.verified and signal == 0;
-    const outcome: []const u8 = if (signal != 0) "cancel_requested" else if (deadline) "deadline_exceeded" else if (success) "created_and_attached" else if (transport_ok and c.finished and !c.attempt_seen) "refused" else "uncertain";
+    // Rex flushes its pre-call marker before mutation. A fully drained nonzero
+    // exit without that marker, or an exec failure, is a pre-mutation backend
+    // failure. Partial/malformed output or abnormal termination can hide a marker.
+    const backend_failed = launch_failed or (result != null and !result.?.stopped and
+        result.?.term == .Exited and result.?.term.Exited != 0 and c.pending.items.len == 0);
+    const outcome: []const u8 = if (signal != 0) "cancel_requested" else if (deadline) "deadline_exceeded" else if (success) "created_and_attached" else if (c.attempt_seen) "uncertain" else if (transport_ok and c.finished and c.reason != null) "refused" else if (backend_failed) "backend_error" else "uncertain";
     if (!success) {
         if (result) |r| if (r.stderr.len != 0) std.debug.print("teerex spawn: Rex backend: {s}\n", .{r.stderr});
     }
@@ -161,7 +172,7 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
         .creation_attempt_frame_seen = c.attempt_seen,
         .attempt_evidence = "received_local_frame_not_server_dispatch_proof",
         .outcome = outcome,
-        .failure_reason = failure orelse c.reason orelse if (!success) @as(?[]const u8, "rex_transport_incomplete") else null,
+        .failure_reason = failure orelse c.reason orelse if (std.mem.eql(u8, outcome, "backend_error")) @as(?[]const u8, "rex_backend_nonzero_exit") else if (!success) @as(?[]const u8, "rex_transport_incomplete") else null,
         .backend_term = if (result) |r| @as(?std.process.Child.Term, r.term) else null,
         .environment_contract = "agent_core_spawn_address_v1",
         .program_start = "not_assessed",

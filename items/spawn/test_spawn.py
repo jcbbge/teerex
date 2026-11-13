@@ -173,19 +173,24 @@ class SpawnTest(unittest.TestCase):
 
     def test_backend_failures_preserve_bounded_diagnostics_and_termination(self):
         before = self.view()
-        for body, term, diagnostic in [
-            ("import sys\nsys.exit(7)\n", {"Exited": 7}, ""),
-            ("import sys\nsys.stderr.write('synthetic failure:'+'x'*5000);sys.exit(7)\n", {"Exited": 7}, "synthetic failure:" + "x" * (4096 - 18)),
-            ("pass\n", {"Exited": 0}, ""),
-            ("print('{',end='')\n", {"Exited": 0}, ""),
-            ("import os,signal\nos.kill(os.getpid(),signal.SIGTERM)\n", {"Signal": 15}, ""),
+        for body, term, diagnostic, outcome in [
+            ("import sys\nsys.exit(7)\n", {"Exited": 7}, "", "backend_error"),
+            ("import sys\nsys.stderr.write('synthetic failure:'+'x'*5000);sys.exit(7)\n", {"Exited": 7}, "synthetic failure:" + "x" * (4096 - 18), "backend_error"),
+            ("pass\n", {"Exited": 0}, "", "uncertain"),
+            ("import sys\nsys.stdout.write('{');sys.exit(7)\n", {"Exited": 7}, "", "uncertain"),
+            ("import sys\nprint('not-json');sys.exit(7)\n", None, "", "uncertain"),
+            ("print('{',end='')\n", {"Exited": 0}, "", "uncertain"),
+            ("import os,signal\nos.kill(os.getpid(),signal.SIGTERM)\n", {"Signal": 15}, "", "uncertain"),
         ]:
             with self.subTest(body=body):
                 self.shim(body)
                 result, packet = self.invoke("/bin/true")
                 self.assertEqual(result.returncode, 1, result.stderr + result.stdout)
-                self.assertEqual(packet["outcome"], "uncertain")
-                self.assertEqual(packet["failure_reason"], "rex_transport_incomplete")
+                self.assertEqual(packet["outcome"], outcome)
+                if term is None:
+                    self.assertIsNotNone(packet["failure_reason"])
+                else:
+                    self.assertEqual(packet["failure_reason"], "rex_backend_nonzero_exit" if outcome == "backend_error" else "rex_transport_incomplete")
                 self.assertEqual(packet["backend_term"], term)
                 self.assertEqual(result.stderr, "teerex spawn: Rex backend: " + diagnostic + "\n" if diagnostic else "")
                 self.assertIsNone(packet["created"])
@@ -194,12 +199,14 @@ class SpawnTest(unittest.TestCase):
                 self.assertFalse(packet["automatic_close"])
         self.env["PATH"] = str(self.work / "no-rex")
         result, packet = self.invoke("/bin/true")
+        self.assertEqual(packet["outcome"], "backend_error")
         self.assertEqual(packet["failure_reason"], "FileNotFound")
         self.assertIsNone(packet["backend_term"])
         self.shim("pass\n")
         (self.work / "shim" / "rex").chmod(0o644)
         self.env["PATH"] = str(self.work / "shim")
         result, packet = self.invoke("/bin/true")
+        self.assertEqual(packet["outcome"], "backend_error")
         self.assertEqual(packet["failure_reason"], "AccessDenied")
         self.assertIsNone(packet["backend_term"])
         self.assertEqual(self.view(), before)
@@ -276,6 +283,7 @@ class SpawnTest(unittest.TestCase):
                                     capture_output=True, text=True, timeout=5)
             self.assertEqual(result.returncode, 2, result.stderr)
             self.assertEqual(result.stdout, "")
+        before = self.view()
         missing = self.work / "absent.sock"
         command = self.command("/bin/true")
         command[command.index("--socket") + 1] = str(missing)
@@ -290,8 +298,12 @@ class SpawnTest(unittest.TestCase):
         result = subprocess.run(command, capture_output=True, text=True, env=self.env, timeout=5)
         packet = json.loads(result.stdout)
         self.assertEqual(result.returncode, 1, result.stderr + result.stdout)
-        self.assertEqual(packet["outcome"], "uncertain")
-        self.assertEqual(packet["failure_reason"], "rex_transport_incomplete")
+        self.assertEqual(packet["outcome"], "backend_error")
+        self.assertEqual(packet["failure_reason"], "rex_backend_nonzero_exit")
+        self.assertFalse(packet["creation_attempt_frame_seen"])
+        self.assertFalse(packet["retry_safe"])
+        self.assertIsNone(packet["created"])
+        self.assertEqual(self.view(), before)
         self.assertIn(absent, result.stderr)
         self.assertNotEqual(packet["backend_term"], {"Exited": 0})
 
