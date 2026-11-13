@@ -668,8 +668,20 @@ class RexBoardsTest(unittest.TestCase):
             self.assertEqual(result.returncode, code, result.stdout + result.stderr)
             return json.loads(result.stdout)
         made = cli("surfaces", "open", "--socket", str(self.socket), "--session", sid,
-                   "--layout", "tab", "--label", "prepared decision cat", "--", "/bin/cat")
+                   "--layout", "tab", "--label", "prepared decision cat", "--", "/bin/sh", "-c",
+                   "stty -echo && printf 'CAT READY\\n' && exec /bin/cat")
         bid = made["actual"]["block_id"]
+        def capture():
+            return cli("observe", "--socket", str(self.socket), "--session", sid, "--block", bid,
+                       "--max-bytes", "65536")
+        # Observe readiness only after stty disables echo; otherwise the tty's echo
+        # can satisfy the baseline before cat writes its second copy after Enter.
+        for _ in range(100):
+            if "CAT READY" in capture()["capture"]["content"]:
+                break
+            time.sleep(.02)
+        else:
+            self.fail("non-echoing cat did not become ready")
         decision = root / "card.json"
         value = prepared_decision()
         decision.write_text(json.dumps(value))
@@ -679,19 +691,17 @@ class RexBoardsTest(unittest.TestCase):
         self.assertEqual(receipt["outcome"], "events_acknowledged")
         self.assertTrue(receipt["paste"]["acknowledged"])
         self.assertTrue(receipt["enter"]["acknowledged"])
-        def capture():
-            observed = cli("observe", "--socket", str(self.socket), "--session", sid, "--block", bid,
-                           "--max-bytes", "65536")
-            return observed
-        # Read through the public observe path; allow the disposable cat to echo first.
+        # Read through observe until cat has emitted the complete final field.
+        complete = "".join(("Recommendation: " + value["recommend"]).split())
         for _ in range(100):
             before = capture()
             rendered = json.dumps(before, ensure_ascii=False)
-            if "Recommendation:" in rendered and "[irreversible]" in rendered:
+            if complete in "".join(before["capture"]["content"].split()) and "[irreversible]" in rendered:
                 break
             time.sleep(.02)
         else:
             self.fail(rendered)
+        self.assertEqual(before["capture"]["content"].count("FROM worker: DECISION [cleanup-1]"), 1)
         for expected in ("Checked:", "If no answer:", "(default: hold)", "Continuing:", "Evidence:"):
             self.assertIn(expected, rendered)
         value["prepared"]["default"] = "Delete now"
