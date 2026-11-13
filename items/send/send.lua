@@ -45,9 +45,17 @@ local function read_draft()
     return draft_from_vt(text)
 end
 -- Cooperative state is local to the command/Rex host. No server input lease is implied.
-local clutch = {held_observed=false, waited_ms=0, bound_reached=false}
+local clutch = {state="unknown", held_observed=false, waited_ms=0, bound_reached=false}
 local clutch_reason
 local function gate()
+    local function unknown(reason)
+        clutch.state, clutch.failure_reason = "unknown", reason
+        emit({event="clutch", clutch=clutch})
+        return true
+    end
+    if type(a.clutch_file) ~= "string" then
+        return unknown(type(a.clutch_failure) == "string" and a.clutch_failure or "clutch_state_unavailable")
+    end
     while true do
         local f = io.open(a.clutch_file, "r")
         local held = false
@@ -55,13 +63,14 @@ local function gate()
             local raw = f:read(8193); f:close()
             local ok, state = pcall(rex.json.decode, raw)
             if not ok or type(state) ~= "table" or type(state.held) ~= "boolean" or #raw > 8192 then
-                clutch_reason = "clutch_state_unavailable"; return false
+                return unknown("clutch_state_invalid")
             end
             held = state.held
         else
-            clutch_reason = "clutch_state_unavailable"; return false
+            return unknown("clutch_state_unreadable")
         end
-        if not held then return true end
+        clutch.state, clutch.failure_reason = held and "held" or "released", nil
+        if not held then emit({event="clutch", clutch=clutch}); return true end
         clutch.held_observed = true
         if clutch.waited_ms >= a.draft_wait_ms then
             clutch.bound_reached = true

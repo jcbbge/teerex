@@ -456,8 +456,15 @@ class SendTest(unittest.TestCase):
         lock = self.lock(target)
         for sig in [signal.SIGINT, signal.SIGTERM]:
             lock.mkdir()
+            # A fixed 100ms sleep can signal Darwin before the binary installs handlers.
+            # Initial clutch state is published after Signals.init, before the bridge-lock wait.
+            clutch_root = self.work / ("cancel-clutch-" + str(sig))
+            self.env["TEEREX_CLUTCH_DIR"] = str(clutch_root)
             proc = subprocess.Popen(self.command(target), env=self.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-            time.sleep(.1)
+            end = time.monotonic() + 5
+            while not list(clutch_root.glob("*.json")) and proc.poll() is None and time.monotonic() < end:
+                time.sleep(.01)
+            self.assertTrue(list(clutch_root.glob("*.json")), "sender did not initialize before cancellation")
             proc.send_signal(sig)
             out, err = proc.communicate(timeout=3)
             self.assertEqual(proc.returncode, 128 + sig, out + err)

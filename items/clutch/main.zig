@@ -5,6 +5,7 @@ const usage =
     \\Cooperative human hold: teerex send waits within its draft-wait budget, then refuses without input.
     \\Private state: TEEREX_CLUTCH_DIR or ~/.local/state/teerex/clutch (0700), per canonical socket/session/pane.
     \\take/release are idempotent; status is saved state, not live pane evidence. No expiry or automatic release.
+    \\Store errors produce named failure_reason; send treats unreadable state as unknown and continues.
     \\Binds teerex writers only, never raw Rex writers or human keys. Not a server input lease.
     \\Palette: teerex clutch palette --file ABS --socket ABS [--teerex ABS]
     \\Creates a new native two-action fragment; register with surfaces palette install plan/apply.
@@ -25,7 +26,7 @@ fn usageError(reason: []const u8) u8 {
     std.debug.print("teerex clutch: {s}\n{s}", .{ reason, usage });
     return 2;
 }
-pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
+fn execute(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
     if (args.len == 1 and std.mem.eql(u8, args[0], "--help")) {
         try std.fs.File.stdout().writeAll(usage);
         return 0;
@@ -74,4 +75,13 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
     try std.fs.File.stdout().writeAll(raw);
     try std.fs.File.stdout().writeAll("\n");
     return 0;
+}
+
+pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
+    return execute(allocator, args) catch |err| {
+        const raw = try std.json.Stringify.valueAlloc(allocator, .{ .schema_version = 1, .kind = "clutch_result", .outcome = "refused", .state = "unknown", .failure_reason = state.failureReason(err), .cooperative = true, .server_enforced = false }, .{});
+        try std.fs.File.stdout().writeAll(raw);
+        try std.fs.File.stdout().writeAll("\n");
+        return 1;
+    };
 }

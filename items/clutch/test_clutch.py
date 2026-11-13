@@ -1,4 +1,5 @@
 """Cooperative clutch contracts against a disposable Rex server only."""
+import fcntl
 import json
 import os
 from pathlib import Path
@@ -115,10 +116,11 @@ class ClutchTest(fixtures.SendTest):
                                 capture_output=True, text=True, env=self.env, timeout=5)
         self.assertFalse(json.loads(result.stdout)["held"])
 
-    def test_unsafe_state_fails_closed_and_socket_alias_shares_hold(self):
+    def test_unsafe_state_is_unknown_and_socket_alias_shares_confirmed_hold(self):
         target, raw = self.fixture()
         _, packet = self.clutch("take", target)
-        alias = self.work / "alias.sock"
+        # Keep the same path length as rex.sock: Darwin sockaddr_un has a short fixed limit.
+        alias = self.socket.with_name("app sock")
         alias.symlink_to(self.socket)
         command = self.command(target) + ["--draft-wait-ms", "0"]
         command[command.index("--socket") + 1] = str(alias)
@@ -126,11 +128,71 @@ class ClutchTest(fixtures.SendTest):
         self.assertEqual(json.loads(result.stdout)["failure_reason"], "pane_held_by_human")
         state = Path(packet["state_file"])
         state.chmod(0o644)
-        result, _ = self.clutch("release", target)
+        result, refusal = self.clutch("release", target)
         self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(refusal["state"], "unknown")
+        self.assertEqual(refusal["failure_reason"], "ClutchStateNotPrivateOwned")
         result = subprocess.run(command, capture_output=True, text=True, env=self.env, timeout=5)
-        self.assertNotEqual(result.returncode, 0)
-        self.assertEqual(raw.read_bytes(), b"")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        packet = json.loads(result.stdout)
+        self.assertEqual(packet["clutch"]["state"], "unknown")
+        self.assertEqual(packet["clutch"]["failure_reason"], "ClutchStateNotPrivateOwned")
+        self.assertNotIn("Unexpected", result.stdout + result.stderr)
+        self.received(raw, self.pasted(b"hello"))
+
+    def test_store_open_and_corrupt_record_failures_do_not_block_ordinary_send(self):
+        target, raw = self.fixture()
+        root = Path(self.env["TEEREX_CLUTCH_DIR"])
+        root.write_text("not a directory")
+        result, packet = self.bounded_send(target, 0)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(packet["clutch"]["state"], "unknown")
+        self.assertTrue(packet["clutch"]["failure_reason"])
+        self.assertNotIn("Unexpected", result.stdout + result.stderr)
+        self.received(raw, self.pasted(b"hello"))
+        root.unlink()
+        result, held = self.clutch("take", target)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        Path(held["state_file"]).write_text("corrupt JSON")
+        result, packet = self.bounded_send(target, 0)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(packet["clutch"]["state"], "unknown")
+        self.assertTrue(packet["clutch"]["failure_reason"])
+        self.received(raw, self.pasted(b"hello") * 2)
+
+    def test_busy_optional_initializer_does_not_exhaust_send_deadline(self):
+        target, raw = self.fixture()
+        root = Path(self.env["TEEREX_CLUTCH_DIR"])
+        root.mkdir(mode=0o700)
+        lock = root / "clutch.lock"
+        fd = os.open(lock, os.O_CREAT | os.O_RDWR, 0o600)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            result, packet = self.send(target, timeout=1000)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(packet["clutch"]["state"], "unknown")
+            self.assertTrue(packet["clutch"]["failure_reason"])
+            self.received(raw, self.pasted(b"hello"))
+        finally:
+            os.close(fd)
+
+    def test_record_becoming_unreadable_during_draft_wait_is_nonblocking(self):
+        target, log = self.prompt()
+        self.type_draft(target, "keep this draft")
+        result, saved = self.clutch("release", target)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        process = subprocess.Popen(self.command(target) + ["--draft-wait-ms", "500"], env=self.env,
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.addCleanup(lambda: self.cleanup_process(process))
+        time.sleep(.2)
+        Path(saved["state_file"]).write_text("corrupt JSON")
+        stdout, stderr = process.communicate(timeout=6)
+        self.assertEqual(process.returncode, 0, stdout + stderr)
+        packet = json.loads(stdout)
+        self.assertEqual(packet["clutch"]["state"], "unknown")
+        self.assertEqual(packet["clutch"]["failure_reason"], "clutch_state_invalid")
+        self.assertTrue(packet["draft"]["restore_verified"])
+        self.assertIn("keep this draft", self.prompt_text(target))
 
     def test_palette_fragment_is_exclusive_and_uses_invoking_pane(self):
         fragment = self.work / "clutch.lua"

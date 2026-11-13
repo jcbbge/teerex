@@ -34,10 +34,13 @@ pub const Store = struct {
         var dir = try std.fs.openDirAbsolute(root, .{ .no_follow = true, .iterate = true });
         errdefer dir.close();
         try privateStat(dir.fd, true);
-        const canonical = std.fs.cwd().realpathAlloc(allocator, socket) catch |err| switch (err) {
-            error.FileNotFound => try allocator.dupe(u8, socket),
-            else => return err,
+        // Darwin cannot open Unix sockets as regular files. Resolve paths through POSIX realpath.
+        var canonical_buffer: [std.fs.max_path_bytes]u8 = undefined;
+        const resolved = std.posix.realpath(socket, &canonical_buffer) catch |err| switch (err) {
+            error.FileNotFound => socket,
+            else => return error.ClutchSocketCanonicalizationFailed,
         };
+        const canonical = try allocator.dupe(u8, resolved);
         var hash = std.crypto.hash.sha2.Sha256.init(.{});
         hash.update(canonical);
         hash.update("\x00");
@@ -71,7 +74,17 @@ pub const Store = struct {
     }
 
     pub fn set(self: *Store, allocator: std.mem.Allocator, desired: ?bool, reason: []const u8) !struct { changed: bool, state: State } {
-        const fd = try std.posix.openat(self.dir.fd, "clutch.lock", .{ .ACCMODE = .RDWR, .CREAT = true, .NOFOLLOW = true, .NONBLOCK = true, .CLOEXEC = true }, 0o600);
+        // Darwin can transiently return ENOENT while cooperating creators open the same lock.
+        var attempts: usize = 0;
+        const fd = while (true) : (attempts += 1) {
+            break std.posix.openat(self.dir.fd, "clutch.lock", .{ .ACCMODE = .RDWR, .CREAT = true, .NOFOLLOW = true, .NONBLOCK = true, .CLOEXEC = true }, 0o600) catch |err| switch (err) {
+                error.FileNotFound => if (desired != null and attempts < 200) {
+                    std.Thread.sleep(5 * std.time.ns_per_ms);
+                    continue;
+                } else return error.ClutchLockCreationUnavailable,
+                else => return err,
+            };
+        };
         const lock: std.fs.File = .{ .handle = fd };
         defer lock.close();
         try privateStat(fd, false);
@@ -79,7 +92,7 @@ pub const Store = struct {
         var timer = try std.time.Timer.start();
         while (true) {
             std.posix.flock(fd, std.posix.LOCK.EX | std.posix.LOCK.NB) catch |err| {
-                if (err != error.WouldBlock or timer.read() / std.time.ns_per_ms >= 1000) return err;
+                if (err != error.WouldBlock or desired == null or timer.read() / std.time.ns_per_ms >= 1000) return err;
                 std.Thread.sleep(5 * std.time.ns_per_ms);
                 continue;
             };
@@ -101,3 +114,10 @@ pub const Store = struct {
         return .{ .changed = previous != null or held, .state = state };
     }
 };
+
+pub fn failureReason(err: anyerror) []const u8 {
+    return switch (err) {
+        error.Unexpected => "clutch_state_system_error",
+        else => @errorName(err),
+    };
+}

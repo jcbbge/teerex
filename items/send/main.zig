@@ -10,6 +10,7 @@ const usage =
     \\Select a dedicated agent terminal: this can submit/execute input and does not establish prompt safety.
     \\--draft guard|ignore defaults guard: wait for quiet/empty draft, clear, send, restore without Enter.
     \\Cooperative clutch always applies, including --draft ignore; held panes wait then refuse pane_held_by_human.
+    \\Unavailable clutch state is reported unknown with a named failure_reason and does not block send.
     \\State: TEEREX_CLUTCH_DIR or ~/.local/state/teerex/clutch; same command/Rex host required.
     \\--draft-wait-ms N defaults 30000 (0..55000); quiet window1500ms, restore delay400ms.
     \\Ignore preserves prior paste/Enter behavior. No chunking, retry, inbox forwarding, or autostart.
@@ -36,7 +37,7 @@ const Draft = struct {
     restored: ?bool = null,
     restore_verified: ?bool = null,
 };
-const Clutch = struct { held_observed: bool = false, waited_ms: u64 = 0, bound_reached: bool = false };
+const Clutch = struct { state: []const u8 = "unknown", failure_reason: ?[]const u8 = null, held_observed: bool = false, waited_ms: u64 = 0, bound_reached: bool = false };
 const Frame = struct {
     clutch: ?Clutch = null,
     event: []const u8,
@@ -229,10 +230,31 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
     const started_at = std.time.milliTimestamp();
     var env = try std.process.getEnvMap(allocator);
     for ([_][]const u8{ "REX_SERVER", "REX_SESSION", "REX_BLOCK", "REX_CLIENT" }) |key| env.remove(key);
-    var clutch = try clutch_state.Store.open(allocator, &env, path, sid, bid);
-    defer clutch.close();
-    // Validate existing state before invoking Lua; corrupt or unsafe state fails closed.
-    _ = try clutch.set(allocator, null, "");
+    var clutch_failure: ?[]const u8 = null;
+    var clutch = clutch_state.Store.open(allocator, &env, path, sid, bid) catch |err| blk: {
+        clutch_failure = clutch_state.failureReason(err);
+        break :blk @as(?clutch_state.Store, null);
+    };
+    defer if (clutch) |*store| store.close();
+    var clutch_file: ?[]const u8 = null;
+    var clutch_initial: []const u8 = "unknown";
+    if (clutch) |*store| prepare: {
+        // Read an existing hold without needing the mutation lock. Only initialize absent state.
+        const previous = store.read(allocator) catch |err| {
+            clutch_failure = clutch_state.failureReason(err);
+            break :prepare;
+        };
+        const current = previous orelse blk: {
+            const result = store.set(allocator, null, "") catch |err| {
+                clutch_failure = clutch_state.failureReason(err);
+                clutch_file = store.path; // A concurrently created positive hold can still be observed by Lua.
+                break :prepare;
+            };
+            break :blk result.state;
+        };
+        clutch_file = store.path;
+        clutch_initial = if (current.held) "held" else "released";
+    }
     var input_failure: ?[]const u8 = null;
     const message = readMessage(allocator, file_path, &timer, timeout_ms) catch |err| blk: {
         if (err == error.FileTooBig) usageError("message exceeds 65536 bytes");
@@ -246,7 +268,7 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
     const lock_path = try std.fmt.allocPrint(allocator, "{s}/agent-send.{s}.lock", .{ if (configured_tmp.len != 0) configured_tmp else "/tmp", suffix });
     if (!std.fs.path.isAbsolute(lock_path)) usageError("TMPDIR must be absolute");
     const endpoint = try std.fmt.allocPrint(allocator, "unix://{s}", .{path});
-    var collector: Collector = .{ .allocator = allocator, .timer = &timer, .draft = .{ .mode = mode } };
+    var collector: Collector = .{ .allocator = allocator, .timer = &timer, .draft = .{ .mode = mode }, .clutch = .{ .state = clutch_initial, .failure_reason = clutch_failure } };
     var locked = false;
     var acquired = false;
     var backend_started = false;
@@ -295,7 +317,8 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
             .block_id = bid,
             .draft_mode = mode,
             .draft_wait_ms = draft_wait_ms,
-            .clutch_file = clutch.path,
+            .clutch_file = clutch_file,
+            .clutch_failure = clutch_failure,
             .text = try std.fmt.allocPrint(allocator, "FROM {s}: {s}", .{ sender, message }),
         }, .{});
         encoded_argument_bytes = request.len;
@@ -355,7 +378,7 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
         .failure_reason = failure orelse collector.reason orelse if (backend != null and !success) @as(?[]const u8, "rex_transport_incomplete") else null,
         .cancellation_signal = if (signal == 0) @as(?u8, null) else signal,
         .draft = collector.draft,
-        .clutch = .{ .cooperative = true, .state_file = clutch.path, .held_observed = collector.clutch.held_observed, .waited_ms = collector.clutch.waited_ms, .bound_reached = collector.clutch.bound_reached },
+        .clutch = .{ .cooperative = true, .state_file = clutch_file, .state = collector.clutch.state, .failure_reason = collector.clutch.failure_reason, .held_observed = collector.clutch.held_observed, .waited_ms = collector.clutch.waited_ms, .bound_reached = collector.clutch.bound_reached },
         .draft_warning = collector.draft_warning,
         .paste = .{ .attempted = collector.paste_attempted, .acknowledged = collector.paste_acknowledged },
         .enter = .{ .attempted = collector.enter_attempted, .acknowledged = collector.enter_acknowledged },
