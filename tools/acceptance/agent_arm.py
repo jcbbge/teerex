@@ -35,8 +35,9 @@ def run(args):
         if result.returncode:
             raise ValueError("agent_control_refused")
         return json.loads(result.stdout)
-    def close(block):
+    def close(block, receipt_path):
         result = command("surfaces", "close", "--socket", socket, "--session", session, "--pane", block)
+        save(receipt_path, result)
         return result.get("outcome") == "closed_and_absent" and result.get("block_absence_verified") is True
     sink = None
     try:
@@ -125,7 +126,7 @@ def run(args):
                             if agent:
                                 capture, _ = execute([*base, "observe", "--socket", socket, "--session", session, "--block", agent, "--max-bytes", "65535"])
                                 save(work / "agent-final-private.json", capture.stdout)
-                                closed = close(agent)
+                                closed = close(agent, evidence / "agent-closure.json")
                                 if report["runs"]:
                                     report["runs"][-1]["agent_pane_closed"] = closed
                             private.close()
@@ -136,7 +137,7 @@ def run(args):
                                     shutil.move(str(source), str(evidence / name))
                             shutil.rmtree(work)
     finally:
-        report["notification_sink_closed"] = close(sink) if sink else False
+        report["notification_sink_closed"] = close(sink, args.out / "sink-closure.json") if sink else False
         save(args.out / "report.json", report)
         lines = ["# Actual-agent synthetic F1 baseline", "", "No model output is published. Task panes used private servers. The approved visible inert notification sink was closed: " + str(report["notification_sink_closed"]) + ".", "", "| Condition | n | Tool calls median | Interruptions median | Misdirected inputs | Correct reports |", "| --- | --- | --- | --- | --- | --- |"]
         for condition in ("with-teerex", "plain-rex"):
