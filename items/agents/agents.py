@@ -4,6 +4,7 @@ Only the in-pane supervisor waits for an agent. No daemon, screen-based ACK,
 implicit endpoint, hidden fallback, creation retry or notification retry exists.
 """
 import argparse
+import base64
 import contextlib
 import json
 import os
@@ -181,24 +182,30 @@ def receipt(state, outcome, **extra):
     # Tokens, full argv, briefs and reports stay private; state files are the recovery interface.
     result = {k: state.get(k) for k in ("launch_id", "name", "owner", "purpose", "review_at", "profile", "target",
                                         "starter", "report_to", "phase", "tracked", "protocol_acknowledged",
-                                        "brief_attempted", "brief_outcome", "immediate_child_term", "notifications")}
+                                        "brief_attempted", "brief_outcome", "immediate_child_term", "remote_child_term", "notifications")}
+    result["execution_host"] = state.get("execution", {}).get("host") if state.get("execution") else None
+    result["immediate_child_role"] = "ssh_transport" if state.get("execution") else "agent_program"
     result.update(schema_version=1, kind="agents_result", outcome=outcome, agent_readiness="not_assessed",
                   task_completion="not_assessed", all_processes_verified_gone=False, exclusive_input_lease=False,
                   retry_safe=False, **extra)
     return result
 
 
-def invoke(arguments, timeout=10, client_path=None, rex_executable=None):
+def invoke(arguments, timeout=10, client_path=None, rex_executable=None, input_bytes=None):
     """Bounded foreground client, never the agent. Retain diagnostics without treating exit as ACK."""
     import tempfile
     # Output sinks are private regular files, not pipes that a failed descendant can hold open.
-    with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
+    with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err, tempfile.TemporaryFile() as source:
         environment = dict(os.environ)
         if client_path is not None:
             environment["PATH"] = client_path
         if rex_executable is not None:
             environment["TEEREX_INTERNAL_REX"] = absolute(rex_executable)
-        p = subprocess.Popen([RUNTIME, *arguments], stdin=subprocess.DEVNULL, stdout=out, stderr=err,
+        if input_bytes is not None:
+            require(len(input_bytes) <= 32768, "callback_input_too_large")
+            source.write(input_bytes)
+            source.seek(0)
+        p = subprocess.Popen([RUNTIME, *arguments], stdin=source if input_bytes is not None else subprocess.DEVNULL, stdout=out, stderr=err,
                              start_new_session=True, env=environment)
         try:
             code = p.wait(timeout=timeout)
@@ -248,6 +255,124 @@ def transport_ack(code, packet):
 def send_options(state):
     # Root send routes registered seats before terminal input; a failed store never falls back to paste.
     return ["--store", absolute(state["store"]), "--host", state["target"]["host"]] if state["store"] else []
+
+
+def execution_config(profile):
+    execution, callbacks = profile.get("execution"), profile.get("callbacks")
+    if execution is None:
+        require(callbacks is None, "callbacks_require_execution")
+        return None, None
+    require(isinstance(execution, dict) and set(execution) == {"config", "host", "cwd"}, "invalid_execution_config")
+    require(isinstance(callbacks, dict) and set(callbacks) == {"config", "host"}, "explicit_compute_callbacks_required")
+    for route in (execution, callbacks):
+        absolute(route["config"])
+        require(isinstance(route["host"], str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}", route["host"]),
+                "invalid_configured_route")
+    absolute(execution["cwd"])
+    code, packet = invoke(["targets", "resolve", "--config", execution["config"], "--host", execution["host"]])
+    require(code == 0 and isinstance(packet, dict) and isinstance(packet.get("host"), dict), "compute_route_resolution_failed")
+    require(packet["host"].get("transport") == "ssh", "execution_requires_distinct_ssh_compute_host")
+    # Callback paths belong to compute; they must not be opened on the pane host.
+    return dict(execution), dict(callbacks)
+
+
+def callback_command(callbacks, arguments):
+    return [RUNTIME, "--config", callbacks["config"], "--host", callbacks["host"], "agents", *arguments]
+
+
+def remote_exec(o):
+    # Trusted operator argv, not a channel method. All SSH serialization belongs to targets exec.
+    require(len(o.payload) <= 98304, "compute_payload_too_large")
+    payload = json.loads(base64.b64decode(o.payload, validate=True))
+    require(isinstance(payload, dict) and set(payload) == {"argv", "cwd", "metadata", "protocol", "registry", "launch_id",
+                                                          "token", "callbacks", "hook_events", "pane", "store"}, "invalid_compute_payload")
+    argv = payload["argv"]
+    require(isinstance(argv, list) and argv and all(isinstance(v, str) and "\0" not in v for v in argv), "invalid_compute_argv")
+    absolute(argv[0])
+    absolute(payload["cwd"])
+    identifier(payload["launch_id"])
+    token = text(payload["token"], 64)
+    require(re.fullmatch(r"[0-9a-f]{64}", token), "invalid_compute_token")
+    metadata = payload["metadata"]
+    require(isinstance(metadata, dict) and set(metadata) == {"AGENT_SESSION", "AGENT_PANE", "REX_SESSION", "REX_BLOCK",
+                                                           "AGENT_NAME", "AGENT_STARTER", "AGENT_REPORT_TO", "AGENT_LAUNCH_ID",
+                                                           "AGENT_REGISTRY"}, "invalid_compute_metadata")
+    require(all(isinstance(v, str) and "\0" not in v for v in metadata.values()), "invalid_compute_metadata")
+    require(metadata["AGENT_LAUNCH_ID"] == payload["launch_id"], "compute_launch_mismatch")
+    sid, bid = address_id(metadata["AGENT_SESSION"], "session"), address_id(metadata["AGENT_PANE"], "block")
+    require(metadata["REX_SESSION"] == sid and metadata["REX_BLOCK"] == bid, "compute_address_mismatch")
+    callbacks = payload["callbacks"]
+    require(isinstance(callbacks, dict) and set(callbacks) == {"config", "host"}, "invalid_compute_callbacks")
+    absolute(callbacks["config"])
+    absolute(payload["registry"])
+    # Resolve on THIS host before starting any program: path identity is never assumed across SSH.
+    code, resolved = invoke(["targets", "resolve", "--config", callbacks["config"], "--host", callbacks["host"]])
+    require(code == 0 and isinstance(resolved, dict) and isinstance(resolved.get("host"), dict), "callback_route_resolution_failed")
+    pane = payload["pane"]
+    require(isinstance(pane, dict) and pane == dict(host=resolved["host"]["host_id"], server="unix://" + resolved["host"]["socket"],
+                                                   session_id=sid, block_id=bid), "callback_must_route_to_pane_registry_host")
+    ack_args = ["ack", "--registry", payload["registry"], "--launch-id", payload["launch_id"],
+                "--token", token, "--session", sid, "--block", bid]
+    protocol = message(payload["protocol"].encode())
+    report_sid, report_bid = metadata["AGENT_REPORT_TO"].split(" ")
+    report_args = ["send", "--session", address_id(report_sid, "session"), "--block", address_id(report_bid, "block"),
+                   "--from", metadata["AGENT_NAME"], "--message-file", "-"]
+    if payload["store"] is not None:
+        report_args += ["--store", absolute(payload["store"])]
+    # Replace only routing command lines. All protocol text/whitespace remains literal.
+    for marker, command in (("Acknowledge this protocol now by running:\n", callback_command(callbacks, ack_args)),
+                            ("Supply report bytes on stdin then EOF using:\n", [RUNTIME, "--config", callbacks["config"],
+                                                                                "--host", callbacks["host"], *report_args])):
+        require(protocol.count(marker) == 1, "invalid_compute_protocol")
+        before, after = protocol.split(marker, 1)
+        unused, tail = after.split("\n", 1)
+        protocol = before + marker + shlex.join(command) + "\n" + tail
+    if payload["hook_events"]:
+        require("--settings" not in argv, "profile_settings_conflict")
+        hook = shlex.join([RUNTIME, "agents", "stop", "--registry", payload["registry"],
+                           "--launch-id", payload["launch_id"], "--event-file", "-", "--callback-config", callbacks["config"],
+                           "--callback-host", callbacks["host"]])
+        # The compute-side adapter reads its own transcript, then forwards only bounded event bytes.
+        settings = {"hooks": {k: [{"hooks": [{"type": "command", "command": hook, "timeout": 15}]}]
+                              for k in ("Stop", "StopFailure")}}
+        argv = argv + ["--settings", json.dumps(settings)]
+    env = dict(os.environ)
+    for key in ("AGENT_CHANNEL", "LC_AGENT_CHANNEL"):
+        env.pop(key, None)
+    env.update(metadata)
+    env.update({"LC_" + k: v for k, v in metadata.items()})
+    env.pop("TEEREX_INTERNAL_REX", None)
+    child = subprocess.Popen(argv + [protocol], env=env, cwd=payload["cwd"])
+    def forward(sig, unused):
+        with contextlib.suppress(ProcessLookupError):
+            child.send_signal(sig)
+    signal.signal(signal.SIGTERM, forward)
+    signal.signal(signal.SIGINT, forward)
+    code = child.wait()
+    term = {"Exited": code} if code >= 0 else {"Signal": -code}
+    # A separate callback records measured remote-child evidence. SSH's own exit never substitutes for it.
+    args = callback_command(callbacks, ["exited", "--registry", payload["registry"], "--launch-id", payload["launch_id"],
+                                       "--token", token, "--session", sid, "--block", bid, "--term-json", json.dumps(term)])
+    callback_code, result = invoke(args[1:])
+    if callback_code:
+        print(json.dumps(dict(kind="compute_exit_callback", outcome="uncertain", receipt=result, retry_safe=False)), file=sys.stderr)
+    return (code if code >= 0 else min(255, 128 - code)), None
+
+
+def exited(o):
+    term = json.loads(o.term_json)
+    require(isinstance(term, dict) and len(term) == 1 and
+            ((set(term) == {"Exited"} and type(term["Exited"]) is int and 0 <= term["Exited"] <= 255) or
+             (set(term) == {"Signal"} and type(term["Signal"]) is int and 1 <= term["Signal"] <= 127)), "invalid_compute_term")
+    def record(s):
+        require(s.get("execution") is not None, "compute_exit_not_expected")
+        require(secrets.compare_digest(text(o.token, 64), s["token"]), "compute_exit_token_mismatch")
+        require(s["target"]["session_id"] == address_id(o.session, "session") and
+                s["target"]["block_id"] == address_id(o.block, "block"), "compute_exit_address_mismatch")
+        require(s.get("remote_child_term") is None, "compute_exit_already_recorded")
+        s["remote_child_term"] = term
+    state = update(o.registry, o.launch_id, record)
+    return 0, receipt(state, "remote_child_exit_reported")
 
 
 def delivery_config(value):
@@ -526,10 +651,12 @@ def launch(o):
     require(type(profile.get("hook_events", False)) is bool, "invalid_hook_events")
     if profile.get("hook_events"):
         require(profile.get("harness", o.profile) == "claude" and "--settings" not in argv, "unsupported_or_conflicting_hook_adapter")
+    execution, callbacks = execution_config(profile)
     delivery = delivery_config(profile.get("delivery"))
-    require("execution" not in profile and "callbacks" not in profile, "remote_compute_not_yet_supported")
+    require(not (delivery is not None and execution is not None), "remote_fenced_delivery_not_yet_supported")
+    if execution is None:
+        require(Path(argv[0]).name not in ("ssh", "mosh"), "use_execution_route_for_lossless_remote_protocol")
     if delivery is not None:
-        require(Path(argv[0]).name not in ("ssh", "mosh"), "delivery_requires_local_profile")
         require("ack" in delivery["grants"], "managed_delivery_requires_ack_grant")
         require(not profile.get("hook_events") or "stop" in delivery["grants"], "hooks_require_stop_grant")
     # Explicit defaults replace personal/global shell edits; command-line options override them.
@@ -564,7 +691,8 @@ def launch(o):
                  protocol_acknowledged=False, protocol_outcome=None, brief_attempted=False, brief_outcome=None,
                  immediate_child_term=None, notifications={}, brief_file=None, protocol_file=None,
                  hook_events=profile.get("hook_events", False), client_path=os.environ.get("PATH", os.defpath),
-                 rex_executable=os.environ.get("TEEREX_INTERNAL_REX"), delivery=delivery)
+                 rex_executable=os.environ.get("TEEREX_INTERNAL_REX"), delivery=delivery, execution=execution,
+                 callbacks=callbacks, remote_child_term=None)
     with Registry(root) as registry:
         if brief is not None:
             state["brief_file"] = registry.write_message(launch_id, "brief", brief)
@@ -744,6 +872,18 @@ def stop(o):
     event = json.loads(raw)
     require(isinstance(event, dict), "invalid_hook_event")
     event_id = identifier(o.event_id) if o.event_id else secrets.token_hex(16)
+    require((o.callback_config is None) == (o.callback_host is None), "both_callback_route_fields_required")
+    if o.callback_config is not None:
+        validate_hook_event(event)
+        if event["hook_event_name"] == "Stop" and not event.get("last_assistant_message"):
+            try:
+                event["last_assistant_message"] = transcript_last_text(event.get("transcript_path"))[:1500]
+            except (OSError, Refusal, ValueError):
+                event["last_assistant_message"] = "(last words unavailable on compute host)"
+        event.pop("transcript_path", None)
+        args = callback_command(dict(config=absolute(o.callback_config), host=o.callback_host),
+                                ["stop", "--registry", o.registry, "--launch-id", o.launch_id, "--event-file", "-", "--event-id", event_id])
+        return invoke(args[1:], input_bytes=json.dumps(event, ensure_ascii=False).encode())
     return report_stop(o.registry, o.launch_id, event_id, event)
 
 
@@ -812,7 +952,7 @@ def supervise(o):
     env.update(metadata)
     env.update({"LC_" + k: v for k, v in metadata.items()})
     argv = state["argv"]
-    if state.get("hook_events"):
+    if state.get("hook_events") and state.get("execution") is None:
         require(state["harness"] == "claude", "automatic_hook_adapter_not_supported_for_harness")
         hook = shlex.join([RUNTIME, "agents", "stop", "--registry", o.registry, "--launch-id", o.launch_id, "--event-file", "-"])
         if broker is not None:
@@ -823,7 +963,18 @@ def supervise(o):
         settings = {"hooks": {k: [{"hooks": [{"type": "command", "command": hook, "timeout": 15}]}]
                               for k in ("Stop", "StopFailure")}}
         argv = argv + ["--settings", json.dumps(settings)]
-    argv = argv + [message(read_file(state["protocol_file"], 32768, private=True))]
+    protocol = message(read_file(state["protocol_file"], 32768, private=True))
+    if state.get("execution") is None:
+        argv = argv + [protocol]
+    else:
+        execution = state["execution"]
+        payload = dict(argv=argv, cwd=execution["cwd"], metadata=metadata, protocol=protocol, registry=o.registry,
+                       launch_id=o.launch_id, token=state["token"], callbacks=state["callbacks"], hook_events=state["hook_events"],
+                       pane=state["target"], store=state["store"])
+        encoded = base64.b64encode(json.dumps(payload, ensure_ascii=False).encode()).decode()
+        require(len(encoded) <= 98304, "compute_payload_too_large")
+        argv = [RUNTIME, "targets", "exec", "--config", execution["config"], "--host", execution["host"], "--tty",
+                "--", "agents", "exec", "--payload", encoded]
     # No output pipe: agent, supervisor and real pointer/keyboard input share the visible terminal.
     def osc(status, detail):
         sys.stdout.write("\x1b]7501;" + json.dumps(dict(state=status, title=state["name"], msg=detail)) + "\x07")
@@ -863,8 +1014,11 @@ def supervise(o):
     osc("done" if term == {"Exited": 0} else "error", "immediate child terminated; descendants not verified")
     state = load(o.registry, o.launch_id)
     last = state.get("last_hook", {}).get("text", "(no harness last words supplied)")
+    role = "SSH transport" if state.get("execution") else "Immediate child"
+    remote = (f"Remote child: {json.dumps(state['remote_child_term']) if state.get('remote_child_term') else 'unknown; no measured exit callback'}\n"
+              if state.get("execution") else "")
     notice_code, result = notify(o.registry, o.launch_id, "child-exit",
-                                f"PROCESS EXIT: {state['name']}\nImmediate child: {json.dumps(term)}\n"
+                                f"PROCESS EXIT: {state['name']}\n{role}: {json.dumps(term)}\n" + remote +
                                 f"Last harness report: {last}\nDescendants are not verified gone.", "waited_immediate_child")
     if notice_code:
         print(json.dumps(result), file=sys.stderr)
@@ -916,13 +1070,15 @@ def shell(o):
 
 def parser():
     p = argparse.ArgumentParser(prog="teerex agents", description=(
-        "Visible profiles, protocol ACK-before-one-brief, opt-in bounded local fence channel. "
+        "Visible profiles, protocol ACK-before-one-brief, optional named SSH compute and opt-in bounded local fence channel. "
         "Python3.9+. API13 jobs. Creation, transport ACK, agent ACK, idle and child exit are distinct. "
         "No readiness claim, input lease, hidden agent, daemon, automatic retry/close or whole-tree death guarantee."))
     sub = p.add_subparsers(dest="operation", required=True)
     for op in ("profiles", "shell"):
         q = sub.add_parser(op, help="inspect profiles" if op == "profiles" else "print opt-in shell functions; never edits shell files")
         q.add_argument("--config", required=True)
+    q = sub.add_parser("exec", help="compute-host adapter for an explicit managed execution route; never a channel method")
+    q.add_argument("--payload", required=True, help="bounded base64 JSON literal argv/cwd/protocol and callback route")
     q = sub.add_parser("channel", help="one bounded launch-scoped request; no Rex socket, registry or arbitrary destination")
     q.add_argument("--handle", required=True)
     q.add_argument("--request-id", required=True, help="32 lowercase hex; reuse refuses, never resends")
@@ -940,19 +1096,24 @@ def parser():
         q.add_argument("--" + key)
     q.add_argument("--review-at", type=int, help="absolute future Unix milliseconds, <=30 days; default config review_after_ms")
     q.add_argument("--ack-timeout-ms", type=int, default=10000, choices=range(100, 60001), metavar="100..60000")
-    for op in ("ack", "deliver", "inspect", "present", "stop", "supervise"):
+    for op in ("ack", "deliver", "inspect", "present", "stop", "supervise", "exited"):
         q = sub.add_parser(op, help={"ack": "record agent protocol ACK; token plus exact pane required",
                                     "deliver": "explicitly attempt a not-yet-attempted brief after ACK",
                                     "inspect": "offline lifecycle metadata; not live liveness",
                                     "present": "explicit relocation beside anchor through jobs owner/generation checks",
                                     "stop": "submit a harness Stop/StopFailure report, never death proof",
-                                    "supervise": "internal retained visible in-pane program; waits immediate child"}[op])
+                                    "supervise": "internal retained visible in-pane program; waits immediate child",
+                                    "exited": "compute adapter measured-child-exit callback, distinct from SSH exit"}[op])
         q.add_argument("--registry", required=True)
         q.add_argument("--launch-id", required=True)
-        if op == "ack":
+        if op in ("ack", "exited"):
             for key in ("token", "session", "block"):
                 q.add_argument("--" + key, required=True)
+        if op == "exited":
+            q.add_argument("--term-json", required=True)
         if op == "stop":
+            q.add_argument("--callback-config", help="compute-local named-host config; paired with callback-host")
+            q.add_argument("--callback-host", help="explicit registry-host route; never inferred from pane label")
             q.add_argument("--event-file", required=True, help="absolute JSON file or - for <=32KiB stdin/EOF within 2s")
             q.add_argument("--event-id", help="optional stable 32-lowercase-hex hook invocation ID; duplicate attempts refuse")
         if op == "present":
@@ -972,6 +1133,8 @@ def main():
             code, result = deliver(o.registry, o.launch_id)
         elif o.operation == "inspect":
             code, result = 0, receipt(load(o.registry, o.launch_id), "saved_metadata_not_live_evidence")
+        elif o.operation == "exec":
+            code, result = remote_exec(o)
         else:
             code, result = globals()[o.operation](o)
         if result is not None:

@@ -132,9 +132,40 @@ Each save exclusively creates `agents-ID.json.next`, syncs, renames over the com
 
 The ACK wait budget excludes creation, jobs, subprocess cleanup, filesystem/scheduling and stdout waits. Each foreground teerex child invocation has a 10-second client wait, bounded diagnostic reads (4096 bytes), and up to one additional second for the owned native client's cleanup after TERM before a required KILL. The Python controller explicitly installs INT/TERM handlers even when INT was inherited as ignored. No client failure closes the server-created agent pane. Exit0 verifies only the reported stage; 1 refusal/error/uncertainty; argparse usage2; ACK wait124; INT130/TERM143. Always inspect exit status **and** JSON. `agent_readiness`, `task_completion` remain `not_assessed`; `all_processes_verified_gone`, `exclusive_input_lease`, `retry_safe` remain false.
 
-## Source-only scoped delivery (issue21)
+## Source-only compute routing and scoped delivery (issues14 and21)
 
-**Not in published alpha.5.** This opt-in local path is not permission to remove Rivet's relay or change a personal fence. Profiles without `delivery` retain their local lifecycle. Explicit `execution`/`callbacks` fields refuse before pane creation; remote compute and remote fenced delivery are not implemented in this slice. No SSH forwarding, socket exposure or general RPC proxy is added.
+**Not in published alpha.5.** These are two independent opt-in paths, not permission to remove Rivet's relay or change a personal fence. Profiles without either field retain their local lifecycle. Combining `execution` and `delivery` currently refuses **before pane creation** (`remote_fenced_delivery_not_yet_supported`); no SSH forwarding, socket exposure or general RPC proxy is added.
+
+### Explicit unfenced compute route (#14)
+
+Add these fields to the selected **profile**, retaining its literal agent argv (not an argv beginning with ssh):
+
+```json
+{
+  "argv": ["/absolute/compute/bin/claude"],
+  "harness": "claude",
+  "protocol_mode": "argument",
+  "hook_events": true,
+  "execution": {
+    "config": "/absolute/pane-host/targets.json",
+    "host": "compute",
+    "cwd": "/absolute/compute/workspace"
+  },
+  "callbacks": {
+    "config": "/absolute/compute-host/callback-targets.json",
+    "host": "pane-registry"
+  }
+}
+```
+
+- **Who/why:** an operator who already authorizes both strict SSH routes; this is an **unfenced** route with ordinary callback SSH authority, never a worker capability.
+- **What/when:** the visible pane still runs the outside supervisor beside its registry; `execution` selects a distinct SSH compute environment. It does not reinterpret leaf `--host`, root `--host`, or schema1 host records. Target/starter/report-to remain full host/server/session/block tuples on the pane server. A separate arbitrary registry host or cross-server report-to is not supported by this topology.
+- **Where:** `execution.config` is read on the pane/supervisor host; the named entry's teerex is on compute. `execution.cwd`, profile argv and `callbacks.config` are compute paths; `defaults.cwd` remains the supervisor's pane-host cwd. Registry, brief, protocol and boards paths remain on the pane host. Nothing is implicitly uploaded/shared. Both teerex installations need this source and the shared `targets exec --tty` extension.
+- **How:** existing `targets resolve` validates the compute route; existing `targets exec --tty ... -- agents exec --payload BASE64` supplies a bounded JSON payload through the one strict serializer. SSH gets a PTY only for the agent, not for machine callbacks. No copied SSH builder, changed forwarding guard, connection reuse, password fallback or creation retry exists. Raw profile argv starting with ssh/mosh now refuses with an instruction to use `execution`, instead of knowingly mangling the protocol.
+
+The compute adapter derives its actual teerex executable there, validates the callback named host's configured host ID/socket against the explicit pane address, and supplies the protocol as **one final literal argument**. The protocol's ACK and report commands use the compute-local callback config and named registry route. An actual token/address-bound ACK still precedes one brief attempt. Stop/StopFailure commands run a compute-side `agents stop --callback-config ABS --callback-host NAME ...` adapter: bounded stdin/transcript reads happen on compute, transcript paths are stripped, and only event bytes travel over the non-TTY callback. No pane-host registry file is opened on compute.
+
+`agents exited --registry ABS --launch-id HEX --token HEX --session FULL --block FULL --term-json JSON` records the compute adapter's separately measured immediate-child exit/signal report as `remote_child_term`. `immediate_child_role:"ssh_transport"` and `immediate_child_term` describe the **local SSH process**, not the remote agent. A missing exit callback remains unknown even after SSH7/143/255/disconnect; no transport status proves remote death. A token/address-bound callback is cooperative evidence, not host attestation or whole-tree death. Hook and exit alerts still notify both fixed starter/report-to (deduplicating an exact tuple); direct report commands target report-to. Root registered-seat routing and its refusal boundaries remain in force.
 
 ### Launch-scoped local fence channel (#21)
 
@@ -172,7 +203,9 @@ Lease/revocation stops **new admission**; it does not undo input or cancel an al
 
 ### Source acceptance and remaining cutover
 
-On disposable Linux x86_64, Zig0.15.2, Rex preview.16/API13, all **16** public lifecycle tests passed. Run `TEEREX_AGENTS_FENCE=1 TEEREX_AGENTS_INTEGRATION=1 TEEREX_AGENTS_CROSS_SESSION=1 TEEREX_BIN=ABS REX_BIN=ABS python3 items/agents/test_agents.py -v`. The fence gate requires working Linux bubblewrap namespaces and no personal endpoints; omitted gates explicitly skip, not pass.
+On disposable Linux x86_64, Zig0.15.2, Rex preview.16/API13, all **17** public lifecycle tests passed with the shared `targets exec --tty` patch. Run `TEEREX_AGENTS_SSH=1 TEEREX_AGENTS_FENCE=1 TEEREX_AGENTS_INTEGRATION=1 TEEREX_AGENTS_CROSS_SESSION=1 TEEREX_BIN=ABS REX_BIN=ABS python3 items/agents/test_agents.py -v`. SSH/fence gates require working OpenSSH server/client/keygen, Linux bubblewrap namespaces and no personal endpoints; omitted gates explicitly skip, not pass.
+
+The SSH test uses two real ephemeral SSH endpoints and a separate compute mount namespace where the pane registry and Rex socket are absent. It checks a quoted executable path, callback config with spaces, empty/Unicode/quote/newline argv, preserved protocol, wrong token/address, real ACK before one exact brief, late continuation once, compute-local transcript Stop/StopFailure, exact starter/report-to replies, measured exit7, lost exit callback and SSH255 remaining unknown. This is not the old same-server cross-session test.
 
 The independent real bubblewrap test masks /tmp, /run and /var, denies direct Rex socket and registry access, then permits the scoped ACK, one exact multiline/trailing-newline report and configured Stop hook through only the read-only launch directory. Further cases cover malformed/oversized/duplicate frames, invalid targets/tokens/launch IDs, duplicate/lost response without resend, EOF budget, symlink refusal, expiry/count/INT/TERM teardown, seat append with zero PTY input and original store refusal without paste fallback. Synthetic hooks are not paid-harness certification; isolated environments are not two physical hosts or personal M5/hive validation.
 

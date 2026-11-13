@@ -37,6 +37,11 @@ if protocol:
     with out.open("a") as f: f.write(json.dumps({"event":"protocol_argument","payload":protocol})+"\n")
     if behavior != "noack":
         line=protocol.split("Acknowledge this protocol now by running:\n",1)[1].split("\n",1)[0]
+        if behavior == "remote-exit7":
+            for key,value in (("--token","0"*64),("--block",os.environ['AGENT_STARTER'].split()[1])):
+                wrong=shlex.split(line); wrong[wrong.index(key)+1]=value
+                result=subprocess.run(wrong,capture_output=True,text=True)
+                with out.open('a') as f: f.write(json.dumps({"event":"wrong-ack","code":result.returncode,"stdout":result.stdout})+'\n')
         if behavior == "lateack": time.sleep(1)
         result=subprocess.run(shlex.split(line),capture_output=True,text=True)
         with out.open("a") as f: f.write(json.dumps({"event":"ack","code":result.returncode,"stdout":result.stdout})+"\n")
@@ -52,6 +57,18 @@ if protocol:
                                   input=json.dumps({"hook_event_name":"Stop","last_assistant_message":"fenced turn complete β"}),
                                   capture_output=True,text=True)
             with out.open("a") as f: f.write(json.dumps({"event":"channel-stop","code":result.returncode,"stdout":result.stdout})+"\n")
+        if behavior == "remote-exit7":
+            settings=json.loads(args[args.index("--settings")+1])
+            transcript=Path('/work/transcript.jsonl')
+            transcript.write_text(json.dumps({"type":"assistant","message":{"content":[{"type":"text","text":"remote transcript β '\""}]}})+'\n')
+            for kind in ('Stop','StopFailure'):
+                event={"hook_event_name":kind,"transcript_path":str(transcript),"error":"remote failure β"}
+                command=settings['hooks'][kind][0]['hooks'][0]['command']
+                result=subprocess.run(command,shell=True,input=json.dumps(event),capture_output=True,text=True)
+                with out.open('a') as f: f.write(json.dumps({"event":"remote-hook","kind":kind,"code":result.returncode,"stdout":result.stdout})+'\n')
+            report_line=protocol.split('Supply report bytes on stdin then EOF using:\n',1)[1].split('\n',1)[0]
+            result=subprocess.run(shlex.split(report_line),input='remote direct reply β\n\n',capture_output=True,text=True)
+            with out.open('a') as f: f.write(json.dumps({"event":"remote-reply","code":result.returncode,"stdout":result.stdout})+'\n')
 buf=b""
 while True:
     part=os.read(0,65536)
@@ -61,7 +78,7 @@ while True:
         raw,buf=buf.split(b"\x1b[201~\r",1)
         payload=raw.removeprefix(b"\x1b[200~").decode()
         with out.open("a") as f: f.write(json.dumps({"event":"input","payload":payload})+"\n")
-        if "TASK β asymmetric" in payload and behavior == "exit7":
+        if "TASK β asymmetric" in payload and behavior in ("exit7", "remote-exit7"):
             sys.exit(7)
 '''
 
@@ -464,6 +481,177 @@ class AgentsTest(unittest.TestCase):
         self.assertFalse(self.worker_log.exists())
         self.assertEqual(len(self.rpc("session.view", {"session_id": self.session})["windows"]), 2)
         self.assertEqual([v for v in events(self.starter_log) if v["event"] == "input"], [])
+
+    @unittest.skipUnless(os.environ.get("TEEREX_AGENTS_SSH") == "1", "explicit isolated Linux SSH compute acceptance gate")
+    def test_isolated_ssh_compute_ack_protocol_hooks_and_measured_exit(self):
+        self.assertEqual(sys.platform, "linux")
+        for executable in ("/usr/sbin/sshd", "/usr/bin/bwrap", "/usr/bin/ssh-keygen"):
+            self.assertTrue(Path(executable).exists(), executable)
+        import getpass
+        compute = self.work / "compute"
+        compute.mkdir(mode=0o700)
+        (self.work / "boards").mkdir(mode=0o700)
+        # Two actual SSH endpoints: compute runs in a separate mount namespace; registry remains outside it.
+        key = self.work / "client-key"
+        host_key = self.work / "host-key"
+        for path in (key, host_key):
+            subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(path)], check=True)
+        authorized = self.work / "authorized_keys"
+        authorized.write_text(key.with_suffix(".pub").read_text())
+        authorized.chmod(0o600)
+        ports = []
+        for unused in range(2):
+            with socket.socket() as s:
+                s.bind(("127.0.0.1", 0))
+                ports.append(s.getsockname()[1])
+        force = self.work / "compute-shell"
+        force.write_text("#!/usr/bin/python3\nimport os\nfrom pathlib import Path\n" +
+                         "cmd=['bwrap','--die-with-parent']\n" +
+                         "for p in ['/usr','/bin','/sbin','/lib','/lib64','/etc']:\n" +
+                         " if Path(p).exists(): cmd+=['--ro-bind',p,p]\n" +
+                         "cmd+=['--dev','/dev','--proc','/proc','--tmpfs','/tmp','--tmpfs','/run','--tmpfs','/var']\n" +
+                         f"cmd+=['--ro-bind',{BIN!r},\"/opt/teerex cli's\",'--bind',{str(compute)!r},'/work']\n" +
+                         "os.execvp('bwrap',cmd+['--chdir','/work','--','/bin/sh','-c',os.environ['SSH_ORIGINAL_COMMAND']])\n")
+        force.chmod(0o700)
+        logs = []
+        for i, port in enumerate(ports):
+            ssh_config = self.work / ("sshd-" + str(i))
+            ssh_config.write_text(f"Port {port}\nListenAddress 127.0.0.1\nHostKey {host_key}\n"
+                                  f"AuthorizedKeysFile {authorized}\nPidFile {self.work / ('sshd-'+str(i)+'.pid')}\n"
+                                  "StrictModes no\nPasswordAuthentication no\nKbdInteractiveAuthentication no\nUsePAM no\n"
+                                  f"AllowUsers {getpass.getuser()}\nAllowTcpForwarding no\nAllowStreamLocalForwarding no\n"
+                                  + (f"ForceCommand {force}\n" if i == 0 else ""))
+            log = (self.work / ("sshd-" + str(i) + ".log")).open("w+")
+            self.addCleanup(log.close)
+            logs.append(log)
+            server = subprocess.Popen(["/usr/sbin/sshd", "-D", "-e", "-f", str(ssh_config)], stdout=log, stderr=log)
+            self.addCleanup(lambda p=server: (p.terminate(), p.wait(timeout=5)) if p.poll() is None else None)
+            def ready():
+                if server.poll() is not None:
+                    log.seek(0)
+                    self.fail(log.read())
+                try:
+                    with socket.create_connection(("127.0.0.1", port), timeout=.1):
+                        return True
+                except OSError:
+                    return False
+            wait_for(ready)
+        known = self.work / "known-hosts"
+        public = " ".join(host_key.with_suffix(".pub").read_text().split()[:2])
+        known.write_text("".join(f"[127.0.0.1]:{p} {public}\n" for p in ports))
+        shutil.copy(key, compute / "identity")
+        shutil.copy(known, compute / "known-hosts")
+        (compute / "fixture.py").write_text(FIXTURE)
+        def host(port, binary, socket_path, config_key, known_path):
+            return dict(host_id="disposable", transport="ssh", address=getpass.getuser()+"@127.0.0.1", port=port,
+                        known_hosts=known_path, identity_file=config_key, home="/work", platform="linux-x86_64",
+                        socket=socket_path, rex=str(Path(REX).resolve()), teerex=binary, store=str(self.work / "boards"))
+        targets = self.work / "compute-targets.json"
+        targets.write_text(json.dumps(dict(schema_version=1, hosts=dict(compute=host(ports[0], "/opt/teerex cli's",
+                                            "/run/absent-rex.sock", str(key), str(known))))))
+        (compute / "callbacks route.json").write_text(json.dumps(dict(schema_version=1, hosts=dict(registry=host(
+            ports[1], BIN, str(self.socket), "/work/identity", "/work/known-hosts")))))
+        report_log = self.work / "remote-report-to.jsonl"
+        target = self.rpc("session.new_window", dict(session_id=self.session, focus=False, layout=dict(block=dict(
+            flavor="com.superlogical.terminal.shell", options=dict(command=[sys.executable, str(self.fixture), str(report_log), "noack"],
+                                                                  exit=dict(on_completion=False))))))
+        report_block = target["block_ids"][0]
+        wait_for(lambda: events(report_log))
+        self.settings["defaults"].update(report_to_session=self.session, report_to_block=report_block)
+        literal_args = ["", "two words", "line\nbreak", "'$;`\" β"]
+        self.settings["profiles"]["probe"].update(argv=[sys.executable, "/work/fixture.py", "/work/worker.jsonl", "remote-exit7", *literal_args],
+            harness="claude", hook_events=True, execution=dict(config=str(targets), host="compute", cwd="/work"),
+            callbacks=dict(config="/work/callbacks route.json", host="registry"))
+        self.enable_channel()
+        self.config.write_text(json.dumps(self.settings))
+        before = self.rpc("session.view", dict(session_id=self.session))
+        p, refusal = self.run_cli("launch", "--config", str(self.config), "--profile", "probe")
+        self.assertEqual(p.returncode, 1)
+        self.assertIn("remote_fenced_delivery_not_yet_supported", refusal["failure_reason"])
+        self.assertEqual(self.rpc("session.view", dict(session_id=self.session)), before)
+        self.settings["profiles"]["probe"].pop("delivery")
+        self.config.write_text(json.dumps(self.settings))
+        p, packet = self.run_cli("launch", "--config", str(self.config), "--profile", "probe", "--brief-file", str(self.brief),
+                                 "--ack-timeout-ms", "6000")
+        self.assertEqual(p.returncode, 0, p.stderr + p.stdout)
+        launch_id = packet["launch_id"]
+        worker = compute / "worker.jsonl"
+        wait_for(lambda: len([v for v in events(worker) if v["event"] == "remote-hook"]) == 2)
+        started = events(worker)[0]
+        self.assertFalse(started["registry_present"], "compute accidentally shares the pane-host registry")
+        self.assertTrue(started["stdin_tty"])
+        self.assertEqual(started["cwd"], "/work")
+        self.assertEqual(started["argv"][:len(literal_args)], literal_args)
+        self.assertEqual([v["code"] for v in events(worker) if v["event"] == "wrong-ack"], [1, 1])
+        self.assertEqual([v["code"] for v in events(worker) if v["event"] == "ack"], [0])
+        self.assertEqual([v["code"] for v in events(worker) if v["event"] == "remote-hook"], [0, 0])
+        wait_for(lambda: [v for v in events(worker) if v["event"] == "remote-reply"])
+        self.assertEqual([v["code"] for v in events(worker) if v["event"] == "remote-reply"], [0])
+        self.assertEqual([v["payload"] for v in events(worker) if v["event"] == "input"], ["FROM probe: " + self.brief.read_text()])
+        state = wait_for(lambda: self.record(launch_id) if self.record(launch_id).get("notifications", {}).get(
+            "child-exit", {}).get("outcome") == "transport_acknowledged" else None)
+        self.assertEqual(state["remote_child_term"], {"Exited": 7})
+        self.assertEqual(state["immediate_child_term"], {"Exited": 7})
+        self.assertEqual(state["last_hook"]["kind"], "StopFailure")
+        for destination_log in (self.starter_log, report_log):
+            count = 3 if destination_log == self.starter_log else 4
+            notices = wait_for(lambda: [v["payload"] for v in events(destination_log) if v["event"] == "input"]
+                               if len([v for v in events(destination_log) if v["event"] == "input"]) == count else None)
+            self.assertIn("remote transcript β '\"", notices[0])
+            self.assertIn("remote failure β", notices[1])
+            self.assertIn('Remote child: {"Exited": 7}', notices[-1])
+            self.assertIn("SSH transport:", notices[-1])
+            if destination_log == report_log:
+                self.assertEqual(notices[2], "FROM probe: remote direct reply β\n\n")
+        # Stored protocol and compute protocol differ only in their explicitly routed command lines.
+        protocol = [v["payload"] for v in events(worker) if v["event"] == "protocol_argument"][0]
+        saved = Path(state["protocol_file"]).read_text()
+        def without_routes(value):
+            for marker in ("Acknowledge this protocol now by running:\n", "Supply report bytes on stdin then EOF using:\n"):
+                before, after = value.split(marker)
+                value = before + marker + "ROUTING_COMMAND\n" + after.split("\n", 1)[1]
+            return value
+        self.assertEqual(without_routes(protocol), without_routes(saved))
+        self.assertIn("--config '/work/callbacks route.json' --host registry agents ack", protocol)
+        # A later explicit ACK can continue once; timeout never submits the brief by itself.
+        profile = self.settings["profiles"]["probe"]
+        profile["argv"] = [sys.executable, "/work/fixture.py", "/work/late.jsonl", "lateack"]
+        profile["hook_events"] = False
+        self.config.write_text(json.dumps(self.settings))
+        p, late = self.run_cli("launch", "--config", str(self.config), "--profile", "probe", "--brief-file", str(self.brief),
+                               "--ack-timeout-ms", "200")
+        self.assertEqual(p.returncode, 124, p.stderr + p.stdout)
+        self.assertFalse(late["brief_attempted"])
+        wait_for(lambda: self.record(late["launch_id"])["protocol_acknowledged"])
+        self.assertEqual([v for v in events(compute / "late.jsonl") if v["event"] == "input"], [])
+        p, result = self.run_cli("deliver", "--registry", str(self.registry), "--launch-id", late["launch_id"])
+        self.assertEqual(p.returncode, 0, p.stderr + p.stdout)
+        wait_for(lambda: [v for v in events(compute / "late.jsonl") if v["event"] == "input"])
+        p, result = self.run_cli("deliver", "--registry", str(self.registry), "--launch-id", late["launch_id"])
+        self.assertEqual(p.returncode, 1)
+        self.assertEqual(len([v for v in events(compute / "late.jsonl") if v["event"] == "input"]), 1)
+        # Lose the measured-exit callback: even a terminating SSH result must leave remote evidence unknown.
+        (compute / "known-hosts").write_text("")
+        os.kill(events(compute / "late.jsonl")[0]["pid"], signal.SIGTERM)
+        state = wait_for(lambda: self.record(late["launch_id"]) if self.record(late["launch_id"])[
+            "notifications"].get("child-exit", {}).get("outcome") == "transport_acknowledged" else None)
+        self.assertIsNone(state["remote_child_term"])
+        self.assertEqual(state["immediate_child_term"], {"Exited": 143})
+        last_notice = [v["payload"] for v in events(self.starter_log) if v["event"] == "input"][-1]
+        self.assertIn("Remote child: unknown; no measured exit callback", last_notice)
+        # A refused new compute connection cannot ACK or submit a brief, and is not remote-death evidence.
+        route = json.loads(targets.read_text())
+        with socket.socket() as s:
+            s.bind(("127.0.0.1", 0))
+            route["hosts"]["compute"]["port"] = s.getsockname()[1]
+        targets.write_text(json.dumps(route))
+        p, failure = self.run_cli("launch", "--config", str(self.config), "--profile", "probe", "--brief-file", str(self.brief),
+                                  "--ack-timeout-ms", "3000")
+        self.assertEqual(p.returncode, 1, p.stderr + p.stdout)
+        self.assertEqual(failure["outcome"], "child_exited_before_ack")
+        self.assertFalse(failure["brief_attempted"])
+        self.assertIsNone(failure["remote_child_term"])
+        self.assertEqual(failure["immediate_child_term"], {"Exited": 255})
 
     def enable_channel(self, count=32, lifetime=60000):
         self.delivery = self.work / "delivery"
