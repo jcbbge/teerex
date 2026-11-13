@@ -493,9 +493,13 @@ class JobsTest(unittest.TestCase):
         before = self.view()
         with (self.registry / "lock").open("r+") as f:
             fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            r, p = self.invoke("list")
+            r, p = self.invoke("list")  # a reader waits the bounded 10 s, then refuses retry-safe
             self.assertEqual(r.returncode, 1)
-            self.assertEqual(p["failure_reason"], "WouldBlock")
+            self.assertEqual((p["failure_reason"], p["retry_safe"]), ("registry_busy", True))
+            import threading
+            threading.Timer(1.0, lambda: fcntl.flock(f, fcntl.LOCK_UN)).start()
+            r, p = self.invoke("list")  # released mid-wait: the reader succeeds instead of WouldBlock
+            self.assertEqual((r.returncode, p["kind"]), (0, "jobs_list"))
         self.registry.chmod(0o755)
         r, p = self.invoke("list")
         self.assertEqual(p["failure_reason"], "RegistryNotPrivateOwnedRegular")

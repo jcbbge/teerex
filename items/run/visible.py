@@ -264,6 +264,16 @@ def forget_job(runtime, pin, packet):
         return
     jobs["forget_outcome"] = "uncertain"
     try:
+        # Forget by the generation this run tracked; list only if that generation moved (e.g. a present).
+        transport = invoke(runtime, pin, ["jobs", "forget", "--registry", jobs["registry"],
+                           "--socket", packet["server"][7:], "--session", packet["session_id"],
+                           "--block", packet["created"]["block_id"], "--owner", jobs["owner"],
+                           "--generation", str(jobs["generation"]), "--reason", "run-visible ended; exit evidence is separate"])
+        if transport["code"] == 0 and transport["receipt"] and transport["receipt"].get("outcome") == "record_forgotten":
+            jobs["forget"] = transport
+            jobs["forget_outcome"] = "forgotten"
+            return
+        jobs["first_forget"] = transport
         listing = invoke(runtime, pin, ["jobs", "list", "--registry", jobs["registry"]])
         jobs["lookup"] = listing
         if listing["code"] or not listing["receipt"] or listing["receipt"].get("kind") != "jobs_list":

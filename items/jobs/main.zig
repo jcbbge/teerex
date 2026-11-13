@@ -13,7 +13,7 @@ const usage =
     \\A focused source requires --focus yes for relocation; no silent focus transfer, retry or recreation.
     \\forget: --owner LABEL --generation N --reason TEXT (local record only; never closes a block)
     \\Live operations optionally take --timeout-ms N (100..60000, default 5000).
-    \\Exclusive registry lock waits up to10000ms before any mutation; registry_busy is retry-safe.
+    \\Registry locks (shared for list, exclusive otherwise) wait up to10000ms; registry_busy is retry-safe.
     \\List opens existing files read-only and creates no files, including no lock file.
     \\Registry must already be an absolute, private 0700 owned directory. Max 32 records/256 KiB.
     \\API13 Mac-arm64/Linux-amd64 only; no autostart, agents, daemon, automatic close or enforced deadlines.
@@ -130,21 +130,19 @@ const Registry = struct {
         };
         errdefer if (lock) |f| f.close();
         if (lock) |f| {
-            if (read_only) {
-                try std.posix.flock(f.handle, std.posix.LOCK.SH | std.posix.LOCK.NB);
-            } else {
-                var timer = try std.time.Timer.start();
-                while (true) {
-                    if (supervised.requestedSignal() != 0) return error.RegistryWaitCancelled;
-                    std.posix.flock(f.handle, std.posix.LOCK.EX | std.posix.LOCK.NB) catch |err| {
-                        if (err != error.WouldBlock) return err;
-                        const elapsed = timer.read() / std.time.ns_per_ms;
-                        if (elapsed >= 10000) return error.RegistryBusy;
-                        std.Thread.sleep(@as(u64, @min(10, 10000 - elapsed)) * std.time.ns_per_ms);
-                        continue;
-                    };
-                    break;
-                }
+            // Readers and writers both wait (bounded) so a concurrent launch never turns a read into WouldBlock.
+            const mode: i32 = if (read_only) std.posix.LOCK.SH else std.posix.LOCK.EX;
+            var timer = try std.time.Timer.start();
+            while (true) {
+                if (supervised.requestedSignal() != 0) return error.RegistryWaitCancelled;
+                std.posix.flock(f.handle, mode | std.posix.LOCK.NB) catch |err| {
+                    if (err != error.WouldBlock) return err;
+                    const elapsed = timer.read() / std.time.ns_per_ms;
+                    if (elapsed >= 10000) return error.RegistryBusy;
+                    std.Thread.sleep(@as(u64, @min(10, 10000 - elapsed)) * std.time.ns_per_ms);
+                    continue;
+                };
+                break;
             }
         }
         var state: State = .{ .schema_version = 1, .next_generation = 1, .entries = &.{} };
