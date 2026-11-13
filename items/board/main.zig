@@ -420,9 +420,12 @@ const UI = struct {
         const done = num(get(r, "done"));
         const total = num(get(r, "total"));
         const progress = if (total > 0) try fmt(a, "{s} {d}/{d}", .{ try bar(a, done * 100 / total, if (width < 45) 5 else 8), integer(done), integer(total) }) else "░░░░░ —";
-        const ago = @max(0, model.timestamp - @as(i64, @intFromFloat(@min(1e15, @max(0, num(get(r, "since")))))));
+        const since = num(get(r, "since"));
+        const ago = @max(0, model.timestamp - @as(i64, @intFromFloat(@min(1e15, @max(0, since)))));
+        // A pane with no launch record has no known start; show no age rather than one since 1970.
+        const age = if (since <= 0) "—" else try fmt(a, "{d}{s}", .{ @divTrunc(ago, if (ago >= 60000) @as(i64, 60000) else 1000), if (ago >= 60000) "m" else "s" });
         const name = try clip(a, text(r, "name"), @max(6, @min(20, width -| (cells(progress) + 10))));
-        const header = try fmt(a, "{s} {s}  {s}  {d}{s}{s}", .{ if (selected) "►" else if (priority(r) == 0) "●" else if (priority(r) == 1) "!" else "·", name, progress, @divTrunc(ago, if (ago >= 60000) @as(i64, 60000) else 1000), if (ago >= 60000) "m" else "s", if (eq(text(r, "placement"), "detached")) " detached" else "" });
+        const header = try fmt(a, "{s} {s}  {s}  {s}{s}", .{ if (selected) "►" else if (priority(r) == 0) "●" else if (priority(r) == 1) "!" else "·", name, progress, age, if (eq(text(r, "placement"), "detached")) " detached" else "" });
         if (lines.items.len < 256) self.hit[lines.items.len] = index;
         try lines.append(a, .{ .value = header, .role = role, .selected = priority(r) < 2 and self.flash });
         if (lines.items.len < 256) self.hit[lines.items.len] = index;

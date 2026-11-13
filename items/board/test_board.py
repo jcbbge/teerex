@@ -499,6 +499,17 @@ class BoardTest(unittest.TestCase):
         self.assertIn('missing board row changing',out.getvalue())
         self.assertIn('2 differences',out.getvalue())
 
+    def test_row_without_start_shows_no_age(self):
+        events=[json.loads(line) for line in FIXTURE.read_text().splitlines()]
+        template=next(e for e in events if e['kind']=='agent' and e['host']=='hive')
+        events.append(dict(template,id='hive-hand',name='hand-started',state='idle',now='typed by hand',since=0))
+        path=self.root/'age.jsonl';path.write_text('\n'.join(map(json.dumps,events)))
+        p=Pane(self.root,width=120,fixture=path);self.addCleanup(p.close)
+        p.until(lambda:b'hand-started' in p.output);p.settle()
+        line=next(l for l in p.view().splitlines() if 'hand-started' in l)
+        self.assertIn('—',line)
+        self.assertNotRegex(line,r'\d{5,}m')
+
     def test_gone_removes_rows(self):
         events=[json.loads(line) for line in FIXTURE.read_text().splitlines()]
         for e in list(events):
