@@ -1272,8 +1272,8 @@ class RexBoardsTest(unittest.TestCase):
         received_text = received.read_bytes().decode()
         self.assertIn("FROM worker: DECISION [live-test]: Live decision", received_text)
         self.assertIn("Recommendation: Review", received_text)
-        self.assertIn("FROM operator: DECISION RESOLVED [live-test]", received_text)
-        self.assertIn("Answer: Wait and review", received_text)
+        # Resolving reaches the asker, never the pane that holds the card (Josh, H07).
+        self.assertNotIn("DECISION RESOLVED [live-test]", received_text)
 
 
 if __name__ == "__main__":
