@@ -15,6 +15,7 @@ const usage =
     \\  seat register|inspect|clear              Exact-address operator seat
     \\  inbox append|inspect|clear                    Private retained messages
     \\  ask                                          Complete typed decisions or explicit resolution
+    \\  waiting list|next|back|put-away [--hosts hive,m5] [--focus] Cross-host attention navigation
     \\  scratch init|now|todo|done|show|path|watch|hook|hook-settings  Per-pane working scratchpad
     \\  agents launch|profiles|shell|ack|deliver|inspect|stop|present|timeline|prune
     \\         exec|exited|channel|fence-probe       Compute callbacks / local delivery / fence checks
@@ -151,6 +152,14 @@ fn run(allocator: std.mem.Allocator) !void {
     args = try withDefaultSocket(allocator, args);
     const command = args[0];
     const rest = args[1..];
+    if (std.mem.eql(u8, command, "waiting")) {
+        const resolver = try std.json.Stringify.valueAlloc(allocator, @import("fleet_sources").resolver, .{});
+        const script = try std.fmt.allocPrint(allocator, "import types,sys\ntargets=types.ModuleType('targets')\nexec({s},targets.__dict__)\n{s}", .{ resolver, @import("waiting_source").source });
+        var forwarded: std.ArrayList([]const u8) = .empty;
+        try forwarded.appendSlice(allocator, &.{ "python3", "-I", "-c", try @import("rex_boards").call_log.python(allocator, script) });
+        try forwarded.appendSlice(allocator, rest);
+        return std.process.execv(allocator, forwarded.items);
+    }
     if (std.mem.eql(u8, command, "mcp")) finish(allocator, try @import("rex_mcp").run(allocator, rest));
     if (std.mem.eql(u8, command, "replay")) finish(allocator, try @import("rex_replay").run(allocator, rest));
     if (std.mem.eql(u8, command, "fleet") and rest.len > 0 and (std.mem.eql(u8, rest[0], "install") or std.mem.eql(u8, rest[0], "rollback"))) {

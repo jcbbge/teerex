@@ -247,6 +247,12 @@ jobs:
           REX_BIN: ${{ runner.temp }}/rex-bin/rex
         run: python3 items/adapters/test_adapters.py -v
 
+      - name: Run cross-host waiting on two disposable servers
+        env:
+          TEEREX_BIN: ${{ github.workspace }}/zig-out/bin/teerex
+          REX_BIN: ${{ runner.temp }}/rex-bin/rex
+        run: python3 items/waiting/test_waiting.py -v
+
       - name: Run API13 responsibility registry and presentation regressions
         if: matrix.rex-api == 13
         env:

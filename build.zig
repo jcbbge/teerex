@@ -24,6 +24,9 @@ pub fn build(b: *std.Build) void {
         fleet_sources.addOption([]const u8, name, source);
     }
     exe.root_module.addOptions("fleet_sources", fleet_sources);
+    const waiting_source = b.addOptions();
+    waiting_source.addOption([]const u8, "source", b.build_root.handle.readFileAlloc(b.allocator, "items/waiting/waiting.py", 1024 * 1024) catch @panic("waiting source unavailable"));
+    exe.root_module.addOptions("waiting_source", waiting_source);
     const observation = b.createModule(.{
         .root_source_file = b.path("items/observe/main.zig"),
         .target = target,
