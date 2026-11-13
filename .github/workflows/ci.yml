@@ -204,6 +204,39 @@ jobs:
           grep -E "^api: revision $REX_API \\(" "$RUNNER_TEMP/rex-version.txt"
           echo "$RUNNER_TEMP/rex-bin" >> "$GITHUB_PATH"
 
+      - name: Build older-Mac readiness catalogs
+        if: runner.os == 'macOS' && matrix.rex-api != 13
+        run: |
+          python3 tools/cartridges/package.py --platform aarch64-macos \
+            --version 0.1.0-alpha.5 --output "$RUNNER_TEMP/cartridge-catalog"
+
+      - name: Execute installed-payload readiness on three fresh servers
+        run: |
+          platform=x86_64-linux
+          if [[ "$RUNNER_OS" == macOS ]]; then platform=aarch64-macos; fi
+          python3 tools/acceptance/previous.py --platform "$platform" --out "$RUNNER_TEMP/previous-teerex"
+          python3 tools/acceptance/readiness.py --item observe --catalog "$RUNNER_TEMP/cartridge-catalog" \
+            --rex "$RUNNER_TEMP/rex-bin/rex" --previous-teerex "$RUNNER_TEMP/previous-teerex" \
+            --teerex "$PWD/zig-out/bin/teerex" --runs 3 --long \
+            --executor "ci:https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            --out "$RUNNER_TEMP/readiness-observe-${{ matrix.rex-api }}.json"
+
+      - name: Measure private-server safe-subset baseline
+        if: matrix.rex-api == 13
+        run: |
+          python3 tools/acceptance/baseline.py --teerex "$PWD/zig-out/bin/teerex" \
+            --rex "$RUNNER_TEMP/rex-bin/rex" --out "$RUNNER_TEMP/safe-subset-baseline"
+
+      - name: Preserve sanitized readiness records and baseline summary
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: readiness-${{ runner.os }}-api${{ matrix.rex-api }}
+          if-no-files-found: warn
+          path: |
+            ${{ runner.temp }}/readiness-observe-*.json
+            ${{ runner.temp }}/safe-subset-baseline/summary.md
+
       - name: Run disposable-Rex observation, comparison and watch regressions
         env:
           TEEREX_BIN: ${{ github.workspace }}/zig-out/bin/teerex

@@ -271,6 +271,9 @@ def run_one(args, payload, version, index):
             row("R11", R11)
             def R6():
                 after = controls(server, session, block, sentinel)
+                if args.evidence_dir:
+                    save(args.evidence_dir / ("controls-before-%s.json" % index), before)
+                    save(args.evidence_dir / ("controls-after-%s.json" % index), after)
                 delta = sorted(k for k in before if before[k] != after[k])
                 if args.teerex:
                     final_inspect, _ = execute(inspect, server.env)
@@ -311,11 +314,16 @@ def main(argv=None):
     parser.add_argument("--long", action="store_true")
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--merge", type=Path)
+    parser.add_argument("--evidence-dir", type=Path, help="optional new private directory for exact control diagnostics")
     args = parser.parse_args(argv)
     if not 1 <= args.runs <= 20 or not args.catalog.is_absolute() or not args.out.is_absolute():
         parser.error("absolute catalog/output and runs 1..20 required")
     if args.out.exists() and not args.merge:
         parser.error("output exists; use an explicit --merge")
+    if args.evidence_dir:
+        if not args.evidence_dir.is_absolute() or args.evidence_dir.exists():
+            parser.error("new absolute evidence directory required")
+        args.evidence_dir.mkdir(mode=0o700)
     try:
         catalog = read_json(args.catalog / "catalog.json")
         candidates = []

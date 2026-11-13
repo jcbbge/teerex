@@ -41,6 +41,31 @@ class EvidenceTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 validate(changed)
 
+    def test_compare_only_and_doctor_packet_cannot_be_ready(self):
+        value = record()
+        for run in value["runs"]:
+            for row in ("R1", "R5", "R9"):
+                run["rows"][row]["pass"] = False
+        self.assertEqual(verdict(value)["verdict"], "not_ready")
+        self.assertTrue({"R1", "R5", "R9"}.issubset(verdict(value)["failed_rows"]))
+        with self.assertRaisesRegex(ValueError, "not_a_readiness_run"):
+            validate(dict(advertised_requirements_met=True, kind="doctor_result"))
+
+    def test_agent_shim_blocks_plain_teerex_and_stubs_interruptions(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config = root / "config.json"
+            log = root / "tools.jsonl"
+            config.write_text(json.dumps(dict(condition="plain-rex", log=str(log))))
+            shim = Path(__file__).with_name("agent_shim.py")
+            blocked = subprocess.run([sys.executable, str(shim), str(config), "teerex", "observe", "SECRET_ARGUMENT"], capture_output=True)
+            stubbed = subprocess.run([sys.executable, str(shim), str(config), "agent-send", "SECRET_MESSAGE"], capture_output=True)
+            self.assertEqual((blocked.returncode, stubbed.returncode), (127, 0))
+            entries = [json.loads(line) for line in log.read_text().splitlines()]
+            self.assertTrue(entries[0]["blocked"])
+            self.assertTrue(entries[1]["interruption"])
+            self.assertNotIn("SECRET", log.read_text())
+
     def test_raw_fixture_prefix_equal_full_tail_and_exit_differ(self):
         first, error = expected("F1")
         second, quiet = expected("F4")
