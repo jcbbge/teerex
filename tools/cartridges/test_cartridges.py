@@ -36,7 +36,9 @@ class Lifecycle(unittest.TestCase):
         self.catalog = self.home / "catalog"
         self.catalog.mkdir()
         self.entries = []
-        self.env = dict(os.environ, HOME=str(self.home))
+        # macOS system Python otherwise writes framework bytecode into HOME,
+        # which is unrelated to the manager and breaks exact read-only controls.
+        self.env = dict(os.environ, HOME=str(self.home), PYTHONDONTWRITEBYTECODE="1")
         self.sentinels = []
         for name in (".zshrc", ".config/rex/init.lua", ".local/opt/teerex/current"):
             p = self.home / name
