@@ -74,3 +74,5 @@ For each public agent-core stopgap, deliver the replacement invocation, tested p
 Every program launched by the new operating layer must be visible in Rex and available to the operator to read, focus and close. Existing low-level local `run`/offstage command-experiment contracts are historical tools, not an exception for launching hidden agents or boards. No agent runs detached as a substitute for visible responsibility.
 
 Actual personal-machine installation, global launcher replacement, pane closure, server update/restart and captured-content publication still require their specific authorization. Product shipping authorization does not authorize those actions.
+
+Source-only follow-on: [`records`](../items/records/README.md) composes private evidence records and Rex park/resume in the combined CLI; it is not an independent cartridge or a claim about older published binaries.

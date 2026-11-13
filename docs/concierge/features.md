@@ -319,3 +319,7 @@ Require exit0/full per-host plan; planning neither downloads nor installs/execut
 Update/rollback/remove: exact retained-version rollback uses the same integrity/version checks; legacy pre-`--version` releases require core lifecycle plus byte verification instead. Preserve manual folders/backups/state; launcher restoration is explicit and does not remove managed releases. No Rex install/restart, cartridge bulk install, agent migration or personal-host certification follows.
 
 Presentation views for §3/§4/§11: compare, watch and filter opt into declared spans with `--view progress-v1` or `--view-rules FILE`. See the [observe contract](../../items/observe/README.md#declared-presentation-views) and [lossless filter](../../items/filter/README.md#opt-in-presentation-view). Raw evidence remains alongside every view. Cosmetic counts are not idle, working or done state; partial hidden tails stay unknown. Cache and maneuver recognition behavior is unchanged.
+
+## 18. `records` — private reasoning, evidence and park/resume
+
+Use [records](../../items/records/README.md) to write investigations, experiments, receipts and handoffs. Resume reads reasoning first, evidence second and target availability last; `navigate --focus yes` is a separate verified effect. One private store, no daemon, composed in the combined CLI rather than a cartridge.

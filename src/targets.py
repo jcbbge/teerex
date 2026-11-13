@@ -28,6 +28,8 @@ SELECTORS = {**{(verb,): ("socket",) for verb in
                 (("seat", ("register", "inspect", "clear")), ("inbox", ("append", "inspect", "clear")),
                  ("fleet", ("report", "forget"))) for op in operations},
              **{("clutch", op): ("socket",) for op in ("take", "release", "status", "palette")},
+             **{("records", op): (("socket", "host", "records_store") if op in ("park", "resume", "navigate") else ("records_store",)) for op in
+                ("init", "new", "park", "add", "attach", "set", "close", "show", "resume", "navigate", "list", "lint", "export", "forget")},
              ("agents", "launch"): ("socket", "host", "store")}
 
 
@@ -72,6 +74,8 @@ def resolve_host(config_path, name):
         raise ValueError("host_id must be an explicit identifier")
     for field in PATH_FIELDS:
         absolute(host.get(field), field)
+    if "records_store" in host:
+        absolute(host["records_store"], "records_store")
     if host.get("platform") not in ("macos-arm64", "linux-x86_64"):
         raise ValueError("platform must be macos-arm64 or linux-x86_64")
     if host.get("transport") not in ("local", "ssh"):
@@ -119,9 +123,11 @@ def command_argv(host, command):
             selectors = ("socket", "host", "store")
         supplied = []
         for field in selectors:
-            if field == "store" and "--store" in flags:
+            if field in ("store", "records_store") and "--store" in flags:
                 continue  # Existing explicit command-host store override remains supported.
-            supplied += ["--" + field, host["host_id" if field == "host" else field]]
+            flag = "store" if field == "records_store" else field
+            value = host.get("records_store", host["home"] + "/.local/state/teerex-records") if field == "records_store" else host["host_id" if field == "host" else field]
+            supplied += ["--" + flag, value]
         result[at:at] = supplied
     return [host["teerex"], "--rex", host["rex"], *result]
 

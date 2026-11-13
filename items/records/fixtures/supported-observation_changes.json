@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "kind": "observation_changes",
+  "before_observation_id": "synthetic-before",
+  "after_observation_id": "synthetic-after",
+  "capture": {
+    "before_complete": false,
+    "after_complete": true
+  },
+  "interpretation": "none"
+}

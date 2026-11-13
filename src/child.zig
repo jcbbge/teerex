@@ -116,7 +116,8 @@ pub const Result = struct {
 
 // macOS and Linux. Caller owns Signals and the receiver's stdout retention policy.
 // An optional isComplete() requests owned-group cleanup, not command success.
-// All invocations use EOF stdin, bounded diagnostics, and an owned process group.
+// EOF stdin by default; a receiver may explicitly opt into inherited stdin.
+// Diagnostics remain bounded and each invocation owns its process group.
 pub fn collect(allocator: std.mem.Allocator, argv: []const []const u8, env: *const std.process.EnvMap, deadline_ms: ?u64, receiver: anytype) !Result {
     var timer = try std.time.Timer.start();
     const started_at = std.time.milliTimestamp();
@@ -129,7 +130,7 @@ pub fn collect(allocator: std.mem.Allocator, argv: []const []const u8, env: *con
     } else argv;
     defer if (selected_argv.ptr != argv.ptr) allocator.free(selected_argv);
     var child = std.process.Child.init(selected_argv, allocator);
-    child.stdin_behavior = .Ignore;
+    child.stdin_behavior = if (@hasDecl(@TypeOf(receiver.*), "inherit_stdin") and @TypeOf(receiver.*).inherit_stdin) .Inherit else .Ignore;
     child.stdout_behavior = .Pipe;
     child.stderr_behavior = .Pipe;
     child.env_map = env;

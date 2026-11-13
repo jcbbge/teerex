@@ -18,6 +18,7 @@ const usage =
     \\  agents launch|profiles|shell|ack|deliver|inspect|stop|present
     \\         exec|exited|channel|fence-probe       Compute callbacks / local delivery / fence checks
     \\  spawn --profile NAME --profiles ABS           Managed protocol-ACK-before-brief launch
+    \\  records init|new|park|add|attach|set|close|show|resume|navigate|list|lint|export|forget  Private evidence and reasoning
     \\  recovery snapshot|inspect|restore|update      Private snapshots and reviewed restoration
     \\  snapshot|restore|update                       Recovery aliases; update is manual handoff
     \\  fleet install|rollback                       Explicit named-host installation plan/apply
@@ -38,11 +39,11 @@ const usage =
     \\Where: configured command host; paths belong there, never silently uploaded.
     \\Why: report actual activity/results and unknowns, not infer readiness or completion.
     \\How: explicit config/host or socket/full IDs; no retries, fallback or autostart.
-    \\Python3.9+ is required for targets, boards, agents, recovery, fleet, cartridges, replay, mcp and palette install.
+    \\Python3.9+ is required for targets, boards, agents, recovery, records, fleet, cartridges, replay, mcp and palette install.
     \\Legacy direct-socket native tools do not require Python. SSH trust/key are explicit.
     \\Native call history adds no runtime dependency; missing end records stay unknown.
     \\Personal install/restart/close/config actions need their own authorization.
-    \\Guides: docs/alpha5.md and items/{surfaces,boards,agents,recovery}/README.md.
+    \\Guides: docs/alpha5.md and items/{surfaces,boards,agents,recovery,records}/README.md.
     \\
 ;
 
@@ -168,6 +169,7 @@ fn run(allocator: std.mem.Allocator) !void {
         std.fs.File.stderr().writeAll(line) catch {};
         finish(allocator, 1);
     }
+    if (std.mem.eql(u8, command, "records")) finish(allocator, try @import("rex_records").run(allocator, rest));
     if (std.mem.eql(u8, command, "recovery")) finish(allocator, try @import("rex_recovery").run(allocator, rest));
     if (std.mem.eql(u8, command, "snapshot") or std.mem.eql(u8, command, "restore") or std.mem.eql(u8, command, "update")) finish(allocator, try @import("rex_recovery").run(allocator, args));
     if (std.mem.eql(u8, command, "surfaces")) finish(allocator, try @import("rex_surfaces").run(allocator, rest));

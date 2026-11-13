@@ -145,6 +145,10 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     }));
+    const records = b.createModule(.{ .root_source_file = b.path("items/records/main.zig"), .target = target, .optimize = optimize });
+    records.addImport("supervised_child", child);
+    records.addImport("rex_boards", boards);
+    exe.root_module.addImport("rex_records", records);
     b.installArtifact(exe);
 
     const run = b.addRunArtifact(exe);

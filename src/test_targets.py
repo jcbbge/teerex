@@ -102,6 +102,26 @@ class TargetsTest(unittest.TestCase):
             self.assertEqual(json.loads(self.output.read_text()),
                              ["--rex", self.host["rex"], "surfaces", leaf, "--socket", self.host["socket"], *command[2:]])
 
+    def test_records_store_routing_override_and_default(self):
+        self.host["records_store"] = str(self.root / "records")
+        self.save()
+        for op in ("init", "new", "park", "add", "attach", "set", "close", "show", "resume", "navigate", "list", "lint", "export", "forget"):
+            args = ["records", op, "--id", "record-a"]
+            r = self.call("--config", str(self.config), "--host", "hive", *args)
+            self.assertEqual(r.returncode, 7, r.stderr)
+            injected = ["--socket", self.host["socket"], "--host", "fixture"] if op in ("park", "resume", "navigate") else []
+            self.assertEqual(json.loads(self.output.read_text()), ["--rex", self.host["rex"], "records", op, *injected, "--store", self.host["records_store"], "--id", "record-a"])
+        r = self.call("--config", str(self.config), "--host", "hive", "records", "list", "--store", "/explicit")
+        self.assertEqual(r.returncode, 7, r.stderr)
+        observed = json.loads(self.output.read_text())
+        self.assertEqual(observed.count("--store"), 1)
+        self.assertEqual(observed[-1], "/explicit")
+        del self.host["records_store"]
+        self.save()
+        r = self.call("--config", str(self.config), "--host", "hive", "records", "list")
+        self.assertEqual(r.returncode, 7, r.stderr)
+        self.assertEqual(json.loads(self.output.read_text())[-1], self.host["home"] + "/.local/state/teerex-records")
+
     def test_nested_leaves_receive_only_their_supported_selectors(self):
         socket = ["--socket", self.host["socket"]]
         store = ["--store", self.host["store"]]
