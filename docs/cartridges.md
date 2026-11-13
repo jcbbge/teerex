@@ -1,8 +1,8 @@
 # Independent cartridges — current alpha.5 contract
 
-**Current alpha.5 ships a separate local cartridge manager and real standalone payload catalogs**, first delivered in alpha.4. Use [current setup](concierge/setup.md) for the core and the [alpha.5 release guide](releases/v0.1.0-alpha.5.md) for exact separate catalog/onboarding assets. Alpha.3 had no independent packages; its tag/archive remains unchanged. New surfaces/boards/agents/recovery commands are combined-CLI composition, not additional independent cartridges. Do not put cartridge files in the core installer's managed tree. No personal installation, Rex change, PATH/profile edit or feature-use permission follows from packaging; source-only doc corrections do not rebuild frozen assets.
+**The core embeds the local cartridge manager; native payload catalogs remain separate.** Independent catalogs were first delivered in alpha.4. Use [current setup](concierge/setup.md) for the core and the [alpha.5 release guide](releases/v0.1.0-alpha.5.md) for exact separate catalog/onboarding assets. Alpha.3 had no independent packages; its tag/archive remains unchanged. New surfaces/boards/agents/recovery commands are combined-CLI composition, not additional independent cartridges. Do not put cartridge files in the core installer's managed tree. No personal installation, Rex change, PATH/profile edit or feature-use permission follows from packaging; source-only doc corrections do not rebuild frozen assets.
 
-The manager is `python3 tools/cartridges/cartridges.py`. It requires Python **3.9+**, a non-root user, a canonical user-owned HOME, and Apple-silicon macOS or Linux x86_64. Python is an explicit prerequisite, not silently installed. It uses only the Python standard library. The separate native payloads require no Python themselves; bypassing the manager also bypasses its cooperative in-use protection.
+The primary entry is `teerex cartridges`; `python3 tools/cartridges/cartridges.py` is the equivalent direct source entry. The core embeds that same source and execs Python in isolated mode, then execs payloads without changing their arguments or environment. It requires Python **3.9+**, a non-root user, a canonical user-owned HOME, and Apple-silicon macOS or Linux x86_64. Python is an explicit prerequisite, not silently installed. It uses only the Python standard library. The separate native payloads require no Python themselves; bypassing the manager also bypasses its cooperative in-use protection.
 
 ## Payloads and honest readiness
 
@@ -21,7 +21,7 @@ The manager is `python3 tools/cartridges/cartridges.py`. It requires Python **3.
 | `jobs` | `teerex-jobs track|list|inspect|adopt|present|forget …` | Apple silicon, Linux x86_64; API13 only |
 | `adapters` | `teerex-adapters generate|call …` | Apple silicon, Linux x86_64; API10–13 acceptance |
 
-Every current item stays **experimental**. Default `--all` therefore selects zero current items; explicit `--allow-experimental` admits experiments, including experimental dependencies. This does not mark them ready or supersede the historical ready-only collection policy. A future catalog changes membership only when explicitly selected; existing installations do not update themselves. `source.json` is a build recipe, not a claim that all listed APIs/builds are behavior-certified. Item READMEs and rights are copied into each payload. The narrower Mac-only run/doctor/offstage and API13-only offstage/maneuver domains remain intact. No Rex executable is bundled.
+Every current item stays **experimental**. Default `--all` therefore selects zero current items; the additive `excluded_experimental` plan/apply field lists the sorted excluded IDs (empty for explicit IDs or `--allow-experimental`); explicit `--allow-experimental` admits experiments, including experimental dependencies. This does not mark them ready or supersede the historical ready-only collection policy. A future catalog changes membership only when explicitly selected; existing installations do not update themselves. `source.json` is a build recipe, not a claim that all listed APIs/builds are behavior-certified. Item READMEs and rights are copied into each payload. The narrower Mac-only run/doctor/offstage and API13-only offstage/maneuver domains remain intact. No Rex executable is bundled.
 
 The observation standalone build uses the integrated `pub fn runObservations(allocator, args) !u8` boundary in `items/observe/main.zig`; `args` starts with `observe`, `compare`, or `watch`, not an executable name. That boundary contains no other cartridge dispatch. It is a follow-on to frozen alpha.3, not present in the alpha.3 tag. Filter/maneuvers statically include the observation evidence validator/comparator; other shared code is also statically linked. There is **no runtime dependency on the combined core executable**. Static source reuse does not make payload installation/removal inseparable.
 
@@ -39,20 +39,41 @@ The output is a reviewable directory, not an executable installer or downloaded 
 The root defaults to `~/.local/opt/teerex-cartridges`; `--root` must precede the subcommand. Roots must be strictly inside HOME, have no symlink ancestors, and be user-owned and not group/world-writable. An existing nonempty unmarked root is refused. Use canonical paths on macOS: for example `/private/var/…`, not its `/var/…` alias. Package paths are relative, bounded, unique regular files: no symlinks, hard links, traversal, duplicate JSON keys, extra files, or install scripts.
 
 ```sh
+# Discover ready items (currently none):
+teerex cartridges install --all --catalog /canonical/catalog
+
 # Plans disclose selected IDs/versions, dependencies, provenance/compatibility,
 # code/data destinations, permissions and undo. They do not install or execute.
-python3 tools/cartridges/cartridges.py install filter --catalog /canonical/catalog --allow-experimental
-python3 tools/cartridges/cartridges.py install --all --catalog /canonical/catalog --allow-experimental
+teerex cartridges install filter --catalog /canonical/catalog --allow-experimental
+teerex cartridges install --all --catalog /canonical/catalog --allow-experimental
 
 # Apply the same resolver and individual lifecycle paths, once for the selection.
-python3 tools/cartridges/cartridges.py install filter --catalog /canonical/catalog --allow-experimental --apply
-python3 tools/cartridges/cartridges.py list
-python3 tools/cartridges/cartridges.py run filter -- --help
+teerex cartridges install filter --catalog /canonical/catalog --allow-experimental --apply
+teerex cartridges list
+teerex cartridges run filter -- --help
 ```
 
-Lifecycle output is schema-1 JSON (`ok`, `operation`, `applied`, selected package records); contract/filesystem failures are JSON on stderr with exit 1. Argument-usage errors use argparse's stderr/exit 2. `run` passes through the payload's stdout/stderr, arguments and exact exit/signal behavior by `exec`; output after that is the item's contract, not a fabricated lifecycle receipt. Shell metacharacters are literal argv, not evaluated. Human and agent callers use the same interface. `kind=agent` uses exactly the same install/run/lease/remove rules as scripts, programs and extensions; no privileged agent path or implicit agent startup exists. Current production manifests are programs, not bundled autonomous agents.
+Lifecycle output is schema-1 JSON (`ok`, `operation`, `applied`, selected package records); contract/filesystem failures are JSON on stderr with exit 1. SIGINT returns schema-1 JSON on stderr with exit 130 after existing rollback cleanup. Missing or too-old Python returns an explicit JSON refusal with exit 1. Named-host `--config/--host` routing is refused: log in and run `teerex cartridges` on that machine. Argument-usage errors use argparse's stderr/exit 2. `run` passes through the payload's stdout/stderr, arguments and exact exit/signal behavior by `exec`; output after that is the item's contract, not a fabricated lifecycle receipt. Shell metacharacters are literal argv, not evaluated. Human and agent callers use the same interface. `kind=agent` uses exactly the same install/run/lease/remove rules as scripts, programs and extensions; no privileged agent path or implicit agent startup exists. Current production manifests are programs, not bundled autonomous agents.
 
 `--apply` explicitly requests the described local mutation. It is **not** an authentication mechanism or a human-approval service: an agent running as the same OS user has that user's authority. Manifest `permissions` are disclosures, not sandbox enforcement. Review/approval for terminal input, local commands, credentials, remote deployment and other consequential effects remains the caller's responsibility. Installation alone never authorizes invocation or personal-machine access.
+
+## Refusals and recovery
+
+Common refusals include an additive `next_step` string. Never delete locks or edit `state.json` to bypass them.
+
+| Error | Next step |
+| --- | --- |
+| Experimental cartridge requires flag | Review the plan; add `--allow-experimental` if intended. |
+| Choose explicit IDs or `--all` | Supply one selection form. |
+| Cartridge root does not exist | Check HOME and `--root`, then install first. |
+| Unsafe, symlinked, or unmarked root | Choose an empty canonical user-owned path strictly inside HOME. |
+| Active removal requires `--deactivate` | Add the flag to leave the ID inactive. |
+| Active dependent blocks removal | Remove or switch that dependent first. |
+| In use or concurrent lifecycle operation | Wait for the holder to finish, then retry manually. |
+| Changed hashes, manifest, or package membership | Copy out edits and inspect; the manager will not delete them. |
+| Installed version identity differs | Use a new version for changed bytes. |
+| Unregistered or retired version exists | Restore it or inspect manually. |
+| Interrupted | Run `list`, inspect `.stage-*` directories and registry before retrying. |
 
 ## Manifest and dependency contract
 
@@ -88,9 +109,9 @@ Installing an explicit new version activates it and retains older versions; the 
 
 ```sh
 # Set PACKAGE_VERSION to the exact installed/retired version shown by list.
-python3 tools/cartridges/cartridges.py activate filter --version "$PACKAGE_VERSION" --apply
-python3 tools/cartridges/cartridges.py remove filter --version "$PACKAGE_VERSION" --deactivate --apply
-python3 tools/cartridges/cartridges.py restore filter --version "$PACKAGE_VERSION" --apply
+teerex cartridges activate filter --version "$PACKAGE_VERSION" --apply
+teerex cartridges remove filter --version "$PACKAGE_VERSION" --deactivate --apply
+teerex cartridges restore filter --version "$PACKAGE_VERSION" --apply
 # Reactivation is a separate explicit activate command after restore.
 ```
 
@@ -106,6 +127,7 @@ A bulk install prevalidates the entire selection and existing active graph, stag
 
 ```sh
 python3 -m unittest discover -s tools/cartridges -p test_cartridges.py -v
+TEEREX_BIN="$PWD/zig-out/bin/teerex" python3 tools/cartridges/test_root_entry.py -v
 python3 tools/cartridges/test_payloads.py --catalog /canonical/native/catalog
 # Optional real-Rex acceptance: explicitly selected disposable API13 Rex on PATH/REX_BIN.
 python3 tools/cartridges/test_payloads.py --catalog /canonical/native/catalog --with-rex
@@ -114,7 +136,9 @@ zig fmt --check tools/cartridges/*.zig
 
 The first command exercises disposable HOME roots, individual/all composition, experiment gating, exact dependency conflict/cycle/missing rejection, upgrade/rollback, retirement/restore, retained data, modified/extra/linked payload refusal, malicious paths/JSON, in-use refusal with unrelated removal, no install-time execution, and untouched shell/Rex/core sentinels. Agent/script/extension kinds use real fixture entrypoints but are not claims of a production agent/service ecosystem.
 
-The second installs the **real separately built native payloads**, executes each help path, rejects cross-cartridge dispatch, reuses existing filter/cache/maneuver/observation/adapter offline public tests through a temporary test-only argv adapter, and exercises removal/data retention/inactive restore for every payload. It does not contact Rex unless `--with-rex` is explicitly selected. That option also runs each packaged item's public runtime tests against fresh isolated API13 fixtures, selecting Mac-only suites only when their payloads are present. Runtime suites invoke the actual installed payloads directly to preserve deliberate HOME changes and concurrent callers; they do not claim the manager's cooperative leases cover direct invocation. Offline mode and lifecycle tests exercise the managed launcher separately. The argv adapter is validation code, never a shipped cartridge wrapper. No test here restarts a personal server or claims M5/hive validation.
+The root-entry suite repeats lifecycle tests through the embedded manager and checks exact process/exit/signal passthrough, help, Python isolation, missing Python, named-host refusal and direct-manager parity (allowing argparse program-name alignment). Set `TEEREX_BIN` for native payload acceptance too to exercise install/help/removal through the core. Offline suites that deliberately remove Python from PATH retain their absolute-Python adapter.
+
+Native payload acceptance installs the **real separately built native payloads**, executes each help path, rejects cross-cartridge dispatch, reuses existing filter/cache/maneuver/observation/adapter offline public tests through a temporary test-only argv adapter, and exercises removal/data retention/inactive restore for every payload. It does not contact Rex unless `--with-rex` is explicitly selected. That option also runs each packaged item's public runtime tests against fresh isolated API13 fixtures, selecting Mac-only suites only when their payloads are present. Runtime suites invoke the actual installed payloads directly to preserve deliberate HOME changes and concurrent callers; they do not claim the manager's cooperative leases cover direct invocation. Offline mode and lifecycle tests exercise the managed launcher separately. The argv adapter is validation code, never a shipped cartridge wrapper. No test here restarts a personal server or claims M5/hive validation.
 
 On 12 November 2026, all **14 lifecycle tests** passed on Linux x86_64/Python 3.13.5, Linux/Python **3.9.25** (the declared minimum), and disposable Apple-silicon macOS 27.2/Python 3.15.2. Separately built native catalogs contained **five Linux** and **eight Mac** executables. Installed-payload acceptance passed all **27 existing offline contracts on each platform**, plus each payload's help, cross-dispatch refusal, retirement/data retention/inactive restore. Mac executables were cross-built on Linux with pinned Zig 0.15.2, then actually executed on the disposable Mac; `file` identified arm64 Mach-O on Mac and static x86-64 ELF on Linux. A real permission-denied registry-write case after staging both upgrades preserved the prior registry and removed both staged versions. No public release or hosted-CI success is claimed by this local evidence.
 

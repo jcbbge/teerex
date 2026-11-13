@@ -32,7 +32,8 @@ def main():
         home = Path(temporary).resolve()
         root = home / "cartridges"
         env = dict(os.environ, HOME=str(home))
-        command = [sys.executable, str(HERE / "cartridges.py"), "--root", str(root)]
+        prefix = [str(Path(os.environ["TEEREX_BIN"]).resolve()), "cartridges"] if os.environ.get("TEEREX_BIN") else [sys.executable, str(HERE / "cartridges.py")]
+        command = prefix + ["--root", str(root)]
 
         def call(*argv):
             result = subprocess.run(command + list(argv), env=env, capture_output=True, text=True, timeout=30)
@@ -55,6 +56,14 @@ def main():
             result = subprocess.run(command + ["run", key, "--", "send" if key != "send" else "filter", "--help"], env=env, capture_output=True, text=True, timeout=10)
             assert result.returncode != 0, "unexpected cross-cartridge dispatch: " + key
             cases.append("native help and independent dispatch: " + key)
+        # The core entry needs python3 on PATH. Public offline suites below
+        # intentionally remove PATH, so retain their absolute-interpreter adapter.
+        if "filter" in packages:
+            arguments = ["--sample", str(home / "missing-sample")]
+            managed = subprocess.run(command + ["run", "filter", "--", *arguments], env=env, capture_output=True)
+            direct = subprocess.run([str(Path(packages["filter"]["code"]) / "teerex-filter"), *arguments], env=env, capture_output=True)
+            assert managed.returncode != 0
+            assert (managed.returncode, managed.stdout, managed.stderr) == (direct.returncode, direct.stdout, direct.stderr)
         adapter = home / "combined-test-interface"
         script = "#!/bin/sh\ncase \"$1\" in\n"
         mapping = {"filter": "filter", "maneuver-check": "maneuvers", "compare": "observe", "observe": "observe", "watch": "observe",
@@ -67,7 +76,7 @@ def main():
             # manager's HOME-bound root and short nonblocking lifecycle mutex.
             # Manager help/dispatch above, offline mode, and lifecycle tests still
             # exercise the managed launcher and its separate lease contract.
-            invocation = [str(Path(packages[key]["code"]) / ("teerex-" + key))] if args.with_rex else command + ["run", key, "--"]
+            invocation = [str(Path(packages[key]["code"]) / ("teerex-" + key))] if args.with_rex else [sys.executable, str(HERE / "cartridges.py"), "--root", str(root), "run", key, "--"]
             prefix = " ".join(shlex.quote(s) for s in invocation)
             if key != "observe":
                 script += f"{verb}) shift; exec {prefix} \"$@\" ;;\n"

@@ -14,6 +14,10 @@ pub fn build(b: *std.Build) void {
     const build_version = b.addOptions();
     build_version.addOption([]const u8, "version", "0.1.0-alpha.5");
     exe.root_module.addOptions("build_version", build_version);
+    const cartridge_sources = b.addOptions();
+    const manager = b.build_root.handle.readFileAlloc(b.allocator, "tools/cartridges/cartridges.py", 1024 * 1024) catch @panic("cartridge manager source unavailable");
+    cartridge_sources.addOption([]const u8, "manager", manager);
+    exe.root_module.addOptions("cartridge_sources", cartridge_sources);
     const fleet_sources = b.addOptions();
     for ([_][]const u8{ "controller", "worker", "installer", "resolver" }, [_][]const u8{ "tools/fleet-install/fleet_install.py", "tools/fleet-install/worker.py", "tools/install/teerex-install", "src/targets.py" }) |name, path| {
         const source = b.build_root.handle.readFileAlloc(b.allocator, path, 1024 * 1024) catch @panic("fleet support source unavailable");

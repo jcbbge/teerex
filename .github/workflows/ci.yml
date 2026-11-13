@@ -151,11 +151,12 @@ jobs:
         if: runner.os == 'Linux' || matrix.rex-api == 13
         run: |
           python3 -m unittest discover -s tools/cartridges -p test_cartridges.py -v
+          python3 tools/cartridges/test_root_entry.py -v
           platform=x86_64-linux
           if [[ "$RUNNER_OS" == macOS ]]; then platform=aarch64-macos; fi
           python3 tools/cartridges/package.py --platform "$platform" \
             --version 0.1.0-alpha.5 --output "$RUNNER_TEMP/cartridge-catalog"
-          python3 tools/cartridges/test_payloads.py --catalog "$RUNNER_TEMP/cartridge-catalog"
+          TEEREX_BIN="$PWD/zig-out/bin/teerex" python3 tools/cartridges/test_payloads.py --catalog "$RUNNER_TEMP/cartridge-catalog"
 
       - name: Run installer lifecycle and public release controls
         if: runner.os == 'Linux' || matrix.rex-api == 13

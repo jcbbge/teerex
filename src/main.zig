@@ -21,6 +21,7 @@ const usage =
     \\  recovery snapshot|inspect|restore|update      Private snapshots and reviewed restoration
     \\  snapshot|restore|update                       Recovery aliases; update is manual handoff
     \\  fleet install|rollback                       Explicit named-host installation plan/apply
+    \\  cartridges install|list|run|activate|remove|restore  Independent native payloads
     \\  targets resolve|exec                         Named-host lookup and explicit transport
     \\  run-visible                                  Visible noninteractive argv, output and actual exit
     \\Existing tools: observe, compare, watch, run, offstage, doctor, send, spawn,
@@ -31,7 +32,7 @@ const usage =
     \\Where: configured command host; paths belong there, never silently uploaded.
     \\Why: report actual activity/results and unknowns, not infer readiness or completion.
     \\How: explicit config/host or socket/full IDs; no retries, fallback or autostart.
-    \\Python3.9+ is required for targets, boards, agents, recovery, fleet and palette install.
+    \\Python3.9+ is required for targets, boards, agents, recovery, fleet, cartridges and palette install.
     \\Legacy direct-socket native tools do not require Python. SSH trust/key are explicit.
     \\Personal install/restart/close/config actions need their own authorization.
     \\Guides: docs/alpha5.md and items/{surfaces,boards,agents,recovery}/README.md.
@@ -108,6 +109,10 @@ fn run(allocator: std.mem.Allocator) !void {
                 host = args[i + 1];
             } else return error.UnknownOrRepeatedGlobalOption;
         }
+        if (i < args.len and std.mem.eql(u8, args[i], "cartridges")) {
+            try std.fs.File.stderr().writeAll("{\"error\": \"cartridges cannot use named-host routing; run teerex cartridges on that machine\", \"next_step\": \"Log in to the selected machine and run teerex cartridges there.\", \"ok\": false, \"schema_version\": 1}\n");
+            std.process.exit(1);
+        }
         var forwarded: std.ArrayList([]const u8) = .empty;
         try forwarded.appendSlice(allocator, &.{ "exec", "--config", config orelse return error.ExplicitConfigRequired, "--host", host orelse return error.ExplicitHostRequired, "--" });
         try forwarded.appendSlice(allocator, args[i..]);
@@ -133,6 +138,16 @@ fn run(allocator: std.mem.Allocator) !void {
         try forwarded.appendSlice(allocator, &.{ "python3", "-c", @embedFile("fleet_bridge.py"), sources.controller, sources.worker, sources.installer, sources.resolver });
         try forwarded.appendSlice(allocator, rest);
         return std.process.execv(allocator, forwarded.items);
+    }
+    if (std.mem.eql(u8, command, "cartridges")) {
+        var argv: std.ArrayList([]const u8) = .empty;
+        try argv.appendSlice(allocator, &.{ "python3", "-I", "-c", @import("cartridge_sources").manager });
+        try argv.appendSlice(allocator, rest);
+        const err = std.process.execv(allocator, argv.items);
+        var buf: [512]u8 = undefined;
+        const line = std.fmt.bufPrint(&buf, "{{\"error\": \"cannot execute python3 ({s}): teerex cartridges requires Python 3.9+\", \"next_step\": \"Install Python 3.9+ on this machine and retry.\", \"ok\": false, \"schema_version\": 1}}\n", .{@errorName(err)}) catch unreachable;
+        std.fs.File.stderr().writeAll(line) catch {};
+        std.process.exit(1);
     }
     if (std.mem.eql(u8, command, "recovery")) std.process.exit(try @import("rex_recovery").run(allocator, rest));
     if (std.mem.eql(u8, command, "snapshot") or std.mem.eql(u8, command, "restore") or std.mem.eql(u8, command, "update")) std.process.exit(try @import("rex_recovery").run(allocator, args));

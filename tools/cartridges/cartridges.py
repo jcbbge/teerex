@@ -284,6 +284,7 @@ def install(store, args):
     available = catalog(Path(args.catalog).absolute())
     require(bool(args.ids) != args.all, "choose explicit IDs or --all")
     selected = sorted(k for k, (m, _, _) in available.items() if m["status"] == "ready" or args.allow_experimental) if args.all else args.ids
+    excluded = sorted(k for k, (m, _, _) in available.items() if args.all and not args.allow_experimental and m["status"] == "experimental")
     manifests = {k: value[0] for k, value in available.items()}
     ordered = closure(selected, manifests)
     require(args.allow_experimental or all(manifests[k]["status"] == "ready" for k in ordered), "experimental cartridge requires --allow-experimental")
@@ -300,7 +301,7 @@ def install(store, args):
             store.get(key, v)
         else:
             require(not os.path.lexists(store.path(key, v)) and not os.path.lexists(store.path(key, v, True)), "unregistered or retired version exists; inspect or restore it")
-    result = dict(ok=True, operation="install", applied=args.apply, selected=selected,
+    result = dict(ok=True, operation="install", applied=args.apply, selected=selected, excluded_experimental=excluded,
                   packages=[describe(store, manifests[k]) for k in ordered], active_before=store.state["active"].copy(),
                   atomic_activation=True, hooks_executed=False, undo="remove each new version with --deactivate --apply; activate retained prior versions explicitly")
     if args.apply:
@@ -388,7 +389,7 @@ def change(store, args):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(prog="teerex cartridges" if sys.argv[0] == "-c" else None, description=__doc__)
     parser.add_argument("--root", default=os.path.join(os.environ["HOME"], ".local/opt/teerex-cartridges"))
     sub = parser.add_subparsers(dest="command", required=True)
     p = sub.add_parser("install", help="plan installation; --apply explicitly mutates")
@@ -455,9 +456,47 @@ def main():
             os.close(fd)
 
 
-if __name__ == "__main__":
+def next_step(message):
+    for problem, step in (
+        ("experimental cartridge requires", "Review the plan, then add --allow-experimental if experiments are intended."),
+        ("choose explicit IDs or --all", "Pass explicit IDs or --all, but not both."),
+        ("cartridge root does not exist", "Check HOME and --root, then install the cartridge first."),
+        ("active removal requires", "Re-run with --deactivate to leave this ID inactive."),
+        ("active dependent blocks removal", "Remove or switch the named dependent first."),
+        ("in use or concurrent lifecycle operation", "Wait for the running cartridge or lifecycle operation to finish, then retry manually."),
+        ("root must be strictly inside HOME", "Choose a canonical user-owned root strictly inside HOME."),
+        ("symlink or non-directory ancestor", "Choose a canonical path without symlink or non-directory ancestors."),
+        ("refusing unmarked/nonempty", "Choose an empty user-owned root inside HOME."),
+        ("payload checksum mismatch", "Copy out any edits and inspect the installed payload before retrying."),
+        ("package contains missing or additional files", "Copy out any edits and inspect the installed payload before retrying."),
+        ("manifest identity changed", "Copy out any edits and inspect the installed manifest before retrying."),
+        ("installed version identity differs", "Use a new version number for changed package bytes."),
+        ("unregistered or retired version exists", "Restore the retired version or inspect the unregistered directory manually."),
+    ):
+        if problem in message:
+            return step
+    return None
+
+
+def entry():
     try:
+        if sys.version_info < (3, 9):
+            emit(dict(ok=False, error="Python 3.9+ required, found %s.%s" % sys.version_info[:2],
+                      next_step="Install Python 3.9+ on this machine and retry."), sys.stderr)
+            sys.exit(1)
         main()
+    except KeyboardInterrupt:
+        emit(dict(ok=False, error="interrupted: run list and inspect the root for .stage-* directories before retrying",
+                  next_step="Run list and inspect the root for .stage-* directories before retrying."), sys.stderr)
+        sys.exit(130)
     except (ContractError, OSError, ValueError) as error:
-        emit(dict(ok=False, error=str(error)), sys.stderr)
+        result = dict(ok=False, error=str(error))
+        step = next_step(str(error))
+        if step:
+            result["next_step"] = step
+        emit(result, sys.stderr)
         sys.exit(1)
+
+
+if __name__ == "__main__":
+    entry()

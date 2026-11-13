@@ -1,5 +1,12 @@
 """Public lifecycle tests in disposable HOME; never invoke Rex or personal state."""
+import signal
+import fcntl
+import time
 import hashlib
+import importlib.util
+import io
+from contextlib import redirect_stderr
+from unittest.mock import patch
 import json
 import os
 from pathlib import Path
@@ -11,6 +18,7 @@ import unittest
 
 
 CLI = Path(__file__).with_name("cartridges.py").resolve()
+PREFIX = [str(Path(os.environ["TEEREX_BIN"]).resolve()), "cartridges"] if os.environ.get("TEEREX_BIN") else [sys.executable, str(CLI)]
 PLATFORM = "aarch64-macos" if platform.system() == "Darwin" else "x86_64-linux"
 
 
@@ -69,9 +77,17 @@ class Lifecycle(unittest.TestCase):
         self.write_catalog()
 
     def invoke(self, *args, ok=True):
-        p = subprocess.run([sys.executable, str(CLI), "--root", str(self.root), *map(str, args)], env=self.env, capture_output=True, text=True, timeout=10)
+        p = subprocess.run(PREFIX + ["--root", str(self.root), *map(str, args)], env=self.env, capture_output=True, text=True, timeout=10)
         self.assertEqual(p.returncode == 0, ok, p.stdout + p.stderr)
-        return json.loads(p.stdout if ok else p.stderr)
+        result = json.loads(p.stdout if ok else p.stderr)
+        if not ok:
+            self.assertEqual(p.returncode, 1)
+            self.assertEqual(result["schema_version"], 1)
+            for message in ("experimental cartridge requires", "choose explicit IDs", "cartridge root does not exist",
+                            "active removal requires", "active dependent blocks", "in use or concurrent"):
+                if message in result["error"]:
+                    self.assertTrue(result["next_step"])
+        return result
 
     def install(self, *ids, apply=True, extra=(), ok=True):
         return self.invoke("install", *ids, "--catalog", self.catalog, *( ["--apply"] if apply else []), *extra, ok=ok)
@@ -84,6 +100,7 @@ class Lifecycle(unittest.TestCase):
         self.package("beta", status="experimental")
         result = self.install(apply=False, extra=["--all"])
         self.assertEqual(result["selected"], ["alpha"])
+        self.assertEqual(result["excluded_experimental"], ["beta"])
         self.assertFalse(self.root.exists())
         self.install("beta", apply=False, ok=False)
         self.assertFalse(self.root.exists())
@@ -111,7 +128,7 @@ class Lifecycle(unittest.TestCase):
     def test_upgrade_rollback_remove_restore_and_retained_data(self):
         self.package("alpha")
         self.install("alpha")
-        run = subprocess.run([sys.executable, str(CLI), "--root", str(self.root), "run", "alpha", "--", "space ; in arg"], env=self.env, capture_output=True, text=True)
+        run = subprocess.run(PREFIX + ["--root", str(self.root), "run", "alpha", "--", "space ; in arg"], env=self.env, capture_output=True, text=True)
         self.assertEqual(run.returncode, 0, run.stderr)
         self.assertEqual(run.stdout, "fixture:alpha:1.0.0\nspace ; in arg\n")
         data = self.root / "data/alpha/private-notes"
@@ -240,13 +257,15 @@ class Lifecycle(unittest.TestCase):
 
     def test_in_use_blocks_own_removal_upgrade_and_dependencies_not_unrelated_items(self):
         self.package("lib")
-        self.package("agent", deps={"lib": "1.0.0"}, kind="agent", code='#!/bin/sh\nprintf "ready\\n"\nread answer\nprintf "%s\\n" "$answer"\n')
+        self.package("agent", deps={"lib": "1.0.0"}, kind="agent", code='#!/bin/sh\nprintf "ready\\n%s\\n%s\\n" "$TEEREX_CARTRIDGE_DATA" "$TEEREX_CARTRIDGE_DEPENDENCIES"\nread answer\nprintf "%s\\n" "$answer"\n')
         self.package("other")
         self.install("agent", "other")
-        command = [sys.executable, str(CLI), "--root", str(self.root), "run", "agent"]
+        command = PREFIX + ["--root", str(self.root), "run", "agent"]
         process = subprocess.Popen(command, env=self.env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         try:
             self.assertEqual(process.stdout.readline(), "ready\n")
+            self.assertEqual(process.stdout.readline().strip(), str(self.root / "data/agent"))
+            self.assertEqual(json.loads(process.stdout.readline()), {"lib": str(self.root / "packages/lib/1.0.0")})
             self.invoke("remove", "agent", "--version", "1.0.0", "--deactivate", "--apply", ok=False)
             self.package("agent", "2.0.0", deps={"lib": "1.0.0"})
             self.install("agent", ok=False)
@@ -259,6 +278,10 @@ class Lifecycle(unittest.TestCase):
             if process.poll() is None:
                 process.kill()
                 process.communicate()
+        self.invoke("remove", "agent", "--version", "1.0.0", "--deactivate", "--apply")
+        self.assertIsNotNone(process.poll())
+        self.assertTrue((self.root / "leases/agent/1.0.0").exists())
+        self.assertTrue((self.root / "data/agent").exists())
         self.install("agent")
         self.assertEqual(self.state()["active"]["agent"], "2.0.0")
 
@@ -281,6 +304,146 @@ class Lifecycle(unittest.TestCase):
         self.assertFalse((self.root / "packages/alpha/2.0.0").exists())
         self.assertFalse((self.root / "packages/beta/2.0.0").exists())
         self.assertEqual(self.state()["active"], {"alpha": "1.0.0", "beta": "1.0.0"})
+
+    def snapshot(self):
+        return {str(p.relative_to(self.home)): sha(p) if p.is_file() else None
+                for p in self.home.rglob("*")}
+
+    def test_preview_experimental_empty_and_refusal_guidance(self):
+        self.package("alpha", status="experimental", code='#!/bin/sh\ntouch "$HOME/EXECUTED"\n')
+        before = self.snapshot()
+        for ids, extra in (((), ["--all"]), (("alpha",), ["--allow-experimental"]),
+                           ((), ["--all", "--allow-experimental"])):
+            result = self.install(*ids, apply=False, extra=extra)
+            self.assertFalse(result["applied"])
+            self.assertEqual(self.snapshot(), before)
+            if not ids and "--allow-experimental" not in extra:
+                self.assertEqual(result["selected"], [])
+                self.assertEqual(result["packages"], [])
+                self.assertEqual(result["excluded_experimental"], ["alpha"])
+        for argv in (("install", "alpha", "--catalog", self.catalog),
+                     ("install", "alpha", "--all", "--catalog", self.catalog),
+                     ("run", "alpha")):
+            result = self.invoke(*argv, ok=False)
+            self.assertEqual(result["schema_version"], 1)
+            self.assertTrue(result["next_step"])
+            self.assertEqual(self.snapshot(), before)
+        result = self.install(extra=["--all"])
+        self.assertEqual(result["excluded_experimental"], ["alpha"])
+        self.assertEqual(self.state()["active"], {})
+        self.assertFalse((self.root / "packages").exists())
+
+    def test_registry_contention_is_immediate_and_read_only(self):
+        self.package("alpha")
+        self.install("alpha")
+        before = self.snapshot()
+        with (self.root / ".lock").open("r+") as held:
+            fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            for argv in (("run", "alpha"), ("install", "alpha", "--catalog", self.catalog, "--apply"),
+                         ("remove", "alpha", "--version", "1.0.0", "--deactivate", "--apply")):
+                start = time.monotonic()
+                result = self.invoke(*argv, ok=False)
+                self.assertLess(time.monotonic() - start, 1)
+                self.assertIn("in use or concurrent lifecycle operation: .lock", result["error"])
+                self.assertTrue(result["next_step"])
+                self.assertEqual(self.snapshot(), before)
+
+    def test_common_refusals_preserve_existing_home(self):
+        self.package("alpha")
+        self.package("beta", deps={"alpha": "1.0.0"})
+        self.package("experiment", status="experimental")
+        self.install("beta")
+        before = self.snapshot()
+        for argv in (("install", "experiment", "--catalog", self.catalog),
+                     ("install", "alpha", "--all", "--catalog", self.catalog),
+                     ("remove", "beta", "--version", "1.0.0", "--apply"),
+                     ("remove", "alpha", "--version", "1.0.0", "--deactivate", "--apply")):
+            result = self.invoke(*argv, ok=False)
+            self.assertTrue(result["next_step"])
+            self.assertEqual(self.snapshot(), before)
+
+    def test_old_python_version_refuses_before_main(self):
+        spec = importlib.util.spec_from_file_location("manager", CLI)
+        manager = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(manager)
+        error = io.StringIO()
+        with patch.object(sys, "version_info", (3, 8)), patch.object(manager, "main") as main, redirect_stderr(error):
+            with self.assertRaises(SystemExit) as stopped:
+                manager.entry()
+        self.assertEqual(stopped.exception.code, 1)
+        main.assert_not_called()
+        refusal = json.loads(error.getvalue())
+        self.assertIn("Python 3.9+ required, found 3.8", refusal["error"])
+        self.assertEqual(refusal["schema_version"], 1)
+
+    def test_sigint_during_apply_returns_json_and_previous_selection(self):
+        self.package("alpha")
+        self.install("alpha")
+        path = self.package("alpha", "2.0.0")
+        payload = path / "launch"
+        payload.write_bytes(b"#!/bin/sh\n" + b"#" * (60 * 1024 * 1024))
+        self.update_manifest(path, lambda m: m["files"][0].update(sha256=sha(payload)))
+        command = PREFIX + ["--root", str(self.root), "install", "alpha", "--catalog", str(self.catalog), "--apply"]
+        process = subprocess.Popen(command, env=self.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            deadline = time.monotonic() + 10
+            while process.poll() is None and time.monotonic() < deadline:
+                if list((self.root / "packages/alpha").glob(".stage-*")):
+                    process.send_signal(signal.SIGINT)
+                    break
+                time.sleep(0.001)
+            out, error = process.communicate(timeout=10)
+            self.assertEqual(process.returncode, 130, out + error)
+            self.assertTrue(json.loads(error)["error"].startswith("interrupted"))
+            self.assertEqual(self.state()["active"], {"alpha": "1.0.0"})
+            self.assertNotIn("2.0.0", self.state()["installed"]["alpha"])
+            self.assertFalse(list(self.root.rglob(".stage-*")))
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.communicate()
+
+    def test_entry_interrupt_rolls_back_and_emits_json(self):
+        spec = importlib.util.spec_from_file_location("manager", CLI)
+        manager = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(manager)
+        self.package("alpha")
+        self.install("alpha")
+        before = (self.root / "state.json").read_bytes()
+        self.package("alpha", "2.0.0")
+        argv = ["-c", "--root", str(self.root), "install", "alpha", "--catalog", str(self.catalog), "--apply"]
+        error = io.StringIO()
+        with patch.dict(os.environ, self.env), patch.object(sys, "argv", argv), \
+                patch.object(manager.Store, "save", side_effect=KeyboardInterrupt), redirect_stderr(error):
+            with self.assertRaises(SystemExit) as stopped:
+                manager.entry()
+        self.assertEqual(stopped.exception.code, 130)
+        self.assertTrue(json.loads(error.getvalue())["error"].startswith("interrupted"))
+        self.assertEqual((self.root / "state.json").read_bytes(), before)
+        self.assertFalse((self.root / "packages/alpha/2.0.0").exists())
+
+    def test_home_change_and_direct_invocation_has_no_lease(self):
+        self.package("alpha", code='#!/bin/sh\nprintf "ready\\n"\nread answer\n')
+        self.install("alpha")
+        other = self.home / "other-home"
+        other.mkdir(mode=0o700)
+        env = dict(self.env, HOME=str(other))
+        listed = subprocess.run(PREFIX + ["list"], env=env, capture_output=True, text=True)
+        self.assertEqual(json.loads(listed.stdout)["active"], {})
+        run = subprocess.run(PREFIX + ["run", "alpha"], env=env, capture_output=True, text=True)
+        self.assertEqual(run.returncode, 1)
+        self.assertIn("cartridge root does not exist", run.stderr)
+        process = subprocess.Popen([str(self.root / "packages/alpha/1.0.0/launch")], env=self.env,
+                                   stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            self.assertEqual(process.stdout.readline(), "ready\n")
+            self.invoke("remove", "alpha", "--version", "1.0.0", "--deactivate", "--apply")
+            process.communicate("done\n", timeout=5)
+            self.assertEqual(process.returncode, 0)
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.communicate()
 
     def test_no_automatic_code_execution_on_install(self):
         sentinel = self.home / "must-not-run"
