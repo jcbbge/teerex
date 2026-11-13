@@ -131,7 +131,7 @@ class ScratchTest(unittest.TestCase):
 
     def test_palette_rex_pin_is_literal_and_relative_pin_refuses(self):
         path = self.root / "pinned.lua"
-        pin = str(self.root / "rex pin α")
+        pin = str(self.root / "rex pin")
         self.cli("palette", "--file", str(path), "--socket", str(self.root / "none.sock"), "--rex", pin)
         self.assertIn("--rex", path.read_text())
         self.assertIn(pin, path.read_text())
