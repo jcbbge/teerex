@@ -54,7 +54,7 @@ def task(args):
         stats = metrics()
         result = None
         try:
-            end = time.monotonic() + 5
+            end = time.monotonic() + 15
             while not marker.with_suffix('.ready').exists():
                 if time.monotonic() > end:
                     raise RuntimeError('fixture readiness timeout')
@@ -133,7 +133,9 @@ def task(args):
                     filters[filter_arm] = fs
             return dict(arm=arm, event=event, iteration=iteration, metrics=stats, filters=filters)
         finally:
-            subprocess.run(base + ['kill', sid], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
+            closed = subprocess.run(base + ['kill', sid], capture_output=True, timeout=10)
+            if closed.returncode:
+                raise RuntimeError('fixture cleanup failed: exit ' + str(closed.returncode))
 
 
 def aggregate(runs):
@@ -161,6 +163,7 @@ def main():
         p.error('invalid measurement bounds')
     out = Path(a.output)
     out.mkdir(parents=True, exist_ok=True)
+    (out / 'runs.jsonl').write_text('')
     with tempfile.TemporaryDirectory(prefix='teerex-view-', dir='/tmp') as temp:
         root = Path(temp)
         socket = str(root / 'rex.sock')
@@ -183,6 +186,8 @@ def main():
                         grouped[result['arm']][result['event']].append(result['metrics'])
                         for arm, metrics_value in result['filters'].items():
                             grouped[arm][result['event']].append(metrics_value)
+                        with (out / 'runs.jsonl').open('a') as journal:
+                            journal.write(json.dumps(result) + '\n')
                         if index % 18 == 17:
                             print('Measured round ' + str(index // 18 + 1) + '/' + str(a.warm_runs + 1), flush=True)
                 measurements = {arm: {event: aggregate(runs) for event, runs in events.items()} for arm, events in grouped.items()}

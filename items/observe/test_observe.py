@@ -333,6 +333,12 @@ class CompareTest(unittest.TestCase):
 
     def test_view_V_C24_documentation_makes_no_state_claim(self):
         root = Path(__file__).resolve().parents[2]
+        help_result = subprocess.run([str(BIN), 'compare', '--help'], capture_output=True, text=True)
+        self.assertEqual(help_result.returncode, 0)
+        view_help = help_result.stdout.split('Compare/watch accept', 1)[1].split('Read bounded terminal', 1)[0]
+        for line in view_help.splitlines():
+            if re.search(r'\b(stable|idle|done|complete|finished|waiting|ready|busy|working)\b', line, re.I):
+                self.assertRegex(line, r'(?i)\b(not|never|no|cannot|exclude)\b')
         for name, marker in (('items/observe/README.md', '## Declared presentation views'), ('items/filter/README.md', '## Opt-in presentation view')):
             additions = (root / name).read_text().split(marker, 1)[1]
             for line in additions.splitlines():
