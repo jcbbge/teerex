@@ -615,9 +615,24 @@ class SurfacesTest(unittest.TestCase):
         brief.write_text("PALETTE TASK α quotes ' $(literal)\n")
         actions = self.rpc("client.keymap", {})["actions"]
         name = next(a["name"] for a in actions if a.get("title") == "Start an agent: probe")
+        older = self.work / "older-menu.lua"
+        older.write_text((self.work / "agents.lua").read_text().replace('local version=rex.call("server.version")',
+                                                                 'local version={api_revision=12}'))
+        before = self.view()
+        refused = subprocess.run(self.base + ["do", "--session", self.session, "--block", self.anchor,
+                                 str(older), "--action", name], capture_output=True, text=True, timeout=10)
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertIn("requires Rex API13", refused.stderr)
+        self.assertEqual(before, self.view())
+        self.assertEqual(list(registry.glob("agents-*.json")), [])
         r = subprocess.run(self.base + ["do", "--session", self.session, "--block", self.anchor, name,
                            "--args", json.dumps(dict(name="palette worker", brief_file=str(brief)))],
                            capture_output=True, text=True, timeout=20)
+        if self.source["api_revision"] != 13:
+            self.assertNotEqual(r.returncode, 0, r.stdout)
+            self.assertIn("requires Rex API13", r.stderr)
+            self.assertEqual(list(registry.glob("agents-*.json")), [])
+            return
         self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
         value = json.loads(r.stdout)
         self.assertTrue(value["protocol_acknowledged"])

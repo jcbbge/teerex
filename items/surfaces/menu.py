@@ -91,7 +91,9 @@ def generate(o):
             name = "teerex_agent_" + hashlib.sha256(profile.encode()).hexdigest()[:16]
             command = [binary, "--rex", absolute(o.rex), "agents", "launch", "--config", config, "--profile", profile,
                        "--launch-wait-ms", "0"]
-            body = '''if not ctx.session_id or not ctx.block_id then error("invoke from an attached terminal pane",0) end
+            body = '''local version=rex.call("server.version")
+if type(version)~="table" or version.api_revision~=13 then error("managed agent menu requires Rex API13 jobs",0) end
+if not ctx.session_id or not ctx.block_id then error("invoke from an attached terminal pane",0) end
 local argv=''' + literal(command) + '''
 for _,v in ipairs({"--session",ctx.session_id,"--starter-session",ctx.session_id,"--starter-block",ctx.block_id,
 "--report-to-session",ctx.session_id,"--report-to-block",ctx.block_id}) do argv[#argv+1]=v end
