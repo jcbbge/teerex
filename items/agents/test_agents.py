@@ -1763,6 +1763,8 @@ Path('/work/network-harness').touch()
         return next((r["state"] for r in result.get("records", []) if r.get("app") == "teerex-agent"), None)
 
     def test_codex_adapter_validation_conflicts_and_callback_failure_are_visible(self):
+        self.env.pop("AGENT_SCRATCHPAD", None)
+        self.env.pop("LC_AGENT_SCRATCHPAD", None)
         log = self.work / "callback.json"
         command = [sys.executable, "-c", "import sys; from pathlib import Path; Path(" + repr(str(log)) + ").write_text(sys.stdin.read()); sys.exit(23)"]
         common = ["hook", "--harness", "codex", "--command-json", json.dumps(command), "--payload"]
