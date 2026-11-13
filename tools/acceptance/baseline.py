@@ -135,6 +135,18 @@ def teerex_task(args, server, session, anchor, root, mode, keep=True, controller
                             save(root / "comparison.json", comparison)
                 server.rpc("block.close", dict(session_id=session, block_id=block))
                 stats["rex_client_launches"] += 1
+        try:
+            pid = json.loads((output / "started.json").read_text())["pid"]
+            if sys.platform == "darwin":
+                sample = subprocess.run(["ps", "-o", "time=", "-p", str(pid)], capture_output=True, text=True)
+                if sample.returncode == 0 and sample.stdout.strip():
+                    minutes, seconds = sample.stdout.strip().split(":")[-2:]
+                    stats["pane_side_cpu_ms"] = (int(minutes) * 60 + float(seconds)) * 1000
+            else:
+                fields = Path("/proc/%s/stat" % pid).read_text().rsplit(")", 1)[1].split()
+                stats["pane_side_cpu_ms"] = (int(fields[11]) + int(fields[12])) * 1000 / os.sysconf("SC_CLK_TCK")
+        except (OSError, ValueError, KeyError):
+            pass
         stats["output_dir_bytes"] = sum(p.stat().st_size for p in output.rglob("*") if p.is_file()) if output.exists() else 0
         code = (value.get("exit_report") or {}).get("exit_code")
         stats["false_success"] = int(bool(value.get("success")) and (mode != "F4" or code != 0))
@@ -316,11 +328,15 @@ def refusals(args, server, session, anchor, evidence):
 
 
 def unknown_tests(args, server):
-    environment = dict(server.env, TEEREX_BIN=args.teerex, REX_BIN=args.rex)
-    result, _ = execute([sys.executable, str(ROOT / "items/run/test_visible.py"),
-        "VisibleTest.test_lost_creation_and_close_acks_are_not_retried",
-        "VisibleTest.test_controller_sigkill_retains_known_ids_and_helper_own_deadline", "-v"], environment, timeout=45)
-    return result.returncode == 0
+    home = Path(tempfile.mkdtemp(prefix="c31-fault-home-", dir="/tmp"))
+    environment = dict(server.env, HOME=str(home), TEEREX_BIN=args.teerex, REX_BIN=args.rex)
+    try:
+        result, _ = execute([sys.executable, str(ROOT / "items/run/test_visible.py"),
+            "VisibleTest.test_lost_creation_and_close_acks_are_not_retried",
+            "VisibleTest.test_controller_sigkill_retains_known_ids_and_helper_own_deadline", "-v"], environment, timeout=45)
+        return result.returncode == 0
+    finally:
+        __import__("shutil").rmtree(home)
 
 
 def summarize(report):

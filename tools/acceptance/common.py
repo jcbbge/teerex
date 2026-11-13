@@ -86,7 +86,7 @@ class Server:
         self.home = self.root / "home"
         self.home.mkdir(mode=0o700)
         self.socket = self.root / "rex.sock"
-        self.env = dict(os.environ, HOME=str(self.home), PATH=str(Path(self.rex).parent) + os.pathsep + os.environ.get("PATH", os.defpath))
+        self.env = dict(os.environ, HOME=str(self.home), PATH=str(Path(self.rex).parent) + os.pathsep + os.environ.get("PATH", os.defpath), PYTHONDONTWRITEBYTECODE="1")
         for key in ("REX_SERVER", "REX_SESSION", "REX_BLOCK", "REX_CLIENT", "TEEREX_INTERNAL_REX", "TEEREX_REX", "TEEREX_BIN"):
             self.env.pop(key, None)
         self.base = [self.rex, "--autostart=false", "--server", "unix://" + str(self.socket), "--timeout", "3s"]

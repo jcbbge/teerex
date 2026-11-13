@@ -112,6 +112,8 @@ def run_one(args, payload, version, index):
             observe = observations(installed, server, session, block)
             # Warm the CLI's schema cache before the file-listing controls.
             server.command("api", "list")
+            # Rex on macOS retains a start.lock even for a no-autostart refusal.
+            execute([installed, "observe", "--socket", root / "absent.sock", "--session", session, "--block", block], server.env)
             # Seed persistent manager paths before measuring the N6 delta.
             manage("run", args.item, "--", "observe", "--help")
             (package_root / "retired" / args.item).mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -127,7 +129,9 @@ def run_one(args, payload, version, index):
                     detail = action()
                     rows[name] = dict(pass_=True, detail=detail)
                 except Exception as error:
-                    rows[name] = dict(pass_=False, detail="failed:" + type(error).__name__ + ":" + str(error).splitlines()[0][:160])
+                    reason = str(error).splitlines()[0][:160]
+                    safe = reason if re.fullmatch(r"[A-Za-z0-9_=:,;.-]{1,160}", reason) else "details_redacted"
+                    rows[name] = dict(pass_=False, detail="failed:" + type(error).__name__ + ":" + safe)
             def R1():
                 nonlocal outcomes
                 for verb, expected in mapping["help_options"].items():

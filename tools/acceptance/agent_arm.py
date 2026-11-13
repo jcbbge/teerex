@@ -46,8 +46,9 @@ def run(args):
         for profile in profiles:
             for n in range(args.agent_runs):
                 for condition in ("with-teerex", "plain-rex"):
-                    work = args.out / ("%s-%s-%s" % (profile, n, condition))
-                    work.mkdir(mode=0o700)
+                    work = Path(tempfile.mkdtemp(prefix="c32-", dir=ROOT.parent))
+                    evidence = args.out / ("%s-%s-%s" % (profile, n, condition))
+                    evidence.mkdir(mode=0o700)
                     registry = work / "registry"
                     registry.mkdir(mode=0o700)
                     shim = work / "bin"
@@ -82,7 +83,7 @@ def run(args):
                             source = "#!" + sys.executable + "\nimport os,sys\ne=dict(os.environ,PATH=" + repr(str(shim) + os.pathsep + os.environ.get("PATH", os.defpath)) + ")\ne.pop('TEEREX_INTERNAL_REX',None)\ne.pop('TEEREX_REX',None)\nos.execve(" + repr(argv[0]) + "," + repr(argv) + "+sys.argv[1:],e)\n"
                             save(launcher, source.encode(), 0o700)
                             selected["argv"] = [str(launcher)]
-                            cfg = dict(schema_version=1, profiles={profile: selected}, defaults=dict(defaults, registry=str(registry), cwd=str(work),
+                            cfg = dict(schema_version=1, profiles={profile: selected}, defaults=dict(defaults, registry=str(registry), cwd=str(ROOT.parent),
                                 starter_session=session, starter_block=sink, report_to_session=session, report_to_block=sink, store=None, owner="c32-acceptance", purpose="bounded synthetic agent measurement"))
                             save(work / "profiles.json", cfg)
                             began = time.monotonic()
@@ -128,6 +129,12 @@ def run(args):
                                 if report["runs"]:
                                     report["runs"][-1]["agent_pane_closed"] = closed
                             private.close()
+                            # Preserve private evidence, then remove the owned scratch cwd.
+                            for name in ("registry", "tools.jsonl", "owned.jsonl", "agent-final-private.json"):
+                                source = work / name
+                                if source.exists():
+                                    shutil.move(str(source), str(evidence / name))
+                            shutil.rmtree(work)
     finally:
         report["notification_sink_closed"] = close(sink) if sink else False
         save(args.out / "report.json", report)
