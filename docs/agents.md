@@ -42,6 +42,7 @@ teerex run-visible --session "$SES" --cwd "$PWD" --env-file env.json --stdin-fil
 
 - The command runs in a tab Josh can see, and you get back its real exit code and its output.
 - `--env-file` is a JSON object that **replaces** the whole environment, so include at least `PATH`: `printf '{"PATH":"/usr/bin:/bin"}' > env.json`. Use `--stdin-file /dev/null` for no input.
+- The tab closes when the command ends. Add `--keep-open` to leave it up for Josh to read.
 - teerex itself exits 1 when your command fails. Your command's own exit code is in the result at `exit_report.exit_code`; read that, not teerex's exit status.
 - Long or unbounded work: use `--no-deadline`.
 - Track it as a job: add `--registry … --owner … --purpose …`.
