@@ -4,6 +4,8 @@
 
 ## Alpha.5 additions
 
+The published alpha.5 source `682489d66dfdb39992b1b2e9f05054bcc009e6d7` passed [all four hosted lanes](https://github.com/jcbbge/teerex/actions/runs/43294504395). Fresh public-byte lifecycle acceptance on both OSes is recorded in the [release guide](releases/v0.1.0-alpha.5.md#quick-changelog-and-current-setup-handoff). Later documentation-only pushes require their own exact-head checks; they do not rebuild those immutable release archives or imply personal-host acceptance.
+
 The existing four lanes retain their pinned toolchains/Rex builds and legacy suites. Alpha.5 adds root targets/version/embedded-native-fleet acceptance (`src/test_targets.py`) and surfaces15 on all four lanes. API13 lanes additionally run boards12 with the compiled native `tryRoute` helper, agents12 with **both** `TEEREX_AGENTS_INTEGRATION=1` and `TEEREX_AGENTS_CROSS_SESSION=1`, recovery11 and fleet11. API10/12 lanes run recovery update inventory and explicit snapshot refusal; snapshot/restore and managed launch are not certified on those APIs. Core installer suite is now20. The existing catalog uses version0.1.0-alpha.5 but retains ten Mac/seven Linux native payloads; the new composed operating-layer commands are combined-CLI only.
 
 Local real loopback SSH tests are separate opt-in checks (`python3 tools/fleet-install/test_ssh.py`), requiring disposable sshd/sudo and generated keys. They are not silently counted as hosted CI. No personal endpoints/credentials are required. A green diagnostic85c3f29 workflow predates the new alpha.5 source and is not its exact-head CI result.

@@ -1,19 +1,22 @@
 # Install, upgrade, roll back, and remove teerex
 
-The reviewed source-tree installer manages one shared experimental CLI inside your home directory on **Darwin arm64** or **Linux x86_64**. [Alpha.3](releases/v0.1.0-alpha.3.md) provides both platform archives. Rex is separately obtained and never bundled, installed, upgraded or restarted by this tool. Earlier alpha.1/alpha.2 releases have only a Mac asset; selecting an absent platform asset fails without replacing the active version.
+The reviewed installer manages one shared experimental CLI inside your home directory on **Darwin arm64** or **Linux x86_64**. The current published [v0.1.0-alpha.5](releases/v0.1.0-alpha.5.md) provides both platform archives. Start with the canonical [WWWWW+H setup, exact checksum/install/upgrade/verify/rollback commands and support matrix](concierge/setup.md), or the [copy-ready local-agent handoff](concierge/agent-prompts.md#a-install-or-upgrade-alpha5-without-touching-rex). This contract describes the installer; historical releases remain in their tagged guides. Rex is separately obtained and never installed, upgraded or restarted by this tool.
 
-This is **not independent cartridge packaging**. The commands share one executable and cannot yet be individually installed/removed; no `--all` or cartridge selector exists. Source-tree features newer than a selected tag do not appear in its binary. Installation needs no Zig, running Rex or administrator privileges.
+This **core installer does not manage independent cartridges**; the separate [catalog manager](cartridges.md) supplies that already-delivered lifecycle. The new operating-layer composition is combined-CLI only. Source-only documentation pushes do not rebuild immutable alpha.5 assets or complete gated migrations. Installation needs no Zig, running Rex or administrator privileges; Python3.9+ is needed for the documented operating-layer Python paths.
 
 ## Review, verify and install
 
-Run from a reviewed checkout containing `tools/install/teerex-install`; do not pipe a remote script into a shell. The installer is a source-tree tool, not included inside the binary archive.
+Use the reviewed pinned source installer or frozen onboarding root; it is not inside the three-file core archive. Current setup instructions are in source, not a replacement for older packaged docs. Do not pipe a remote script into a shell. For a new root, after the setup guide's checksum/preflight steps:
 
 ```sh
 bash tools/install/teerex-install --help
-bash tools/install/teerex-install install --version v0.1.0-alpha.3
-"$HOME/.local/opt/teerex/current/teerex" --help
-bash tools/install/teerex-install list
+bash tools/install/teerex-install install --version v0.1.0-alpha.5
+bash tools/install/teerex-install inspect
+bash tools/install/teerex-install verify --version v0.1.0-alpha.5
+"$HOME/.local/opt/teerex/current/teerex" --version
 ```
+
+For an active managed root use `upgrade` **instead of** `install`; for an already retained tag verify and deliberately reactivate with `rollback` only when needed. Preserve the actual prior active tag, and repeat an agreed custom `--prefix` on every lifecycle command.
 
 The explicit tag is mandatory; nothing guesses `latest`, polls or autoupdates. Downloads use HTTPS release assets from `github.com/jcbbge/teerex`:
 
@@ -26,8 +29,8 @@ Archives must contain exactly three regular, top-level files: `teerex`, `README.
 Mac uses system Bash 3.2 and stock tools. Linux requires Bash, GNU coreutils (`sha256sum`, `mv`), `tar`, `gzip`, `file`, `awk`, `grep`, and `curl` with usable HTTPS certificates. Missing tools produce a diagnostic, never package installation. To use explicitly reviewed local assets, place archive and checksums in one directory:
 
 ```sh
-bash tools/install/teerex-install install --version v0.1.0-alpha.3 \
-  --from "$HOME/Downloads/teerex-alpha.3"
+bash tools/install/teerex-install install --version v0.1.0-alpha.5 \
+  --from "$HOME/Downloads/teerex-alpha.5"
 ```
 
 `--from` avoids downloads, not checksum/executable validation or the requirement to trust that source. Same-release checksums detect changed bytes, not independently authenticate a publisher. The Mac binary is **not Developer-ID-signed or notarized**; browser-quarantine/Gatekeeper acceptance remains unverified. The installer does not remove quarantine, disable security or bypass a denial.
@@ -39,12 +42,12 @@ The Linux CLI is built with Zig 0.15.2, `ReleaseSmall`, `x86_64-linux-musl`. `fi
 ```text
 ~/.local/opt/teerex/
   .teerex-install-root
-  versions/v0.1.0-alpha.3/
+  versions/v0.1.0-alpha.5/
     teerex
     README.md
     RIGHTS.md
     .files.sha256
-  current -> versions/v0.1.0-alpha.3
+  current -> versions/v0.1.0-alpha.5
 ```
 
 For a custom location, pass `--prefix "$HOME/somewhere/teerex"` on **every** lifecycle command. It must be a new, user-owned path inside HOME, with no symlink ancestors or dot components; an existing unmanaged directory is not adopted or overwritten. Spaces work. Keep roots host-local, not shared between Mac/Linux. The executable is account-private; no global launcher is installed.
@@ -102,18 +105,21 @@ These are point-in-time observations, **not leases or protection against a later
 
 Use the full executable path above. Deliberately add `$HOME/.local/opt/teerex/current` through your own shell workflow only if desired. No `.zshrc`, `.zprofile`, profile, Rex `init.lua`, key binding, existing binary or setting is edited. Remove any PATH change you made yourself when uninstalling.
 
-Integrity/help success is **not live compatibility**. Alpha.3 has per-command OS/API limits: observe/watch/send/spawn accept integer API10–13; run and doctor runtime remain Mac-only; offstage remains Mac/API13-only; maneuver definitions remain API13-only. See the selected [release guide](releases/v0.1.0-alpha.3.md) and item contracts. API11 numeric acceptance is not actual-build certification. Historical alpha.1 is API13-only and has no doctor; alpha.2 adds the compatibility fix but no newer commands.
+Integrity/help success is **not live compatibility**. Alpha.5 retains numeric API10–13 for observe/watch/low-level send/spawn/adapters; surfaces have actual Mac10/12/13 and Linux13 coverage. Managed launch/jobs/snapshot/restore require API13; update is read-only inventory/manual handoff. Run/doctor runtime remain Mac-only and offstage Mac/API13-only. See the current [setup matrix](concierge/setup.md#supported-platforms-and-api-boundaries), [release guide](releases/v0.1.0-alpha.5.md) and item contracts. API11 numeric acceptance, configured host execution and package/help success do not certify actual API11, personal hosts, exact issue #10 topology or real harness hooks. Historical alpha.1–4 guides remain unchanged.
 
 **Never update, restart or auto-start Rex as an installation prerequisite.** Updates can close panes. Choose a compatible release while preserving the existing server. Joshua's setup agent supplied M5/API10 and hive/API13 observations; installer/disposable-platform tests do not constitute personal-machine validation. Every agent/worker/sidecar/message on his machines must remain visible through authorized Rex/teerex routing, including Rivet; installation creates no hidden-worker exception. Setup/guard migration remains separate ownership. This installer never connects to a server, launches an agent, accesses hive or changes agent-core/Rivet configuration.
 
 ## Upgrade and rollback
 
-Choose a real reviewed release tag, not the literal `TAG`:
+Follow [setup preflight](concierge/setup.md#how-inspect-first-then-choose-exactly-one-activation) to record and verify the actual prior active `PRIOR_TAG` before upgrading. Repeat an agreed custom `--prefix` everywhere. Choose upgrade only when the destination is not already retained:
 
 ```sh
-bash tools/install/teerex-install upgrade --version TAG
-"$HOME/.local/opt/teerex/current/teerex" --help
-bash tools/install/teerex-install rollback --version v0.1.0-alpha.3
+bash tools/install/teerex-install upgrade --version v0.1.0-alpha.5
+"$HOME/.local/opt/teerex/current/teerex" --version
+# Only if an explicit rollback is needed and the before record names a retained tag:
+test -n "$PRIOR_TAG"
+bash tools/install/teerex-install verify --version "$PRIOR_TAG"
+bash tools/install/teerex-install rollback --version "$PRIOR_TAG"
 ```
 
 Upgrade requires an active, integrity-checked installation, stages/validates the chosen version, and atomically replaces `current`. Explicit selection, not semantic-version ordering, determines the destination. Previous versions stay installed. A repeated tag is never overwritten. Rollback activates only a retained, integrity/architecture-checked version, without downloading or invoking Rex. `.files.sha256` detects accidental modification, not another process with your account's write authority.
@@ -123,10 +129,10 @@ Stop foreground teerex invocations before switching/removing versions. This inst
 ## Remove and finish uninstalling
 
 ```sh
-# Inactive version:
-bash tools/install/teerex-install remove --version v0.1.0-alpha.3
+# Inactive version (select one branch, not both):
+bash tools/install/teerex-install remove --version v0.1.0-alpha.5
 # Or deliberately deactivate and remove the active version:
-bash tools/install/teerex-install remove --version v0.1.0-alpha.3 --deactivate
+# bash tools/install/teerex-install remove --version v0.1.0-alpha.5 --deactivate
 bash tools/install/teerex-install list
 ```
 
@@ -140,7 +146,7 @@ rm "$HOME/.local/opt/teerex/.teerex-install-root"
 rmdir "$HOME/.local/opt/teerex"
 ```
 
-`rmdir` refuses nonempty directories; do not substitute recursive removal. Source checkouts, installer scripts and downloaded assets are separate files you may retain or remove yourself. Independent cartridges remain future work; no license has been selected ([rights](../RIGHTS.md)).
+`rmdir` refuses nonempty directories; do not substitute recursive removal. Source checkouts, installer scripts and downloaded assets are separate files you may retain or remove yourself. Independent cartridges have their own [existing lifecycle](cartridges.md); removing the core neither removes nor rolls back them or their data. No project license has been selected ([rights](../RIGHTS.md)).
 
 ## Validation boundaries
 

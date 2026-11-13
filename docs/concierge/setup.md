@@ -1,115 +1,153 @@
-# Install, verify, update and recover
+# Install or upgrade the published alpha.5, without restarting Rex
 
-## Who / What / When / Where / Why
+**Current selected release: [v0.1.0-alpha.5](https://github.com/jcbbge/teerex/releases/tag/v0.1.0-alpha.5), source commit `682489d66dfdb39992b1b2e9f05054bcc009e6d7`.** This current-source setup guide supersedes its alpha.3 procedure. Historical release guides and alpha.5's frozen binary README/onboarding archive remain unchanged; a later documentation commit is not a new binary release.
 
-- **Who:** the account owner or their local setup agent, within explicit installation and target authorization. No administrator privileges are required or requested.
-- **What:** install one versioned shared teerex executable and keep an explicit rollback path. Installation does not install Rex, independent cartridges or a launcher.
-- **When:** after reviewing an exact published tag and its per-command platform/API limits; not whenever main changes or an agent proposes a flag.
-- **Where:** a user-owned root under HOME, default `$HOME/.local/opt/teerex`. Keep roots local to one host/platform. Never adopt an unmanaged directory.
-- **Why:** avoid replacing unrelated binaries, changing shell/Rex settings or losing the prior release when a new version fails validation.
+## Who / What / When / Where / Why / How
 
-## How: prepare an exact source checkout
+- **Who:** the account owner or their expressly authorized local installation agent; no sudo or new machine access.
+- **What:** install or upgrade the combined experimental CLI, verify exact public bytes and retain a rollback version. Independent catalogs are separate, optional installations.
+- **When:** after reviewing the exact published release and the existing managed root; not automatically whenever main changes.
+- **Where:** Apple-silicon macOS or Linux x86_64, inside the agreed user-owned root, default `$HOME/.local/opt/teerex`. Never adopt an unmanaged manual directory.
+- **Why:** gain inspectable surfaces, boards, seat/decisions, managed launch/responsibility, structural recovery/manual update inventory and named-host fleet tools without disturbing existing agents.
+- **How:** use the pinned source installer and checksummed matching core below. Install code only; live reads, palette/config changes, agent-core migration, fleet rollout and server operations need their own explicit scope.
 
-Prerequisites: Git and trusted HTTPS access for the checkout; Bash and the tools listed in [installer prerequisites](../install.md#review-verify-and-install) for installation. Darwin arm64 uses stock tools/Bash3.2. Linux x86_64 needs Bash, coreutils, tar/gzip, file, awk/grep and curl with working certificates. Missing tools are a blocker, not authorization to install packages. Neither Zig nor a running Rex is needed to install a release binary. A source build instead requires Zig0.15.2 and is not the published asset.
+## Supported platforms and API boundaries
 
-Use a new directory you own; the example destination must not already exist. Read commands before executing. This tag is deliberately fixed, not `latest`:
+| Operation | Supported contract / executed coverage |
+| --- | --- |
+| Core install, inspect, verify, upgrade, retained rollback | Darwin arm64 / Linux x86_64; no running Rex or Zig required. |
+| `observe`, `watch`, low-level `send`/argv `spawn`, `adapters` | Numeric API10–13 on Mac/Linux; actual Mac API10/12/13 and Linux API13 tested. Creation/paste ACK is not agent readiness or consumption. |
+| `surfaces` and native palette | Actual Mac API10/12/13 and Linux API13 tested; palette apply is a separate authorized config mutation. |
+| Managed profiles/agents, `jobs`, snapshot/restore | API13 on Mac/Linux. Snapshot/restore is structural, not authoritative draft recovery or generic harness resume. |
+| Seat/inbox/typed decisions; foreground boards | Private typed store works independently; API13 live inventory tested. Unsupported/unavailable hosts stay unknown, never inferred idle/dead. |
+| `update` inventory/manual handoff | Numeric API10–13; actual Mac API10/12/13 and Linux API13 tested. No updater, restart or pane closure runs. |
+| `run`, `doctor`; `offstage` | Mac API10–13 for run/doctor; Mac API13 for offstage. No Linux runtime support; offstage is not a hidden-agent launcher. |
+| Offline compare/filter/cache; maneuver library | Observation schema1/API10–13; maneuvers require API13 saved evidence. No live input/replay follows a match. |
+
+API11 has numeric acceptance, not actual-build certification. Four release-head [CI lanes passed](https://github.com/jcbbge/teerex/actions/runs/43294504395); this does not certify every build, personal m5/hive/m1, exact issue #10 attached-host topology, native Rex.app painting or real paid-harness hooks. [Full release matrix and remaining gates](../releases/v0.1.0-alpha.5.md).
+
+Prerequisites: Git/HTTPS for the pinned checkout; Bash, curl, tar/gzip, file, awk/grep and platform checksum tools ([installer dependencies](../install.md#review-verify-and-install)). Python3.9+ is required for the new operating-layer Python commands and the JSON steps below. Missing tools, permissions or Mac security denial are blockers, not permission to install packages, remove quarantine or disable Gatekeeper. Mac assets are ad-hoc signed, not notarized. Rex is separately acquired and unbundled.
+
+## How: obtain the exact reviewed installer and archive
+
+Run these blocks in Bash, checking each result. Preserve existing checkouts and installations. The new private workspace avoids resetting another agent's files; retain it while its installer/rollback records are needed.
 
 ```sh
+set -euo pipefail
 umask 077
-git clone --branch v0.1.0-alpha.3 --depth 1 https://github.com/jcbbge/teerex.git "$HOME/teerex-alpha.3-source"
-git -C "$HOME/teerex-alpha.3-source" rev-parse HEAD
+TAG=v0.1.0-alpha.5
+RELEASE_COMMIT=682489d66dfdb39992b1b2e9f05054bcc009e6d7
+PREFIX="$HOME/.local/opt/teerex" # use the agreed existing root, if different
+WORK=$(mktemp -d)
+git clone --quiet --branch "$TAG" --depth 1 https://github.com/jcbbge/teerex.git "$WORK/source"
+test "$(git -C "$WORK/source" rev-parse HEAD)" = "$RELEASE_COMMIT"
+INSTALLER="$WORK/source/tools/install/teerex-install"
+BASE="https://github.com/jcbbge/teerex/releases/download/$TAG"
+case "$(uname -s)/$(uname -m)" in
+  Darwin/arm64) PLATFORM=aarch64-macos ;;
+  Linux/x86_64) PLATFORM=x86_64-linux ;;
+  *) printf '%s\n' 'Unsupported host; no installation attempted' >&2; exit 1 ;;
+esac
+ASSET="teerex-$TAG-$PLATFORM.tar.gz"
+curl -fLsS "$BASE/SHA256SUMS" -o "$WORK/SHA256SUMS"
+curl -fLsS "$BASE/$ASSET" -o "$WORK/$ASSET"
+awk -v name="$ASSET" '$2 == name { print; n++ } END { if (n != 1) exit 1 }' \
+  "$WORK/SHA256SUMS" > "$WORK/selected.sha256"
+(
+  cd "$WORK"
+  if [ "$PLATFORM" = aarch64-macos ]; then
+    shasum -a 256 -c selected.sha256
+  else
+    sha256sum -c selected.sha256
+  fi
+)
+bash "$INSTALLER" --help
 ```
 
-Expected commit: `8b2827860029e30a3ad5724d357655de155520d5`. Review `docs/releases/v0.1.0-alpha.3.md`, `docs/install.md`, `RIGHTS.md` and `tools/install/teerex-install` in that checkout. Do not pipe an unaudited download into a shell. If that directory already exists, verify its origin, commit and local changes or choose a new directory; never reset/overwrite it merely to follow this example.
+Read the pinned installer, `RIGHTS.md` and tagged release guide before applying. Expected selected **archive** SHA256: Mac `7e797d36fc2a1669476bb49ddb29b82dc318e92a373791f64e33e2b7f96453f8`; Linux `90e2cb72f1725e56e3137fcacd62a1f489bb49117cba273c89365d6d1b77848f`. These are not the executable hashes below. Same-release hashes detect changed bytes, not independently authenticate the publisher. The installer rechecks checksum, strict three-file archive shape, architecture and help before activation; do not manually extract unchecked code.
 
-From the reviewed source root:
+## How: inspect first, then choose exactly one activation
 
 ```sh
-bash tools/install/teerex-install --help
-bash tools/install/teerex-install list
+bash "$INSTALLER" inspect --prefix "$PREFIX" > "$WORK/before.json"
+python3 -m json.tool "$WORK/before.json"
+PRIOR_TAG=$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["ok"] and d["state"] in ("absent","managed") and not d["busy"], "unsafe/unmanaged/busy root; preserve it"; print(d["active_version"] or "")' "$WORK/before.json")
+if [ -n "$PRIOR_TAG" ]; then
+  bash "$INSTALLER" verify --prefix "$PREFIX" --version "$PRIOR_TAG" > "$WORK/prior-version.json"
+fi
 ```
 
-For a first install, `list` reports no managed installation and exits1; that is expected, not a request to fix/create arbitrary directories. For an existing managed root it shows tags and the active tag. Use `--prefix "$HOME/chosen/teerex"` on **every** lifecycle operation if a custom root was agreed.
+`unmanaged`, busy/stale locks, malformed layouts or failed verification are blockers: preserve the root and ask for an approved alternative/recovery, not deletion/adoption. Keep the private before/verification records for rollback. Do not run install and upgrade sequentially:
+
+**New root, or valid deactivated root with this tag not yet retained:**
 
 ```sh
-# New managed root only:
-bash tools/install/teerex-install install --version v0.1.0-alpha.3
-# Existing managed active root, instead:
-# bash tools/install/teerex-install upgrade --version v0.1.0-alpha.3
-TEEREX="$HOME/.local/opt/teerex/current/teerex"
+bash "$INSTALLER" install --version "$TAG" --prefix "$PREFIX" --from "$WORK"
+```
+
+**Existing active managed root, this tag not yet retained — use this instead:**
+
+```sh
+bash "$INSTALLER" upgrade --version "$TAG" --prefix "$PREFIX" --from "$WORK"
+```
+
+If alpha.5 is already retained, verify it and use `rollback --version "$TAG" --prefix "$PREFIX"` only when deliberate reactivation is needed; do not reinstall/overwrite it. If it is already active, verification alone suffices. Stop only your own foreground teerex invocations before switching code; do not stop other agents.
+
+## How: verify installed bytes, without contacting Rex
+
+```sh
+bash "$INSTALLER" inspect --prefix "$PREFIX"
+bash "$INSTALLER" verify --prefix "$PREFIX" --version "$TAG"
+TEEREX="$PREFIX/current/teerex"
+"$TEEREX" --version
 "$TEEREX" --help
-bash tools/install/teerex-install list
+if [ "$PLATFORM" = aarch64-macos ]; then
+  shasum -a 256 "$TEEREX"
+else
+  sha256sum "$TEEREX"
+fi
 ```
 
-Run exactly one install/upgrade branch. An already retained identical tag is not overwritten; inspect `list` and use explicit rollback to reactivate a retained verified tag when appropriate. Installer success means checksum, strict archive shape, host executable format and help passed before activation. It does not prove live compatibility. It creates no PATH/profile/config edit, service, watcher or server. Retain the selected source installer separately: binary archives contain only teerex, release README and RIGHTS.
+Require exit0, `active_version` and `selected_version` equal to `v0.1.0-alpha.5`, version exactly `teerex 0.1.0-alpha.5`, and the correct **executable** SHA256: Mac `1091c39f9273a4a106ee3ab8691e40fcc85a7e8c261bb431c9fb3cc30b39628f` (822392 bytes); Linux `5cfdb12e436367fb3f48ad5903bcb96e5cf3b75eab14bcdd87e2e71ff158c86a` (695680 bytes). Inspect/verify return JSON and do not execute candidate code or contact Rex; explicit version/help do execute the installed CLI. No PATH/profile, launcher, Rex config or running process is changed by installation. Always use the full selected path; cached shell commands may still select an older executable.
 
-Expected alpha.3 binary SHA256: Linux `8467c5acfc92ad6ee4c8f726b7dc33e25cb73722b8a19c62ea78bb68af848dd7`; Mac `99679a4ff95119e74cac900ce10af9b4be35f3073a6aaab2f8c76f3a80261cd0`. Use `sha256sum "$TEEREX"` on Linux or `shasum -a 256 "$TEEREX"` on Mac. Release checksums detect modified bytes, not independently authenticate the publisher. For reviewed offline assets use `install --version v0.1.0-alpha.3 --from /absolute/private/asset-directory`; the directory must contain the matching archive and external SHA256SUMS. Validation is not bypassed. See [manual archive validation](../releases/v0.1.0-alpha.3.md#download-and-validate) if not using the installer.
+## Optional: one separately authorized read-only live check
 
-## Optional: verify one authorized existing target, without restarting
-
-Installation can finish without endpoint access. Obtain private `SOCKET`, `SESSION`, `BLOCK` values from the local operator's authorized target record, and select a trusted separately installed `rex` on PATH. The socket must be absolute; IDs must be canonical full lowercase UUID addresses, not suffixes or window names. Do not discover endpoints by scanning other agents' panes. All files below are deliberately private; `mktemp` chooses a local temporary directory, not a public repository:
+Installation is complete without a live check. Obtain exact private `SOCKET`, canonical full `SESSION`/`BLOCK` and absolute trusted `REX` executable from the operator's authorized record; never scan neighboring panes or guess from focus/labels. With read/storage authorization, create a private `CHECK_DIR` and run each command separately, checking exit0 before consuming its output:
 
 ```sh
-umask 077
 CHECK_DIR=$(mktemp -d)
-rex --autostart=false --server "unix://$SOCKET" api call server.version > "$CHECK_DIR/version.json"
-"$TEEREX" observe --socket "$SOCKET" --session "$SESSION" --block "$BLOCK" \
+"$REX" --autostart=false --server "unix://$SOCKET" api call server.version > "$CHECK_DIR/version.json"
+"$TEEREX" --rex "$REX" observe --socket "$SOCKET" --session "$SESSION" --block "$BLOCK" \
   --max-bytes 600 --timeout-ms 5000 > "$CHECK_DIR/observation.json"
 "$TEEREX" compare --before "$CHECK_DIR/observation.json" \
   --after "$CHECK_DIR/observation.json" > "$CHECK_DIR/comparison.json"
 ```
 
-Run each command separately and check exit0 **before** using its output. A shell redirection can leave a partial/empty file even on failure. Decode the complete JSON privately: the observation must carry the exact target and actual server version/platform/API revision; capture budget/prefix/completeness and process/directory/status provenance/unknowns must be retained. Self-comparison should have no known value or availability changes, with unknown full text when capture is partial. IDs and timestamps do not prove authenticity or freshness. JSON syntax alone is not a successful smoke.
-
-Then, if a foreground wait is authorized:
-
-```sh
-"$TEEREX" watch --socket "$SOCKET" --session "$SESSION" --block "$BLOCK" \
-  --baseline "$CHECK_DIR/observation.json" --timeout-ms 1000 > "$CHECK_DIR/watch.json"
-```
-
-An idle designated pane normally yields exit124 / `deadline_exceeded`; exit0 means changed evidence, **not completion**. Exit1,2,130,143 are not a pass. Inspect the complete wait packet and source/target. `doctor --socket "$SOCKET"` is an optional Mac-only advertised-requirements check, always `behavior_certified=false`; it cannot substitute for observe or certify other commands. No Linux runtime doctor or run probe is supported.
-
-Execution, spawning or sending is not part of this read-only smoke. Only if separately authorized, use the per-feature recipes on the expressly designated disposable execution pane/server. All other panes are live-agent boundaries. Do not run integration suites against a personal endpoint; suites create their own disposable servers and some deliberately exercise surviving descendants.
+Parse complete JSON privately: exact target/source/API, capture prefix/completeness/bounds and process/directory/status unknowns must be retained. Self-comparison has no known changes but cannot establish full-text equality for a partial prefix. Do not infer freshness, completion or input permission. This check authorizes no send/spawn/focus/move/close/palette/restore/update/fleet action; do not run integration suites against a personal server. [Feature recipes](features.md) and [current operating-layer guides](../releases/v0.1.0-alpha.5.md#commands-and-tested-support) require their own scope.
 
 ## Upgrade / rollback / remove
 
-Stop your own foreground teerex invocations before switching versions; do not stop other agents. Read the new **published** tag's release/feature/schema notes first and preserve current private data. No follow-on version is selected in this guide. After setting `NEXT_TAG` to an approved real release and `PRIOR_TAG` to the verified retained version:
+The upgrade block above retains the prior tag. If an explicit rollback is needed, first review old schema compatibility and preserve new private state. `PRIOR_TAG` must be the actual previously recorded retained tag, not a guessed alpha number:
 
 ```sh
-bash tools/install/teerex-install upgrade --version "$NEXT_TAG"
-"$HOME/.local/opt/teerex/current/teerex" --help
-bash tools/install/teerex-install list
-# If verification fails, explicitly restore the retained known version:
-bash tools/install/teerex-install rollback --version "$PRIOR_TAG"
-"$HOME/.local/opt/teerex/current/teerex" --help
+test -n "$PRIOR_TAG"
+bash "$INSTALLER" verify --prefix "$PREFIX" --version "$PRIOR_TAG"
+bash "$INSTALLER" rollback --prefix "$PREFIX" --version "$PRIOR_TAG"
+bash "$INSTALLER" inspect --prefix "$PREFIX"
+"$PREFIX/current/teerex" --help
 ```
 
-Check status, hash, help and the scoped smoke again. Upgrade retains previous versions; rollback does not download. Fixed version paths and shell command caches can continue using old bytes: verify through `current/teerex`. Binary rollback does not roll back program side effects, terminal input, launched workers or private schemas/data; do not feed new schemas to an old release without checking compatibility.
-
-To remove exactly alpha.3, select **one** appropriate branch after checking `list`:
-
-```sh
-# Inactive release:
-bash tools/install/teerex-install remove --version v0.1.0-alpha.3
-# Active release, instead (leaves no active binary):
-# bash tools/install/teerex-install remove --version v0.1.0-alpha.3 --deactivate
-bash tools/install/teerex-install list
-```
-
-Removal refuses modified/extra/symlinked version files before deletion. It removes neither captures nor source/download directories nor existing workers. Close/stop only explicitly owned resources with separate authorization, not as a binary removal side effect. Remove only named private capture/message files you elected to retain; choose retention before deletion. For an entirely empty managed root, use the nonrecursive final cleanup in [uninstall](../install.md#remove-and-finish-uninstalling). Remove any PATH entry you personally added; none was installed automatically.
+Rollback downloads nothing, does not contact Rex and does not reverse input, launched processes, jobs/boards data, cartridge selections or schema changes. Older CLIs may not implement `--version`; compare the retained hash with the before record instead. A first install has no automatic prior version: an empty `PRIOR_TAG` is not permission to choose/download one. Review [explicit removal](../install.md#remove-and-finish-uninstalling) separately; active removal requires `--deactivate` and leaves no active CLI.
 
 ## Troubleshooting and safe next actions
 
 | Symptom | Check / response |
 | --- | --- |
-| Unsupported host, missing tool, missing release asset | Verify uname and selected release matrix. Report the unsupported operation. Do not sudo, install packages, switch architectures or substitute an unreleased binary without authorization. |
-| Checksum, archive, architecture or help failure | Keep the active version. Reacquire exact assets from the chosen source and investigate mismatch; never skip validation. Mac security denial is a blocker, not a quarantine/Gatekeeper bypass recipe. |
-| Unmanaged root / modified version / stale installer lock | Preserve files. Choose another approved root, or inspect modifications. For stale locks verify no installer is running before deliberately removing only that lock/stage; do not recursively delete the root. |
-| Missing socket / API refusal / absent consumed binding | Check the already-approved absolute socket and independently queried server version. Keep actual API in the report. Never restart/update/autostart Rex or close panes as repair. |
-| Empty, malformed or partial stdout | Check exit code/stderr, permissions and storage/output limits. Do not promote partial evidence to a successful observation or retry a mutation blindly. |
-| Source/target mismatch / retained baseline drift | Stop that comparison/wait. Confirm correct source/target; take a new baseline only with read/storage authorization. Do not rewrite old evidence to make labels agree. |
-| Truncated capture / null process or reports / watch deadline | Preserve unknowns. Increase capture budget only within limits and read authorization; do not infer idle, done, failure or input safety. |
-| Spawn/send/offstage lost ACK or cancellation | Effects may already exist. Inspect only the selected authorized resource and known IDs; never automatically retry, close by a guessed label, resend or retract queued bytes. |
+| Unsupported host/tool, checksum/architecture/help failure, Mac security denial | Keep active bytes; report the actual failure. No sudo, package install, platform fallback or validation/security bypass. |
+| Unmanaged root, modified version or stale/busy lock | Preserve files; investigate exact ownership/in-flight operation or choose a separately approved root. No recursive deletion or automatic lock removal. |
+| Missing socket, unsupported API, source/target mismatch or partial stdout | Check exact authorized endpoint/version and full exit/schema. No Rex autostart/update/restart or pane closure as repair. |
+| Unknown/lost mutation ACK | The effect may exist. Inspect only the authorized resource; no automatic retry, recreate, resend or cleanup-close. |
 
-A useful sanitized handoff reports selected tag/commit, OS/architecture, binary hash, CLI/server versions/API, each exit code, decoded-node checks, unsupported/skipped work and retained rollback tag. Do not share raw terminal content, messages, endpoint/session/block values, private filenames or credentials. Installation success, disposable-platform evidence and exact personal-machine feature verification are separate claims.
+Full restart/draft recovery, real harness/custom-guard parity, arbitrary separate-host replies, exact issue #10 topology and consolidated agent-core deletions remain gated. The reported [intermittent SSH spawn/send failure (#12)](https://github.com/jcbbge/teerex/issues/12) is not established fixed by upgrading; retain the complete failure/attempt evidence and do not blindly retry uncertain mutations. Preserve working stopgaps. Strong host leases, human revocation and isolation are not supplied by client locks. `update` is inventory/manual handoff, not a server updater. Fleet/config/palette changes are not part of this local install.
+
+Return a sanitized receipt: tag and source commit, platform, binary hash, active/retained tags, command exits and decoded checks, limitations and exact rollback command. Keep roots/endpoints/IDs, captures, message bodies, policies and credentials private. Installation success is not personal-machine live compatibility or completion of gated migrations.

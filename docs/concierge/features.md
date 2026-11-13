@@ -1,6 +1,6 @@
 # Alpha.3 feature field guide: Who / What / When / Where / Why / How
 
-These commands are in **v0.1.0-alpha.3**, not a promise about later source. [Setup](setup.md) supplies installation, exact release hashes, upgrade/rollback/remove and the private read-only smoke. Every feature below uses that shared binary lifecycle: none is independently removable in alpha.3. Stop invoking a command to remove its runtime effect; software removal never undoes input, program side effects or worker lifetimes. No automatic capture history, telemetry or service is installed.
+This is the preserved **v0.1.0-alpha.3** recipe baseline, not the current installation target. For published alpha.5 use the [current setup/support matrix](setup.md), [alpha.5 changes and operating-layer guides](../releases/v0.1.0-alpha.5.md#commands-and-tested-support), and [alpha.4 inherited follow-ons](follow-ons.md). Historical alpha.3 identities remain in its [release guide](../releases/v0.1.0-alpha.3.md); do not combine those hashes with the current setup's alpha.5 installer examples. Every feature below uses that shared binary lifecycle: none is independently removable in alpha.3. Stop invoking a command to remove its runtime effect; software removal never undoes input, program side effects or worker lifetimes. No automatic capture history, telemetry or service is installed.
 
 ## Recipe inputs and common checks
 
