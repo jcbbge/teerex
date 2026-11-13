@@ -8,7 +8,8 @@ The temporary test adapter translates the existing combined-CLI test argv into
 separate installed executables; it is not a shipped cartridge or runtime shim.
 """
 import argparse
-import copy
+import hashlib
+import platform
 import fcntl
 import selectors
 import shutil
@@ -42,6 +43,8 @@ class ManagedRuntime(unittest.TestCase):
         self.command = [str(self.binary), 'cartridges', '--root', str(self.root)]
         receipt = self.call('install', '--all', '--catalog', str(self.native_catalog), '--allow-experimental', '--apply')
         self.packages = {p['id']: p for p in receipt['packages']}
+        self.assertTrue(self.packages)
+        self.assertTrue(all(p['kind'] == 'program' for p in self.packages.values()))
         self.processes = []
         self.addCleanup(self.stop_processes)
 
@@ -106,7 +109,7 @@ class ManagedRuntime(unittest.TestCase):
         args = ['--sample', str(self.home / 'absent')]
         a = subprocess.run(self.command + ['run', 'filter', '--', *args], env=self.env, capture_output=True)
         b = subprocess.run([str(Path(self.packages['filter']['code']) / 'teerex-filter'), *args], env=self.env, capture_output=True)
-        self.assertNotEqual(a.returncode, 0)
+        self.assertEqual(a.returncode, 2)
         self.assertEqual((a.returncode, a.stdout, a.stderr), (b.returncode, b.stdout, b.stderr))
         self.factory.package('env', code='#!/bin/sh\nprintf "%s\\n" "$TEEREX_CARTRIDGE_DATA" "$TEEREX_CARTRIDGE_DEPENDENCIES"\n')
         self.call('install', 'env', '--catalog', str(self.factory.catalog), '--apply')
@@ -225,7 +228,9 @@ def managed_runtime(args):
     ManagedRuntime.native_catalog = args.catalog.resolve()
     ManagedRuntime.rex = (os.environ.get('REX_BIN') or shutil.which('rex')) if args.with_rex else None
     result = unittest.TextTestRunner(verbosity=2).run(unittest.defaultTestLoader.loadTestsFromTestCase(ManagedRuntime))
-    print(json.dumps(dict(ok=result.wasSuccessful(), contract_tests=result.testsRun, skipped=len(result.skipped), suite_invocation='managed_runtime', boundaries='M1 parity and M7 direct calls are deliberate counterexamples; all other payload runtime calls use teerex cartridges run')))
+    index = json.loads((args.catalog / 'catalog.json').read_text())
+    manifests = [json.loads((args.catalog / item['path'] / 'manifest.json').read_text()) for item in index['packages']]
+    print(json.dumps(dict(ok=result.wasSuccessful(), contract_tests=result.testsRun, skipped=len(result.skipped), suite_invocation='managed_runtime', machine=platform.machine(), system=platform.system(), python=platform.python_version(), core_sha256=hashlib.sha256(binary.read_bytes()).hexdigest(), catalog_sha256=hashlib.sha256((args.catalog / 'catalog.json').read_bytes()).hexdigest(), native_cartridges=sorted(m['id'] for m in manifests), catalog_provenance=[{'id':m['id'],'version':m['version'],'provenance':m['provenance']} for m in manifests], boundaries='M1 parity and M7 direct calls are deliberate counterexamples; all other payload runtime calls use teerex cartridges run')))
     return 0 if result.wasSuccessful() else 1
 
 
