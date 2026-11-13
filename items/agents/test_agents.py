@@ -2,6 +2,7 @@
 
 TEEREX_BIN must dispatch agents/spawn/jobs/send. REX_BIN selects the fixture's exact executable.
 """
+import errno
 import json
 import os
 from pathlib import Path
@@ -772,7 +773,12 @@ class AgentsTest(unittest.TestCase):
                 c.settimeout(2)
                 c.connect(handle["socket"])
                 c.sendall(raw)
-                c.shutdown(socket.SHUT_WR)
+                try:
+                    c.shutdown(socket.SHUT_WR)
+                except OSError as error:
+                    # macOS can report ENOTCONN after the server already sent its refusal and closed.
+                    if error.errno != errno.ENOTCONN:
+                        raise
                 response = b""
                 while not response.endswith(b"\n"):
                     part = c.recv(65536)
