@@ -7,7 +7,7 @@
 - **Status:** chosen under Josh's overnight standing authority (the seat's overnight file of 2026-11-13: build every roadmap item; decide by 10X developer/agentic/user experience). It supersedes the brief's "defer collection" gate. Choices made here are marked **chosen (overnight rubric)**. This is a spec only. No source was edited and no Git write was run.
 - **Implementer:** the teerex lead, in `jcbbge/teerex`, for everything in teerex. The agent-core native owner does the [agent-core lines](#agent-core-changes-owner-agent-core-native). rexconfig has nothing to do.
 - **Base read:** `244d893c2131c94778b49038910815c5fc2b04a5`. Public main is now `1bbb9dc`, which touches `items/{agents,boards,send}` but does not add #13.
-- **Dependencies (externally owned, consumed, not redesigned):** issue #13 "Record every teerex call" is briefed to the teerex lead's `codex-boards` worker (`feat/boards-ask-log`) and not yet built. H01 `teerex records` ([evidence-records.md](evidence-records.md)) is specified but not yet accepted. Field names here follow both as written today, and the coordinator aligns them on acceptance.
+- **Dependencies (externally owned, consumed, not redesigned):** issue #13 "Record every teerex call" is briefed to the teerex lead's `codex-boards` worker (`feat/boards-ask-log`) and not yet built. H01 `teerex records` ([evidence-records.md](evidence-records.md)) is accepted; names here are aligned with it.
 - **Host-blocked:** none. Both parts are local file work plus read-only probes. #13's bypass marking is #13's own concern.
 - **Acceptance cases below are specified but not executed.**
 
@@ -157,7 +157,7 @@ All cases use synthetic #13 and friction fixtures in a temp 0700 directory. The 
 
 ### Envelope delta for the H01 owner
 
-These are additive and optional for the existing kinds. H01's fields and rules are unchanged. The coordinator aligns names when H01 is accepted.
+These are additive and optional for the existing kinds. H01's fields and rules are unchanged. Command and flag names here are aligned with the accepted [H01 spec](evidence-records.md) (`--expect-generation`, `--fields-file`, `--by`, `attach`, `close`, `superseded_by:<id>`); where they differ, H01 wins.
 
 - Top-level `pins[]`: `{"id":"p1","type":"git_ref|file_sha256|program_version|gh_issue_state|supplied","target":"…","recorded_value":"…","recorded_at":"…","basis":"observed|supplied","last_value":null,"last_checked":null,"last_result":"unchecked"}`. Targets: `git_ref` → `"/abs/repo@refname"`; `file_sha256` → abs path; `program_version` → abs program path (run `PROG --version`, 5 s, first line ≤256 bytes); `gh_issue_state` → `"owner/repo#N"` (value `OPEN`, or `CLOSED:<STATEREASON>`); `supplied` → free text, never probed.
 - Claim fields: `status` (`provisional` default \| `accepted` \| `stale` \| `withdrawn`), `depends_on` (pin and evidence ids), `contradicts` (claim ids), `supersedes` (claim id or null), `status_history[]` `{status, at, by, reason}`.
@@ -177,17 +177,17 @@ These are additive and optional for the existing kinds. H01's fields and rules a
  "card_id":null}
 ```
 
-Record `state` keeps H01's meaning: `open` is proposed, `concluded` is decided, and `superseded` with `superseded_by` is replaced by a newer decision. "needs review" is **computed** by `revalidate` and never stored as a state.
+Record `state` keeps H01's meaning: `open` is proposed, `concluded` is decided, and `superseded_by:<id>` (set by `records new --supersedes OLD`) is replaced by a newer decision. "needs review" is **computed** by `revalidate` and never stored as a state.
 
 ### Commands (added to `records`)
 
 | Command | Effect |
 | --- | --- |
-| `records pin add --id ID --type T --target X [--value V] [--gh ABS]` | `observed` types probe now and store `recorded_value`. With `--value`, `basis: supplied`, no probe. `gh_issue_state` needs `--gh ABS` (explicit binary). A probe failure refuses `pin_probe_failed`. |
-| `records decide --id ID --generation G --from-file ABS\|-` | Sets the decision's `kind_fields` from strict JSON (the shape above). Refuses unknown keys, option or invalidator ids not matching `o\d+`/`v\d+`, and dangling pins (`unknown_pin`). Once `state` is `concluded`, changing `decision.text` or `because` refuses; supersede the record instead. |
+| `records pin add --id ID --by NAME --type T --target X [--value V] [--gh ABS] [--expect-generation N]` | `observed` types probe now and store `recorded_value`. With `--value`, `basis: supplied`, no probe. `gh_issue_state` needs `--gh ABS` (explicit binary). A probe failure refuses `pin_probe_failed`. |
+| `records decide --id ID --by NAME --expect-generation G --fields-file ABS\|-` | Sets the decision's `kind_fields` from strict JSON (the shape above). Refuses unknown keys, option or invalidator ids not matching `o\d+`/`v\d+`, and dangling pins (`unknown_pin`). Once `state` is `concluded`, changing `decision.text` or `because` refuses; supersede the record instead. |
 | `records add claim … [--depends-on p1,e2] [--contradicts k2] [--supersedes k1]` | Extends H01's `add claim`. `--contradicts` writes the link on **both** claims. Neither text is changed. |
-| `records claim-status --id ID --claim kN --status accepted\|withdrawn --by NAME --reason T --generation G` | The only way a claim becomes `accepted` or `withdrawn`. It appends to `status_history`. Nothing sets `accepted` automatically. |
-| `records revalidate (--id ID \| --all --kind decision) [--network --gh ABS] [--write]` | Probes every pin (`gh_issue_state` only with `--network`, otherwise `not_rechecked`) and rechecks evidence as in H01 `recheck`. It computes the [results](#revalidation-rules-exact). Without `--write` it is read-only. With `--write` it stores `last_value`/`last_checked`/`last_result` and moves claims to `stale` with a `status_history` entry. It never changes `state`, decision text, options or `accepted`. |
+| `records claim-status --id ID --claim kN --status accepted\|withdrawn --by NAME --reason T --expect-generation G` | The only way a claim becomes `accepted` or `withdrawn`. It appends to `status_history`. Nothing sets `accepted` automatically. |
+| `records revalidate (--id ID \| --all --kind decision) [--network --gh ABS] [--write]` | Probes every pin (`gh_issue_state` only with `--network`, otherwise `not_rechecked`) and recomputes each evidence entry's `availability_now` as H01's `show` does (H01 dropped its `recheck` verb). It computes the [results](#revalidation-rules-exact). Without `--write` it is read-only. With `--write` it stores `last_value`/`last_checked`/`last_result` and moves claims to `stale` with a `status_history` entry. It never changes `state`, decision text, options or `accepted`. |
 | `records set --id ID … kind_fields.options.oN.status="chosen"` | Refused with `revisit_not_due` unless the latest stored revalidation listed `oN` as `revisit_due`, or `--override-reason T --by NAME` is given (the override is appended to the option's `history[]` `{status, at, by, reason}`). |
 | `records show --id ID` (decision) | Order: decision text · authority · state · **needs_review yes/no and why** · because claims (status, basis, pins with recorded vs last value) · open contradictions as `k2 ⟷ k5` pairs · options (chosen first, rejected with revisit condition and `revisit_due`) · invalidators · evidence availability. |
 | `records list --kind decision [--needs-review]` | `--needs-review` filters on the last stored revalidation. |
@@ -232,15 +232,15 @@ S=~/.local/state/teerex-records
 teerex records new --store $S --kind decision --id dec-h02-on-13 --writer "teerex planning" \
   --question "Where does H02 friction data come from?" \
   --next-actor "teerex lead" --next-step "build boards friction after #13 lands" --next-stop-when "F1-F15 green"
-teerex records add evidence --store $S --id dec-h02-on-13 --type file --locator /abs/overnight.md --digest auto  # e1, private
-teerex records pin add --store $S --id dec-h02-on-13 --type gh_issue_state --target jcbbge/teerex#13 --gh /usr/bin/gh   # p1 = OPEN
-teerex records pin add --store $S --id dec-h02-on-13 --type git_ref --target /abs/teerex@refs/remotes/origin/main  # p2
-teerex records add claim --store $S --id dec-h02-on-13 --text "#13 is briefed to codex-boards" --basis supplied \
+teerex records attach --store $S --id dec-h02-on-13 --by "teerex planning" --evidence /abs/overnight.md --label authority  # e1, type file, private
+teerex records pin add --store $S --id dec-h02-on-13 --by "teerex planning" --type gh_issue_state --target jcbbge/teerex#13 --gh /usr/bin/gh   # p1 = OPEN
+teerex records pin add --store $S --id dec-h02-on-13 --by "teerex planning" --type git_ref --target /abs/teerex@refs/remotes/origin/main  # p2
+teerex records add claim --store $S --id dec-h02-on-13 --by "teerex planning" --text "#13 is briefed to codex-boards" --basis supplied \
   --supplied-by "teerex lead brief" --depends-on p1                                                              # k1
-teerex records add claim --store $S --id dec-h02-on-13 --text "No call log exists in source" --basis observed \
+teerex records add claim --store $S --id dec-h02-on-13 --by "teerex planning" --text "No call log exists in source" --basis observed \
   --evidence e2 --depends-on p2                                                                                  # k2
-teerex records decide --store $S --id dec-h02-on-13 --generation 7 --from-file /abs/dec-h02-kind.json   # the kind_fields JSON above
-teerex records set --store $S --id dec-h02-on-13 --generation 8 'state="concluded"'
+teerex records decide --store $S --id dec-h02-on-13 --by "teerex planning" --expect-generation 7 --fields-file /abs/dec-h02-kind.json   # the kind_fields JSON above
+teerex records close --store $S --id dec-h02-on-13 --by "teerex planning" --state concluded --expect-generation 8
 teerex records revalidate --store $S --id dec-h02-on-13 --network --gh /usr/bin/gh
 ```
 
