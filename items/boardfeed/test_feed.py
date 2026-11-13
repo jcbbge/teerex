@@ -294,7 +294,9 @@ class FeedTests(unittest.TestCase):
                 self.assertEqual(inventory.rows[other_block]['now'],'Lua own work')
                 self.assertEqual(inventory.rows[other_block]['state'],'idle')
                 # A distinct, profile-owned executable with no managed launch or OSC record.
-                runner=root/'runner';shutil.copy2(shutil.which('sleep'),runner)
+                runner=root/'runner';shutil.copy(shutil.which('sleep'),runner)
+                # macOS kills a copied platform binary until it is ad-hoc signed.
+                if sys.platform=='darwin':subprocess.run(['codesign','--force','-s','-',str(runner)],check=True,capture_output=True)
                 alias=root/'runner-link';alias.symlink_to(runner)
                 profiles=root/'profiles.json'
                 profiles.write_text(json.dumps(dict(profiles=dict(example=dict(argv=[str(alias)])))))

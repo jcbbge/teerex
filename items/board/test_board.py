@@ -13,6 +13,7 @@ import select
 import signal
 import struct
 import subprocess
+import sys
 import tempfile
 import termios
 import time
@@ -373,7 +374,9 @@ class BoardTest(unittest.TestCase):
         self.assertIn('header total: rows=1 header=2',result.stdout)
         self.assertIn('1 differences',result.stdout)
         # Profile-only rows and the independent checker agree without a launch record.
-        runner=self.root/'profile-runner';shutil.copy2(shutil.which('sleep'),runner)
+        runner=self.root/'profile-runner';shutil.copy(shutil.which('sleep'),runner)
+        # macOS kills a copied platform binary until it is ad-hoc signed.
+        if sys.platform=='darwin':subprocess.run(['codesign','--force','-s','-',str(runner)],check=True,capture_output=True)
         profile_dir=self.root/'.config/teerex';profile_dir.mkdir(parents=True)
         profiles=profile_dir/'profiles.json'
         profiles.write_text(json.dumps(dict(profiles=dict(example=dict(argv=[str(runner)])))))
@@ -395,7 +398,8 @@ class BoardTest(unittest.TestCase):
         host=next(h for h in json.loads(snapshot.stdout)['hosts'] if h['host']=='hive')
         self.assertEqual({r['block'] for r in host['rows']},{targets['hive'][2]})
         self.assertEqual(host['counts']['total'],1)
-        subprocess.run([BIN,'surfaces','close','--socket',hosts['hive']['socket'],'--session',manual_created['session_id'],'--pane',manual_block],capture_output=True,timeout=5,check=True)
+        subprocess.run([BIN,'surfaces','close','--socket',hosts['hive']['socket'],'--session',manual_created['session_id'],'--pane',manual_block],capture_output=True,timeout=5,check=True,
+                       env=dict(os.environ,PATH=os.path.dirname(rex)+os.pathsep+os.environ.get('PATH','')))  # surfaces close needs rex on PATH
         # The normal entrypoint must start the integrated feed, receive vitals,
         # and reap its foreground feed children when the board exits.
         live=Pane(self.root,fixture=None,config=config)
