@@ -8,8 +8,9 @@ const Parsed = std.json.Parsed(Value);
 const ESC = "\x1b";
 const usage =
     \\Usage: teerex board [--config ABS] [--hosts hive,m5] [--replay FILE]
-    \\                    [--no-graphics] [--once] [--benchmark N]
+    \\                    [--no-graphics] [--once] [--json] [--benchmark N]
     \\Live Rex/teerex events and machine vitals. Event-driven; no screen timer.
+    \\--json prints finite per-host rows and header counts from live feeds or replay.
     \\Feed: teerex board feed --help
     \\Replay is JSONL v1; EOF holds the final frame, q exits. --once prints it and exits.
     \\Keys: j/k or arrows select; Enter jump; Space scratchpad; m machine;
@@ -577,14 +578,14 @@ fn scratch(allocator: A, self: []const u8, config: []const u8, row: Value) !?Par
     return std.json.parseFromSlice(Value, allocator, result.stdout, .{ .allocate = .alloc_always }) catch null;
 }
 
-const Options = struct { config: []const u8, hosts: []const u8 = "hive,m5", replay: ?[]const u8 = null, once: bool = false, graphics: bool = true, benchmark: usize = 0 };
+const Options = struct { config: []const u8, hosts: []const u8 = "hive,m5", replay: ?[]const u8 = null, once: bool = false, json: bool = false, graphics: bool = true, benchmark: usize = 0 };
 fn options(a: A, args: []const []const u8) !Options {
     const home = try std.process.getEnvVarOwned(a, "HOME");
     var result: Options = .{ .config = try std.fs.path.join(a, &.{ home, ".config/teerex/hosts.json" }) };
     var i: usize = 0;
     while (i < args.len) : (i += 1) {
         const s = args[i];
-        if (eq(s, "--once")) result.once = true else if (eq(s, "--no-graphics")) result.graphics = false else if (eq(s, "--config") or eq(s, "--hosts") or eq(s, "--replay") or eq(s, "--benchmark")) {
+        if (eq(s, "--json")) result.json = true else if (eq(s, "--once")) result.once = true else if (eq(s, "--no-graphics")) result.graphics = false else if (eq(s, "--config") or eq(s, "--hosts") or eq(s, "--replay") or eq(s, "--benchmark")) {
             i += 1;
             if (i >= args.len) return error.BoardOptionNeedsValue;
             if (eq(s, "--config")) result.config = args[i] else if (eq(s, "--hosts")) result.hosts = args[i] else if (eq(s, "--replay")) result.replay = args[i] else result.benchmark = try std.fmt.parseInt(usize, args[i], 10);
@@ -607,13 +608,42 @@ pub fn run(allocator: A, args: []const []const u8) !u8 {
     defer ui.rows.deinit(allocator);
     defer if (ui.pad) |*pad| pad.deinit();
     var theme: Theme = .{ .color = !std.process.hasEnvVarConstant("NO_COLOR") };
-    if (opts.once) {
-        const bytes = try std.fs.cwd().readFileAlloc(allocator, opts.replay.?, 16 * 1024 * 1024);
+    if (opts.once or opts.json) {
+        var feed_failed = false;
+        const bytes = if (opts.replay) |path| try std.fs.cwd().readFileAlloc(allocator, path, 16 * 1024 * 1024) else blk: {
+            const self = try std.fs.selfExePathAlloc(allocator);
+            defer allocator.free(self);
+            const result = try std.process.Child.run(.{ .allocator = allocator, .argv = &.{ self, "board", "feed", "--config", opts.config, "--hosts", opts.hosts, "--once" }, .max_output_bytes = 16 * 1024 * 1024 });
+            defer allocator.free(result.stderr);
+            feed_failed = result.term != .Exited or result.term.Exited != 0;
+            break :blk result.stdout;
+        };
         defer allocator.free(bytes);
         var events = std.mem.splitScalar(u8, bytes, '\n');
         while (events.next()) |line| if (line.len > 0) {
             _ = try model.ingest(line);
         };
+        if (opts.json) {
+            const Snapshot = struct { host: []const u8, rows: []const Value, counts: Counts, reachable: ?bool };
+            var snapshots: std.ArrayList(Snapshot) = .empty;
+            defer {
+                for (snapshots.items) |snapshot| allocator.free(snapshot.rows);
+                snapshots.deinit(allocator);
+            }
+            var selected = std.mem.splitScalar(u8, opts.hosts, ',');
+            while (selected.next()) |name| {
+                ui.host = if (eq(name, "hive")) 0 else if (eq(name, "m5")) 1 else return error.UnknownBoardHost;
+                try ui.visible(&model);
+                const reachable = model.hosts[ui.host].reachable;
+                if (reachable != true and opts.replay == null) feed_failed = true;
+                try snapshots.append(allocator, .{ .host = name, .rows = try allocator.dupe(Value, ui.rows.items), .counts = countRows(ui.rows.items), .reachable = reachable });
+            }
+            const output = try std.json.Stringify.valueAlloc(allocator, .{ .hosts = snapshots.items, .invalid = model.invalid }, .{});
+            defer allocator.free(output);
+            try std.fs.File.stdout().writeAll(output);
+            try std.fs.File.stdout().writeAll("\n");
+            return if (model.invalid == 0 and !feed_failed) 0 else 1;
+        }
         try ui.visible(&model);
         var arena = std.heap.ArenaAllocator.init(allocator);
         defer arena.deinit();

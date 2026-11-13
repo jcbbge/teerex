@@ -44,3 +44,7 @@ A live pane qualifies through a launch record or a `teerex-agent` status record.
 Scratchpads join by the live pane’s session and block id, including idle/done
 panes. State comes only from OSC 7501 `program_status`; `blocked` remains
 `blocked`, and missing status is `unknown`.
+
+`--once` reads one finite inventory/status/scratchpad snapshot and exits without
+starting vitals or the event subscription. With named hosts it forwards the
+same finite option to each configured worker. This powers `board --json`.

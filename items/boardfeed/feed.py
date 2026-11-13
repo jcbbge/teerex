@@ -417,6 +417,9 @@ def rex_events(a,state):
 
 def local(a):
     state=State(a)
+    if a.once:
+        state.scan()
+        return
     watcher=Watcher([a.agents_registry,a.jobs_registry,a.scratch,a.calls])
     sample=LinuxVitals() if sys.platform=='linux' else MacVitals()
     thread=threading.Thread(target=rex_events,args=(a,state),daemon=True);thread.start()
@@ -438,7 +441,7 @@ def local(a):
 def merge(a):
     threads=[]
     def host_feed(host):
-        command=[a.executable,'targets','exec','--config',a.config,'--host',host,'--','board','feed','--local','--host-name',host]
+        command=[a.executable,'targets','exec','--config',a.config,'--host',host,'--','board','feed','--local','--host-name',host]+(['--once'] if a.once else [])
         try:
             p=subprocess.Popen(command,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,text=True);CHILDREN.append(p)
             for line in p.stdout:
@@ -449,7 +452,8 @@ def merge(a):
                     event['host']=host
                     with LOCK: print(json.dumps(event,separators=(',',':')),flush=True)
                 except (ValueError,TypeError):continue
-            if not STOP.is_set():emit(host,'host',reachable=False,error='Host feed disconnected')
+            code=p.wait()
+            if not STOP.is_set() and (not a.once or code):emit(host,'host',reachable=False,error='Host feed disconnected')
         except OSError:emit(host,'host',reachable=False,error='Host feed unavailable')
     for host in a.hosts.split(','):
         t=threading.Thread(target=host_feed,args=(host,),daemon=True);t.start();threads.append(t)
@@ -460,6 +464,7 @@ def main(argv=None):
     parser=argparse.ArgumentParser(prog='teerex board feed',description=__doc__)
     parser.add_argument('--config',default=os.path.expanduser('~/.config/teerex/hosts.json'),help='absolute named-host configuration')
     parser.add_argument('--hosts',default='hive,m5',help='comma-separated configured hosts; both by default')
+    parser.add_argument('--once',action='store_true',help='finite pane snapshot, then exit (no vitals or event subscription)')
     parser.add_argument('--local',action='store_true',help='read this host only (transport worker)')
     parser.add_argument('--host-name',dest='host',default=platform.node().split('.')[0])
     parser.add_argument('--socket',default=os.environ.get('TEEREX_BOARD_SOCKET', '/run/user/%d/rex/server.sock'%os.getuid() if sys.platform=='linux' else os.path.expanduser('~/Library/Application Support/rex/server.sock')))

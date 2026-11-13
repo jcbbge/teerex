@@ -12,6 +12,8 @@ teerex board --config /absolute/hosts.json    # explicit named hosts
 teerex board --hosts hive                    # a single configured source
 teerex board --replay /absolute/events.jsonl  # bounded JSONL fixture; EOF holds
 teerex board --replay /absolute/events.jsonl --once # final 60-column text snapshot
+teerex board --json                          # finite live rows + per-host header counts
+teerex board --hosts hive --json             # only the selected source
 teerex board --no-graphics                    # Unicode only
 ```
 
@@ -163,3 +165,25 @@ The agent header counts the same host-filtered pane rows as the list. Idle,
 done and unknown rows remain until their live pane disappears. `wait` combines
 Rex’s `waiting` and `blocked` states; neither launch phase nor hook state
 contributes a count.
+
+`--json` needs no terminal and exits after a finite feed snapshot (also works
+with `--replay`). Its `hosts` array contains each selected host's sorted `rows`,
+`counts`, and `reachable` evidence. The same row filter and count function drive
+the screen and JSON; `blocked` is kept separately in JSON and contributes to
+`wait` on screen. An unavailable host or invalid feed event makes the exit
+nonzero. Configured host executables must support `board feed --once`.
+
+Run the kept, read-only comparison against every host in the configured file:
+
+```sh
+python3 items/board/check_one_source.py --config "$HOME/.config/teerex/hosts.json" --teerex "$PWD/zig-out/bin/teerex"
+```
+
+It reads Rex pane/status inventory and launch metadata independently through
+the existing named-host transport, then reads `board --json`. It prints every
+missing/extra/duplicate pane, session/state mismatch and header discrepancy;
+only zero differences exits 0. Reads are sequential snapshots, so a pane or
+status changing between reads can produce a real observed difference. Host
+read failures are differences, never empty inventories accepted as success.
+The disposable two-host test checks live JSON and injects an incorrect header
+total to prove the check fails and names the difference.

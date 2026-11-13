@@ -260,6 +260,31 @@ class BoardTest(unittest.TestCase):
         p.key(b' ')
         self.assertIn('Check complete scratchpad',p.view())
         self.assertIn('Started private Rex',p.view())
+        # Finite live JSON and the independent kept check use these disposable
+        # servers and a private launch registry, never the operator's state.
+        registry=self.root/'.local/state/teerex-agents';registry.mkdir(parents=True)
+        for name, (_, sid, target, _) in targets.items():
+            (registry/(name+'.json')).write_text(json.dumps(dict(name=name,launch_id=name,target=dict(session_id=sid,block_id=target))))
+        private_env=dict(os.environ,HOME=str(self.root),TEEREX_CALL_LOG_DIR=str(self.root/'calls'))
+        snapshot=subprocess.run([BIN,'board','--config',str(config),'--json'],env=private_env,capture_output=True,text=True,timeout=20)
+        self.assertEqual(snapshot.returncode,0,snapshot.stderr)
+        data=json.loads(snapshot.stdout)
+        for host in data['hosts']:
+            self.assertEqual(len(host['rows']),1)
+            self.assertEqual(host['rows'][0]['block'],targets[host['host']][2])
+            self.assertEqual(host['counts']['total'],1)
+            self.assertEqual(host['counts']['unknown'],1)
+        check=Path(__file__).with_name('check_one_source.py')
+        result=subprocess.run(['python3',str(check),'--config',str(config),'--teerex',BIN],env=private_env,capture_output=True,text=True,timeout=30)
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+        self.assertIn('0 differences',result.stdout)
+        wrapper=self.root/'inject-count'
+        wrapper.write_text('#!/usr/bin/env python3\nimport json,subprocess,sys\nr=subprocess.run('+repr([BIN])+"+sys.argv[1:],capture_output=True,text=True)\nd=json.loads(r.stdout)\nd['hosts'][0]['counts']['total']+=1\nprint(json.dumps(d))\n")
+        wrapper.chmod(0o700)
+        result=subprocess.run(['python3',str(check),'--config',str(config),'--teerex',str(wrapper)],env=private_env,capture_output=True,text=True,timeout=30)
+        self.assertEqual(result.returncode,1,result.stdout+result.stderr)
+        self.assertIn('header total: rows=1 header=2',result.stdout)
+        self.assertIn('1 differences',result.stdout)
         # The normal entrypoint must start the integrated feed, receive vitals,
         # and reap its foreground feed children when the board exits.
         live=Pane(self.root,fixture=None,config=config)
@@ -294,6 +319,21 @@ class BoardTest(unittest.TestCase):
         self.assertIn('idle 1  wait 1  error 0  done 1',view)
         self.assertIn('unknown 1',view)
         for state in ('idle','done','unknown'):self.assertIn('agent-'+state,view)
+
+    def test_json_counts_match_filtered_rows(self):
+        events=[json.loads(line) for line in FIXTURE.read_text().splitlines()]
+        template=next(e for e in events if e['kind']=='agent' and e['host']=='hive')
+        for state in ('idle','done','unknown','blocked','error'):
+            events.append(dict(template,id='hive-'+state,name='agent-'+state,state=state))
+        path=self.root/'json-counts.jsonl';path.write_text('\n'.join(map(json.dumps,events)))
+        result=subprocess.run([BIN,'board','--replay',str(path),'--hosts','hive','--json'],env=dict(os.environ,TEEREX_CALL_LOG_DIR=str(self.root/'calls')),capture_output=True,text=True,timeout=5)
+        self.assertEqual(result.returncode,0,result.stderr)
+        hosts=json.loads(result.stdout)['hosts']
+        self.assertEqual(len(hosts),1)
+        snapshot=hosts[0]
+        self.assertTrue(all(row['host']=='hive' for row in snapshot['rows']))
+        self.assertEqual(snapshot['counts'],dict(total=7,working=1,waiting=1,blocked=1,error_count=1,idle=1,done=1,unknown=1))
+        self.assertEqual(snapshot['counts']['total'],len(snapshot['rows']))
 
     def test_gone_removes_rows(self):
         events=[json.loads(line) for line in FIXTURE.read_text().splitlines()]

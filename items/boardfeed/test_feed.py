@@ -94,7 +94,7 @@ class FeedTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             fake=Path(tmp)/'exec';fake.write_text('#!/bin/sh\nexit 1\n');fake.chmod(0o700)
             class Args:pass
-            a=Args();a.executable=str(fake);a.config=str(Path(tmp)/'config');a.hosts='absent'
+            a=Args();a.once=False;a.executable=str(fake);a.config=str(Path(tmp)/'config');a.hosts='absent'
             out=io.StringIO()
             with contextlib.redirect_stdout(out):feed.merge(a)
             event=json.loads(out.getvalue());self.assertFalse(event['reachable']);self.assertEqual(event['host'],'absent')
