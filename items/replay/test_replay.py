@@ -101,6 +101,7 @@ class Replay(unittest.TestCase):
         fixture = self.record("utf8-split")
         manifest = json.loads((fixture / "fixture.json").read_text())
         data = (fixture / "stream.bin").read_bytes()
+        self.assertEqual(data, "naïve ✓ 日本\r\n".encode(), "record must contain program bytes only, without login banners")
         tick = data.index("✓".encode())
         self.assertIn(tick + 1, [offset + length for offset, length, _ in manifest["chunks"]])
         facts = {"end": [dict(id="tick", capture_contains="✓"), dict(id="valid", capture_not_contains="�")]}
@@ -255,7 +256,7 @@ class Replay(unittest.TestCase):
         fixture = self.path("tab-record")
         self.invoke("record", ["--out", fixture, "--id", "tab", "--allow-sensitive-capture", "--cwd", self.work],
                     [sys.executable, "-c", "import os; print(os.getcwd())"])
-        self.assertIn(str(self.work).encode(), (fixture / "stream.bin").read_bytes())
+        self.assertEqual((str(self.work.resolve()) + "\r\n").encode(), (fixture / "stream.bin").read_bytes(), "tab launch must also be silent")
 
     def test_resize_owner_contention_refuses(self):
         fixture = self.path("contended-fixture")

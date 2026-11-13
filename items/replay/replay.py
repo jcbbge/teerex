@@ -318,22 +318,14 @@ class Runner:
                                  dict(session_id=self.args.session, block_id=self.block, args=args or {}))
 
     def create(self, argv, playing=False):
-        options = dict(shell="none", command=[sys.executable, "-c", GATE, str(self.root / "go"), *argv],
+        options = dict(shell="none", login=False, interactive=False, command=[sys.executable, "-c", GATE, str(self.root / "go"), *argv],
                        cwd=self.args.cwd or str(Path.cwd()), size=dict(columns=self.args.columns, rows=self.args.rows),
                        exit=dict(on_completion=False))
         if self.args.layout == "tab":
-            rex = os.environ.get("TEEREX_INTERNAL_REX") or os.environ.get("TEEREX_REX") or shutil.which("rex")
-            if not rex:
-                raise Refused("rex_executable_unavailable")
-            # surfaces owns tab creation and its placement contract.
-            command = [self.binary, "--rex", rex, "surfaces", "open", "--socket", self.args.socket,
-                       "--session", self.args.session, "--layout", "tab", "--label", self.args.label,
-                       "--cwd", options["cwd"],
-                       "--", *options["command"]]
-            result = subprocess.run(command, capture_output=True, text=True, timeout=10)
-            if result.returncode:
-                raise Refused("creation_uncertain")
-            self.block = json.loads(result.stdout)["created"]["block_id"]
+            made = self.control.call("session.new_window", dict(session_id=self.args.session,
+                window_label=self.args.label, focus=False, layout=dict(block=dict(
+                    flavor="com.superlogical.terminal.shell", options=options, label=self.args.label))))
+            self.block = made["block_ids"][0]
         else:
             self.block = self.control.call("session.new_block", dict(session_id=self.args.session,
                 flavor="com.superlogical.terminal.shell", options=options, label=self.args.label))["block_id"]

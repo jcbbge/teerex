@@ -108,3 +108,12 @@ choice and its actual child exit **1**, rather than equating a correct decline
 with exit zero. The 500 ms scripted settling delay remains explicit. Codex/pi
 confirmation steps remain `not_run:needs_authoring`; no absence of a trust prompt
 is inferred beyond these observed starts. Real captures are not committed.
+
+Replay launchers explicitly use Rex terminal options `shell:"none"`, `login:false`
+and `interactive:false` on both layouts. This suppresses launcher output such as
+macOS `Last login:` banners without stripping any program bytes from fixtures or
+weakening replay verification. Visible record tabs use `session.new_window` on
+the retained control connection so the same explicit terminal options apply;
+the surfaces CLI currently has no non-login launch selector. New tabs retain
+`focus:false`. The record checks pin exact program bytes for both tab and
+offstage launch paths on Linux and macOS.
