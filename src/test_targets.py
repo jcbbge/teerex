@@ -88,6 +88,16 @@ class TargetsTest(unittest.TestCase):
             self.assertEqual(json.loads(self.output.read_text()),
                              ["--rex", self.host["rex"], "surfaces", "rename", "--socket", self.host["socket"], *command[2:]])
 
+    def test_named_global_surface_selectors_preserve_create_session_and_label(self):
+        for leaf, options in (("resolve", ["--pane", "seat α"]),
+                              ("ensure", ["--label", "seat α", "--create-session", "project α", "--focus", "yes",
+                                          "--", "/absolute/program", "--session", "literal"])):
+            command = ["surfaces", leaf, "--session", "any", *options]
+            result = self.call("--config", str(self.config), "--host", "hive", *command)
+            self.assertEqual(result.returncode, 7, result.stderr)
+            self.assertEqual(json.loads(self.output.read_text()),
+                             ["--rex", self.host["rex"], "surfaces", leaf, "--socket", self.host["socket"], *command[2:]])
+
     def test_nested_leaves_receive_only_their_supported_selectors(self):
         socket = ["--socket", self.host["socket"]]
         store = ["--store", self.host["store"]]

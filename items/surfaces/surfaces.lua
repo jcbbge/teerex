@@ -53,6 +53,36 @@ local function surface(a, emit)
         result.outcome=made and "created" or "existing"
         return result
     end
+    local global_ensure=a.session_id=="any" and a.operation=="ensure"
+    if a.session_id=="any" and (a.operation=="resolve" or global_ensure) then
+        local inventory={}
+        if #sessions.sessions>128 then return fail("global_session_limit_128") end
+        for _,session in ipairs(sessions.sessions) do
+            local attached=rex.call("session.attach",{session_id=session.session_id})
+            if type(attached)~="table" then return fail("global_session_attach_unavailable") end
+            local view=rex.call("session.view",{session_id=session.session_id})
+            if type(view)~="table" or view.session_id~=session.session_id then return fail("global_session_view_unavailable") end
+            for _,w in ipairs(view.windows or {}) do for _,l in ipairs(w.layers or {}) do for _,b in ipairs(l.blocks or {}) do
+                if b.creator_name=="com.superlogical.terminal" then
+                    if #inventory>=1024 then return fail("global_pane_limit_1024") end
+                    inventory[#inventory+1]={session_id=session.session_id,session_label=session.label,block_id=b.block_id,label=b.label,window_id=w.window_id}
+                end
+            end end end
+        end
+        local match=select_target(inventory,"block_id",global_ensure and a.label or a.block_id,global_ensure)
+        if not match then
+            if not global_ensure or result.failure_reason~="target_not_found" then return result end
+            result.failure_reason=nil; result.candidates=nil
+            a.session_id=a.create_session
+        else
+            a.session_id=match.session_id
+            if global_ensure then a.anchor=nil end
+            if not global_ensure then
+                result.resolved={session_id=match.session_id,block_id=match.block_id}
+                result.actual=match; result.outcome="resolved"; return result
+            end
+        end
+    end
     local selected=select_target(sessions.sessions,"session_id",a.session_id)
     if not selected then return result end
     a.session_id=selected.session_id
@@ -129,7 +159,7 @@ local function surface(a, emit)
                     if b.label==a.label then add(b) end
                 end
             end end
-            if w.label==a.label then
+            if not global_ensure and w.label==a.label then
                 if #in_window~=1 then result.candidates=in_window; return nil end
                 add(in_window[1])
             end

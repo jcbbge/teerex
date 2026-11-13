@@ -3,6 +3,13 @@ const supervised = @import("supervised_child");
 
 const usage =
     \\Usage: teerex surfaces resolve --socket ABS --session TEXT [--pane TEXT | --window TEXT]
+    \\       teerex surfaces resolve --socket ABS --session any --pane TEXT
+    \\       teerex surfaces ensure --socket ABS --session any --label TEXT --create-session TEXT
+    \\         [--focus yes|no] [open options; layout defaults tab] -- ARGV...
+    \\"any" searches terminal pane labels across all sessions; --create-session is used only when absent.
+    \\All pane ensure calls serialize by canonical socket under $XDG_STATE_HOME/teerex-surfaces
+    \\(default ~/.local/state/teerex-surfaces). --timeout-ms bounds lock wait plus transport;
+    \\ensure_busy refuses before mutation and is retry-safe. Successful receipts name ensure_lock.
     \\       teerex surfaces session ensure --socket ABS --label TEXT [--timeout-ms N]
     \\       teerex surfaces ensure --socket ABS --session TEXT --label TEXT [--focus yes|no]
     \\         [open options; layout defaults tab] -- ARGV...
@@ -122,6 +129,49 @@ fn labelValid(s: []const u8) bool {
     for (s) |c| if (c < 32 or c == 127) return false;
     return true;
 }
+const EnsureLock = struct {
+    file: std.fs.File,
+    path: []const u8,
+    waited_ms: u64,
+};
+fn ensureLock(allocator: std.mem.Allocator, socket: []const u8, budget: u64) !EnsureLock {
+    var timer = try std.time.Timer.start();
+    const canonical = try std.fs.cwd().realpathAlloc(allocator, socket);
+    var digest: [32]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash(canonical, &digest, .{});
+    const hex = std.fmt.bytesToHex(digest, .lower);
+    const state = std.process.getEnvVarOwned(allocator, "XDG_STATE_HOME") catch try std.fs.path.join(allocator, &.{ try std.process.getEnvVarOwned(allocator, "HOME"), ".local", "state" });
+    if (!std.fs.path.isAbsolute(state)) return error.EnsureStatePathMustBeAbsolute;
+    try std.fs.cwd().makePath(state);
+    const root = try std.fs.path.join(allocator, &.{ state, "teerex-surfaces" });
+    std.posix.mkdir(root, 0o700) catch |err| if (err != error.PathAlreadyExists) return err;
+    var dir = try std.fs.openDirAbsolute(root, .{ .no_follow = true });
+    defer dir.close();
+    const info = try std.posix.fstat(dir.fd);
+    if (info.uid != std.posix.getuid() or (info.mode & 0o7777) != 0o700) return error.EnsureStateDirectoryNotPrivate;
+    const name = try std.fmt.allocPrint(allocator, "server-{s}.lock", .{hex});
+    // Match the registry's bounded retry for macOS concurrent O_CREAT/ENOENT.
+    const fd = while (true) {
+        if (supervised.requestedSignal() != 0) return error.EnsureWaitCancelled;
+        if (timer.read() / std.time.ns_per_ms >= budget) return error.EnsureBusy;
+        break std.posix.openat(dir.fd, name, .{ .ACCMODE = .RDWR, .CREAT = true, .NOFOLLOW = true, .CLOEXEC = true, .NONBLOCK = true }, 0o600) catch |err| {
+            if (err != error.FileNotFound) return err;
+            std.Thread.sleep(5 * std.time.ns_per_ms);
+            continue;
+        };
+    };
+    const file: std.fs.File = .{ .handle = fd };
+    errdefer file.close();
+    const stat = try std.posix.fstat(fd);
+    if (stat.uid != std.posix.getuid() or (stat.mode & 0o7777) != 0o600 or (stat.mode & std.posix.S.IFMT) != std.posix.S.IFREG or stat.nlink != 1) return error.EnsureLockNotPrivateRegular;
+    while (true) {
+        if (supervised.requestedSignal() != 0) return error.EnsureWaitCancelled;
+        if (timer.read() / std.time.ns_per_ms >= budget) return error.EnsureBusy;
+        if (try file.tryLock(.exclusive)) break;
+        std.Thread.sleep(5 * std.time.ns_per_ms);
+    }
+    return .{ .file = file, .path = try std.fs.path.join(allocator, &.{ root, name }), .waited_ms = timer.read() / std.time.ns_per_ms };
+}
 fn usageError(message: []const u8) u8 {
     std.debug.print("teerex surfaces: {s}\n{s}", .{ message, usage });
     return 2;
@@ -224,7 +274,7 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
         return 0;
     }
     var options: std.StringHashMap([]const u8) = .init(allocator);
-    const allowed = [_][]const u8{ "--socket", "--session", "--anchor", "--pane", "--window", "--layout", "--direction", "--ratio", "--bounds", "--label", "--cwd", "--timeout-ms", "--file", "--name", "--title", "--focus" };
+    const allowed = [_][]const u8{ "--socket", "--session", "--anchor", "--pane", "--window", "--layout", "--direction", "--ratio", "--bounds", "--label", "--cwd", "--timeout-ms", "--create-session", "--file", "--name", "--title", "--focus" };
     var i: usize = 1;
     while (i < args.len and !std.mem.eql(u8, args[i], "--")) : (i += 2) {
         if (i + 1 >= args.len) return usageError("every option needs a value");
@@ -238,9 +288,14 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
     }
     const socket = options.get("--socket");
     const session = options.get("--session");
-    const anchor = options.get("--anchor");
     const pane = options.get("--pane");
     const window = options.get("--window");
+    const create_session = options.get("--create-session");
+    const any_session = session != null and std.mem.eql(u8, session.?, "any") and (resolve or ensure);
+    if (create_session != null and (!ensure or !any_session)) return usageError("--create-session requires ensure --session any");
+    if (any_session and resolve and (pane == null or window != null)) return usageError("resolve --session any requires --pane TEXT");
+    if (any_session and ensure and (create_session == null or !selectorValid(create_session.?, "session:") or std.mem.eql(u8, create_session.?, "any"))) return usageError("ensure --session any requires --create-session TEXT");
+    const anchor = options.get("--anchor");
     if (window != null and !rename and !resolve) return usageError("--window is rename-only");
     const layout: ?[]const u8 = if (move) "tiled" else options.get("--layout") orelse (if (ensure) @as(?[]const u8, "tab") else null);
     const label = options.get("--label");
@@ -313,7 +368,7 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
             for (command.?) |v| if (!std.unicode.utf8ValidateSlice(v)) return usageError("argv must be UTF-8");
         }
     }
-    const request = .{ .operation = if (resolve) "resolve" else if (session_ensure) "session-ensure" else if (ensure) "ensure" else if (inspect) "inspect" else if (focus) "focus" else if (close) "close" else if (move) "move" else if (rename) "rename" else "open", .focus = focus or move_focus, .session_id = session, .block_id = pane, .window_id = window, .anchor = anchor, .layout = layout, .label = label, .direction = direction, .ratio = ratio, .bounds = bounds, .cwd = cwd, .argv = command };
+    const request = .{ .operation = if (resolve) "resolve" else if (session_ensure) "session-ensure" else if (ensure) "ensure" else if (inspect) "inspect" else if (focus) "focus" else if (close) "close" else if (move) "move" else if (rename) "rename" else "open", .focus = focus or move_focus, .session_id = session, .create_session = create_session, .block_id = pane, .window_id = window, .anchor = anchor, .layout = layout, .label = label, .direction = direction, .ratio = ratio, .bounds = bounds, .cwd = cwd, .argv = command };
     const encoded = try std.json.Stringify.valueAlloc(allocator, request, .{ .emit_null_optional_fields = false });
     if (encoded.len > 24000) return usageError("encoded arguments exceed 24000 bytes");
     if (palette) {
@@ -342,9 +397,16 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
     const argv = [_][]const u8{ "rex", "--autostart=false", "--server", endpoint, "--timeout", "3s", "--color", "never", "do", "-e", source, "--args", encoded };
     const signals = supervised.Signals.init();
     defer signals.deinit();
+    const lock: ?EnsureLock = if (ensure) ensureLock(allocator, socket.?, budget) catch |err| {
+        const sig = supervised.requestedSignal();
+        try writeJson(allocator, .{ .schema_version = 1, .kind = "surface_result", .outcome = "refused", .requested = request, .creation_attempted = false, .control_attempted = false, .failure_reason = if (err == error.EnsureBusy) "ensure_busy" else @errorName(err), .retry_safe = err == error.EnsureBusy, .timeout_ms = budget });
+        return if (sig != 0) 128 + sig else 1;
+    } else null;
+    defer if (lock) |held| held.file.close();
+    const transport_budget = if (lock) |held| budget -| held.waited_ms else budget;
     var c: Collector = .{ .allocator = allocator };
     var failure: ?[]const u8 = null;
-    const transport = supervised.collect(allocator, &argv, &env, budget, &c) catch |err| blk: {
+    const transport = supervised.collect(allocator, &argv, &env, @max(1, transport_budget), &c) catch |err| blk: {
         failure = @errorName(err);
         break :blk null;
     };
@@ -355,6 +417,6 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
     const success = ok and sig == 0 and ((resolve and std.mem.eql(u8, r.outcome, "resolved") and r.resolved == .object) or ((session_ensure or ensure) and (std.mem.eql(u8, r.outcome, "existing") or std.mem.eql(u8, r.outcome, "created")) and r.actual == .object and r.resolved == .object and (!ensure or !move_focus or ensureFocusVerified(r))) or ((!ensure and r.actual == .object and (std.mem.eql(u8, r.outcome, "created_and_verified") and r.requested_geometry_verified and r.created == .object or std.mem.eql(u8, r.outcome, "renamed_and_verified") and rename and r.control_acknowledged and r.requested_label_verified or std.mem.eql(u8, r.outcome, "inspected") and inspect or std.mem.eql(u8, r.outcome, "focused_and_verified") and focus and r.control_acknowledged or std.mem.eql(u8, r.outcome, "moved_and_verified") and move and r.control_acknowledged and r.requested_geometry_verified and r.move_receipt == .object and (!move_focus or r.focus_acknowledged))) or (close and std.mem.eql(u8, r.outcome, "closed_and_absent") and r.control_acknowledged and r.block_absence_verified)));
     const reported_success = std.mem.eql(u8, r.outcome, "resolved") or std.mem.eql(u8, r.outcome, "existing") or std.mem.eql(u8, r.outcome, "created") or std.mem.eql(u8, r.outcome, "renamed_and_verified") or std.mem.eql(u8, r.outcome, "created_and_verified") or std.mem.eql(u8, r.outcome, "inspected") or std.mem.eql(u8, r.outcome, "focused_and_verified") or std.mem.eql(u8, r.outcome, "closed_and_absent") or std.mem.eql(u8, r.outcome, "moved_and_verified");
     const outcome = if (sig != 0) "cancel_requested" else if (deadline) "deadline_exceeded" else if (ok and (!reported_success or success)) r.outcome else "uncertain";
-    try writeJson(allocator, .{ .schema_version = 1, .kind = "surface_result", .target = .{ .server = endpoint, .session_id = session }, .resolved = r.resolved, .candidates = r.candidates, .requested = request, .source = r.source, .created = if (r.created != .null) r.created else c.created, .actual = r.actual, .previous = r.previous, .previous_anchor = r.previous_anchor, .move_receipt = r.move_receipt, .focus_acknowledged = r.focus_acknowledged, .outcome = outcome, .creation_attempted = !c.control and c.attempt, .control_attempted = c.control and c.attempt, .control_acknowledged = r.control_acknowledged, .block_absence_verified = ok and r.block_absence_verified, .close_scope = "rex_block_absence_not_descendant_process_death", .attempt_evidence = "received_local_frame_not_server_dispatch_proof", .requested_geometry_verified = success and r.requested_geometry_verified, .requested_label_verified = success and r.requested_label_verified, .failure_reason = failure orelse r.failure_reason orelse if (!ok or reported_success and !success) @as(?[]const u8, "rex_transport_incomplete") else null, .backend_stderr_base64 = try encodedDiagnostic(allocator, if (transport) |v| v.stderr else ""), .retry_safe = false, .automatic_close = false, .focus_requested = focus or move_focus, .close_requested = close, .geometry_units = "window_fraction", .painted_visibility = "not_assessed", .program_readiness = "not_assessed", .timeout_ms = budget });
+    try writeJson(allocator, .{ .schema_version = 1, .kind = "surface_result", .target = .{ .server = endpoint, .session_id = session }, .resolved = r.resolved, .candidates = r.candidates, .requested = request, .source = r.source, .created = if (r.created != .null) r.created else c.created, .actual = r.actual, .previous = r.previous, .previous_anchor = r.previous_anchor, .move_receipt = r.move_receipt, .focus_acknowledged = r.focus_acknowledged, .outcome = outcome, .creation_attempted = !c.control and c.attempt, .control_attempted = c.control and c.attempt, .control_acknowledged = r.control_acknowledged, .block_absence_verified = ok and r.block_absence_verified, .close_scope = "rex_block_absence_not_descendant_process_death", .attempt_evidence = "received_local_frame_not_server_dispatch_proof", .requested_geometry_verified = success and r.requested_geometry_verified, .requested_label_verified = success and r.requested_label_verified, .failure_reason = failure orelse r.failure_reason orelse if (!ok or reported_success and !success) @as(?[]const u8, "rex_transport_incomplete") else null, .backend_stderr_base64 = try encodedDiagnostic(allocator, if (transport) |v| v.stderr else ""), .retry_safe = false, .automatic_close = false, .focus_requested = focus or move_focus, .close_requested = close, .geometry_units = "window_fraction", .painted_visibility = "not_assessed", .program_readiness = "not_assessed", .ensure_lock = if (lock) |held| held.path else null, .timeout_ms = budget });
     return if (sig != 0) 128 + sig else if (deadline) 124 else if (success) 0 else 1;
 }

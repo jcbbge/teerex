@@ -4,6 +4,8 @@ REX_BIN selects a real Rex; TEEREX_BIN selects the shared CLI or standalone test
 No personal/default server, config, pane or process is touched.
 """
 import base64
+import fcntl
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -64,7 +66,7 @@ class SurfacesTest(unittest.TestCase):
         self.work.mkdir()
         self.env = dict(os.environ, PATH=str(Path(self.rex).parent) + os.pathsep + os.environ.get("PATH", ""),
                         REX_SERVER="unix:///tmp/poison.sock", REX_SESSION="session:poison",
-                        REX_BLOCK="block:poison", REX_CLIENT="client:poison")
+                        REX_BLOCK="block:poison", REX_CLIENT="client:poison", XDG_STATE_HOME=str(self.work / "state"))
         self.session = self.rpc("session.create", {"label": "surfaces disposable"})["session_id"]
         self.anchor = self.open("tab")["actual"]["block_id"]
         self.addCleanup(lambda: self.rpc("session.destroy", {"session_id": self.session}))
@@ -111,6 +113,172 @@ class SurfacesTest(unittest.TestCase):
 
     def surface(self, operation, *args):
         return self.run_json([BIN, "surfaces", *operation.split(), "--socket", str(self.socket), *args])
+
+    def another_session(self, label="another session α"):
+        sid = self.rpc("session.create", {"label": label})["session_id"]
+        self.addCleanup(lambda: self.rpc("session.destroy", {"session_id": sid}))
+        return sid
+
+    def global_command(self, label, create_session=None, *options):
+        return [BIN, "surfaces", "ensure", "--socket", str(self.socket), "--session", "any", "--label", label,
+                "--create-session", create_session or self.session, *options, "--", "/bin/sh", "-c", "sleep 60"]
+
+    def test_global_ensure_creates_in_selected_session_then_reuses_across_sessions(self):
+        sid = self.another_session("destination " + self.work.name)
+        r, made = self.run_json(self.global_command("global seat α", sid[-8:]))
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(made["outcome"], "created")
+        self.assertEqual(made["resolved"]["session_id"], sid)
+        self.assertEqual(made["actual"]["session_id"], sid)
+        self.assertEqual(self.view()["windows"][0]["focused_block_id"], self.anchor)
+        before = self.view()
+        other_before = self.rpc("session.view", {"session_id": sid})
+        # The creation target and anchor are unused when reusing an existing pane on another session.
+        r, reused = self.run_json(self.global_command("global seat α", "absent creation session", "--focus", "yes",
+                                                     "--layout", "tiled", "--anchor", self.anchor))
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(reused["outcome"], "existing")
+        self.assertEqual(reused["resolved"], made["resolved"])
+        self.assertFalse(reused["creation_attempted"])
+        self.assertTrue(reused["actual"]["in_active_window"])
+        self.assertEqual(reused["actual"]["focused_block_id"], made["actual"]["block_id"])
+        self.assertEqual(before, self.view())
+        self.assertEqual(len(other_before["windows"]), len(self.rpc("session.view", {"session_id": sid})["windows"]))
+        for selector in ("global seat α", made["actual"]["block_id"], made["actual"]["block_id"][-8:]):
+            r, resolved = self.surface("resolve", "--session", "any", "--pane", selector)
+            self.assertEqual(r.returncode, 0, r.stdout)
+            self.assertEqual(resolved["resolved"], made["resolved"])
+        r, absent = self.surface("resolve", "--session", "any", "--pane", "absent pane")
+        self.assertEqual(r.returncode, 1)
+        self.assertEqual(absent["failure_reason"], "target_not_found")
+        self.assertTrue(all("session_id" in row and "session_label" in row and "label" in row for row in absent["candidates"]))
+
+    def test_global_ensure_refuses_missing_creation_target_and_incomplete_inventory(self):
+        before = self.view()
+        r, refused = self.run_json(self.global_command("uncreated seat", "absent destination"))
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertEqual(refused["failure_reason"], "target_not_found")
+        self.assertFalse(refused["creation_attempted"])
+        for args in (("ensure", "--session", "any", "--label", "seat", "--", "/bin/sh"),
+                     ("resolve", "--session", "any"),
+                     ("resolve", "--session", "any", "--window", "seat"),
+                     ("ensure", "--session", self.session, "--create-session", self.session, "--label", "seat", "--", "/bin/sh")):
+            r = subprocess.run([BIN, "surfaces", args[0], "--socket", str(self.socket), *args[1:]],
+                               capture_output=True, text=True, env=self.env, timeout=5)
+            self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+        needle = 'local view=rex.call("session.view",{session_id=session.session_id})'
+        self.shim("import subprocess,sys\nargs=sys.argv[1:]\ni=args.index('-e')+1\n"
+                  + "args[i]=args[i].replace(" + repr(needle) + ",'local view=nil')\n"
+                  + f"sys.exit(subprocess.run([{self.rex!r},*args]).returncode)\n")
+        r, refused = self.run_json(self.global_command("uncreated seat"))
+        self.assertEqual(r.returncode, 1)
+        self.assertEqual(refused["failure_reason"], "global_session_view_unavailable")
+        self.assertFalse(refused["creation_attempted"])
+        self.assertEqual(before, self.view())
+
+    def test_global_ambiguity_refuses_with_session_attributed_candidates(self):
+        sid = self.another_session()
+        r, one = self.run_json(self.global_command("ambiguous seat"))
+        self.assertEqual(r.returncode, 0, r.stdout)
+        cmd = self.command("tab", label="ambiguous seat")
+        cmd[cmd.index("--session") + 1] = sid
+        r, two = self.run_json(cmd)
+        self.assertEqual(r.returncode, 0, r.stdout)
+        before = self.view()
+        for cmd in (self.global_command("ambiguous seat"),
+                    [BIN, "surfaces", "resolve", "--socket", str(self.socket), "--session", "any", "--pane", "ambiguous seat"]):
+            r, refused = self.run_json(cmd)
+            self.assertEqual(r.returncode, 1, r.stdout)
+            self.assertIn(refused["failure_reason"], ("ambiguous_label", "ambiguous_target"))
+            self.assertFalse(refused["creation_attempted"])
+            self.assertEqual({c["session_id"] for c in refused["candidates"]}, {self.session, sid})
+            self.assertEqual({c["block_id"] for c in refused["candidates"]}, {one["actual"]["block_id"], two["actual"]["block_id"]})
+            self.assertTrue(all(c["session_label"] for c in refused["candidates"]))
+        self.assertEqual(before, self.view())
+
+    def test_global_concurrent_ensures_share_socket_alias_lock_and_create_one_pane(self):
+        sid = self.another_session()
+        alias = self.work / "socket-alias"
+        alias.symlink_to(self.socket)
+        first = self.global_command("concurrent seat", self.session)
+        second = self.global_command("concurrent seat", sid)
+        second[second.index("--socket") + 1] = str(alias)
+        # Slow the child after it starts, so the second ensure overlaps the held lock.
+        self.shim("import subprocess,sys,time\ntime.sleep(.2)\n"
+                  + f"sys.exit(subprocess.run([{self.rex!r},*sys.argv[1:]]).returncode)\n")
+        children = [subprocess.Popen(cmd, env=self.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                    for cmd in (first, second)]
+        results = []
+        for child in children:
+            out, err = child.communicate(timeout=15)
+            self.assertEqual(child.returncode, 0, out + err)
+            results.append(json.loads(out))
+        self.assertEqual({v["outcome"] for v in results}, {"created", "existing"})
+        self.assertEqual(results[0]["resolved"], results[1]["resolved"])
+        self.assertEqual(results[0]["ensure_lock"], results[1]["ensure_lock"])
+        lock = Path(results[0]["ensure_lock"])
+        self.assertEqual(lock.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(lock.parent.stat().st_mode & 0o777, 0o700)
+        self.assertEqual(lock.name, "server-" + hashlib.sha256(str(self.socket.resolve()).encode()).hexdigest() + ".lock")
+        count = sum(b.get("label") == "concurrent seat" for session in (self.session, sid)
+                    for w in self.rpc("session.view", {"session_id": session}).get("windows", [])
+                    for layer in w["layers"] for b in layer["blocks"])
+        self.assertEqual(count, 1)
+
+    def test_ensure_busy_is_retry_safe_and_cancelled_wait_does_not_mutate(self):
+        root = Path(self.env["XDG_STATE_HOME"]) / "teerex-surfaces"
+        root.mkdir(parents=True, mode=0o700)
+        lock = root / ("server-" + hashlib.sha256(str(self.socket.resolve()).encode()).hexdigest() + ".lock")
+        lock.touch(mode=0o600)
+        before = self.view()
+        with lock.open("r+") as held:
+            fcntl.flock(held, fcntl.LOCK_EX)
+            r, busy = self.run_json(self.global_command("busy seat", None, "--timeout-ms", "100"))
+            self.assertEqual(r.returncode, 1, r.stdout)
+            self.assertEqual(busy["failure_reason"], "ensure_busy")
+            self.assertTrue(busy["retry_safe"])
+            self.assertFalse(busy["creation_attempted"])
+            child = subprocess.Popen(self.global_command("busy seat"), env=self.env,
+                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            time.sleep(.1)
+            child.terminate()
+            out, err = child.communicate(timeout=3)
+            self.assertEqual(child.returncode, 143, out + err)
+            self.assertFalse(json.loads(out)["creation_attempted"])
+        self.assertEqual(before, self.view())
+        r, made = self.run_json(self.global_command("busy seat"))
+        self.assertEqual(r.returncode, 0, r.stdout)
+        self.assertEqual(made["outcome"], "created")
+
+    def test_global_ensure_state_fallback_and_private_path_refusals(self):
+        self.env.pop("XDG_STATE_HOME")
+        self.env["HOME"] = str(self.work / "home")
+        r, made = self.run_json(self.global_command("fallback seat"))
+        self.assertEqual(r.returncode, 0, r.stdout)
+        expected = Path(self.env["HOME"]) / ".local/state/teerex-surfaces"
+        self.assertEqual(Path(made["ensure_lock"]).parent, expected)
+        before = self.view()
+        lock = Path(made["ensure_lock"])
+        lock.unlink()
+        target = self.work / "unrelated"
+        target.write_text("must remain")
+        lock.symlink_to(target)
+        r, refused = self.run_json(self.global_command("different seat"))
+        self.assertEqual(r.returncode, 1)
+        self.assertFalse(refused["creation_attempted"])
+        self.assertEqual(target.read_text(), "must remain")
+        self.assertEqual(before, self.view())
+        lock.unlink()
+        lock.touch(mode=0o644)
+        lock.chmod(0o644)
+        r, refused = self.run_json(self.global_command("different seat"))
+        self.assertEqual(r.returncode, 1)
+        self.assertEqual(refused["failure_reason"], "EnsureLockNotPrivateRegular")
+        lock.unlink()
+        expected.chmod(0o755)
+        r, refused = self.run_json(self.global_command("different seat"))
+        self.assertEqual(r.returncode, 1)
+        self.assertEqual(refused["failure_reason"], "EnsureStateDirectoryNotPrivate")
 
     def test_resolve_labels_suffixes_and_mutation_targets(self):
         label = "unique session α " + self.work.name
