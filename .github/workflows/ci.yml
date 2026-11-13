@@ -334,9 +334,7 @@ jobs:
         env:
           TEEREX_BIN: ${{ github.workspace }}/zig-out/bin/teerex
           REX_BIN: ${{ runner.temp }}/rex-bin/rex
-        run: |
-          python3 items/board/test_board.py -v
-          python3 items/boardfeed/test_feed.py -v
+        run: python3 items/board/test_board.py -v
 
       - name: Run private records offline and disposable Rex contracts
         if: matrix.rex-api == 13

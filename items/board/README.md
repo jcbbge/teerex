@@ -113,13 +113,13 @@ benchmarked, so this is not a claim that the custom renderer beats them.
 
 | Prototype measurement | hive x86_64 | M5 arm64 |
 |---|---:|---:|
-| Changed 60×30 frame (10,000 frames) | 99.7 µs | 25.6 µs |
-| Key → PTY bytes, median / p95 | 0.262 / 0.534 ms | 0.111 / 0.149 ms |
+| Changed 60×30 frame (10,000 frames) | 98.1 µs | 26.0 µs |
+| Key → PTY bytes, median / p95 | 0.195 / 0.470 ms | 0.106 / 0.142 ms |
 | Idle CPU ticks over three seconds | 0 | 0 |
 | Idle output bytes | 0 | 0 |
 | Clear-screen sequences | 0 | 0 |
 | Synchronized begin/end pairs | 104 / 104 | 104 / 104 |
-| Combined binary size | 1546064 bytes | 1614040 bytes |
+| Combined binary size | 1589592 bytes | 1647736 bytes |
 
 Measured values are in [hive evidence](hive-measure.json) and
 [M5 evidence](m5-measure.json). The reproduction below records:
@@ -154,3 +154,7 @@ contract and a native Python cbreak/restore reproduction; all actual terminal
 settings must still match. The probe/PTY evidence establishes protocol behavior,
 not a human visual review. Installation and replacement of the seat's current
 fleet pane belong to the integrating lead.
+
+Latest focused local gate: board 11/11 on hive and 11/11 on the M5; feed 7/7
+on hive and 6 passes plus one Linux-only skip on the M5. Both native targets
+built with ReleaseSmall after rebasing onto origin/main; Zig formatting passed.
