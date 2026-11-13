@@ -1,4 +1,4 @@
-"""Private reasoning and digest-checked evidence. Resume reads; only navigate focuses."""
+"""Private reasoning, evidence and decision applicability. pin add records dependencies; decide sets attributed options; claim-status explicitly accepts/withdraws; revalidate is read-only unless --write. Resume reads; only navigate focuses."""
 import argparse
 import contextlib
 import copy
@@ -20,8 +20,8 @@ import time
 
 SCHEMA = "teerex.records/1"
 LIMIT = 1048576
-KINDS = ("investigation", "experiment", "receipt", "handoff")
-PACKETS = {"run_visible_result": "teerex_run_visible", "run_result": "teerex_run",
+KINDS = ("investigation", "experiment", "receipt", "handoff", "decision")
+PACKETS = {"friction_report": "teerex_friction", "run_visible_result": "teerex_run_visible", "run_result": "teerex_run",
            "observation_changes": "teerex_compare", "observation_wait": "teerex_watch"}
 FLAGS = ("retry_safe", "task_completion", "painted_visibility", "all_descendants_verified_gone", "atomic_snapshot", "freshness", "interpretation")
 DEFAULT_PRIVATE = ["notes", "target", "target_at_park", "subject.repo", "subject.untracked", "history[].previous"]
@@ -241,6 +241,8 @@ def packet_info(p):
     require(typ is not None, "unsupported_packet")
     if typ == "teerex_observation":
         require("observation_id" in p and isinstance(p.get("capture"), dict), "unsupported_packet")
+    elif typ == "teerex_friction":
+        require(all(isinstance(p.get(k), list) for k in ("candidates", "defects", "refused")), "unsupported_packet")
     elif typ == "teerex_compare":
         require(isinstance(p.get("capture"), dict) and all(k in p for k in ("before_observation_id", "after_observation_id")), "unsupported_packet")
     else:
@@ -465,6 +467,8 @@ def append_elements(r, field, values):
     for value in values:
         require(isinstance(value, dict) and "id" not in value, "invalid_field:" + field)
         value = copy.deepcopy(value)
+        if field == "claims":
+            require(not set(value) & {"status", "status_history", "original"}, "claim_status_requires_command")
         past = list(target)
         if field == "items":
             for entry in r["history"]:
@@ -478,7 +482,7 @@ def append_elements(r, field, values):
 
 def validate(r):
     fields = {"schema", "kind", "id", "generation", "state", "written_at", "updated_at", "writer", "supersedes", "question", "hypothesis", "discriminating_experiment", "next_action", "claims", "checks", "omissions", "uncertainty", "notes", "subject", "target", "target_at_park", "evidence", "cleanup", "kind_fields", "history", "private"}
-    require(set(r) == fields and r["schema"] == SCHEMA, "record_corrupt")
+    require(fields <= set(r) <= fields | {"pins", "revalidation"} and r["schema"] == SCHEMA, "record_corrupt")
     require(r["kind"] in KINDS, "invalid_field:kind")
     require(SLUG.fullmatch(r["id"]) and isinstance(r["writer"], str), "invalid_field:identity")
     if r["target"] is not None:
@@ -522,7 +526,7 @@ def validate(r):
         require(re.fullmatch(r"e[1-9][0-9]*", evidence.get("id", "")), "invalid_field:evidence.id")
     require(isinstance(r["kind_fields"], dict), "invalid_field:kind_fields")
     allowed_kind = {"investigation": set(), "experiment": {"change_made", "pair_with", "cost"}, "receipt": {"shipped_identity", "human_caveat"},
-                    "handoff": {"direction", "from", "to", "changes", "risks", "undo", "reply_to"}}[r["kind"]]
+                    "handoff": {"direction", "from", "to", "changes", "risks", "undo", "reply_to"}, "decision": {"decision", "because", "options", "invalidators", "card_id"}}[r["kind"]]
     require(set(r["kind_fields"]) <= allowed_kind, "invalid_field:kind_fields")
     kind = r["kind_fields"]
     for field in ("change_made", "pair_with", "direction", "from", "to", "undo", "reply_to"):
@@ -546,7 +550,7 @@ def validate(r):
         require(isinstance(caveat, dict) and set(caveat) == {"text", "basis", "supplied_by"} and caveat["basis"] == "supplied"
                 and isinstance(caveat["text"], str) and isinstance(caveat["supplied_by"], str), "invalid_field:kind_fields.human_caveat")
     for field, allowed, needed, cap in (
-        ("claims", {"id", "text", "basis", "evidence", "supplied_by", "scope"}, {"text", "basis"}, 128),
+        ("claims", {"id", "text", "basis", "evidence", "supplied_by", "scope", "status", "depends_on", "contradicts", "supersedes", "status_history", "original"}, {"text", "basis"}, 128),
         ("checks", {"id", "command", "ran", "process_exit", "assertion", "establishes", "does_not_establish", "evidence"}, {"command", "ran", "process_exit", "assertion", "establishes", "does_not_establish"}, 128),
         ("omissions", {"id", "what", "reason"}, {"what", "reason"}, 128)):
         require(isinstance(r[field], list) and len(r[field]) <= cap, "cap_exceeded:" + field)
@@ -572,7 +576,7 @@ def validate(r):
         require(isinstance(item, dict) and all(isinstance(item.get(k), str) for k in ("id", "what", "where", "owner")), "invalid_field:cleanup.items")
         require(set(item) == {"id", "what", "where", "owner"}, "invalid_field:cleanup.items")
     require(isinstance(r["private"], list) and all(isinstance(p, str) for p in r["private"]), "invalid_field:private")
-    permitted_private = set(DEFAULT_PRIVATE + ["subject", "evidence[].locator", "evidence[].copy", "evidence[].digest", "evidence[].moved_from", "evidence[].supplied_by", "evidence[].teerex.target", "evidence[].teerex.storage_dir", "kind_fields.shipped_identity.repo"])
+    permitted_private = set(DEFAULT_PRIVATE + ["subject", "evidence[].locator", "evidence[].copy", "evidence[].digest", "evidence[].moved_from", "evidence[].supplied_by", "evidence[].teerex.target", "evidence[].teerex.storage_dir", "kind_fields.shipped_identity.repo", "pins", "pins[].target", "pins[].recorded_value", "pins[].last_value"])
     require(set(r["private"]) <= permitted_private, "invalid_field:private")
     def walk(v, path):
         if isinstance(v, str):
@@ -587,6 +591,7 @@ def validate(r):
                 walk(x, path + "." + k if path else k)
         else:
             require(v is None or type(v) in (int, bool, float), "invalid_field:" + path)
+    decision_validate(r)
     walk(r, "")
 
 
@@ -778,11 +783,14 @@ def lint(r, folder, packets=None):
         bad("L6-kind-required", "kind_fields", "kind requirements incomplete")
     if r["kind"] == "handoff" and k.get("direction") == "inbound" and any(c["basis"] == "supplied" and not c["evidence"] for c in r["claims"]) and nxt is None:
         bad("L8-handoff-authority", "next_action", "inbound supplied claim grants no authority")
+    violations.extend(decision_lint(r))
     return violations
 
 
 def render(r, folder, evidence_check=True):
     reasoning = {k: copy.deepcopy(r[k]) for k in ("question", "next_action", "hypothesis", "discriminating_experiment", "claims", "checks", "omissions", "cleanup", "uncertainty", "notes", "subject", "kind_fields")}
+    if r["kind"] == "decision":
+        reasoning.update(decision_view(r))
     reasoning["claims"] = sorted(reasoning["claims"], key=lambda c: BASES.index(c["basis"]))
     reasoning["missing"] = [k for k in ("question", "next_action", "hypothesis", "discriminating_experiment", "uncertainty", "notes", "subject") if r[k] is None]
     if r["cleanup"]["status"] == "unknown" and not r["cleanup"]["items"]:
@@ -799,6 +807,27 @@ def as_text(value):
     if isinstance(value, list):
         return escape_bidi("\n".join(json.dumps(v, ensure_ascii=False) for v in value)) + "\n"
     lines = ["REASONING"]
+    decision = value.get("reasoning", {}).get("decision")
+    if decision:
+        rr = value["reasoning"]
+        lines += ["Decision: " + decision["text"], "Authority: " + decision["authority"] + " · " + decision["decided_by"],
+                  "State: " + value.get("record", {}).get("state", value.get("state", "unknown")),
+                  "needs_review: " + ("yes" if rr["needs_review"] else "no") + " · " + "; ".join(rr["review_reasons"])]
+        if rr["claim_caveat"]:
+            lines.append(rr["claim_caveat"])
+        pins = {p["id"]: p for p in rr["pins"]}
+        for cid in value["reasoning"]["kind_fields"].get("because", []):
+            c = next(c for c in rr["claims"] if c["id"] == cid)
+            lines.append("Claim " + cid + ": " + json.dumps(c, ensure_ascii=False))
+            for dep in c["depends_on"]:
+                if dep in pins:
+                    lines.append("Pin " + dep + ": " + json.dumps(pins[dep], ensure_ascii=False))
+        lines.extend(rr["open_contradictions"])
+        for option in rr["options"]:
+            lines.append("Option: " + json.dumps(option, ensure_ascii=False) + " · " + ("revisit_due" if option["id"] in rr["revisit_due"] else "revisit: pinned condition" if option.get("revisit_when") else "revisit: manual"))
+        lines += ["Invalidators: " + json.dumps(rr["kind_fields"].get("invalidators", []), ensure_ascii=False),
+                  "EVIDENCE (historical, re-checked now)", json.dumps(value.get("evidence", []), ensure_ascii=False)]
+        return escape_bidi("\n".join(lines)) + "\n"
     reasoning = value.get("reasoning", value)
     lines.append("Question: " + str(reasoning.get("question")))
     nxt = reasoning.get("next_action")
@@ -852,6 +881,9 @@ def export_record(r):
     def scan(v, path=""):
         if isinstance(v, str):
             exempt = path.rsplit(".", 1)[-1] in ("digest", "commit", "artifact_digest") and re.fullmatch(r"(?:sha256:)?[0-9a-f]{40,64}", v)
+            pin_path = re.fullmatch(r"pins\.([0-9]+)\.(recorded_value|last_value)", path)
+            if pin_path and out["pins"][int(pin_path[1])]["type"] in ("git_ref", "file_sha256"):
+                exempt = bool(re.fullmatch(r"(?:sha256:)?[0-9a-f]{40,64}", v))
             require(exempt or not SECRET.search(v), "secret_pattern:" + path)
         elif isinstance(v, dict):
             for k, x in v.items():
@@ -865,6 +897,13 @@ def export_record(r):
 
 
 def set_field(r, path, value, by):
+    decision_set_guard(r, path, value, by)
+    if path.startswith("kind_fields.options.") or path.startswith("options."):
+        oid = path.split(".")[-2]
+        option = next((x for x in r["kind_fields"].get("options", []) if x["id"] == oid), None)
+        require(option is not None and path.endswith(".status"), "invalid_field:option")
+        option["status"] = value
+        return
     parts = path.split(".")
     if len(parts) == 1 and path in {"question", "next_action", "hypothesis", "discriminating_experiment", "uncertainty", "private", "notes"}:
         require(path != "notes", "notes_require_fields_file", 2)
@@ -903,10 +942,300 @@ def git_subject(path):
                 untracked_truncated=len(untracked) > 256, artifact=None, digest=None, basis="observed")
 
 
+# H06 adds applicability to records; probes report facts, never grant authority.
+PIN_TYPES = ("git_ref", "file_sha256", "program_version", "gh_issue_state", "supplied")
+
+
+def decision_validate(r):
+    pins = r.get("pins", [])
+    require(isinstance(pins, list) and len(pins) <= 64, "cap_exceeded:pins")
+    ids = set()
+    for p in pins:
+        require(isinstance(p, dict) and set(p) == {"id", "type", "target", "recorded_value", "recorded_at", "basis", "last_value", "last_checked", "last_result"}, "invalid_field:pin")
+        require(re.fullmatch(r"p[1-9][0-9]*", p["id"]) and p["id"] not in ids and p["type"] in PIN_TYPES, "invalid_field:pin")
+        ids.add(p["id"])
+        require(p["basis"] in ("observed", "supplied") and p["last_result"] in ("unchecked", "unchanged", "changed", "unavailable", "not_rechecked"), "invalid_field:pin")
+        require(all(isinstance(p[k], str) for k in ("target", "recorded_value", "recorded_at")), "invalid_field:pin")
+    claims = {c["id"]: c for c in r["claims"]}
+    for c in r["claims"]:
+        c.setdefault("status", "provisional")
+        c.setdefault("depends_on", [])
+        c.setdefault("contradicts", [])
+        c.setdefault("supersedes", None)
+        c.setdefault("status_history", [dict(status="provisional", at=r["written_at"], by=r["writer"], reason="claim recorded")])
+        require("original" not in c or isinstance(c["original"], dict) and set(c["original"]) == {"text", "basis"} and all(isinstance(v, str) for v in c["original"].values()), "invalid_field:claim.original")
+        require(c["status"] in ("provisional", "accepted", "stale", "withdrawn"), "invalid_field:claim.status")
+        require(all(isinstance(c[k], list) and all(isinstance(x, str) for x in c[k]) for k in ("depends_on", "contradicts")), "invalid_field:claim.links")
+        require(all(x in claims and x != c["id"] for x in c["contradicts"]) and (c["supersedes"] is None or c["supersedes"] in claims and c["supersedes"] != c["id"]), "invalid_field:claim.links")
+        require(isinstance(c["status_history"], list) and len(c["status_history"]) <= 128, "cap_exceeded:claim_history")
+        for h in c["status_history"]:
+            require(isinstance(h, dict) and set(h) == {"status", "at", "by", "reason"} and h["status"] in ("provisional", "accepted", "stale", "withdrawn") and all(isinstance(x, str) for x in h.values()), "invalid_field:claim_history")
+    if r["kind"] != "decision":
+        return
+    k = r["kind_fields"]
+    if not k:
+        return
+    require(set(k) == {"decision", "because", "options", "invalidators", "card_id"}, "invalid_field:decision")
+    d = k["decision"]
+    require(isinstance(d, dict) and set(d) == {"text", "decided_by", "authority", "authority_ref", "decided_at"} and all(isinstance(x, str) for x in d.values()), "invalid_field:decision")
+    require(d["authority"] in ("operator_standing", "operator", "agent_rubric"), "invalid_field:authority")
+    require(d["authority_ref"] in {e["id"] for e in r["evidence"]}, "invalid_field:authority_ref")
+    require(isinstance(k["because"], list) and all(x in claims for x in k["because"]), "invalid_field:because")
+    require(k["card_id"] is None or isinstance(k["card_id"], str), "invalid_field:card_id")
+    for field, prefix, allowed, needed in (("options", "o", {"id", "label", "status", "why", "revisit_when", "revisit_text", "history"}, {"id", "label", "status", "why"}), ("invalidators", "v", {"id", "text", "pin", "condition"}, {"id", "text"})):
+        require(isinstance(k[field], list) and len(k[field]) <= 64, "invalid_field:" + field)
+        seen = set()
+        for x in k[field]:
+            require(isinstance(x, dict) and needed <= set(x) <= allowed and re.fullmatch(prefix + r"[1-9][0-9]*", x["id"]) and x["id"] not in seen, "invalid_field:" + field)
+            seen.add(x["id"])
+            require(all(isinstance(x[a], str) for a in needed), "invalid_field:" + field)
+            if field == "options":
+                require(x["status"] in ("chosen", "rejected"), "invalid_field:option.status")
+                require(isinstance(x.get("revisit_when", []), list), "invalid_field:revisit_when")
+                for cond in x.get("revisit_when", []):
+                    require(isinstance(cond, dict) and set(cond) in ({"pin", "becomes"}, {"pin", "changes"}) and isinstance(cond.get("becomes", ""), str) and ("changes" not in cond or cond["changes"] is True), "invalid_field:revisit_when")
+                    require(isinstance(cond["pin"], str), "invalid_field:revisit_when.pin")
+            elif "pin" in x:
+                require(isinstance(x["pin"], str), "invalid_field:invalidator.pin")
+                require(x.get("condition") == "changes" or isinstance(x.get("condition"), dict) and set(x["condition"]) == {"becomes"} and isinstance(x["condition"]["becomes"], str), "invalid_field:invalidator.condition")
+
+
+def decision_link(r):
+    decision_validate(r)
+    claims = {c["id"]: c for c in r["claims"]}
+    for c in list(claims.values()):
+        for other in c["contradicts"]:
+            if c["id"] not in claims[other]["contradicts"]:
+                claims[other]["contradicts"].append(c["id"])
+    protected = set(r["kind_fields"].get("because", [])) if r["kind"] == "decision" else set()
+    for c in claims.values():
+        if c["contradicts"] or c["supersedes"]:
+            protected.add(c["id"])
+            protected.update(c["contradicts"])
+            if c["supersedes"]:
+                protected.add(c["supersedes"])
+    for cid in protected:
+        c = claims[cid]
+        c.setdefault("original", {key: c[key] for key in ("text", "basis")})
+
+
+def decision_lint(r):
+    out = []
+    def bad(rule, path):
+        out.append(dict(rule=rule, path=path, message="decision applicability requirement"))
+    known = {p["id"] for p in r.get("pins", [])} | {e["id"] for e in r["evidence"]}
+    for c in r["claims"]:
+        if any(x not in known for x in c.get("depends_on", [])):
+            bad("L12-dangling-dependency", "claims." + c["id"])
+        if "original" in c and any(c[key] != c["original"].get(key) for key in ("text", "basis")):
+            bad("L11-claim-immutable", "claims." + c["id"])
+    if r["kind"] != "decision":
+        return out
+    k = r["kind_fields"]
+    if not all(k.get("decision", {}).get(x) for x in ("text", "decided_by", "authority", "authority_ref")) or not k.get("because") or not any(x.get("status") == "rejected" for x in k.get("options", [])) or any(not x.get("why") for x in k.get("options", []) if x.get("status") == "rejected") or not k.get("invalidators"):
+        bad("L9-decision-shape", "kind_fields")
+    for option in k.get("options", []):
+        if any(cond["pin"] not in known for cond in option.get("revisit_when", [])):
+            bad("L12-dangling-dependency", "kind_fields.options." + option["id"])
+    for inv in k.get("invalidators", []):
+        if "pin" in inv and inv["pin"] not in known:
+            bad("L12-dangling-dependency", "kind_fields.invalidators." + inv["id"])
+    claims = {c["id"]: c for c in r["claims"]}
+    uncertainty = (r["uncertainty"] or {}).get("text", "")
+    for cid in k.get("because", []):
+        c = claims[cid]
+        for other in c.get("contradicts", []):
+            if r["state"] == "concluded" and c["status"] != "withdrawn" and claims[other]["status"] != "withdrawn" and not all(re.search(r"\b" + re.escape(x) + r"\b", uncertainty) for x in (cid, other)):
+                bad("L10-open-contradiction", "claims." + cid)
+    return out
+
+
+def pin_probe(p, gh=None):
+    typ, target = p["type"], p["target"]
+    try:
+        if typ == "file_sha256":
+            return file_hash(absolute(target))[0]
+        if typ == "git_ref":
+            repo, ref = target.rsplit("@", 1)
+            absolute(repo)
+            require(ref and not ref.startswith("-"), "pin_probe_failed")
+            code, raw = process(["git", "--no-optional-locks", "-c", "core.fsmonitor=false", "-C", repo, "rev-parse", "--verify", "--end-of-options", ref], cap=4096)
+        elif typ == "program_version":
+            code, raw = process([absolute(target), "--version"], cap=65536)
+            require(code == 0 and raw.splitlines(), "pin_probe_failed")
+            line = raw.splitlines()[0]
+            require(len(line) <= 256, "pin_probe_failed")
+            return line.decode("utf-8")
+        elif typ == "gh_issue_state":
+            require(gh and re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+#[1-9][0-9]*", target), "pin_probe_failed")
+            repo, num = target.split("#")
+            code, raw = process([absolute(gh), "issue", "view", num, "--repo", repo, "--json", "state,stateReason"], cap=4096)
+            require(code == 0, "pin_probe_failed")
+            v = loads(raw)
+            require(v.get("state") in ("OPEN", "CLOSED"), "pin_probe_failed")
+            require(v["state"] == "OPEN" or v.get("stateReason") in ("COMPLETED", "NOT_PLANNED", "REOPENED"), "pin_probe_failed")
+            return "OPEN" if v["state"] == "OPEN" else "CLOSED:" + v["stateReason"]
+        else:
+            raise Refusal("pin_probe_failed")
+        require(code == 0 and re.fullmatch(rb"[0-9a-f]{40,64}\n?", raw), "pin_probe_failed")
+        return raw.decode().strip()
+    except (OSError, ValueError, UnicodeError, Refusal):
+        raise Refusal("pin_probe_failed")
+
+
+def decision_mutate(r, o):
+    require(o.by is not None, "by_required", 2)
+    if o.operation == "pin":
+        require(o.entries == ["add"] and o.type in PIN_TYPES and o.target, "pin_fields_required", 2)
+        pins = r.setdefault("pins", [])
+        require(len(pins) < 64, "cap_exceeded:pins")
+        p = dict(id="p" + str(len(pins) + 1), type=o.type, target=o.target, recorded_at=now(), basis="supplied" if o.value is not None else "observed", last_value=None, last_checked=None, last_result="unchecked")
+        require(o.type != "supplied" or o.value is not None, "pin_probe_failed")
+        p["recorded_value"] = o.value if o.value is not None else pin_probe(p, o.gh)
+        pins.append(p)
+        return [p["id"]]
+    require(o.expect_generation is not None, "expect_generation_required", 2)
+    if o.operation == "decide":
+        require(r["kind"] == "decision" and o.fields_file, "decision_fields_required", 2)
+        k = loads(stdin_bytes(65536) if o.fields_file == "-" else read_file(o.fields_file, 65536), "invalid_field:decision")
+        require(isinstance(k, dict) and set(k) == {"decision", "because", "options", "invalidators", "card_id"}, "invalid_field:decision")
+        proposed = copy.deepcopy(r)
+        proposed["kind_fields"] = k
+        decision_validate(proposed)
+        if r["state"] == "concluded":
+            require(k["decision"]["text"] == r["kind_fields"]["decision"]["text"] and k["because"] == r["kind_fields"]["because"], "claim_text_immutable")
+        for option in k.get("options", []):
+            require("history" not in option, "invalid_field:option.history")
+            old = next((x for x in r["kind_fields"].get("options", []) if x["id"] == option.get("id")), None)
+            if old:
+                if option.get("status") == "chosen" and old["status"] != "chosen":
+                    decision_option_guard(r, "options." + old["id"] + ".status", o, o.by)
+                if "history" in old:
+                    option["history"] = copy.deepcopy(old["history"])
+        r["kind_fields"] = k
+        decision_validate(r)
+        known = {p["id"] for p in r.get("pins", [])}
+        require(all(c["pin"] in known for option in k["options"] for c in option.get("revisit_when", [])) and all(inv["pin"] in known for inv in k["invalidators"] if "pin" in inv), "unknown_pin")
+    else:
+        require(o.status in ("accepted", "withdrawn") and o.reason, "claim_status_fields_required", 2)
+        c = next((c for c in r["claims"] if c["id"] == o.claim), None)
+        require(c is not None, "invalid_field:claim")
+        c["status"] = o.status
+        c["status_history"].append(dict(status=o.status, at=now(), by=o.by, reason=o.reason))
+    return []
+
+
+def decision_set_guard(r, path, value, by):
+    parts = path.split(".")
+    if parts[0] == "claims" and len(parts) == 3:
+        c = next((c for c in r["claims"] if c["id"] == parts[1]), {})
+        require(parts[2] not in ("status", "status_history", "original", "contradicts", "supersedes"), "claim_text_immutable")
+        require(parts[2] not in ("text", "basis") or "original" not in c, "claim_text_immutable")
+    if r["kind"] == "decision" and (path == "kind_fields" or path.startswith("kind_fields.")):
+        require(path not in ("kind_fields", "kind_fields.options"), "revisit_not_due")
+        if r["state"] == "concluded":
+            if path == "kind_fields":
+                require(value.get("decision", {}).get("text") == r["kind_fields"]["decision"]["text"] and value.get("because") == r["kind_fields"]["because"], "claim_text_immutable")
+            elif path == "kind_fields.because":
+                require(value == r["kind_fields"]["because"], "claim_text_immutable")
+            elif path == "kind_fields.decision":
+                require(isinstance(value, dict) and value.get("text") == r["kind_fields"]["decision"]["text"], "claim_text_immutable")
+        require(path not in ("kind_fields", "kind_fields.options"), "revisit_not_due")
+
+
+def decision_option_guard(r, path, o, actor):
+    oid = path.split(".")[-2]
+    option = next((x for x in r["kind_fields"].get("options", []) if x["id"] == oid), None)
+    require(option is not None, "invalid_field:option")
+    if option["status"] == "chosen":
+        return
+    due = oid in r.get("revalidation", {}).get("revisit_due", [])
+    require(due or o.override_reason is not None, "revisit_not_due")
+    require(o.by is not None, "by_required", 2)
+    option.setdefault("history", []).append(dict(status="chosen", at=now(), by=actor, reason=o.override_reason or "revisit condition holds"))
+
+
+def revalidation(r, folder, o):
+    pins = copy.deepcopy(r.get("pins", []))
+    for p in pins:
+        p.update(last_checked=now(), last_value=None)
+        if p["basis"] == "supplied" or p["type"] == "supplied" or p["type"] == "gh_issue_state" and not o.network:
+            p["last_result"] = "not_rechecked"
+        else:
+            try:
+                p["last_value"] = pin_probe(p, o.gh)
+                p["last_result"] = "unchanged" if p["last_value"] == p["recorded_value"] else "changed"
+            except Refusal:
+                p["last_result"] = "unavailable"
+    results = {p["id"]: p["last_result"] for p in pins}
+    evidence = [availability(e, folder) for e in r["evidence"]]
+    for e in evidence:
+        a = e["availability_now"]
+        results[e["id"]] = "changed" if a in ("missing", "deleted", "digest_differs", "digest_mismatch") else "unavailable" if a in ("unavailable", "hazard_refused", "unreachable") else "unchanged"
+    claims = {}
+    not_rechecked = []
+    for c in r["claims"]:
+        deps = [results.get(x, "unavailable") for x in c.get("depends_on", [])]
+        claims[c["id"]] = "stale" if "changed" in deps else "unverifiable" if "unavailable" in deps else c["status"]
+        if "not_rechecked" in deps:
+            not_rechecked.append(c["id"])
+    byid = {p["id"]: p for p in pins}
+    def holds(cond):
+        p = byid.get(cond.get("pin"), {})
+        return p.get("last_result") in ("changed", "unchanged") and (p.get("last_value") == cond["becomes"] if "becomes" in cond else p.get("last_result") == "changed")
+    k = r["kind_fields"] if r["kind"] == "decision" else {}
+    reasons = [cid + " " + claims[cid] for cid in k.get("because", []) if claims[cid] in ("stale", "unverifiable", "withdrawn")]
+    manual = []
+    for inv in k.get("invalidators", []):
+        if "pin" not in inv:
+            manual.append(inv["id"])
+        else:
+            condition = inv["condition"]
+            if holds(dict(pin=inv["pin"], **({"changes": True} if condition == "changes" else condition))):
+                reasons.append(inv["id"] + " invalidated")
+    due = [x["id"] for x in k.get("options", []) if x["status"] == "rejected" and x.get("revisit_when") and all(holds(c) for c in x["revisit_when"])]
+    return dict(checked_at=now(), pins=pins, evidence=evidence, claims=claims, not_rechecked=not_rechecked, needs_review=bool(reasons), reasons=reasons, revisit_due=due, manual_invalidators=manual)
+
+
+def revalidate_records(store, o):
+    require(bool(o.id) != bool(o.all) and (not o.all or o.kind == "decision"), "id_or_all_kind_required", 2)
+    require(not o.network or o.gh is not None, "gh_required", 2)
+    ids = [o.id] if o.id else sorted(os.listdir(store.records))
+    values = []
+    for rid in ids:
+        r = store.read(rid)
+        if o.all and r["kind"] != "decision":
+            continue
+        result = revalidation(r, store.path / "records" / rid, o)
+        if o.write:
+            r["pins"] = result["pins"]
+            r["revalidation"] = {k: v for k, v in result.items() if k not in ("pins", "evidence")}
+            for c in r["claims"]:
+                if result["claims"][c["id"]] == "stale" and c["status"] != "stale":
+                    c["status"] = "stale"
+                    c["status_history"].append(dict(status="stale", at=now(), by="revalidate", reason="dependency changed"))
+            r["generation"] += 1
+            r["updated_at"] = now()
+            validate(r)
+            store.save(r, {})
+        values.append(dict(id=rid, generation=r["generation"], **result))
+    return 0, dict(schema_version=1, kind="records_revalidate", writes_performed=len(values) if o.write else 0, results=values)
+
+
+def decision_view(r):
+    k = r["kind_fields"]
+    v = r.get("revalidation", {})
+    pairs = sorted({tuple(sorted((c["id"], x))) for c in r["claims"] for x in c.get("contradicts", [])})
+    return dict(decision=k.get("decision"), needs_review=v.get("needs_review", False), review_reasons=v.get("reasons", []), pins=r.get("pins", []),
+                open_contradictions=[a + " ⟷ " + b for a, b in pairs if all(c["status"] != "withdrawn" for c in r["claims"] if c["id"] in (a, b))],
+                claim_caveat="decided on provisional claims" if r["state"] == "concluded" and k.get("because") and all(c["status"] == "provisional" for c in r["claims"] if c["id"] in k["because"]) else None,
+                revisit_due=v.get("revisit_due", []), options=sorted(k.get("options", []), key=lambda x: x["status"] != "chosen"))
+
+
 def execute(o):
     op = o.operation
     require(op not in ("add", "attach", "close") or o.by is not None, "by_required", 2)
-    writes = op in ("init", "new", "park", "add", "attach", "set", "close", "forget")
+    writes = op in ("pin", "decide", "claim-status") or op == "revalidate" and o.write or op in ("init", "new", "park", "add", "attach", "set", "close", "forget")
     if o.check_command:
         require(o.assertion is not None and o.establishes is not None and o.does_not_establish is not None, "check_assertion_and_scope_required", 2)
     if o.fields_file == "-" and any(flag == "--evidence" and vals[0] == "-" for flag, vals in (o.inputs or [])):
@@ -914,12 +1243,16 @@ def execute(o):
     with contextlib.closing(Store(o.store, writes, op == "init")) as store:
         if op == "init":
             return 0, dict(schema_version=1, kind="records_result", operation=op, outcome="initialized", generation=0)
+        if op == "revalidate":
+            return revalidate_records(store, o)
         if op in ("list", "lint") and (op == "list" or o.all):
             rs = [store.read(rid) for rid in sorted(os.listdir(store.records))]
             if op == "lint":
                 violations = [dict(id=r["id"], **v) for r in rs for v in lint(r, store.path / "records" / r["id"])]
                 return (3 if violations else 0), dict(schema_version=1, kind="records_lint", violations=violations)
             rs = [r for r in rs if (o.state == "all" or r["state"] == o.state) and (o.kind is None or r["kind"] == o.kind)]
+            if o.needs_review:
+                rs = [r for r in rs if r.get("revalidation", {}).get("needs_review", False)]
             rs.sort(key=lambda r: (r["state"] in ("open", "parked"), r["updated_at"], r["id"]), reverse=True)
             values = [dict(id=r["id"], kind=r["kind"], state=r["state"], written_at=r["written_at"], updated_at=r["updated_at"], writer=r["writer"],
                            question=r["question"], next_action={"step": (r["next_action"] or {}).get("step")}, target=r["target"], evidence_count=len(r["evidence"]), generation=r["generation"]) for r in rs]
@@ -990,7 +1323,7 @@ def execute(o):
                     os.fsync(f.fileno())
                 return 0, dict(schema_version=1, kind="records_result", operation=op, outcome="exported", bytes=len(raw), digest=sha(raw))
             return 0, value
-        require(creating or r["state"] in ("open", "parked") or op == "forget", "record_closed")
+        require(creating or r["state"] in ("open", "parked") or op in ("forget", "pin", "decide", "claim-status") or r["kind"] == "decision" and op in ("add", "attach", "set"), "record_closed")
         if op == "forget":
             require(o.expect_generation is not None and o.reason, "generation_and_reason_required", 2)
             text(o.reason, "reason")
@@ -1007,7 +1340,9 @@ def execute(o):
             os.fsync(store.records)
             return 0, dict(schema_version=1, kind="records_result", operation=op, outcome="forgotten", id=r["id"], generation=r["generation"])
         actor = o.by or o.writer or "operator"
-        if op in ("new", "park"):
+        if op in ("pin", "decide", "claim-status"):
+            assigned.extend(decision_mutate(r, o))
+        elif op in ("new", "park"):
             assigned.extend(attach_inputs(r, o, packets))
             assigned.extend(apply_content(r, values, actor, True))
             if op == "park":
@@ -1048,6 +1383,8 @@ def execute(o):
                 value = {k: getattr(o, k) for k in keys if getattr(o, k) is not None}
                 if field in ("claims", "checks"):
                     value["evidence"] = (o.evidence_ids or "").split(",") if o.evidence_ids else []
+                if field == "claims":
+                    value.update(depends_on=o.depends_on.split(",") if o.depends_on else [], contradicts=o.contradicts.split(",") if o.contradicts else [], supersedes=o.supersedes)
                 assigned.extend(append_elements(r, field, [value]))
         elif op == "set":
             require(o.expect_generation is not None, "expect_generation_required", 2)
@@ -1060,6 +1397,8 @@ def execute(o):
                 require(path not in assignments and path not in values, "field_flag_file_conflict", 2)
                 assignments[path] = loads(raw, "invalid_field:" + path)
             for path, value in assignments.items():
+                if path.startswith(("kind_fields.options.", "options.")) and value == "chosen":
+                    decision_option_guard(r, path, o, actor)
                 set_field(r, path, value, actor)
             for path, value in values.items():
                 if path == "notes":
@@ -1067,11 +1406,13 @@ def execute(o):
                 elif path == "cleanup.status":
                     r["cleanup"]["status"] = value
                 else:
+                    decision_set_guard(r, path, value, actor)
                     replace(r, path, value, actor)
         elif op == "close":
             require(o.state in ("concluded", "abandoned"), "close_state_required", 2)
             assigned.extend(apply_content(r, content(o, {"claims", "uncertainty", "cleanup", "next_action"}), actor))
             r["state"] = o.state
+        decision_link(r)
         validate(r)
         if op in ("park", "close"):
             violations = lint(r, folder, packets)
@@ -1082,7 +1423,7 @@ def execute(o):
         old = None
         if creating and o.supersedes:
             old = store.read(o.supersedes)
-            require(old["state"] in ("open", "parked"), "record_closed")
+            require(old["state"] in ("open", "parked") or old["kind"] == "decision", "record_closed")
             old["state"] = "superseded_by:" + r["id"]
             old["generation"] += 1
             old["updated_at"] = now()
@@ -1125,11 +1466,11 @@ class SafeParser(argparse.ArgumentParser):
 def parser():
     p = SafeParser(description=__doc__)
     sub = p.add_subparsers(dest="operation", required=True)
-    for op in ("init", "new", "park", "add", "attach", "set", "close", "show", "resume", "navigate", "list", "lint", "export", "forget"):
+    for op in ("init", "new", "park", "add", "attach", "set", "close", "show", "resume", "navigate", "list", "lint", "export", "forget", "pin", "decide", "claim-status", "revalidate"):
         q = sub.add_parser(op, help={"resume": "read reasoning, historical evidence and live target; zero writes", "navigate": "one explicit verified focus; never relaunch", "park": "write private reasoning for an explicit Rex target"}.get(op, op + " private records"))
         q.add_argument("--store", default=str(Path.home() / ".local/state/teerex-records"))
         for key in ("id", "writer", "by", "supersedes", "fields-file", "question", "next-actor", "next-step", "next-stop-when", "hypothesis", "discriminating-experiment", "uncertainty", "git-repo", "subject-artifact",
-                    "host", "socket", "session", "block", "card-id", "seat-host", "seat-socket", "seat-session", "seat-block", "supplied-by", "check-command", "command", "text", "scope", "what", "reason", "where", "owner", "out"):
+                    "host", "socket", "session", "block", "card-id", "seat-host", "seat-socket", "seat-session", "seat-block", "supplied-by", "check-command", "command", "text", "scope", "what", "reason", "where", "owner", "out", "type", "target", "value", "gh", "depends-on", "contradicts", "claim", "status", "override-reason"):
             q.add_argument("--" + key)
         q.add_argument("--kind", choices=KINDS)
         q.add_argument("--state", choices=("open", "parked", "all", "concluded", "abandoned"), default="all" if op == "list" else None)
@@ -1155,7 +1496,8 @@ def parser():
         q.add_argument("--label", dest="labels", action="append")
         q.add_argument("--exportable", action=ExportableAction, nargs=0)
         q.add_argument("--include", action="append")
-        q.add_argument("--all", action="store_true")
+        for flag in ("all", "network", "write", "needs-review"):
+            q.add_argument("--" + flag, action="store_true")
         q.add_argument("entries", nargs="*")
         q.set_defaults(operation=op, inputs=None, evidence_ids=None, exportable=None)
     return p
@@ -1178,7 +1520,7 @@ def main():
     try:
         o = p.parse_args()
         require(100 <= o.timeout_ms <= 60000 and 256 <= o.observe_max_bytes <= 65536, "invalid_bounds", 2)
-        if o.operation not in ("set", "add"):
+        if o.operation not in ("set", "add", "pin"):
             require(not o.entries, "unexpected_arguments", 2)
         code, value = execute(o)
         if o.format in ("text", "md") and isinstance(value, (list, dict)) and o.operation in ("show", "resume", "list", "export") and code == 0 and not o.out:

@@ -29,7 +29,7 @@ SELECTORS = {**{(verb,): ("socket",) for verb in
                  ("fleet", ("report", "forget"))) for op in operations},
              **{("clutch", op): ("socket",) for op in ("take", "release", "status", "palette")},
              **{("records", op): (("socket", "host", "records_store") if op in ("park", "resume", "navigate") else ("records_store",)) for op in
-                ("init", "new", "park", "add", "attach", "set", "close", "show", "resume", "navigate", "list", "lint", "export", "forget")},
+                ("init", "new", "park", "add", "attach", "set", "close", "show", "resume", "navigate", "list", "lint", "export", "forget", "pin", "decide", "claim-status", "revalidate")},
              ("agents", "launch"): ("socket", "host", "store")}
 
 

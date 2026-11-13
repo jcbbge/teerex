@@ -336,7 +336,9 @@ jobs:
         env:
           TEEREX_BIN: ${{ github.workspace }}/zig-out/bin/teerex
           REX_BIN: ${{ runner.temp }}/rex-bin/rex
-        run: python3 items/records/test_records.py -v
+        run: |
+          python3 items/records/test_records.py -v
+          python3 items/records/test_decisions.py -v
 
       - name: Run older API recovery update inventory/refusal
         if: matrix.rex-api != 13

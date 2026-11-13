@@ -105,7 +105,7 @@ class TargetsTest(unittest.TestCase):
     def test_records_store_routing_override_and_default(self):
         self.host["records_store"] = str(self.root / "records")
         self.save()
-        for op in ("init", "new", "park", "add", "attach", "set", "close", "show", "resume", "navigate", "list", "lint", "export", "forget"):
+        for op in ("pin", "decide", "claim-status", "revalidate", "init", "new", "park", "add", "attach", "set", "close", "show", "resume", "navigate", "list", "lint", "export", "forget"):
             args = ["records", op, "--id", "record-a"]
             r = self.call("--config", str(self.config), "--host", "hive", *args)
             self.assertEqual(r.returncode, 7, r.stderr)

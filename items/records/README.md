@@ -44,7 +44,7 @@ Every verb accepts `--store`. `--help` lists flags. Supported operations:
 | Verb | Contract |
 |---|---|
 | `init` | Create or validate the private store and lock. |
-| `new --kind investigation\|experiment\|receipt\|handoff --writer NAME` | New open record; optional `--id`, `--supersedes`, `--git-repo` (observed HEAD/dirty/untracked names), `--subject-artifact`. |
+| `new --kind investigation\|experiment\|receipt\|handoff\|decision --writer NAME` | New open record; optional `--id`, `--supersedes`, `--git-repo` (observed HEAD/dirty/untracked names), `--subject-artifact`. |
 | `park --writer NAME --host H --socket ABS --session ID --block ID` | New parked investigation, question and complete next action required. Target check defaults yes; `--allow-unavailable-target yes` preserves an unavailable target honestly. Optional one `--observe yes` read. |
 | `add claim\|check\|omission\|cleanup --id ID --by NAME` | Append assigned `kN`, `cN`, `oN`, `uN` IDs. Claims take text/basis/evidence IDs/source/scope; checks require command, ran, process-exit, assertion, establishes and does-not-establish. Fields-file can append arrays. |
 | `attach --id ID --by NAME` | Append evidence plus optional claims/omissions or replacement uncertainty/cleanup/next action from fields-file. Explicit check assertion required when `--check-command` is used. |
@@ -57,7 +57,7 @@ Every verb accepts `--store`. `--help` lists flags. Supported operations:
 | `export --id ID [--format json\|md] [--out NEW_ABS]` | Lint, project private fields away, preserve caveats and scan exported strings before writing. Never overwrite. `--include` cannot override privacy. |
 | `forget --id ID --expect-generation N --reason TEXT` | Explicit deletion of that record and its copies only. |
 
-All record writes accept `--expect-generation`; `set` and `forget` require it. Write receipts contain IDs, generation, byte counts and digests, never reasoning content. Kind-specific fields and evidence references are schema-checked on write. `new` accepts incomplete drafts; park/close/export enforce the applicable lint rules. Closed or superseded records cannot be appended to.
+All record writes accept `--expect-generation`; `set` and `forget` require it. Write receipts contain IDs, generation, byte counts and digests, never reasoning content. Kind-specific fields and evidence references are schema-checked on write. `new` accepts incomplete drafts; park/close/export enforce the applicable lint rules. Closed or superseded records of the original four kinds cannot be appended to; decision applicability and status updates remain explicit.
 
 ### Evidence
 
@@ -90,3 +90,32 @@ A changed or missing original stays changed or missing even when a copy is prese
 The new surface is a local UID-owned CLI/filesystem store. Its risks are following hostile files, losing concurrent updates, mistaking historical or supplied claims for authority, leaking private reasoning, and falsely promoting exit zero. Invariants: no path-hazard reads, no unlocked record writes, no reasoning in write receipts/errors/call logs, no inferred assertion, no mutation on resume, no navigation without explicit focus and verified identity. There is no new listener, credential, provider, service, schedule or deployment mechanism. Writer/source names are assertions, never credentials. Personal-store and installed-artifact checks are separate integration work.
 
 Live run-result fixtures use the test runner’s `sys.executable` for explicit zero/nonzero exits on Linux and macOS; they do not assume `/bin/true` or `/bin/false` exists.
+
+## Decision applicability (H06)
+
+`records new --kind decision` creates an open proposal in the same private store.
+`records pin add --id ID --by NAME --type git_ref|file_sha256|program_version|gh_issue_state|supplied --target TEXT [--value TEXT] [--gh ABS]`
+records one of at most 64 pins. Git targets use `/absolute/repo@ref`; file and program targets are absolute; issues use `owner/repo#N` and an explicit `--gh` executable. Programs run with `--version`, a five second deadline and a bounded first line. Supplying `--value` records attribution without probing. Pins never expire.
+
+`records add claim … --depends-on p1,e2 --contradicts k2 --supersedes k1`
+adds dependency links and symmetric contradictions. New claims are provisional. Referenced claim text and basis become immutable; add a superseding claim instead.
+`records claim-status --id ID --claim kN --status accepted|withdrawn --by NAME --reason TEXT --expect-generation N`
+is the only command that accepts or withdraws a claim, preserving its status history.
+
+`records decide --id ID --by NAME --expect-generation N --fields-file ABS|-`
+accepts a strict object with `decision` (`text`, `decided_by`, `authority`, `authority_ref`, `decided_at`), `because` claim IDs, `options`, `invalidators`, and nullable `card_id`.
+Authority is `operator_standing|operator|agent_rubric`; its reference names attached evidence.
+Options have `oN` IDs, label, `chosen|rejected` status, why, optional `revisit_text` and `revisit_when` conditions (`{"pin":"p1","becomes":"VALUE"}` or `{"pin":"p1","changes":true}`). Invalidators have `vN` IDs, text, and optionally a pin with condition `"changes"` or `{"becomes":"VALUE"}`. Text-only conditions remain manual.
+A concluded decision freezes its text and because links; `new --supersedes OLD` replaces it.
+
+`records revalidate (--id ID|--all --kind decision) [--network --gh ABS] [--write]`
+reports recorded/current pin values, evidence availability, per-claim results, `needs_review` reasons and rejected options whose complete pinned condition is due. Without `--write`, record bytes and generation remain unchanged. With it, last results are stored and only claims depending on changed pins or missing/changed evidence become stale. Unavailable dependencies report unverifiable; issue pins without network and supplied pins remain not rechecked. Nothing accepts a claim, expires one, chooses an option, or changes the record state.
+
+`records set --id ID --expect-generation N --by NAME 'kind_fields.options.o2.status="chosen"'`
+requires the last stored revalidation to list that rejected option as due. An explicit `--override-reason TEXT --by NAME` records an override. Both paths append option history. Whole-option replacement cannot bypass this guard.
+`records list --kind decision --needs-review` filters the last stored result.
+`show --format text` starts with decision, authority, state and review reasons, preserves provisional caveats and shows open contradiction pairs.
+
+Lint adds L9 decision shape (because claims, rejected alternative with why and invalidators), L10 unresolved contradictions on concluded because claims, L11 changed protected claim text/basis, and L12 dangling dependencies. Close and export retain the existing lint gate. Decision records allow explicit applicability/status updates after conclusion. `attach` additionally accepts H02 `friction_report` packets. Export preserves decision reasoning, statuses, revisit conditions and public pin values; mark `pins` or `pins[].target|recorded_value|last_value` private when needed. The existing secret scan also covers decision text and revisit text.
+
+`python3 items/records/test_decisions.py -v` runs D1–D15 with temporary Git, program-version and fake-gh fixtures, alongside the original records suite in API13 CI lanes. No real issue, store or configuration is changed.
