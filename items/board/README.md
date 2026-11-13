@@ -165,6 +165,10 @@ idle output and restoration. Disposable Rex checks verify named-host navigation,
 full scratchpads, live feed cleanup and restoring a board from 50% to one third
 after inserting a pane beside the anchor. Both API13 CI lanes run this suite.
 
+The PTY harness keeps reading output while waiting for exit, as a real terminal
+client does. This prevents a final frame from filling Darwin's PTY before the
+board can consume `q`; the five-second shutdown deadline remains unchanged.
+
 Darwin sets the kernel's `PENDIN` bit when canonical mode returns. The test
 excludes only that kernel-maintained bit, following the existing fleet PTY
 contract and a native Python cbreak/restore reproduction; all actual terminal

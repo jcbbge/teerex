@@ -49,3 +49,6 @@ Decision-directory changes invoke the absolute teerex `decide list --json`.
 the merge combines both hosts in opening order. Registry/scratch/decision reads
 remain filesystem-event driven. The renderer ignores legacy `stream` events.
 Projection subprocesses are tracked and reaped during foreground feed shutdown.
+
+Shutdown signals are sent once. Re-entering cleanup does not signal workers
+again while their Python signal handlers are setting the stop event.

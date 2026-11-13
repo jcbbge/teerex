@@ -108,10 +108,21 @@ class Pane:
         self.read(.5)
         self.settle()
     def view(self): return screen(self.output, self.width)[0]
+    def wait_exit(self, timeout=5):
+        # A terminal client keeps draining output while the program exits.
+        # Darwin's PTY can otherwise fill during a frame and block before q
+        # is read. Keep the original deadline; draining is not a retry.
+        end = time.monotonic() + timeout
+        while self.proc.poll() is None:
+            remaining = end - time.monotonic()
+            if remaining <= 0:
+                raise subprocess.TimeoutExpired(self.proc.args, timeout)
+            self.read(min(.05, remaining))
+        return self.proc.returncode
     def close(self):
         if self.proc.poll() is None:
             os.write(self.master,b'q')
-            try: self.proc.wait(timeout=5)
+            try: self.wait_exit(timeout=5)
             except subprocess.TimeoutExpired:
                 self.proc.kill(); self.proc.wait(); raise
         self.read(0)
@@ -209,7 +220,7 @@ class BoardTest(unittest.TestCase):
         p=self.pane()
         self.assertIsNone(p.proc.poll())
         p.proc.send_signal(signal.SIGTERM)
-        p.proc.wait(timeout=3)
+        p.wait_exit(timeout=3)
         self.assertEqual(p.proc.returncode,0)
     def test_invalid_events_visible_and_once_nonzero(self):
         path=self.root/'invalid.jsonl'
@@ -281,7 +292,7 @@ class BoardTest(unittest.TestCase):
             descendants=expanded
         descendants.discard(live.proc.pid)
         self.assertTrue(descendants,'integrated feed process was not observed')
-        live.key(b'q');live.proc.wait(timeout=5)
+        live.key(b'q');live.wait_exit(timeout=5)
         for pid in descendants:
             try:os.kill(pid,0)
             except ProcessLookupError:continue

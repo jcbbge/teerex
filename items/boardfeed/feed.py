@@ -549,7 +549,11 @@ def main(argv=None):
         parser.error('absolute --config and valid host names required')
     for path in (args.agents_registry,args.jobs_registry,args.scratch,args.calls):
         if not path.is_absolute():parser.error('source paths must be absolute')
+    stopping=False
     def stop(signum,frame):
+        nonlocal stopping
+        if stopping:return
+        stopping=True
         STOP.set()
         for p in list(CHILDREN):
             if p.poll() is None:p.terminate()

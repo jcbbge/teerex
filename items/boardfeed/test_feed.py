@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import queue
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -127,6 +128,25 @@ class FeedTests(unittest.TestCase):
             state.rex_event(dict(type='session_event',payload=dict(event=dict(type='block_event',payload=dict(block_id='b',name='program_status_changed',payload=dict(id='',record=dict(state='blocked',msg='Which option?')))))))
             state.rex_event(dict(type='session_event',payload=dict(event=dict(type='block_label_changed',payload={}))))
         self.assertEqual(state.status['b'],'waiting');self.assertEqual(state.questions['b'],'Which option?');self.assertIn('title changed',out.getvalue())
+
+    def test_shutdown_signals_workers_once(self):
+        from unittest.mock import patch
+        callbacks={}
+        class Child:
+            signals=0
+            def poll(self):return None
+            def terminate(self):self.signals+=1
+            def wait(self,timeout):return 0
+        child=Child();feed.CHILDREN.append(child)
+        def merge(args):
+            callbacks[signal.SIGTERM](signal.SIGTERM,None)
+            callbacks[signal.SIGTERM](signal.SIGTERM,None)
+        try:
+            with patch.object(feed,'EXECUTABLE','/fixture',create=True),patch.object(feed.signal,'signal',side_effect=lambda sig,handler:callbacks.update({sig:handler})),patch.object(feed,'merge',side_effect=merge):
+                feed.main([])
+            self.assertEqual(child.signals,1,'signal handler and finally must not repeatedly signal workers')
+        finally:
+            feed.CHILDREN.remove(child);feed.STOP.clear()
 
     def test_unreachable_host_is_event(self):
         with tempfile.TemporaryDirectory() as tmp:
