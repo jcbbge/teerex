@@ -5,6 +5,7 @@ from pathlib import Path
 import sys
 import tty
 import time
+import re
 
 tty.setraw(0)
 log = Path(sys.argv[1])
@@ -18,7 +19,10 @@ os.write(1, b"\x1b[?2004h")
 
 
 def draw():
-    os.write(1, b"\r\x1b[2K> " + (draft if draft else b"\x1b[90m" + suggestion.encode() + b"\x1b[0m"))
+    # Claude Code renders internal runs of spaces as cursor-forward movements.
+    content = draft if draft else b"\x1b[90m" + suggestion.encode() + b"\x1b[0m"
+    content = re.sub(rb" +", lambda m: b"\x1b[" + str(len(m[0])).encode() + b"C", content)
+    os.write(1, "\r\x1b[2K❯\xa0".encode() + content)
 
 
 draw()

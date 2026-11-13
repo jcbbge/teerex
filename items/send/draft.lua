@@ -36,14 +36,25 @@ local function draft_from_vt(text)
     for index = math.max(1, #lines - 14), #lines do
         local line = lines[index]
         if prompt((line:gsub(csi, ""))) ~= nil then
-            local dim, grey, out, pos = false, false, {}, 1
+            local dim, grey, out, pos, rendered = false, false, {}, 1, 0
             while pos <= #line do
                 local first, last = line:find(csi, pos)
                 local part = line:sub(pos, first and first - 1 or #line)
-                if not dim and not grey then table.insert(out, part) end
+                if not dim and not grey then
+                    if #part > 1048576 - rendered then return nil end
+                    table.insert(out, part); rendered = rendered + #part
+                end
                 if not first then break end
                 local escape = line:sub(first, last)
-                if escape:sub(-1) == "m" then
+                local forward = escape:match("^\27%[(%d*)C$")
+                if forward ~= nil then
+                    local count = math.max(1, tonumber(forward) or 1)
+                    if count > 1048576 then return nil end
+                    if not dim and not grey then
+                        if count > 1048576 - rendered then return nil end
+                        table.insert(out, string.rep(" ", count)); rendered = rendered + count
+                    end
+                elseif escape:sub(-1) == "m" then
                     local codes = {}
                     local parameters = escape:sub(3, -2) .. ";"
                     for code in parameters:gmatch("(.-);") do

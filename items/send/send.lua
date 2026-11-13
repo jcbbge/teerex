@@ -70,12 +70,14 @@ local function deliver()
         local function finish_restore(warning)
             if complete then return end
             complete = true
-            if verify_timer then verify_timer:cancel() end
-            if restore_bound then restore_bound:cancel() end
             report("restored")
             if warning then emit({event="warning", reason=warning}) end
             -- Restoration cannot undo the already acknowledged message/Enter.
             emit({event="finished"})
+            -- Cancelling the last active timer can end rex do immediately.
+            -- Publish every final frame before relinquishing those timers.
+            if verify_timer then verify_timer:cancel() end
+            if restore_bound then restore_bound:cancel() end
             rex.stop()
         end
         if not acknowledged then finish_restore("draft_restore_failed"); return end
@@ -96,8 +98,11 @@ local function deliver()
 end
 if a.draft_mode == "ignore" then report("ready"); deliver(); return end
 local poll_timer, quiet_timer, bound_timer
+local proceeding = false
 local function proceed(bound)
-    for _, timer in pairs({poll_timer, quiet_timer, bound_timer}) do timer:cancel() end
+    if proceeding then return end
+    proceeding = true
+    -- Keep the polling timer alive until final publication; rex.stop owns teardown.
     local current = read_draft()
     if current == nil then refuse("draft_capture_unavailable"); rex.stop(); return end
     saved = current
@@ -131,6 +136,7 @@ if a.draft_wait_ms == 0 then proceed(true); return end
 bound_timer = rex.after(a.draft_wait_ms / 1000, function() proceed(true) end)
 quiet_timer = rex.after(1.5, function() proceed(false) end)
 poll_timer = rex.every(.25, function()
+    if proceeding then return end
     local current = read_draft()
     if current == nil then refuse("draft_capture_unavailable"); rex.stop(); return end
     if current == "" then proceed(false); return end

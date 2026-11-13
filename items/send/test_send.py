@@ -150,6 +150,12 @@ class SendTest(unittest.TestCase):
                     ("│ ❯ \x1b[38;2;100;100;100msuggest\x1b[0m │", ""),
                     ("┃ > α😀\x1b[22m kept ┃", "α😀 kept"),
                     ("| > \x1b[38;5;239mreal\x1b[39m |", "real"),
+                    ("❯\xa0a\x1b[1Cb\x1b[2Cc\x1b[1Cdd", "a b  c dd"),
+                    ("❯\xa0a\x1b[Cb", "a b"),
+                    ("❯\xa0a\x1b[0Cb", "a b"),
+                    ("❯\xa0a\x1b[2C\x1b[90msuggest\x1b[3Cgrey\x1b[0m", "a"),
+                    ("❯\xa0a\x1b[90msuggest\x1b[3Cgrey\x1b[0m\x1b[2Cb", "a  b"),
+                    ("❯\xa0\x1b[2msuggest\x1b[Cgrey\x1b[0m", ""),
                     ("> old\n" + "other\n" * 15, ""), ("> first\n> last", "last")]
         lua = Path(__file__).with_name("draft.lua").read_text() + "\nlocal out={} for _,v in ipairs(rex.args.cases) do table.insert(out,draft_from_vt(v)) end io.write(rex.json.encode(out))"
         target, _ = self.fixture()
@@ -163,7 +169,7 @@ class SendTest(unittest.TestCase):
             r, packet = self.send(target)
             self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
             self.assertEqual([json.loads(line) for line in log.read_text().splitlines()], ["FROM worker: hello"])
-            self.assertIn("> " + text, self.prompt_text(target))
+            self.assertIn("❯\xa0" + text, self.prompt_text(target))
             draft = packet["draft"]
             self.assertEqual(draft["mode"], "guard")
             self.assertTrue(draft["detected"])
@@ -172,6 +178,21 @@ class SendTest(unittest.TestCase):
             self.assertFalse(draft["bound_reached"])
             self.assertTrue(draft["cleared"] and draft["restored"] and draft["restore_verified"])
             self.assertNotIn(text, r.stdout + r.stderr)
+
+    def test_guard_preserves_cursor_forward_spaces_with_nbsp_prompt(self):
+        target, log = self.prompt()
+        text = "a b  c dd"
+        self.type_draft(target, text)
+        result = subprocess.run(self.command(target) + ["--draft-wait-ms", "0"],
+                                env=self.env, capture_output=True, text=True, timeout=6)
+        packet = json.loads(result.stdout)
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertTrue(packet["draft"]["restore_verified"])
+        self.assertEqual(packet["draft"]["chars"], len(text))
+        self.assertIsNone(packet["draft_warning"])
+        self.assertIn("❯\xa0" + text, self.prompt_text(target))
+        self.assertEqual([json.loads(line) for line in log.read_text().splitlines()], ["FROM worker: hello"])
+        self.assertNotIn(text, result.stdout + result.stderr)
 
     def test_guard_waits_for_typing_and_restores_in_order(self):
         target, log = self.prompt()
@@ -190,7 +211,7 @@ class SendTest(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertGreater(packet["draft"]["waited_ms"], 3500)
         self.assertEqual([json.loads(line) for line in log.read_text().splitlines()], ["FROM worker: hello"])
-        self.assertIn("> " + text, self.prompt_text(target))
+        self.assertIn("❯\xa0" + text, self.prompt_text(target))
         self.assertNotIn(text, r.stdout + r.stderr)
 
     def test_restore_late_redraw_and_dropped_paste_preserve_send_ack(self):
@@ -211,7 +232,7 @@ class SendTest(unittest.TestCase):
                 self.assertEqual([json.loads(line) for line in log.read_text().splitlines()], ["FROM worker: hello"])
                 self.assertNotIn(text, result.stdout + result.stderr)
                 if verified:
-                    self.assertIn("> " + text, self.prompt_text(target))
+                    self.assertIn("❯\xa0" + text, self.prompt_text(target))
                 else:
                     self.assertNotIn(text, self.prompt_text(target))
 
@@ -254,7 +275,7 @@ class SendTest(unittest.TestCase):
         r = subprocess.run(self.command(target) + ["--draft-wait-ms", "0"], env=self.env, capture_output=True, text=True, timeout=5)
         self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
         self.assertTrue(json.loads(r.stdout)["draft"]["bound_reached"])
-        self.assertIn("> savedPRIVATE", self.prompt_text(target))
+        self.assertIn("❯\xa0savedPRIVATE", self.prompt_text(target))
         r = subprocess.run(self.command(target) + ["--draft", "ignore"], env=self.env, capture_output=True, text=True, timeout=5)
         self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
         self.assertEqual(json.loads(log.read_text().splitlines()[-1]), "savedPRIVATEFROM worker: hello")
