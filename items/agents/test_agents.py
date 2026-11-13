@@ -1084,7 +1084,8 @@ except OSError as e:print(json.dumps(dict(kernel_errno=e.errno)))
         # Modern kernels may independently prohibit TIOCSTI; never relax that protection.
         self.assertTrue(evidence.get("injected") == "z" or evidence.get("kernel_errno") in (errno.EIO, errno.EPERM), evidence)
 
-    @unittest.skipUnless(os.environ.get("TEEREX_AGENTS_FENCE") == "1", "explicit real Linux bubblewrap acceptance gate")
+    @unittest.skipUnless(os.environ.get("TEEREX_AGENTS_FENCE") == "1" and os.environ.get("TEEREX_AGENTS_FENCE_EGRESS") == "1",
+                         "explicit real egress gate: slirp4netns joining the fence netns plus public HTTPS (hive; hosted runners restrict both)")
     def test_fence_probe_closed_loopback_with_real_egress_and_host_counterexample(self):
         import select
         self.assertIsNotNone(shutil.which("slirp4netns"))
