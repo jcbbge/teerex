@@ -4,7 +4,7 @@ const supervised = @import("supervised_child");
 pub const presentation = @import("view.zig");
 
 const observation_usage =
-    \\Usage: teerex observe --socket /absolute/path --session session:UUID --block block:UUID [--max-bytes N] [--timeout-ms N]
+    \\Usage: teerex observe --socket /absolute/path --session session:UUID --block block:UUID [--max-bytes N] [--timeout-ms N] [--tail]
     \\       teerex compare --before /path/to/before.json --after /path/to/after.json
     \\       teerex watch --socket /absolute/path --session session:UUID --block block:UUID --baseline FILE (--timeout-ms N | --no-deadline) [--interval-ms N]
     \\                    [--status-state idle|working|done|blocked|error [--status-id RECORD_ID]]
@@ -16,7 +16,8 @@ const observation_usage =
     \\cosmetic_only_comparisons is evidence, not busy/working/done state.
     \\Read bounded terminal text and process/directory/status evidence from an explicit Rex target.
     \\N defaults to 4096; allowed range: 256..65536 JSON-encoded content bytes.
-    \\Output is JSON. Capture includes screen and scrollback; a partial capture is a prefix.
+    \\Output is JSON. Capture includes screen and scrollback; a partial capture is a prefix by default; --tail selects the newest suffix (API13).
+    \\capture.incomplete_at is start for partial tails, end for partial prefixes, null for complete captures.
     \\Compare reads two explicit observation files (at most 1 MiB each), without contacting Rex.
     \\Changes describe returned evidence, never activity, completion, freshness, or permission.
     \\Observe/compare do not send input, edit configuration, or save files. No autostart or implicit target.
@@ -98,7 +99,7 @@ pub const Observation = struct {
     atomic_snapshot: bool = false,
     target: struct { server: []const u8, session_id: []const u8, block_id: []const u8 },
     source: struct { rex_version: []const u8, platform: []const u8, api_revision: u32 },
-    capture: struct { scope: []const u8, portion: []const u8, max_bytes: usize, complete: bool, content: []const u8 },
+    capture: struct { scope: []const u8, portion: []const u8, max_bytes: usize, complete: bool, content: []const u8, incomplete_at: ?[]const u8 = null },
     process: ?Evidence(ProcessEvidence) = null,
     reported_directory: ?struct {
         method: []const u8,
@@ -353,10 +354,16 @@ pub fn runObservations(allocator: std.mem.Allocator, args: []const []const u8) !
     var socket: ?[]const u8 = null;
     var session: ?[]const u8 = null;
     var block: ?[]const u8 = null;
+    var tail = false;
     var byte_limit: ?usize = null;
     var timeout: ?u64 = null;
     var i: usize = 1;
     while (i < args.len) : (i += 2) {
+        if (std.mem.eql(u8, args[i], "--tail") and !tail) {
+            tail = true;
+            i -= 1;
+            continue;
+        }
         if (i + 1 == args.len) usageError("every option needs a value");
         const name = args[i];
         const value = args[i + 1];
@@ -385,7 +392,7 @@ pub fn runObservations(allocator: std.mem.Allocator, args: []const []const u8) !
     if (builtin.os.tag != .macos and builtin.os.tag != .linux) return error.UnsupportedObservationPlatform;
 
     const endpoint = try std.fmt.allocPrint(allocator, "unix://{s}", .{socket_path});
-    const argv = try observationArgv(allocator, endpoint, session_id, block_id, max_bytes, null);
+    const argv = try observationArgv(allocator, endpoint, session_id, block_id, max_bytes, null, tail);
     var env = try std.process.getEnvMap(allocator);
     for ([_][]const u8{ "REX_SERVER", "REX_SESSION", "REX_BLOCK", "REX_CLIENT" }) |key| env.remove(key);
     const signals = supervised.Signals.init();
@@ -432,6 +439,7 @@ fn observation(allocator: std.mem.Allocator, endpoint: []const u8, session_id: [
         if (id != .integer or id.integer < 0) return error.InvalidCaptureResponse;
     }
     const complete = more == null;
+    const portion = if (capture.object.get("portion")) |value| (if (value == .string) value.string else return error.InvalidCaptureResponse) else "prefix";
     if (capture.object.get("eof")) |eof| {
         if (eof != .bool or eof.bool != complete) return error.InvalidCaptureResponse;
     }
@@ -456,9 +464,10 @@ fn observation(allocator: std.mem.Allocator, endpoint: []const u8, session_id: [
         .source = .{ .rex_version = rex_version.string, .platform = platform.string, .api_revision = @intCast(revision.integer) },
         .capture = .{
             .scope = "screen_and_scrollback",
-            .portion = "prefix",
+            .portion = portion,
             .max_bytes = max_bytes,
             .complete = complete,
+            .incomplete_at = if (complete) null else if (std.mem.eql(u8, portion, "tail")) "start" else "end",
             .content = content.string,
         },
         .process = .{
@@ -500,7 +509,7 @@ pub fn validateObservation(packet: Observation) !Observation {
         return error.UnsupportedObservationVersion;
     }
     if (packet.observation_id.len == 0 or !fullId(packet.target.session_id, "session:") or !fullId(packet.target.block_id, "block:")) return error.InvalidObservationIdentity;
-    if (!std.mem.eql(u8, packet.capture.scope, "screen_and_scrollback") or !std.mem.eql(u8, packet.capture.portion, "prefix")) return error.UnsupportedCaptureScope;
+    if (!std.mem.eql(u8, packet.capture.scope, "screen_and_scrollback") or (!std.mem.eql(u8, packet.capture.portion, "prefix") and !std.mem.eql(u8, packet.capture.portion, "tail"))) return error.UnsupportedCaptureScope;
     if (packet.capture.max_bytes < 256 or packet.capture.max_bytes > 65536) return error.InvalidCaptureLimit;
     var buffer: [256]u8 = undefined;
     var count: std.Io.Writer.Discarding = .init(&buffer);
@@ -605,7 +614,7 @@ pub fn compareObservations(before: Observation, after: Observation) !Comparison 
     if (!equal(before.source, after.source)) return error.DifferentObservationSources;
 
     const both_complete = before.capture.complete and after.capture.complete;
-    const text_comparable = both_complete or before.capture.max_bytes == after.capture.max_bytes;
+    const text_comparable = both_complete or (std.mem.eql(u8, before.capture.portion, after.capture.portion) and before.capture.max_bytes == after.capture.max_bytes);
     const text_changed = !std.mem.eql(u8, before.capture.content, after.capture.content);
     const before_foreground = if (before.process) |node| node.data.foreground else null;
     const after_foreground = if (after.process) |node| node.data.foreground else null;
@@ -707,7 +716,7 @@ fn watch(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
     if (!std.mem.eql(u8, baseline.target.server, endpoint) or !std.mem.eql(u8, baseline.target.session_id, session_id) or !std.mem.eql(u8, baseline.target.block_id, block_id)) return error.DifferentObservationTargets;
     // One explicitly attached Lua connection runs the same five supported reads.
     // Supervise it directly; no self-subprocess or observation JSON round trip.
-    const argv = try observationArgv(allocator, endpoint, session_id, block_id, baseline.capture.max_bytes, interval_ms);
+    const argv = try observationArgv(allocator, endpoint, session_id, block_id, baseline.capture.max_bytes, interval_ms, std.mem.eql(u8, baseline.capture.portion, "tail"));
     var env = try std.process.getEnvMap(allocator);
     for ([_][]const u8{ "REX_SERVER", "REX_SESSION", "REX_BLOCK", "REX_CLIENT" }) |key| env.remove(key);
     const signals = supervised.Signals.init();
@@ -788,8 +797,8 @@ fn observationTargetHint(endpoint: []const u8, session: []const u8, block: []con
     std.debug.print("teerex: compare using the same trusted PATH rex with explicit --server, not only REX_SERVER; observation ignores REX_SERVER/REX_SESSION/REX_BLOCK/REX_CLIENT. No alternate host or focus target was requested by teerex.\n", .{});
 }
 
-fn observationArgv(allocator: std.mem.Allocator, endpoint: []const u8, session: []const u8, block: []const u8, max_bytes: usize, interval_ms: ?u64) ![]const []const u8 {
+fn observationArgv(allocator: std.mem.Allocator, endpoint: []const u8, session: []const u8, block: []const u8, max_bytes: usize, interval_ms: ?u64, tail: bool) ![]const []const u8 {
     // Scope also attaches the Lua connection; explicit IDs alone do not attach it.
-    const request = try std.json.Stringify.valueAlloc(allocator, .{ .session_id = session, .block_id = block, .max_bytes = max_bytes, .interval_ms = interval_ms }, .{});
+    const request = try std.json.Stringify.valueAlloc(allocator, .{ .session_id = session, .block_id = block, .max_bytes = max_bytes, .interval_ms = interval_ms, .tail = tail }, .{});
     return allocator.dupe([]const u8, &.{ "rex", "--autostart=false", "--server", endpoint, "--timeout", "3s", "--color", "never", "do", "--session", session, "--block", block, "-e", @embedFile("collect.lua"), "--args", request });
 }

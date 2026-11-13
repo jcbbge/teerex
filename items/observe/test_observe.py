@@ -148,6 +148,13 @@ class CompareTest(unittest.TestCase):
         self.assertEqual(self.compared()["program_status"], {
             "before_available": True, "after_available": True, "availability_changed": False, "changed": False})
 
+    def test_partial_tail_comparison_preserves_scope(self):
+        self.before["capture"].update(portion="tail", complete=False, incomplete_at="start")
+        self.after["capture"].update(portion="tail", complete=False, incomplete_at="start")
+        self.assertFalse(self.compared()["capture"]["captured_text_changed"])
+        self.after["capture"]["portion"] = "prefix"
+        self.assertIsNone(self.compared()["capture"]["captured_text_changed"])
+
     def test_api_range_preserves_revision_and_refuses_outside_bounds(self):
         for revision in [10, 11, 12, 13]:
             with self.subTest(revision=revision):
@@ -174,7 +181,7 @@ class CompareTest(unittest.TestCase):
             (("target", "block_id"), "block:partial"),
             (("source", "rex_version"), "other-version"), (("source", "platform"), "other-platform"),
             (("source", "api_revision"), 14), (("schema_version",), 2),
-            (("capture", "scope"), "viewport"), (("capture", "portion"), "tail"),
+            (("capture", "scope"), "viewport"), (("capture", "portion"), "middle"),
             (("capture", "max_bytes"), 255), (("capture", "content"), "x" * 255),
             (("process", "basis"), "inferred"), (("reported_directory", "freshness"), "fresh"),
             (("program_status", "method"), "other.method"),
@@ -346,7 +353,7 @@ class CompareTest(unittest.TestCase):
             if re.search(r'\b(stable|idle|done|complete|finished|waiting|ready|busy|working)\b', line, re.I):
                 self.assertRegex(line, r'(?i)\b(not|never|no|cannot|exclude)\b')
         for name, marker in (('items/observe/README.md', '## Declared presentation views'), ('items/filter/README.md', '## Opt-in presentation view')):
-            additions = (root / name).read_text().split(marker, 1)[1]
+            additions = (root / name).read_text().split(marker, 1)[1].split("\n## ", 1)[0]
             for line in additions.splitlines():
                 if re.search(r'\b(stable|idle|done|complete|finished|waiting|ready|busy|working)\b', line, re.I):
                     self.assertRegex(line, r'(?i)\b(not|never|no|cannot|exclude)\b')
@@ -361,7 +368,7 @@ class ObserveTest(unittest.TestCase):
         cls.tmp = tempfile.TemporaryDirectory(prefix="tx-", dir="/tmp")
         cls.addClassCleanup(cls.tmp.cleanup)
         cls.root = Path(cls.tmp.name)
-        cls.socket = cls.root / "rex.sock"
+        cls.socket = cls.root / "rex socket.sock"
         cls.endpoint = "unix://" + str(cls.socket)
         cls.base = [cls.rex, "--autostart=false", "--server", cls.endpoint, "--timeout", "2s"]
         cls.log = (cls.root / "server.log").open("w")
@@ -435,6 +442,36 @@ class ObserveTest(unittest.TestCase):
              "--session", target[0], "--block", target[1], *extra],
             env=env, capture_output=True, text=True, timeout=15,
         )
+
+    def test_tail_exact_unicode_and_same_blob_continuation(self):
+        if self.rex_json("api", "call", "server.version")["api_revision"] != 13:
+            self.skipTest("tail continuation currently requires actual API13")
+        text = ('head α🙂 \\ \" <&>\t\n' * 900) + "LATEST β🙂 END\n"
+        target = self.fixture(text, marker="head")
+        # Read the actual terminal representation, including wrapping/newlines.
+        full = self.rex_json("api", "call", "com.superlogical.terminal.format", json.dumps({
+            "session_id": target[0], "block_id": target[1], "args": {"format": "text"}}))["content"]
+        def cost(value):
+            return len(json.dumps(value, ensure_ascii=False).replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026").encode())
+        for limit in (256, 257, 511, 4096, 65536):
+            with self.subTest(limit=limit):
+                result = self.observe(target, "--tail", "--max-bytes", str(limit))
+                self.assertEqual(result.returncode, 0, result.stderr)
+                packet = json.loads(result.stdout)
+                content = packet["capture"]["content"]
+                self.assertTrue(full.endswith(content))
+                self.assertNotIn("�", content)
+                self.assertIn("LATEST β🙂 END", content)
+                self.assertLessEqual(cost(content), limit)
+                omitted = len(full) - len(content)
+                if omitted: self.assertGreater(cost(full[omitted-1:]), limit)
+                self.assertEqual(packet["capture"]["complete"], content == full)
+                self.assertEqual(packet["capture"]["incomplete_at"], None if content == full else "start")
+                self.assertEqual(packet["capture"]["portion"], "tail")
+        baseline, packet = self.baseline(target, "--tail", "--max-bytes", "256")
+        watched = subprocess.run(self.watch_command(target, baseline, timeout=300),
+                                 capture_output=True, text=True, timeout=5)
+        self.assertEqual(watched.returncode, 124, watched.stderr)
 
     def baseline(self, target, *extra):
         result = self.observe(target, *extra)
