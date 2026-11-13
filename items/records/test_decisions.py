@@ -63,17 +63,21 @@ class Decisions(RecordsFixture):
         self.assertEqual(v["pins"][1]["last_result"], "unchanged")
 
     def contradiction(self):
-        self.claim("send succeeded", "e1", "--contradicts", "k1")
-        self.k["because"] = ["k1"]
+        other = self.root / "other-evidence.txt"
+        other.write_text("synthetic contradictory observation")
+        self.call("attach", "--id", "a", "--by", "worker", "--evidence", other)
+        self.call("add", "claim", "--id", "a", "--by", "worker", "--text", "send succeeded", "--basis", "observed", "--evidence", "e1")
+        self.call("add", "claim", "--id", "a", "--by", "worker", "--text", "pane shows no message", "--basis", "observed", "--evidence", "e2", "--contradicts", "k3")
+        self.k["because"] = ["k3"]
         self.decide()
 
     def test_D3_bidirectional_and_immutable(self):
         self.contradiction()
         cs = self.read()["claims"]
-        self.assertIn("k3", cs[0]["contradicts"])
-        self.assertIn("k1", cs[2]["contradicts"])
-        self.assertIn("k1 ⟷ k3", self.show()["reasoning"]["open_contradictions"])
-        v = self.call("set", "--id", "a", "--by", "worker", "--expect-generation", self.gen(), 'claims.k1.text="different"', code=1)
+        self.assertIn("k4", cs[2]["contradicts"])
+        self.assertIn("k3", cs[3]["contradicts"])
+        self.assertIn("k3 ⟷ k4", self.show()["reasoning"]["open_contradictions"])
+        v = self.call("set", "--id", "a", "--by", "worker", "--expect-generation", self.gen(), 'claims.k3.text="different"', code=1)
         self.assertIn("claim_text_immutable", str(v))
 
     def test_D4_withdrawal_and_lint(self):
@@ -82,9 +86,9 @@ class Decisions(RecordsFixture):
         p = self.store / "records/a/record.json"
         r = self.read(); r["state"] = "concluded"; p.write_text(json.dumps(r))
         self.assertIn("L10-open-contradiction", str(self.call("lint", "--id", "a", code=3)))
-        self.call("claim-status", "--id", "a", "--claim", "k1", "--status", "withdrawn", "--by", "worker", "--reason", "counterexample", "--expect-generation", self.gen())
+        self.call("claim-status", "--id", "a", "--claim", "k3", "--status", "withdrawn", "--by", "worker", "--reason", "counterexample", "--expect-generation", self.gen())
         self.call("lint", "--id", "a")
-        self.assertEqual(len(self.read()["claims"][0]["status_history"]), 2)
+        self.assertEqual(len(self.read()["claims"][2]["status_history"]), 2)
 
     def test_D5_provisional_stays(self):
         self.call("close", "--id", "a", "--by", "worker", "--state", "concluded")
@@ -152,6 +156,13 @@ class Decisions(RecordsFixture):
         self.assertNotIn(str(self.evidence), json.dumps(v))
         self.assertEqual(v["pins"][0]["last_value"], "teerex alpha.5")
         self.assertEqual(v["claims"][0]["status"], "provisional")
+        md = self.call("export", "--id", "a", "--format", "md")
+        self.assertIn("Use one collector", md)
+        self.assertIn("CLOSED:NOT_PLANNED", md)
+        self.assertNotIn(str(self.evidence), md)
+        shown = self.call("show", "--id", "a", "--format", "text")
+        self.assertLess(shown.index("Decision:"), shown.index("Authority:"))
+        self.assertLess(shown.index("needs_review:"), shown.index("Claim k1:"))
         self.k["options"][1]["revisit_text"] = "token=" + "z" * 25
         self.decide()
         self.assertIn("secret_pattern", str(self.call("export", "--id", "a", code=1)))
