@@ -784,6 +784,26 @@ class RexBoardsTest(unittest.TestCase):
             self.fail("dashboard did not show " + needle + ": " + bytes(output)[-6000:].decode(errors="replace"))
         return process, master, slave, before, output, wait_for
 
+    def finish_dashboard(self, process, master, slave, saved, output, expected=0):
+        # macOS PTYs have a small output queue: keep consuming redraws while
+        # waiting, just as a terminal emulator does, so exit cannot block in write.
+        deadline = time.monotonic() + 10
+        while process.poll() is None and time.monotonic() < deadline:
+            if select.select([master], [], [], .1)[0]:
+                try:
+                    output.extend(os.read(master, 65536))
+                except OSError:
+                    break
+        self.assertEqual(process.wait(timeout=1), expected)
+        restored = termios.tcgetattr(slave)
+        # Darwin marks canonical input pending for reprocessing when cbreak is
+        # restored. This kernel-maintained bit is not a changed terminal setting.
+        pending = getattr(termios, "PENDIN", 0) if sys.platform == "darwin" else 0
+        restored[3] &= ~pending
+        saved = list(saved)
+        saved[3] &= ~pending
+        self.assertEqual(restored, saved)
+
     def test_keyboard_dashboard_focus_present_document_and_json_compatibility(self):
         root, env, args, session, anchor, alpha, beta, view = self.dashboard_fixture(named=True)
         initial = view()
@@ -827,8 +847,7 @@ class RexBoardsTest(unittest.TestCase):
         self.assertEqual(sum(len(layer["blocks"]) for w in opened["windows"] for layer in w["layers"]), 4)
         self.assertTrue(any(b.get("label") == "fleet document" for w in opened["windows"] for layer in w["layers"] for b in layer["blocks"]))
         os.write(master, b"rq")
-        self.assertEqual(process.wait(timeout=10), 0)
-        self.assertEqual(termios.tcgetattr(slave), saved)
+        self.finish_dashboard(process, master, slave, saved, output)
         self.assertEqual(view(), opened, "quitting the dashboard must leave all panes alone")
         self.assertNotIn(b"NEVER_SHOW_THIS_TOKEN", output)
         self.assertIn(b"working [OSC]", output)
@@ -850,8 +869,7 @@ class RexBoardsTest(unittest.TestCase):
         os.write(master, b"/no-such-agent\r\r")
         wait_for("no selected row")
         os.write(master, b"/\rq")
-        self.assertEqual(process.wait(timeout=10), 0)
-        self.assertEqual(termios.tcgetattr(slave), saved)
+        self.finish_dashboard(process, master, slave, saved, output)
 
     def test_keyboard_dashboard_missing_metadata_refuses_actions_and_restores_on_signal(self):
         root, env, args, session, anchor, alpha, beta, view = self.dashboard_fixture()
@@ -867,8 +885,7 @@ class RexBoardsTest(unittest.TestCase):
         wait_for("selected_record_has_no_report_or_brief_document")
         self.assertEqual(view(), before)
         process.send_signal(signal.SIGINT)
-        self.assertEqual(process.wait(timeout=10), 130)
-        self.assertEqual(termios.tcgetattr(slave), saved)
+        self.finish_dashboard(process, master, slave, saved, output, expected=130)
         self.assertEqual(view(), before)
 
     def test_dashboard_metadata_redaction_absent_lifecycle_and_corrupt_source(self):
@@ -886,7 +903,7 @@ class RexBoardsTest(unittest.TestCase):
         self.assertIn(b"dash-agent-absent", output)
         self.assertNotIn(b"NEVER_SHOW_THIS_TOKEN", output)
         os.write(master, b"q")
-        self.assertEqual(process.wait(timeout=10), 0)
+        self.finish_dashboard(process, master, slave, saved, output)
         self.assertEqual(before, view())
         # Corrupt lifecycle metadata must not turn a successful live presence read into success for that metadata.
         path.write_text("[]")

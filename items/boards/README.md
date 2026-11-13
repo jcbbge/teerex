@@ -181,7 +181,7 @@ teerex boards fleet --store "$STORE" --config /absolute/private/hosts.json --hos
   --agents-registry hive=/absolute/hive/agents --agents-registry m5=/absolute/mac/agents
 ```
 
-All remote actions use the existing named-target transport; fixtures can use explicit `--targets-file` endpoints. The additive `boards probe --dashboard [--agents-registry ABS]` supplies only live-view metadata. Existing probe invocations and one-shot fleet JSON stay unchanged. The API13 boards CI suite drives scripted PTY keys against disposable Rex and reads back focus, presentation geometry, pane identity and document creation; it also checks no-action filtering, refusals, token redaction, and terminal restoration on quit/signal.
+All remote actions use the existing named-target transport; fixtures can use explicit `--targets-file` endpoints. The additive `boards probe --dashboard [--agents-registry ABS]` supplies only live-view metadata. Existing probe invocations and one-shot fleet JSON stay unchanged. The API13 boards CI suite drives scripted PTY keys against disposable Rex and reads back focus, presentation geometry, pane identity and document creation; it also checks no-action filtering, refusals, token redaction, and terminal restoration on quit/signal. The PTY harness drains redraw output through process exit and compares restored terminal settings, allowing only Darwin's kernel-maintained `PENDIN` input-reprocessing flag.
 
 ### Join a jobs registry and terminal reports (source follow-on #22)
 
