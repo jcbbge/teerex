@@ -87,7 +87,8 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
     const friction_source = try std.json.Stringify.valueAlloc(allocator, @embedFile("friction.py"), .{});
     const allowed_flags = try std.json.Stringify.valueAlloc(allocator, @import("flagnames.zig").names, .{});
     const script = try std.fmt.allocPrint(allocator, "import types,sys\n_dashboard=types.ModuleType('teerex_dashboard')\nexec({s}, _dashboard.__dict__)\nsys.modules['teerex_dashboard']=_dashboard\n_friction=types.ModuleType('teerex_friction')\nexec({s},_friction.__dict__)\n_friction.FLAGS=set({s}.split())\nsys.modules['teerex_friction']=_friction\n{s}", .{ dashboard_source, friction_source, allowed_flags, @embedFile("boards.py") });
-    try argv.appendSlice(allocator, &.{ "python3", "-I", "-c", try call_log.python(allocator, script) });
+    // Keep the source outside the quoted logging wrapper: Linux bounds each argv string to 128 KiB.
+    try argv.appendSlice(allocator, &.{ "python3", "-I", "-c", try call_log.python(allocator, "import sys\nexec(compile(sys.argv.pop(1), '<boards>', 'exec'))"), script });
     const render = args.len > 0 and (std.mem.eql(u8, args[0], "inbox") or std.mem.eql(u8, args[0], "fleet") or std.mem.eql(u8, args[0], "calls")) and
         (args.len == 1 or std.mem.startsWith(u8, args[1], "--"));
     if (render or (args.len > 0 and std.mem.eql(u8, args[0], "friction"))) try argv.append(allocator, "boards");

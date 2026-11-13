@@ -2,6 +2,7 @@
 import fcntl
 import json
 import runpy
+import re
 import os
 import pty
 import select
@@ -630,6 +631,21 @@ class CallsTest(unittest.TestCase):
         self.assertEqual({r["command_host"] for r in payload["calls"]}, {"hive", "m5"})
 
 
+class CompactFleetTest(unittest.TestCase):
+    def test_state_order_and_history(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location('dashboard', ROOT / 'items/boards/dashboard.py')
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        def row(state, present=True):
+            return dict(target=dict(block_id=state), observation=dict(present=present, label=state),
+                        program_status=dict(records=[dict(state=state, age_ms=0)]))
+        rows = [row('idle'), row('working'), row('error'), row('blocked'), row('done'), row('idle', False)]
+        snapshot = dict(rows=rows)
+        self.assertEqual([module.summary(r, 0)['state'] for r in module.fleet_rows(snapshot, 0)], ['blocked', 'error', 'working', 'idle'])
+        self.assertEqual(len(module.fleet_rows(snapshot, 0, True)), 6)
+
+
 class StatusTest(unittest.TestCase):
     def test_rex_timestamp_fractional_precision_on_python39(self):
         status = runpy.run_path(str(ROOT / "items/boards/boards.py"))["status_evidence"]
@@ -785,7 +801,7 @@ class RexBoardsTest(unittest.TestCase):
         targets.write_text(json.dumps([dict(host="hive", server="unix://" + str(self.socket))]))
         args = [BIN, "boards", "fleet", "--store", str(root / "store"), "--jobs-registry", str(root / "jobs"),
                 "--agents-registry", str(root / "agents"), "--dashboard-session", session, "--dashboard-block", anchor,
-                "--dashboard-host", "hive", "--interval-ms", "500"]
+                "--dashboard-host", "hive", "--interval-ms", "500", "--detail"]
         if named:
             config = root / "hosts.json"
             config.write_text(json.dumps(dict(schema_version=1, hosts=dict(hive=dict(host_id="hive", transport="local", home=str(root),
@@ -797,9 +813,9 @@ class RexBoardsTest(unittest.TestCase):
             return json.loads(subprocess.check_output(self.base + ["api", "call", "session.view", json.dumps(dict(session_id=session))]))
         return root, env, args, session, anchor, alpha, beta, view
 
-    def keyboard_dashboard(self, args, env):
+    def keyboard_dashboard(self, args, env, width=160):
         master, slave = pty.openpty()
-        fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 30, 160, 0, 0))
+        fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 30, width, 0, 0))
         before = termios.tcgetattr(slave)
         process = subprocess.Popen(args, env=env, stdin=slave, stdout=slave, stderr=slave)
         output = bytearray()
@@ -850,6 +866,39 @@ class RexBoardsTest(unittest.TestCase):
         saved = list(saved)
         saved[3] &= ~pending
         self.assertEqual(restored, saved)
+
+    def test_compact_fleet_wrap_scratchpad_history_and_inspect(self):
+        for width in (60, 120):
+            root, env, args, session, anchor, alpha, beta, view = self.dashboard_fixture()
+            args.remove('--detail')
+            env['HOME'] = str(root)
+            directory = root / '.local/state/teerex/scratch' / session
+            directory.mkdir(parents=True)
+            work = 'Verify every character of this current task survives wrapping in a narrow sixty column side pane'
+            (directory / (alpha + '.md')).write_text('# alpha\nPurpose: SECRET_PURPOSE\nIntent: finish\nUpdated: 2026-11-13T00:00:00Z\n\n## Now\n- [ ] ' + work + '\n## To-do\n- [ ] Later task\n## Done\n- [x] Finished task\n')
+            record = json.loads((root / 'agents' / ('agents-' + '1'*32 + '.json')).read_text())
+            record.update(launch_id='3'*32, name='history-agent', target=dict(record['target'], block_id='block:'+ZERO))
+            path = root / 'agents' / ('agents-' + '3'*32 + '.json')
+            path.write_text(json.dumps(record))
+            path.chmod(0o600)
+            process, master, slave, saved, output, wait_for = self.keyboard_dashboard(args, env, width)
+            screen = re.sub(r'\x1b\[[0-9;]*[a-zA-Z]', '', wait_for('1/3'))
+            plain = ' '.join(screen.split())
+            self.assertIn(work, plain)
+            self.assertNotIn('history-agent', screen)
+            for forbidden in ('session:', 'block:', 'OWNER', 'SECRET_PURPOSE', 'OSC', 'Receipt:', 'brief_submitted', 'report', 'operator'):
+                self.assertNotIn(forbidden, screen)
+            for line in screen.splitlines()[1:-1]:
+                self.assertLessEqual(len(line), width)
+            os.write(master, b'/dash-agent-alpha\r ')
+            wait_for('Later task')
+            os.write(master, b'i')
+            wait_for('session:')
+            os.write(master, b'i/a\r')
+            os.write(master, b'/\ra')
+            wait_for('history-agent')
+            os.write(master, b'q')
+            self.finish_dashboard(process, master, slave, saved, output)
 
     def test_keyboard_dashboard_focus_present_document_and_json_compatibility(self):
         root, env, args, session, anchor, alpha, beta, view = self.dashboard_fixture(named=True)
@@ -1019,7 +1068,7 @@ class RexBoardsTest(unittest.TestCase):
         self.assertEqual(rows[untracked[1]]["agent_classification"], "unknown_terminal")
         self.assertFalse(rows[vanished[1]]["presence"]["present"])
         self.assertEqual(rows[vanished[1]]["presence"]["reason"], "registered_pane_absent")
-        rendered = subprocess.check_output(command + ["--jobs-registry", "hive=" + str(registry)], env=env, text=True)
+        rendered = subprocess.check_output(command + ["--detail", "--jobs-registry", "hive=" + str(registry)], env=env, text=True)
         for text in ("REGISTRATION [jobs] rivet", "item · step", "PROGRAM_STATUS [terminal report]", "done", "registered_pane_absent"):
             self.assertIn(text, rendered)
         self.assertEqual(before, {p.name: (p.stat().st_mtime_ns, p.read_bytes()) for p in registry.iterdir()})

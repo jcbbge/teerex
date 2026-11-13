@@ -1,4 +1,6 @@
 """Keyboard fleet view. Explicit public teerex actions; no background work."""
+import datetime
+import textwrap
 import contextlib
 import fcntl
 import json
@@ -133,6 +135,107 @@ def cells(row, now):
             seconds(delta), call_time]
 
 
+def scratchpad(session, block):
+    """Read on the probed host; missing or malformed scratchpads are optional."""
+    path = os.path.expanduser('~/.local/state/teerex/scratch/' + session + '/' + block + '.md')
+    result = dict(now='', todo=[], done=[], updated=None)
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        try:
+            import stat
+            if not stat.S_ISREG(os.fstat(fd).st_mode):
+                return result
+            raw = os.read(fd, 65537)
+        finally:
+            os.close(fd)
+        if len(raw) > 65536:
+            return result
+        section = None
+        for line in raw.decode('utf-8').splitlines():
+            if line.startswith('Updated: '):
+                result['updated'] = line[9:]
+            elif line.startswith('## '):
+                section = line[3:]
+            elif line.startswith(('- [ ] ', '- [x] ')):
+                value = clean(line[6:])
+                if section == 'Now' and not result['now']:
+                    result['now'] = value
+                elif section in ('To-do', 'Done'):
+                    result['todo' if section == 'To-do' else 'done'].append(value)
+        return result
+    except (OSError, UnicodeError, ValueError):
+        return result
+
+
+def summary(row, now):
+    data = row.get('dashboard', {})
+    life, report = data.get('lifecycle') or {}, row.get('report') or {}
+    pad = row.get('scratchpad') or {}
+    name = life.get('name') or row['observation'].get('label') or 'terminal'
+    records = (row.get('program_status') or {}).get('records', [])
+    record = min(records, key=lambda r: r.get('age_ms') if r.get('age_ms') is not None else float('inf')) if records else {}
+    state = record.get('state') or report.get('state') or 'idle'
+    state = {'waiting_on_operator': 'blocked', 'completed': 'done', 'dead': 'done', 'unknown': 'idle'}.get(state, state)
+    if pad.get('now') and state == 'idle':
+        state = 'working'
+    delta = record.get('age_ms')
+    if pad.get('updated'):
+        try:
+            at = datetime.datetime.fromisoformat(pad['updated'].replace('Z', '+00:00'))
+            if at.tzinfo is not None:
+                delta = now - int(at.timestamp() * 1000)
+        except (ValueError, OverflowError):
+            pass
+    if delta is None and report.get('at'):
+        delta = now - report['at']
+    age = '—' if delta is None or delta < 0 else str(delta // 1000) + 's' if delta < 60000 else str(delta // 60000) + 'm' if delta < 3600000 else str(delta // 3600000) + 'h' if delta < 86400000 else str(delta // 86400000) + 'd'
+    done = len(pad.get('done', []))
+    total = done + len(pad.get('todo', [])) + bool(pad.get('now'))
+    question = row.get('question') or record.get('title') or 'Needs your answer'
+    message = 'waiting on you  “' + question + '”' if state == 'blocked' else pad.get('now') or '—'
+    return dict(name=clean(name), state=state, message=clean(message), progress=str(done) + '/' + str(total) if total else '', age=age)
+
+
+def fleet_rows(snapshot, now, history=False):
+    rows = snapshot['rows']
+    if not history:
+        rows = [r for r in rows if r['observation'].get('present') is True
+                and (r.get('report') or {}).get('state') not in ('dead', 'completed')
+                and summary(r, now)['state'] != 'done']
+    order = {'blocked': 0, 'error': 1, 'working': 2, 'idle': 3, 'done': 4}
+    return sorted(rows, key=lambda r: (order.get(summary(r, now)['state'], 3), summary(r, now)['name'].casefold()))
+
+
+def fleet_lines(snapshot, rows, now, width, selected=None, flash=(), color=False):
+    values = [summary(r, now) for r in rows]
+    working = sum(v['state'] == 'working' for v in values)
+    waiting = sum(v['state'] == 'blocked' for v in values)
+    hosts = ', '.join(dict.fromkeys(s.get('configured_name') or s.get('host', '') for s in snapshot.get('sources', []))) or 'fleet'
+    header = hosts + ' · ' + str(working) + ' agents working · ' + str(waiting) + ' waiting on you'
+    clock = time.strftime('%H:%M')
+    if len(header) + len(clock) + 2 <= width:
+        header = header.ljust(width - len(clock)) + clock
+    lines = textwrap.wrap(header, width) + ['']
+    for source in snapshot.get('sources', []):
+        if source.get('outcome') != 'observed':
+            lines += textwrap.wrap((source.get('configured_name') or source.get('host') or 'Host') + ' · unavailable', width)
+    for row, value in zip(rows, values):
+        glyph = {'blocked': '●', 'error': '✗', 'working': '▶', 'done': '✓'}.get(value['state'], ' ')
+        prefix = ('›' if key_for(row) == selected else ' ') + ' ' + glyph + ' ' + value['name']
+        suffix = '  ' + value['progress'] + '  ' + value['age']
+        # Work text always wraps in full, including long individual words.
+        wrapped = textwrap.wrap(prefix + '  ' + value['message'] + suffix, width, subsequent_indent='    ') or ['']
+        if color:
+            ink = {'blocked': '33', 'error': '31', 'working': '32', 'done': '32'}.get(value['state'], '2')
+            wrapped[0] = wrapped[0].replace(glyph, '\x1b[' + ink + 'm' + glyph + '\x1b[0m', 1) if glyph != ' ' else '\x1b[2m' + wrapped[0] + '\x1b[0m'
+        if key_for(row) in flash:
+            wrapped = ['\x1b[5m' + line + '\x1b[0m' for line in wrapped]
+        lines += wrapped
+    if not rows:
+        lines += ['No agents working right now.']
+    return lines
+
+
 def read_key(fd, pending, timeout):
     if not pending:
         if not select.select([fd], [], [], max(0, timeout))[0]:
@@ -176,6 +279,11 @@ class Dashboard:
         self.query = ''
         self.edit = None
         self.status = 'Ready. Actions only run on a keypress; reports do not prove completion.'
+        self.history = False
+        self.inline = False
+        self.inspect = False
+        self.waiting = set()
+        self.flash = set()
         self.pending = bytearray()
         self.session = args.dashboard_session or os.environ.get('REX_SESSION') or os.environ.get('LC_REX_SESSION')
         self.block = args.dashboard_block or os.environ.get('REX_BLOCK') or os.environ.get('LC_REX_BLOCK')
@@ -184,13 +292,17 @@ class Dashboard:
         try:
             with contextlib.closing(self.api['Store'](self.a.store)) as store:
                 self.snapshot = self.api['fleet_snapshot'](self.a, store.state)
+                waiting = {key_for(r) for r in self.snapshot['rows'] if summary(r, self.api['stamp']())['state'] == 'blocked'}
+                self.flash = waiting - self.waiting
+                self.waiting = waiting
         except (OSError, ValueError, self.api['Refused']) as error:
             self.snapshot = dict(rows=[], sources=[])
             self.status = 'Refresh unknown: ' + str(error)
 
     def rows(self):
         query = (self.query if self.edit is None else self.edit).casefold()
-        rows = [r for r in self.snapshot['rows'] if query in ' '.join(cells(r, self.api['stamp']())).casefold()]
+        candidates = self.snapshot['rows'] if self.a.detail else fleet_rows(self.snapshot, self.api['stamp'](), self.history)
+        rows = [r for r in candidates if query in ' '.join(cells(r, self.api['stamp']())).casefold()]
         if rows:
             self.position = next((i for i, r in enumerate(rows) if key_for(r) == self.selected), min(self.position, len(rows) - 1))
             self.selected = key_for(rows[self.position])
@@ -199,6 +311,33 @@ class Dashboard:
         return rows
 
     def draw(self):
+        if not self.a.detail:
+            return self.draw_fleet()
+        return self.draw_detail()
+
+    def draw_fleet(self):
+        size = os.get_terminal_size(sys.stdout.fileno())
+        width = max(20, size.columns)
+        rows = self.rows()
+        lines = fleet_lines(self.snapshot, rows, self.api['stamp'](), width, self.selected, self.flash, color=True)
+        self.flash = set()
+        if rows and self.inspect:
+            lines += textwrap.wrap(clean(json.dumps(rows[self.position], ensure_ascii=False)), width)
+        elif rows and self.inline:
+            pad = rows[self.position].get('scratchpad') or {}
+            lines += ['', 'Scratchpad']
+            for glyph, items in [('▶', [pad.get('now')] if pad.get('now') else []), ('☐', pad.get('todo', [])), ('✓', pad.get('done', []))]:
+                for item in items:
+                    lines += textwrap.wrap(glyph + ' ' + clean(item), width, subsequent_indent='  ')
+            if not any(pad.get(k) for k in ('now', 'todo', 'done')):
+                lines += ['No scratchpad yet.']
+        lines += ['', '⏎ jump   ␣ scratchpad   a all history   i inspect   q quit']
+        if self.status != 'Ready. Actions only run on a keypress; reports do not prove completion.':
+            lines += [self.status if self.inspect else 'Action finished' if 'exit=0' in self.status else 'Action unavailable' ]
+        sys.stdout.write('\x1b[2J\x1b[H' + '\n'.join(lines) + '\x1b[J')
+        sys.stdout.flush()
+
+    def draw_detail(self):
         size = os.get_terminal_size(sys.stdout.fileno())
         width, height = max(32, size.columns), max(6, size.lines)
         rows = self.rows()
@@ -311,6 +450,14 @@ class Dashboard:
                         self.edit += key
                 elif key == 'q':
                     return 0
+                elif key == 'a':
+                    self.history = not self.history
+                elif key == ' ':
+                    self.inline = not self.inline
+                    self.inspect = False
+                elif key == 'i':
+                    self.inspect = not self.inspect
+                    self.inline = False
                 elif key == '/':
                     self.edit = ''
                 elif key in ('j', 'k', 'UP', 'DOWN'):

@@ -646,6 +646,8 @@ def probe(socket, jobs_registry=None, teerex=None, dashboard=False, agents_regis
     if dashboard:
         import teerex_dashboard
         live["dashboard"] = teerex_dashboard.metadata(agents_registry, globals())
+        for row in live['rows']:
+            row['scratchpad'] = teerex_dashboard.scratchpad(row['session'], row['block'])
     check(len(json.dumps(live).encode()) <= MAX_BYTES, "probe_response_exceeds_bound")
     return live
 
@@ -804,6 +806,11 @@ def fleet_snapshot(a, state):
                 for row in local_rows:
                     raw_status = next((b.get("program_status") for b in live["rows"] if b["session"] == row["target"]["session_id"] and b["block"] == row["target"]["block_id"]), None)
                     row["program_status"] = status_evidence(raw_status) if raw_status is not None else None
+                    raw_row = next((b for b in live['rows'] if b['session'] == row['target']['session_id'] and b['block'] == row['target']['block_id']), {})
+                    row['scratchpad'] = raw_row.get('scratchpad', {})
+                    name = next((r['name'] for r in metadata.get('lifecycles', []) if r['target'] == row['target']), row['observation'].get('label'))
+                    questions = [r for seat in state['seats'] for r in folded(seat)[0] if r['from'] == name]
+                    row['question'] = max(questions, key=lambda r: r['at'])['body']['ask'] if questions else None
                     row["dashboard"] = dict(configured_name=item.get("name"), jobs_registry=registry,
                         lifecycle=next((r for r in metadata.get("lifecycles", []) if r["target"] == row["target"]), None),
                         last_call=next((c["at"] for c in metadata.get("calls", []) if row["target"]["block_id"] in c.get("ids", [])), None),
@@ -926,8 +933,13 @@ def board(a):
                 payload = dict(schema_version=1, kind="inbox_board", seat=seat, generation=generation, provenance="report")
                 rendered = render_inbox(seat, width)
             else:
+                a.dashboard = not a.json and not a.detail
                 payload = fleet_snapshot(a, state)
-                rendered = render_fleet(payload, width)
+                if a.detail or a.json:
+                    rendered = render_fleet(payload, width)
+                else:
+                    import teerex_dashboard
+                    rendered = '\n'.join(teerex_dashboard.fleet_lines(payload, teerex_dashboard.fleet_rows(payload, stamp()), stamp(), width))
             if a.json:
                 print(json.dumps(payload, ensure_ascii=False), flush=True)
             else:
@@ -1132,13 +1144,14 @@ def parser():
     q.add_argument("--hosts", help="comma-separated command hosts, max 16; unavailable hosts visible")
     q.add_argument("--teerex", help="absolute native CLI; supplied by compiled bridge")
     for v in ("inbox", "fleet"):
-        q = views.add_parser(v, description="Live fleet keys: arrows/j/k select; Enter focuses; p jobs-present+focus beside this dashboard (same server/session); o leaf-opens a recorded report/brief beside its agent; r refresh; / filter; q quit. Actions show native receipts; no auto-focus or close. --once output is unchanged." if v == "fleet" else None)
+        q = views.add_parser(v, description="Live fleet: current work and progress; Space scratchpad; a all history; i inspect; --detail legacy table. Keys: arrows/j/k select; Enter focuses; p jobs-present+focus beside this dashboard (same server/session); o leaf-opens a recorded report/brief beside its agent; r refresh; / filter; q quit. Actions show native receipts; no auto-focus or close. --once --json stays compatible; --once --detail retains the previous text." if v == "fleet" else None)
         common(q, v == "inbox")
         q.add_argument("--once", action="store_true", help="one bounded snapshot, including non-TTY capture")
         q.add_argument("--json", action="store_true")
         q.add_argument("--width", type=bounded_int(32, 160), default=80, metavar="32..160")
         q.add_argument("--interval-ms", type=bounded_int(500, 60000), default=2000, metavar="500..60000")
         if v == "fleet":
+            q.add_argument("--detail", action="store_true", help="show the full evidence table instead of the compact fleet")
             q.add_argument("--agents-registry", action="append", default=[], help="live TUI only: ABS for selected command hosts or repeat HOST=ABS; private lifecycle name/phase/document, never tokens/bodies")
             q.add_argument("--dashboard-session", help="exact dashboard session:UUID; default Rex pane environment, verified before presentation")
             q.add_argument("--dashboard-block", help="exact dashboard block:UUID; default Rex pane environment, verified before presentation")

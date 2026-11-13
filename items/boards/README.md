@@ -153,9 +153,9 @@ The current executable is pinned by the Zig bridge's `selfExePath`; Python-scrip
 - **Report:** recorded owner/purpose/state/detail and report age. Allowed states are `working`, `waiting_on_operator`, `idle`, `dead`, `completed`, `unknown`; even dead/completed remain **reports**, never process certification. Repeated reports reset report age; that is not measured duration of an internal task state. `hook_idle` is not death; `hook_error` is a report; immediate-child exit is not whole-tree death. Launch ACK tokens stay in the agents registry, not in this store.
 - **Inference:** `none`. No inference from quiet panes, expired deadlines, absent terminal rows, stale reports, or failed transport. Missing/unselected saved agents remain visible with observation unknown and their report separately retained. Every failed named host emits a visible source row; one-shot partial failure exits 1, never an all-host success. Configured names/host_id are expectations, not observed authentication.
 
-### Keyboard fleet dashboard (live text view)
+### Detailed fleet dashboard (`--detail`)
 
-`teerex boards fleet` is keyboard-driven when stdin/stdout are terminals. `--once` text/JSON and live `--json` keep their existing read-only paths and JSON shape; they do not acquire dashboard-only metadata. No selection or refresh focuses, moves, launches or closes anything.
+`teerex boards fleet --detail` retains the evidence dashboard when stdin/stdout are terminals. `--once --detail` text and `--json` keep their existing read-only paths and JSON shape; they do not acquire dashboard-only metadata. No selection or refresh focuses, moves, launches or closes anything.
 
 | Key | Explicit action |
 | --- | --- |
@@ -346,3 +346,24 @@ logs and synthetic joined episodes. CI runs it on both Linux and macOS lanes.
 
 
 `ask` terminal delivery uses the send status options: a seat-labelled target gets `ask/<card id>` in blocked/question state with the question line; `--resolve` clears that same child record. Delivery receipts retain `status_record`. Status is best effort and does not replace the decision history or delivery acknowledgement.
+
+## Compact fleet view
+
+`boards fleet` shows live, unfinished panes ordered by waiting on you, error,
+working, then idle. It reads each pane's optional Markdown scratchpad from
+`~/.local/state/teerex/scratch/<session-id>/<block-id>.md` on the probed host.
+Current work wraps in full at 60 columns; progress counts Done out of Now,
+To-do and Done. Waiting rows show the latest open decision from that agent,
+falling back to its blocked terminal status title. Ages use seconds, minutes,
+hours or days since the scratchpad update or terminal status change.
+
+Enter jumps with `surfaces focus`; Space toggles the selected scratchpad inline;
+`a` toggles all history; `i` toggles full evidence; arrows/j/k select; `q` quits.
+New waiting rows flash once. The installed Rex API13 exposes no activity badge
+method, so this view does not set a badge. Unavailable hosts are retained in JSON.
+
+`--detail` retains the previous evidence table and its filtering, presentation
+and document actions. `--once` uses the compact view; `--once --detail` gives the
+previous text snapshot. `--once --json` retains its existing schema and rows.
+Scratchpads are optional and bounded to 64 KiB; missing or unreadable files leave
+current work and progress blank. No scratchpad writes are performed by the board.
