@@ -105,6 +105,92 @@ class SurfacesTest(unittest.TestCase):
         for n, e in zip(actual, expected):
             self.assertAlmostEqual(n, e, places=6)
 
+    def rename_command(self, *target, label="renamed α ' $(literal)"):
+        return [BIN, "surfaces", "rename", "--socket", str(self.socket), "--session", self.session,
+                *target, "--label", label]
+
+    def test_rename_window_and_pane_read_back_labels_without_changing_focus(self):
+        pane = self.open("tab")["actual"]
+        initial = self.view()
+        focus = lambda view: (view["active_window_id"], {w["window_id"]: w.get("focused_block_id") for w in view["windows"]})
+        for flag, identity, label in (("--window", pane["window_id"], "seat α ' $(literal)"),
+                                      ("--pane", pane["block_id"], "pane α ' $(literal)")):
+            r, renamed = self.run_json(self.rename_command(flag, identity, label=label))
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            self.assertEqual(renamed["outcome"], "renamed_and_verified")
+            self.assertEqual(renamed["requested"]["label"], label)
+            self.assertEqual(renamed["actual"]["label"], label)
+            self.assertTrue(renamed["requested_label_verified"])
+            self.assertTrue(renamed["control_attempted"])
+            self.assertTrue(renamed["control_acknowledged"])
+            self.assertFalse(renamed["creation_attempted"])
+            self.assertFalse(renamed["focus_requested"])
+            self.assertFalse(renamed["retry_safe"])
+            self.assertEqual(focus(self.view()), focus(initial))
+        actual = self.inspect(pane["block_id"])
+        self.assertEqual(actual["label"], "pane α ' $(literal)")
+        self.assertEqual(actual["window_label"], "seat α ' $(literal)")
+        self.assertEqual(actual["rect"], pane["rect"])
+        self.assertEqual(len(self.view()["windows"]), len(initial["windows"]))
+
+    def test_rename_usage_and_unknown_target_do_not_mutate(self):
+        before = self.view()
+        window = before["windows"][0]["window_id"]
+        for target, label in (([], "valid"), (["--window", window, "--pane", self.anchor], "valid"),
+                              (["--window", "window:bad"], "valid"), (["--pane", "block:bad"], "valid"),
+                              (["--window", window], ""), (["--pane", self.anchor], "bad\nlabel"),
+                              (["--pane", self.anchor], "α" * 65),
+                              (["--window", window, "--layout", "tab"], "valid")):
+            r = subprocess.run(self.rename_command(*target, label=label), env=dict(self.env, PATH="/missing"),
+                               capture_output=True, text=True, timeout=5)
+            self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+            self.assertEqual(r.stdout, "")
+        r, refused = self.run_json(self.rename_command("--window", "window:00000000-0000-0000-0000-000000000000"))
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertEqual(refused["outcome"], "refused")
+        self.assertEqual(refused["failure_reason"], "window_not_found")
+        self.assertFalse(refused["control_attempted"])
+        self.assertEqual(self.view(), before)
+
+    def test_rename_refuses_missing_server_method_before_mutation(self):
+        before = self.view()
+        # Simulate an older server's advertised methods in the local Lua controller.
+        self.shim("import subprocess,sys\n"
+                  "args=sys.argv[1:]\n"
+                  "i=args.index('-e')+1\n"
+                  "args[i]=args[i].replace('local help=rex.call(\"help.all\")','local help={methods={}}')\n"
+                  f"sys.exit(subprocess.run([{self.rex!r},*args]).returncode)\n")
+        r, refused = self.run_json(self.rename_command("--pane", self.anchor))
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertEqual(refused["outcome"], "refused")
+        self.assertEqual(refused["failure_reason"], "rename_label_method_unavailable")
+        self.assertFalse(refused["control_attempted"])
+        self.assertEqual(self.view(), before)
+
+    def test_rename_normalized_label_mismatch_and_lost_receipt_stay_non_success(self):
+        r, mismatch = self.run_json(self.rename_command("--pane", self.anchor, label="  trimmed α  "))
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertEqual(mismatch["outcome"], "label_mismatch")
+        self.assertEqual(mismatch["requested"]["label"], "  trimmed α  ")
+        self.assertEqual(mismatch["actual"]["label"], "trimmed α")
+        self.assertFalse(mismatch["requested_label_verified"])
+        self.assertEqual(mismatch["failure_reason"], "requested_label_not_verified")
+        before = self.view()
+        self.shim("import json,subprocess,sys\n"
+                  f"r=subprocess.run([{self.rex!r},*sys.argv[1:]],capture_output=True,check=True)\n"
+                  "for line in r.stdout.splitlines():\n"
+                  " if json.loads(line)['event']=='attempt':sys.stdout.buffer.write(line+b'\\n')\n"
+                  "sys.stdout.flush();sys.exit(77)\n")
+        r, lost = self.run_json(self.rename_command("--pane", self.anchor, label="actual rename"))
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertEqual(lost["outcome"], "uncertain")
+        self.assertTrue(lost["control_attempted"])
+        self.assertFalse(lost["creation_attempted"])
+        self.assertFalse(lost["retry_safe"])
+        self.assertFalse(lost["requested_label_verified"])
+        self.assertEqual(self.view()["windows"][0]["layers"][0]["blocks"][0]["label"], "actual rename")
+        self.assertEqual(len(self.view()["windows"]), len(before["windows"]))
+
     def test_four_asymmetric_directions_and_nested_readback(self):
         # Explicit independent rectangles catch confusing NEW share with BEFORE share.
         expected = {"right": [.77, 0, .23, 1], "left": [0, 0, .23, 1],
@@ -487,7 +573,7 @@ class SurfacesTest(unittest.TestCase):
         self.assertEqual(r.returncode, 1)
         self.assertFalse((self.work / "missing.sock").exists())
         self.assertEqual(v["outcome"], "uncertain")
-        for args in [["--help"], ["open", "--help"], ["inspect", "--help"], ["palette", "--help"]]:
+        for args in [["--help"], ["open", "--help"], ["inspect", "--help"], ["rename", "--help"], ["palette", "--help"]]:
             r = subprocess.run([BIN, "surfaces", *args], capture_output=True, text=True, env=self.env)
             self.assertEqual(r.returncode, 0)
             self.assertIn("NEW pane share", r.stdout)

@@ -6,6 +6,9 @@ const usage =
     \\         --label TEXT [--anchor block:UUID] [--direction right|left|up|down] [--ratio N]
     \\         [--bounds '[x,y,w,h]'] [--cwd ABS] [--timeout-ms N] -- ARGV...
     \\       teerex surfaces inspect|focus|close --socket ABS --session session:UUID --pane block:UUID [--timeout-ms N]
+    \\       teerex surfaces rename --socket ABS --session session:UUID (--window window:UUID | --pane block:UUID)
+    \\         --label TEXT [--timeout-ms N]
+    \\Rename requires the server-advertised label method; fresh label/focus readback, no focus request or retry.
     \\       teerex surfaces move --socket ABS --session session:UUID --pane block:UUID --anchor block:UUID
     \\         [--direction right|left|up|down] [--ratio N] [--focus yes|no] [--timeout-ms N]
     \\Move preserves the same attached terminal; no creation. NEW pane share; focus defaults no and refuses
@@ -45,6 +48,7 @@ const SurfaceResult = struct {
     block_absence_verified: bool = false,
     creation_attempted: bool = false,
     requested_geometry_verified: bool = false,
+    requested_label_verified: bool = false,
     failure_reason: ?[]const u8 = null,
 };
 const Frame = struct { event: []const u8, result: ?SurfaceResult = null, created: std.json.Value = .null };
@@ -167,12 +171,13 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
         return 0;
     }
     if (args.len >= 2 and std.mem.eql(u8, args[0], "palette") and std.mem.eql(u8, args[1], "install")) return installPalette(allocator, args[2..]);
-    if (args.len == 0) return usageError("open, inspect, focus, close, move or palette is required");
+    if (args.len == 0) return usageError("open, inspect, rename, focus, close, move or palette is required");
     const inspect = std.mem.eql(u8, args[0], "inspect");
     const focus = std.mem.eql(u8, args[0], "focus");
     const close = std.mem.eql(u8, args[0], "close");
     const move = std.mem.eql(u8, args[0], "move");
-    const pane_control = focus or close or move;
+    const rename = std.mem.eql(u8, args[0], "rename");
+    const pane_control = focus or close or move or rename;
     const palette = std.mem.eql(u8, args[0], "palette");
     if (!inspect and !pane_control and !palette and !std.mem.eql(u8, args[0], "open")) return usageError("unknown subcommand");
     if (args.len == 2 and std.mem.eql(u8, args[1], "--help")) {
@@ -180,7 +185,7 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
         return 0;
     }
     var options: std.StringHashMap([]const u8) = .init(allocator);
-    const allowed = [_][]const u8{ "--socket", "--session", "--anchor", "--pane", "--layout", "--direction", "--ratio", "--bounds", "--label", "--cwd", "--timeout-ms", "--file", "--name", "--title", "--focus" };
+    const allowed = [_][]const u8{ "--socket", "--session", "--anchor", "--pane", "--window", "--layout", "--direction", "--ratio", "--bounds", "--label", "--cwd", "--timeout-ms", "--file", "--name", "--title", "--focus" };
     var i: usize = 1;
     while (i < args.len and !std.mem.eql(u8, args[i], "--")) : (i += 2) {
         if (i + 1 >= args.len) return usageError("every option needs a value");
@@ -196,6 +201,8 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
     const session = options.get("--session");
     const anchor = options.get("--anchor");
     const pane = options.get("--pane");
+    const window = options.get("--window");
+    if (window != null and !rename) return usageError("--window is rename-only");
     const layout: ?[]const u8 = if (move) "tiled" else options.get("--layout");
     const label = options.get("--label");
     const cwd = options.get("--cwd");
@@ -219,7 +226,13 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
     var ratio: ?f64 = null;
     var bounds: ?[4]f64 = null;
     var command: ?[]const []const u8 = null;
-    if (inspect or focus or close) {
+    if (rename) {
+        if ((pane == null) == (window == null)) return usageError("rename requires exactly one of --window or --pane");
+        if (pane) |v| if (!fullId(v, "block:")) return usageError("full lowercase --pane is required");
+        if (window) |v| if (!fullId(v, "window:")) return usageError("full lowercase --window is required");
+        if (label == null or !labelValid(label.?)) return usageError("1..128 byte non-control UTF-8 label is required");
+        if (i != args.len or options.count() > 5 or anchor != null or layout != null or cwd != null or options.contains("--direction") or options.contains("--ratio") or options.contains("--bounds")) return usageError("rename takes only socket, session, window or pane, label and timeout");
+    } else if (inspect or focus or close) {
         if (pane == null or !fullId(pane.?, "block:")) return usageError("full lowercase --pane is required");
         if (i != args.len or options.count() > 4 or anchor != null or layout != null or label != null or cwd != null or options.contains("--direction") or options.contains("--ratio") or options.contains("--bounds")) return usageError("inspect/focus/close take only socket, session, pane and timeout");
     } else {
@@ -255,7 +268,7 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
             for (command.?) |v| if (!std.unicode.utf8ValidateSlice(v)) return usageError("argv must be UTF-8");
         }
     }
-    const request = .{ .operation = if (inspect) "inspect" else if (focus) "focus" else if (close) "close" else if (move) "move" else "open", .focus = focus or move_focus, .session_id = session, .block_id = pane, .anchor = anchor, .layout = layout, .label = label, .direction = direction, .ratio = ratio, .bounds = bounds, .cwd = cwd, .argv = command };
+    const request = .{ .operation = if (inspect) "inspect" else if (focus) "focus" else if (close) "close" else if (move) "move" else if (rename) "rename" else "open", .focus = focus or move_focus, .session_id = session, .block_id = pane, .window_id = window, .anchor = anchor, .layout = layout, .label = label, .direction = direction, .ratio = ratio, .bounds = bounds, .cwd = cwd, .argv = command };
     const encoded = try std.json.Stringify.valueAlloc(allocator, request, .{ .emit_null_optional_fields = false });
     if (encoded.len > 24000) return usageError("encoded arguments exceed 24000 bytes");
     if (palette) {
@@ -294,9 +307,9 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
     const deadline = transport != null and transport.?.deadline_exceeded;
     const ok = transport != null and !transport.?.stopped and transport.?.term == .Exited and transport.?.term.Exited == 0 and c.pending.items.len == 0 and c.result != null;
     const r = c.result orelse SurfaceResult{ .outcome = "uncertain" };
-    const success = ok and sig == 0 and ((r.actual == .object and (std.mem.eql(u8, r.outcome, "created_and_verified") and r.requested_geometry_verified and r.created == .object or std.mem.eql(u8, r.outcome, "inspected") and inspect or std.mem.eql(u8, r.outcome, "focused_and_verified") and focus and r.control_acknowledged or std.mem.eql(u8, r.outcome, "moved_and_verified") and move and r.control_acknowledged and r.requested_geometry_verified and r.move_receipt == .object and (!move_focus or r.focus_acknowledged))) or (close and std.mem.eql(u8, r.outcome, "closed_and_absent") and r.control_acknowledged and r.block_absence_verified));
-    const reported_success = std.mem.eql(u8, r.outcome, "created_and_verified") or std.mem.eql(u8, r.outcome, "inspected") or std.mem.eql(u8, r.outcome, "focused_and_verified") or std.mem.eql(u8, r.outcome, "closed_and_absent") or std.mem.eql(u8, r.outcome, "moved_and_verified");
+    const success = ok and sig == 0 and ((r.actual == .object and (std.mem.eql(u8, r.outcome, "created_and_verified") and r.requested_geometry_verified and r.created == .object or std.mem.eql(u8, r.outcome, "renamed_and_verified") and rename and r.control_acknowledged and r.requested_label_verified or std.mem.eql(u8, r.outcome, "inspected") and inspect or std.mem.eql(u8, r.outcome, "focused_and_verified") and focus and r.control_acknowledged or std.mem.eql(u8, r.outcome, "moved_and_verified") and move and r.control_acknowledged and r.requested_geometry_verified and r.move_receipt == .object and (!move_focus or r.focus_acknowledged))) or (close and std.mem.eql(u8, r.outcome, "closed_and_absent") and r.control_acknowledged and r.block_absence_verified));
+    const reported_success = std.mem.eql(u8, r.outcome, "renamed_and_verified") or std.mem.eql(u8, r.outcome, "created_and_verified") or std.mem.eql(u8, r.outcome, "inspected") or std.mem.eql(u8, r.outcome, "focused_and_verified") or std.mem.eql(u8, r.outcome, "closed_and_absent") or std.mem.eql(u8, r.outcome, "moved_and_verified");
     const outcome = if (sig != 0) "cancel_requested" else if (deadline) "deadline_exceeded" else if (ok and (!reported_success or success)) r.outcome else "uncertain";
-    try writeJson(allocator, .{ .schema_version = 1, .kind = "surface_result", .target = .{ .server = endpoint, .session_id = session.? }, .requested = request, .source = r.source, .created = if (r.created != .null) r.created else c.created, .actual = r.actual, .previous = r.previous, .previous_anchor = r.previous_anchor, .move_receipt = r.move_receipt, .focus_acknowledged = r.focus_acknowledged, .outcome = outcome, .creation_attempted = !pane_control and c.attempt, .control_attempted = pane_control and c.attempt, .control_acknowledged = r.control_acknowledged, .block_absence_verified = ok and r.block_absence_verified, .close_scope = "rex_block_absence_not_descendant_process_death", .attempt_evidence = "received_local_frame_not_server_dispatch_proof", .requested_geometry_verified = success and r.requested_geometry_verified, .failure_reason = failure orelse r.failure_reason orelse if (!ok or reported_success and !success) @as(?[]const u8, "rex_transport_incomplete") else null, .backend_stderr_base64 = try encodedDiagnostic(allocator, if (transport) |v| v.stderr else ""), .retry_safe = false, .automatic_close = false, .focus_requested = focus or move_focus, .close_requested = close, .geometry_units = "window_fraction", .painted_visibility = "not_assessed", .program_readiness = "not_assessed", .timeout_ms = budget });
+    try writeJson(allocator, .{ .schema_version = 1, .kind = "surface_result", .target = .{ .server = endpoint, .session_id = session.? }, .requested = request, .source = r.source, .created = if (r.created != .null) r.created else c.created, .actual = r.actual, .previous = r.previous, .previous_anchor = r.previous_anchor, .move_receipt = r.move_receipt, .focus_acknowledged = r.focus_acknowledged, .outcome = outcome, .creation_attempted = !pane_control and c.attempt, .control_attempted = pane_control and c.attempt, .control_acknowledged = r.control_acknowledged, .block_absence_verified = ok and r.block_absence_verified, .close_scope = "rex_block_absence_not_descendant_process_death", .attempt_evidence = "received_local_frame_not_server_dispatch_proof", .requested_geometry_verified = success and r.requested_geometry_verified, .requested_label_verified = success and r.requested_label_verified, .failure_reason = failure orelse r.failure_reason orelse if (!ok or reported_success and !success) @as(?[]const u8, "rex_transport_incomplete") else null, .backend_stderr_base64 = try encodedDiagnostic(allocator, if (transport) |v| v.stderr else ""), .retry_safe = false, .automatic_close = false, .focus_requested = focus or move_focus, .close_requested = close, .geometry_units = "window_fraction", .painted_visibility = "not_assessed", .program_readiness = "not_assessed", .timeout_ms = budget });
     return if (sig != 0) 128 + sig else if (deadline) 124 else if (success) 0 else 1;
 }

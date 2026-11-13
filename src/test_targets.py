@@ -78,6 +78,16 @@ class TargetsTest(unittest.TestCase):
         self.assertEqual(json.loads(self.output.read_text()),
                          ["--rex", self.host["rex"], "run-visible", "--socket", self.host["socket"], *command[1:]])
 
+    def test_named_surface_rename_routes_exact_target_and_literal_label(self):
+        for target in (("--window", "window:12345678-1234-1234-1234-123456789abc"),
+                       ("--pane", "block:abcdef12-1234-1234-1234-123456789abc")):
+            command = ["surfaces", "rename", "--session", "session:12345678-1234-1234-1234-123456789abc",
+                       *target, "--label", "seat α ' $(literal)"]
+            result = self.call("--config", str(self.config), "--host", "hive", *command)
+            self.assertEqual(result.returncode, 7, result.stderr)
+            self.assertEqual(json.loads(self.output.read_text()),
+                             ["--rex", self.host["rex"], "surfaces", "rename", "--socket", self.host["socket"], *command[2:]])
+
     def test_nested_leaves_receive_only_their_supported_selectors(self):
         socket = ["--socket", self.host["socket"]]
         store = ["--store", self.host["store"]]
@@ -90,7 +100,7 @@ class TargetsTest(unittest.TestCase):
                 cases += [([*prefix, verb, op], target) for op in operations]
             cases += [([*prefix, "inbox"], target), ([*prefix, "fleet"], store), ([*prefix, "ask"], target)]
         cases += [(["boards", "probe"], socket), (["boards", "try-route"], target)]
-        cases += [(["surfaces", op], socket) for op in ("open", "inspect", "move", "focus", "close")]
+        cases += [(["surfaces", op], socket) for op in ("open", "inspect", "rename", "move", "focus", "close")]
         cases += [(["surfaces", "palette"], []), (["surfaces", "palette", "install"], socket)]
         cases += [(["jobs", op], [] if op == "list" else socket)
                   for op in ("list", "track", "inspect", "adopt", "present", "forget")]

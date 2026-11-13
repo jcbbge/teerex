@@ -15,7 +15,7 @@ PATH_FIELDS = ("home", "socket", "rex", "teerex", "store")
 # no Rex target; board state/rendering still needs its selected command-host store.
 SELECTORS = {**{(verb,): ("socket",) for verb in
                 ("observe", "watch", "spawn", "run", "run-visible", "doctor", "offstage", "snapshot", "restore", "update")},
-             **{("surfaces", op): ("socket",) for op in ("open", "inspect", "move", "focus", "close")},
+             **{("surfaces", op): ("socket",) for op in ("open", "inspect", "rename", "move", "focus", "close")},
              ("surfaces", "palette", "install"): ("socket",),
              **{("adapters", op): ("socket",) for op in ("generate", "call")},
              **{("jobs", op): ("socket",) for op in ("track", "inspect", "adopt", "present", "forget")},

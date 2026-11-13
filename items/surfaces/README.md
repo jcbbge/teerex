@@ -9,7 +9,8 @@ Operators and agents placing an actual terminal program in an explicitly selecte
 ## What
 
 - `surfaces open`: a labeled tiled pane beside an anchor, a floating layer in the anchor's window, or a new tab. The program starts already attached to its window; no detached intermediate.
-- `surfaces inspect`: fresh actual geometry, label, host ID and focus/zoom state without changing them.
+- `surfaces inspect`: fresh actual geometry, pane `label`, `window_label`, host ID and focus/zoom state without changing them.
+- `surfaces rename` (unreleased source): rename an existing window/tab or relabel an attached terminal pane by exact address, with fresh label and unchanged-focus verification.
 - `surfaces move`: relocate the **same existing attached terminal** beside an attached anchor, including across tabs in the same session; no new program or replacement pane. Explicit focus intent and fresh split/identity readback are required.
 - `surfaces focus`: explicitly select the given pane and its window, then verify that focus in a new view. A minimized layer refuses rather than silently restoring it.
 - `surfaces close`: explicitly close the given terminal block, including a window's last pane, then verify its absence from both `session.view` and `session.list_blocks`. This is not proof of all descendant or SSH-remote processes dying.
@@ -59,6 +60,25 @@ teerex surfaces close --socket "$SOCKET" --session "$SESSION" --pane "$CREATED_B
 Tiled defaults to `right` and a new-pane share of 1/3. `--ratio` always means the **new pane's share of its anchor's previous rectangle**. Thus right/down invert it when sending Rex's BEFORE share; left/up do not. Ratios must be finite, strictly between 0 and 1. Asymmetric examples matter: a new right-hand share of 0.23 means actual `rect:[0.77,0,0.23,1]` in an initially full tiled layer, not 77% for the new pane. Nested splits subdivide the current anchor rectangle. Tiled refuses a floating or minimized anchor rather than producing a different kind of placement.
 
 Float requires explicit `[x,y,width,height]` fractions fitting inside the window, positive width/height, and a normal attached terminal anchor to identify the window. A tab requires an existing session, which may be empty, and forbids an anchor, bounds, direction and ratio. Direction/ratio apply only to tiled. Cwd, if supplied, must be absolute; if omitted Rex chooses its terminal default. Cwd existence is checked by Rex on the program host, not guessed on the CLI host. Argv travels as an array, never a shell-interpolated command string. Programs that exit remain attached for inspection.
+
+### Rename a tab or relabel a pane (unreleased source)
+
+```sh
+teerex surfaces rename --socket "$SOCKET" --session "$SESSION" --window "$WINDOW" --label seat
+teerex surfaces rename --socket "$SOCKET" --session "$SESSION" --pane "$BLOCK" --label 'review requested'
+teerex surfaces inspect --socket "$SOCKET" --session "$SESSION" --pane "$BLOCK"
+# The selected command host supplies its configured socket and Rex executable:
+teerex --config /absolute/hosts.json --host hive surfaces rename \
+  --session "$SESSION" --window "$WINDOW" --label seat
+```
+
+Supply exactly one canonical lowercase `window:UUID` or `block:UUID`; both or neither is a usage error. Labels use the same validation as open: 1–128 UTF-8 bytes, no control characters. Rename takes only socket, session, window/pane, label and optional `--timeout-ms` (default 5000, range 100–60000). It creates no terminal, requests no focus and makes one label call without retry. Unknown windows refuse with `window_not_found`; missing or detached terminal panes refuse with `pane_not_attached_terminal` before mutation.
+
+Within the existing API10–13 surfaces guard, rename checks the connected server's `help.all.methods` for `session.set_window_label` or `session.set_block_label` before attempting that operation. Missing or unavailable capability evidence refuses with `rename_label_method_unavailable`; an API revision alone is not assumed to imply either method. Schemas and trimming behavior were checked with `rex api describe session.set_window_label --json` and `rex api describe session.set_block_label --json`; this local rename validation exercises actual Linux API13, not historical builds.
+
+Success is exit 0 and `outcome=renamed_and_verified`, with `requested.label`, fresh `actual.label`, `requested_label_verified=true` and `control_acknowledged=true`. `previous` retains the label before the call. A new `session.view` verifies the exact target label, active window and each existing window's focused pane. Pane inspection includes both its `label` and containing `window_label`. Rex trims leading/trailing whitespace; if the actual label differs from the exact request, rename reports `label_mismatch` / `requested_label_not_verified` with nonzero exit and both values, even though the label call took effect. Choose a label without surrounding whitespace for exact verification.
+
+A lost receipt, unavailable readback or concurrent focus change never reports verified success. `control_attempted` records only the locally received pre-call marker; missing evidence is not proof nothing changed. `retry_safe=false`, no rollback and no automatic retry apply to every result. Inspect the exact target after uncertainty before another mutation. Published alpha.5 assets are unchanged.
 
 ### Move an existing terminal beside an anchor
 

@@ -35,7 +35,7 @@ local function surface(a, emit)
                         if not rect then return end
                         return {session_id=view.session_id,revision=view.revision,block_id=bid,window_id=w.window_id,
                             layer_id=l.layer_id,layer_kind=l.kind,layer_state=l.state or "normal",layer_bounds=l.bounds,
-                            rect=rect,split_path=path,label=b.label,host_id=b.host_id,
+                            rect=rect,split_path=path,label=b.label,window_label=w.label,host_id=b.host_id,
                             active_window_id=view.active_window_id,in_active_window=view.active_window_id==w.window_id,
                             focused_block_id=w.focused_block_id,zoomed_block_id=w.zoomed_block_id,
                             attached=true}, w, l
@@ -46,6 +46,49 @@ local function surface(a, emit)
     end
     local before=rex.call("session.view",{session_id=a.session_id})
     if type(before) ~= "table" or before.session_id ~= a.session_id then return fail("session_unavailable") end
+    if a.operation == "rename" then
+        local method=a.window_id and "session.set_window_label" or "session.set_block_label"
+        -- help.all describes the connected server, not the controller's API catalog.
+        local help=rex.call("help.all")
+        local available=false
+        if type(help)=="table" then
+            for _,m in ipairs(help.methods or {}) do if m.name==method then available=true end end
+        end
+        if not available then return fail("rename_label_method_unavailable") end
+        local function target(view)
+            if a.block_id then return locate(view,a.block_id) end
+            for _,w in ipairs(view.windows or {}) do
+                if w.window_id==a.window_id then
+                    return {session_id=view.session_id,window_id=w.window_id,label=w.label,
+                        revision=view.revision,active_window_id=view.active_window_id,focused_block_id=w.focused_block_id}
+                end
+            end
+        end
+        result.previous=target(before)
+        if not result.previous then return fail(a.window_id and "window_not_found" or "pane_not_attached_terminal") end
+        result.control_attempted=true
+        result.outcome="uncertain"
+        progress({event="attempt"})
+        local receipt=rex.call(method,{session_id=a.session_id,window_id=a.window_id,block_id=a.block_id,label=a.label})
+        if type(receipt)~="table" or type(receipt.revision)~="number" then return fail("rename_receipt_unavailable") end
+        result.control_acknowledged=true
+        local after=rex.call("session.view",{session_id=a.session_id})
+        if type(after)~="table" or after.session_id~=a.session_id then return fail("rename_readback_unavailable") end
+        result.actual=target(after)
+        if not result.actual then return fail("rename_target_readback_unavailable") end
+        if before.active_window_id~=after.active_window_id then return fail("rename_focus_changed") end
+        for _,old in ipairs(before.windows or {}) do
+            local unchanged=false
+            for _,w in ipairs(after.windows or {}) do
+                if w.window_id==old.window_id and w.focused_block_id==old.focused_block_id then unchanged=true end
+            end
+            if not unchanged then return fail("rename_focus_changed") end
+        end
+        result.requested_label_verified=result.actual.label==a.label
+        result.outcome=result.requested_label_verified and "renamed_and_verified" or "label_mismatch"
+        if not result.requested_label_verified then result.failure_reason="requested_label_not_verified" end
+        return result
+    end
     if a.operation == "move" then
         local previous=locate(before,a.block_id)
         local anchor=locate(before,a.anchor)
