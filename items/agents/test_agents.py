@@ -73,6 +73,27 @@ if protocol:
             report_line=protocol.split('Supply report bytes on stdin then EOF using:\n',1)[1].split('\n',1)[0]
             result=subprocess.run(shlex.split(report_line),input='remote direct reply β\n\n',capture_output=True,text=True)
             with out.open('a') as f: f.write(json.dumps({"event":"remote-reply","code":result.returncode,"stdout":result.stdout})+'\n')
+if behavior == "codex-hook":
+    callback=json.loads(next(a[len('notify='):] for a in args if a.startswith('notify=')))
+    result=subprocess.run(callback+[json.dumps({"type":"agent-turn-complete","last-assistant-message":"Codex settled β"})],capture_output=True,text=True)
+    with out.open('a') as f: f.write(json.dumps({"event":"codex-hook","code":result.returncode,"stdout":result.stdout})+'\n')
+if behavior == "pi-hook":
+    import base64
+    extension=Path(args[args.index('--extension')+1])
+    script="""
+const handlers={};
+const mod=await import('data:text/javascript;base64,'+process.argv[1]);
+mod.default({on:(name,handler)=>{handlers[name]=handler;}});
+const ctx={sessionManager:{getBranch:()=>[{type:'message',message:{role:'assistant',content:[{type:'text',text:'Pi settled β'}],errorMessage:'Pi synthetic failure'}}]}};
+await handlers.agent_before_settle({outcome:'completed'});
+await handlers.agent_settled({aborted:false},ctx);
+await handlers.agent_before_settle({outcome:'error'});
+await handlers.agent_settled({aborted:false},ctx);
+"""
+    result=subprocess.run(['node','--input-type=module','-e',script,base64.b64encode(extension.read_bytes()).decode()],capture_output=True,text=True)
+    with out.open('a') as f: f.write(json.dumps({"event":"pi-hook","code":result.returncode,"stderr":result.stderr})+'\n')
+if behavior == "human-exit":
+    sys.exit(0)
 buf=b""
 while True:
     part=os.read(0,65536)
@@ -320,6 +341,7 @@ class AgentsTest(unittest.TestCase):
         self.assertEqual(packet["outcome"], "protocol_ack_timeout")
         state = self.record(packet["launch_id"])
         self.assertFalse(state["brief_attempted"])
+        wait_for(lambda: self.program_state(state["target"]["block_id"]) == "working")
         def acknowledge(token, block):
             return self.run_cli("ack", "--registry", str(self.registry), "--launch-id", state["launch_id"],
                                 "--token", token, "--session", self.session, "--block", block)
@@ -1085,6 +1107,127 @@ class AgentsTest(unittest.TestCase):
                           ({"Signal": sig}, {"Exited": 128 + sig}))
             os.kill(events(self.starter_log)[0]["pid"], 0)
 
+    def program_state(self, block):
+        result = json.loads(subprocess.check_output(self.base + ["block", "call", "-s", self.session, "-b", block,
+                                                                "program_status", "{}"], timeout=5))
+        return next((r["state"] for r in result.get("records", []) if r.get("app") == "teerex-agent"), None)
+
+    def test_codex_adapter_validation_conflicts_and_callback_failure_are_visible(self):
+        log = self.work / "callback.json"
+        command = [sys.executable, "-c", "import sys; from pathlib import Path; Path(" + repr(str(log)) + ").write_text(sys.stdin.read()); sys.exit(23)"]
+        common = ["hook", "--harness", "codex", "--command-json", json.dumps(command), "--payload"]
+        for payload in ({"type": "unrecognized"}, {"type": "agent-turn-complete", "last-assistant-message": []},
+                        {"type": "agent-turn-complete", "last-assistant-message": "x" * 32768}):
+            p, result = self.run_cli(*common, json.dumps(payload))
+            self.assertEqual(p.returncode, 1, p.stdout + p.stderr)
+            self.assertFalse(log.exists())
+        p, _ = self.run_cli(*common, json.dumps({"type": "agent-turn-complete", "last-assistant-message": "bounded β"}))
+        self.assertEqual(p.returncode, 23, p.stdout + p.stderr)
+        self.assertEqual(json.loads(log.read_text()), dict(hook_event_name="Stop", last_assistant_message="bounded β"))
+        for option in ("notify=[]", "--config=notify=[]", "-cnotify=[]"):
+            self.settings["profiles"]["probe"].update(harness="codex", hook_events=True, standing_flags=[option])
+            p, result = self.launch()
+            self.assertEqual(p.returncode, 1, p.stdout + p.stderr)
+            self.assertEqual(result["failure_reason"], "profile_notify_conflict")
+        self.assertEqual(list(self.registry.glob("agents-*.json")), [])
+
+    def test_codex_notify_adapter_and_osc_idle_then_error_exit(self):
+        self.settings["profiles"]["probe"].update(harness="codex", hook_events=True)
+        p, launched = self.launch(behavior="codex-hook")
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        launch_id = launched["launch_id"]
+        wait_for(lambda: any(v["event"] == "codex-hook" for v in events(self.worker_log)))
+        callback = next(v for v in events(self.worker_log) if v["event"] == "codex-hook")
+        self.assertEqual(callback["code"], 0, callback)
+        state = self.record(launch_id)
+        self.assertEqual(state["last_hook"]["kind"], "Stop")
+        self.assertEqual(state["last_hook"]["text"], "Codex settled β")
+        self.assertIsNone(state["immediate_child_term"])
+        block = state["target"]["block_id"]
+        wait_for(lambda: self.program_state(block) == "idle")
+        self.assertEqual(len([v for v in events(self.starter_log) if v["event"] == "input" and "Codex settled" in v["payload"]]), 1)
+        os.kill(next(v["pid"] for v in events(self.worker_log) if v["event"] == "started"), signal.SIGTERM)
+        wait_for(lambda: self.record(launch_id).get("immediate_child_term") is not None)
+        wait_for(lambda: self.program_state(block) == "error")
+
+    def test_pi_extension_settled_success_and_failure_reports(self):
+        self.settings["profiles"]["probe"].update(harness="pi", hook_events=True)
+        p, launched = self.launch(behavior="pi-hook")
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        wait_for(lambda: any(v["event"] == "pi-hook" for v in events(self.worker_log)))
+        callback = next(v for v in events(self.worker_log) if v["event"] == "pi-hook")
+        self.assertEqual(callback["code"], 0, callback)
+        state = self.record(launched["launch_id"])
+        self.assertEqual(state["last_hook"]["kind"], "StopFailure")
+        self.assertEqual(state["last_hook"]["text"], "Pi synthetic failure")
+        self.assertIsNone(state["immediate_child_term"])
+        wait_for(lambda: self.program_state(state["target"]["block_id"]) == "error")
+        inputs = [v["payload"] for v in events(self.starter_log) if v["event"] == "input"]
+        self.assertTrue(any("Pi settled β" in v for v in inputs), inputs)
+        self.assertTrue(any("Pi synthetic failure" in v for v in inputs), inputs)
+
+    def test_pi_extension_channel_uses_only_grant_directory_and_cleans_up(self):
+        self.enable_channel()
+        self.test_pi_extension_settled_success_and_failure_reports()
+        started = next(v for v in events(self.worker_log) if v["event"] == "started")
+        extension = Path(started["argv"][started["argv"].index("--extension") + 1])
+        self.assertEqual(extension.parent.parent, self.delivery)
+        self.assertTrue(extension.exists())
+        self.assertNotIn("AGENT_REGISTRY", started["env"])
+        os.kill(started["pid"], signal.SIGTERM)
+        wait_for(lambda: not extension.parent.exists())
+
+    def test_human_shell_replaces_function_tracks_without_starter_or_prompt(self):
+        self.settings["profiles"]["probe"]["argv"][-1] = "human-exit"
+        for key in ("starter_session", "starter_block"):
+            self.settings["defaults"].pop(key)
+        self.config.write_text(json.dumps(self.settings))
+        p, _ = self.run_cli("shell", "--config", str(self.config))
+        self.assertEqual(p.returncode, 0, p.stdout)
+        launched = subprocess.run(["/bin/bash", "-c", "probe() { return 99; };\n" + p.stdout + "\nprobe"],
+                                  capture_output=True, text=True, env=self.env, timeout=15)
+        self.assertEqual(launched.returncode, 0, launched.stdout + launched.stderr)
+        receipt = json.loads(launched.stdout)
+        self.assertEqual(receipt["outcome"], "human_launched")
+        wait_for(lambda: self.record(receipt["launch_id"]).get("immediate_child_term") is not None)
+        state = self.record(receipt["launch_id"])
+        self.assertTrue(state["tracked"])
+        self.assertIsNone(state["starter"])
+        self.assertIsNone(state["report_to"])
+        self.assertFalse(state["protocol_acknowledged"])
+        self.assertFalse(state["brief_attempted"])
+        self.assertEqual(state["immediate_child_term"], {"Exited": 0})
+        started = next(v for v in events(self.worker_log) if v["event"] == "started")
+        self.assertEqual(started["argv"], ["--explicit-standing-flag"])
+        self.assertFalse(any(v["event"] == "protocol_argument" for v in events(self.worker_log)))
+        wait_for(lambda: self.program_state(state["target"]["block_id"]) == "done")
+        p = subprocess.run([BIN, "jobs", "list", "--registry", str(self.registry)], capture_output=True, text=True, env=self.env, timeout=15)
+        self.assertEqual(p.returncode, 0, p.stdout)
+        self.assertIn(state["target"]["block_id"], p.stdout)
+        self.assertFalse(any(v["event"] == "input" for v in events(self.starter_log)))
+
+    def test_human_remote_route_quotes_config_and_runs_once(self):
+        ssh = self.work / "ssh"
+        log = self.work / "ssh.json"
+        ssh.write_text("#!" + sys.executable + "\nimport json,sys\nfrom pathlib import Path\nPath(" + repr(str(log)) + ").write_text(json.dumps(sys.argv[1:]))\n")
+        ssh.chmod(0o700)
+        targets = self.work / "targets.json"
+        targets.write_text(json.dumps(dict(schema_version=1, hosts=dict(hive=dict(
+            host_id="hive", transport="ssh", platform="linux-x86_64", home="/remote", socket="/remote/rex.sock",
+            rex="/remote/rex", teerex="/remote/teerex", store="/remote/store", address="jrg@hive", port=22,
+            identity_file="/fixture/key", known_hosts="/fixture/known_hosts")))))
+        self.settings["human_route"] = dict(config=str(targets), host="hive", profiles="/remote/config 'quoted'.json")
+        self.config.write_text(json.dumps(self.settings))
+        self.env["PATH"] = str(self.work) + os.pathsep + self.env["PATH"]
+        p, _ = self.run_cli("human", "--config", str(self.config), "--profile", "probe")
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        argv = json.loads(log.read_text())
+        self.assertIn("-tt", argv)
+        self.assertEqual(argv[-2], "jrg@hive")
+        self.assertIn("StrictHostKeyChecking=yes", argv)
+        self.assertEqual(shlex.split(argv[-1]), ["/remote/teerex", "--rex", "/remote/rex", "agents", "human", "--config", "/remote/config 'quoted'.json", "--profile", "probe", "--routed"])
+        self.assertEqual(list(self.registry.glob("agents-*.json")), [])
+
     def test_profiles_shell_and_refusals_leave_personal_settings_untouched(self):
         self.settings["profiles"]["claude"] = dict(argv=["/not/installed/claude"], harness="claude",
                                                        standing_flags=["--dangerously-skip-permissions"])
@@ -1099,11 +1242,9 @@ class AgentsTest(unittest.TestCase):
         self.assertEqual(p.returncode, 0)
         self.assertIn("claude() {", p.stdout)
         self.assertIn(shlex.quote(str(self.config)), p.stdout)
-        preserved = subprocess.run(["/bin/bash", "-c", "claude() { printf 'original-function'; };\n" + p.stdout + "\nclaude"],
-                                   capture_output=True, text=True, timeout=5)
-        self.assertEqual(preserved.returncode, 0, preserved.stderr)
-        self.assertEqual(preserved.stdout, "original-function")
-        self.assertIn("preserved existing claude function", preserved.stderr)
+        self.assertNotIn("preserved existing", p.stdout)
+        self.assertIn("agents human", p.stdout)
+        self.assertNotIn("agents launch", p.stdout)
         # No launcher/shell config is sourced or modified by these commands.
         self.assertEqual(sorted(p.name for p in self.work.iterdir()),
                          ["brief.txt", "fixture.py", "profiles.json", "registry", "starter.jsonl"])

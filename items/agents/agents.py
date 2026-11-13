@@ -155,8 +155,8 @@ class Registry:
             if not renamed:
                 os.unlink(stage, dir_fd=self.fd)
 
-    def write_message(self, launch_id, suffix, value):
-        name = "agents-" + identifier(launch_id) + "-" + suffix + ".txt"
+    def write_message(self, launch_id, suffix, value, extension="txt"):
+        name = "agents-" + identifier(launch_id) + "-" + suffix + "." + extension
         fd = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=self.fd)
         with os.fdopen(fd, "wb") as f:
             f.write(value.encode())
@@ -290,7 +290,7 @@ def prune_records(root, apply, at_least=0):
     live = set(ids) - {r["launch_id"] for r in result["retired"]} if apply else set(ids)
     with Registry(root) as registry:
         for n in sorted(os.listdir(registry.fd)):
-            m = re.fullmatch(r"agents-([0-9a-f]{32})(-.+\.txt|\.json\.next)", n)
+            m = re.fullmatch(r"agents-([0-9a-f]{32})(-.+\.(?:txt|ts)|\.json\.next)", n)
             if not m or m.group(1) in live:
                 continue
             st = os.stat(n, dir_fd=registry.fd, follow_symlinks=False)
@@ -428,12 +428,98 @@ def callback_command(callbacks, arguments):
     return [RUNTIME, "--config", callbacks["config"], "--host", callbacks["host"], "agents", *arguments]
 
 
+def validate_adapter(harness, argv):
+    require(harness in ("claude", "codex", "pi"), "unsupported_hook_harness")
+    if harness == "claude":
+        require(not any(a == "--settings" or a.startswith("--settings=") for a in argv), "profile_settings_conflict")
+    if harness == "codex":
+        require(not any(re.match(r"(?:(?:--config|-c)=?)?notify\s*=", a.strip()) for a in argv), "profile_notify_conflict")
+
+
+def adapter_argv(argv, harness, command, root, launch_id, broker=None):
+    """Per-launch hooks only. The common adapter forwards one bounded event to stop/channel."""
+    validate_adapter(harness, argv)
+    if harness == "claude":
+        hook = shlex.join(command)
+        settings = {"hooks": {k: [{"hooks": [{"type": "command", "command": hook, "timeout": 250}]}]
+                              for k in ("Stop", "StopFailure")}}
+        return argv + ["--settings", json.dumps(settings)]
+    if harness == "codex":
+        callback = [RUNTIME, "agents", "hook", "--harness", "codex", "--command-json", json.dumps(command), "--payload"]
+        # JSON arrays/strings are also TOML arrays/basic strings.
+        return argv + ["-c", "notify=" + json.dumps(callback, ensure_ascii=True)]
+    # Pi's explicit -e loads even with --no-extensions. Use settled, not agent_end:
+    # retries/queued continuations can follow agent_end (installed Pi extension contract).
+    source = """import { spawnSync } from 'node:child_process';
+export default function(pi) {
+  let outcome = 'completed';
+  pi.on('agent_before_settle', async (event) => { outcome = event.outcome; });
+  pi.on('agent_settled', async (event, ctx) => {
+    const messages = ctx.sessionManager.getBranch().filter(e => e.type === 'message').map(e => e.message);
+    const last = [...messages].reverse().find(m => m.role === 'assistant');
+    const text = (last?.content ?? []).filter(c => c.type === 'text').map(c => c.text).join('\\n');
+    const failed = outcome === 'error';
+    const payload = {hook_event_name: failed ? 'StopFailure' : 'Stop',
+      last_assistant_message: text.slice(0,1500), error: (last?.errorMessage ?? 'Pi run failed').slice(0,600)};
+    const args = COMMAND;
+    const result = spawnSync(args[0], args.slice(1), {input: JSON.stringify(payload), encoding: 'utf8', timeout: 250000});
+    if (result.error || result.status !== 0) throw new Error('teerex stop report failed: ' + (result.error?.message ?? result.stderr));
+  });
+}
+""".replace("COMMAND", json.dumps(command, ensure_ascii=True))
+    if broker is None:
+        with Registry(root) as registry:
+            path = registry.write_message(launch_id, "pi-stop", source, extension="ts")
+    else:
+        # A fence exposes only the grant directory, never the lifecycle registry.
+        fd = os.open("pi-stop.ts", os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=broker.fd)
+        with os.fdopen(fd, "w") as f:
+            f.write(source)
+            f.flush()
+            os.fsync(f.fileno())
+        path = str(Path(broker.handle).parent / "pi-stop.ts")
+    return argv + ["--extension", path]
+
+
+def hook(o):
+    raw = o.payload.encode() if o.payload is not None else source_bytes(o.event_file)
+    require(len(raw) <= 32768, "hook_event_too_large")
+    event = json.loads(raw)
+    require(isinstance(event, dict), "invalid_hook_event")
+    if o.harness == "codex":
+        require(event.get("type") == "agent-turn-complete", "unsupported_codex_notification")
+        last = event.get("last-assistant-message")
+        if last is None:
+            last = ""
+        require(isinstance(last, str), "invalid_last_words")
+        event = dict(hook_event_name="Stop", last_assistant_message=last[:1500])
+    else:
+        validate_hook_event(event, allow_transcript=False)
+    command = json.loads(o.command_json)
+    require(isinstance(command, list) and command and all(isinstance(v, str) and "\0" not in v for v in command), "invalid_hook_command")
+    absolute(command[0])
+    if command[1:3] == ["agents", "channel"]:
+        command += ["--request-id", secrets.token_hex(16)]
+    result = subprocess.run(command, input=json.dumps(event).encode(), timeout=250)
+    return result.returncode, None
+
+
+def program_status(state, status, detail):
+    # Rex OSC7501 is colon-separated key=value, NOT JSON; text fields are base64.
+    def encoded(value):
+        clean = "".join(c if ord(c) >= 32 and not 127 <= ord(c) <= 159 else " " for c in value)
+        return base64.b64encode(" ".join(clean.split()).encode()).decode()
+    sys.stdout.write("\x1b]7501;state=" + status + ":app=teerex-agent:title=" + encoded(state["name"]) +
+                     ":msg=" + encoded(detail) + "\x07")
+    sys.stdout.flush()
+
+
 def remote_exec(o):
     # Trusted operator argv, not a channel method. All SSH serialization belongs to targets exec.
     require(len(o.payload) <= 98304, "compute_payload_too_large")
     payload = json.loads(base64.b64decode(o.payload, validate=True))
     require(isinstance(payload, dict) and set(payload) == {"argv", "cwd", "metadata", "protocol", "registry", "launch_id",
-                                                          "token", "callbacks", "hook_events", "pane", "store"}, "invalid_compute_payload")
+                                                          "token", "callbacks", "hook_events", "harness", "pane", "store"}, "invalid_compute_payload")
     argv = payload["argv"]
     require(isinstance(argv, list) and argv and all(isinstance(v, str) and "\0" not in v for v in argv), "invalid_compute_argv")
     absolute(argv[0])
@@ -476,14 +562,18 @@ def remote_exec(o):
         unused, tail = after.split("\n", 1)
         protocol = before + marker + shlex.join(command) + "\n" + tail
     if payload["hook_events"]:
-        require("--settings" not in argv, "profile_settings_conflict")
-        hook = shlex.join([RUNTIME, "agents", "stop", "--registry", payload["registry"],
-                           "--launch-id", payload["launch_id"], "--event-file", "-", "--callback-config", callbacks["config"],
-                           "--callback-host", callbacks["host"]])
-        # The compute-side adapter reads its own transcript, then forwards only bounded event bytes.
-        settings = {"hooks": {k: [{"hooks": [{"type": "command", "command": hook, "timeout": 250}]}]
-                              for k in ("Stop", "StopFailure")}}
-        argv = argv + ["--settings", json.dumps(settings)]
+        command = [RUNTIME, "agents", "stop", "--registry", payload["registry"],
+                   "--launch-id", payload["launch_id"], "--event-file", "-", "--callback-config", callbacks["config"],
+                   "--callback-host", callbacks["host"]]
+        # Pi needs a local extension file; use a private temporary directory on compute.
+        import tempfile
+        with tempfile.TemporaryDirectory(prefix="teerex-hook-") as hook_root:
+            argv = adapter_argv(argv, payload["harness"], command, hook_root, payload["launch_id"])
+            return run_remote_child(o, payload, metadata, callbacks, sid, bid, token, argv, protocol)
+    return run_remote_child(o, payload, metadata, callbacks, sid, bid, token, argv, protocol)
+
+
+def run_remote_child(o, payload, metadata, callbacks, sid, bid, token, argv, protocol):
     env = dict(os.environ)
     for key in ("AGENT_CHANNEL", "LC_AGENT_CHANNEL"):
         env.pop(key, None)
@@ -608,7 +698,7 @@ class Channel(ChannelService):
         if self.listener is not None:
             self.listener.close()
         if self.fd is not None:
-            for name in ("channel.sock", "handle.json"):
+            for name in ("channel.sock", "handle.json", "pi-stop.ts"):
                 with contextlib.suppress(FileNotFoundError):
                     os.unlink(name, dir_fd=self.fd)
             os.close(self.fd)
@@ -708,6 +798,16 @@ def config(path):
 
 def launch(o):
     cfg = config(o.config)
+    human = o.operation == "human"
+    if human and cfg.get("human_route") and not o.routed:
+        route = cfg["human_route"]
+        require(isinstance(route, dict) and set(route) == {"config", "host", "profiles"}, "invalid_human_route")
+        host = text(route["host"])
+        require(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}", host), "invalid_human_host")
+        # Reuse the named-host transport, including pinned executables, strict SSH and literal argv.
+        command = [RUNTIME, "targets", "exec", "--config", absolute(route["config"]), "--host", host, "--tty", "--",
+                   "agents", "human", "--config", absolute(route["profiles"]), "--profile", o.profile, "--routed"]
+        return subprocess.call(command), None
     profile = cfg["profiles"].get(o.profile)
     require(isinstance(profile, dict), "unknown_profile")
     argv = profile.get("argv")
@@ -723,7 +823,7 @@ def launch(o):
     require(profile.get("protocol_mode") == "argument", "profile_must_explicitly_support_protocol_as_final_prompt_argument")
     require(type(profile.get("hook_events", False)) is bool, "invalid_hook_events")
     if profile.get("hook_events"):
-        require(profile.get("harness", o.profile) == "claude" and "--settings" not in argv, "unsupported_or_conflicting_hook_adapter")
+        validate_adapter(profile.get("harness", o.profile), argv)
     execution, callbacks = execution_config(profile)
     delivery = delivery_config(profile.get("delivery"))
     require(not (delivery is not None and execution is not None), "remote_fenced_delivery_not_yet_supported")
@@ -744,9 +844,12 @@ def launch(o):
         text(profile["resume_session_id"], 256)
     if os.environ.get("TEEREX_INTERNAL_REX") is not None:
         absolute(os.environ["TEEREX_INTERNAL_REX"])
-    session, ss, sb = address_id(o.session, "session"), address_id(o.starter_session, "session"), address_id(o.starter_block, "block")
-    rs = address_id(o.report_to_session or ss, "session")
-    rb = address_id(o.report_to_block or sb, "block")
+    session = address_id(o.session, "session")
+    ss = address_id(o.starter_session, "session") if not human else None
+    sb = address_id(o.starter_block, "block") if not human else None
+    rs = address_id(o.report_to_session or ss, "session") if not human else None
+    rb = address_id(o.report_to_block or sb, "block") if not human else None
+    require(not human or (execution is None and delivery is None), "human_launch_uses_human_route_not_managed_execution_or_fence")
     name, owner, purpose = text(o.name or o.profile), text(o.owner), text(o.purpose, 256)
     host = text(o.host)
     cwd = absolute(o.cwd)
@@ -756,8 +859,8 @@ def launch(o):
         brief = message(read_file(o.brief_file, 32768)) if o.brief_file else None
         launch_id, token = secrets.token_hex(16), secrets.token_hex(32)
         target = dict(host=host, server="unix://" + socket, session_id=session, block_id=None)
-        starter = dict(host=host, server="unix://" + socket, session_id=ss, block_id=sb)
-        report_to = dict(host=host, server="unix://" + socket, session_id=rs, block_id=rb)
+        starter = dict(host=host, server="unix://" + socket, session_id=ss, block_id=sb) if not human else None
+        report_to = dict(host=host, server="unix://" + socket, session_id=rs, block_id=rb) if not human else None
         state = dict(schema_version=1, launch_id=launch_id, token=token, name=name, owner=owner, purpose=purpose,
                      review_at=review, target=target, starter=starter, report_to=report_to, profile=o.profile, argv=argv,
                      cwd=cwd, harness=text(profile.get("harness", o.profile)), resume_session_id=profile.get("resume_session_id"),
@@ -766,7 +869,7 @@ def launch(o):
                      immediate_child_term=None, notifications={}, brief_file=None, protocol_file=None,
                      hook_events=profile.get("hook_events", False), client_path=os.environ.get("PATH", os.defpath),
                      rex_executable=os.environ.get("TEEREX_INTERNAL_REX"), delivery=delivery, execution=execution,
-                     callbacks=callbacks, remote_child_term=None)
+                     callbacks=callbacks, remote_child_term=None, human=human)
         # Retire exited/never-started/pane-gone records before the cap can refuse a launch; history is archived.
         pruned = prune_records(root, apply=True, at_least=AUTO_PRUNE_AT)
         state["auto_prune"] = dict(retired=len(pruned["retired"]), live_before=pruned["live_before"])
@@ -775,14 +878,18 @@ def launch(o):
                 state["brief_file"] = registry.write_message(launch_id, "brief", brief)
             registry.save(state, new=True)
         command = [RUNTIME, "agents", "supervise", "--registry", root, "--launch-id", launch_id]
-        code, packet = invoke(["spawn", "--socket", socket, "--session", session, "--name", name, "--cwd", cwd,
-                               "--report-to-session", rs, "--report-to-block", rb, "--", *command])
+        if human:
+            code, packet = invoke(["surfaces", "open", "--socket", socket, "--session", session, "--layout", "tab",
+                                   "--label", name, "--cwd", cwd, "--", *command])
+        else:
+            code, packet = invoke(["spawn", "--socket", socket, "--session", session, "--name", name, "--cwd", cwd,
+                                   "--report-to-session", rs, "--report-to-block", rb, "--", *command])
         def created(s):
             s["spawn_receipt"] = packet
             if isinstance(packet, dict) and packet.get("created"):
                 s["target"]["block_id"] = address_id(packet["created"]["block_id"], "block")
         state = update(root, launch_id, created)
-        if not succeeded(code, packet, "created_and_attached"):
+        if not succeeded(code, packet, "created_and_verified" if human else "created_and_attached"):
             return 1, receipt(state, "creation_uncertain", client_exit=code)
         block = state["target"]["block_id"]
         code, packet = invoke(["jobs", "track", "--registry", root, "--socket", socket, "--session", session, "--block", block,
@@ -797,6 +904,13 @@ def launch(o):
             return 1, receipt(state, "tracking_uncertain", client_exit=code)
         if publish_fleet(root, state, "launch", "unknown", "Visible agent registered; protocol not acknowledged; readiness not assessed"):
             return 1, receipt(load(root, launch_id), "fleet_report_uncertain")
+        if human:
+            with Registry(root) as registry:
+                state = registry.read(launch_id)
+                state["protocol_file"] = registry.write_message(launch_id, "human", "Human interactive launch; no brief or ACK.")
+                state["phase"] = "human_interactive"
+                registry.save(state)
+            return 0, receipt(state, "human_launched")
         # The first harness prompt is an explicit profile-supported argv argument. Sending terminal input
         # immediately after creation would race shell/harness startup and silently lose the protocol.
         ack_command = [RUNTIME, "agents", "ack", "--registry", root, "--launch-id", launch_id,
@@ -903,8 +1017,8 @@ def notify(root, launch_id, event_id, body, evidence, reported_state="unknown"):
         state["notifications"][event_id] = dict(outcome="uncertain", evidence=evidence, attempted_at=now())
         registry.save(state)
     # Starter and report-to can differ; notify both, deduplicating the exact tuple.
-    destinations = [state["starter"]]
-    if state["report_to"] != state["starter"]:
+    destinations = [state["starter"]] if state["starter"] is not None else []
+    if state["report_to"] is not None and state["report_to"] != state["starter"]:
         destinations.append(state["report_to"])
     results = []
     for i, destination in enumerate(destinations):
@@ -1019,8 +1133,8 @@ def supervise(o):
     for key in ("AGENT_CHANNEL", "LC_AGENT_CHANNEL"):
         env.pop(key, None)  # A new launch never inherits its parent's capability implicitly.
     metadata = dict(AGENT_SESSION=sid, AGENT_PANE=bid, REX_SESSION=sid, REX_BLOCK=bid, AGENT_NAME=state["name"],
-                    AGENT_STARTER=state["starter"]["session_id"] + " " + state["starter"]["block_id"],
-                    AGENT_REPORT_TO=state["report_to"]["session_id"] + " " + state["report_to"]["block_id"],
+                    AGENT_STARTER=(state["starter"]["session_id"] + " " + state["starter"]["block_id"]) if state["starter"] else "",
+                    AGENT_REPORT_TO=(state["report_to"]["session_id"] + " " + state["report_to"]["block_id"]) if state["report_to"] else "",
                     AGENT_LAUNCH_ID=o.launch_id, AGENT_REGISTRY=o.registry)
     broker = Channel(o.registry, state) if state.get("delivery") is not None else None
     if broker is not None:
@@ -1032,54 +1146,56 @@ def supervise(o):
     env.update({"LC_" + k: v for k, v in metadata.items()})
     argv = state["argv"]
     if state.get("hook_events") and state.get("execution") is None:
-        require(state["harness"] == "claude", "automatic_hook_adapter_not_supported_for_harness")
-        hook = shlex.join([RUNTIME, "agents", "stop", "--registry", o.registry, "--launch-id", o.launch_id, "--event-file", "-"])
+        command = [RUNTIME, "agents", "stop", "--registry", o.registry, "--launch-id", o.launch_id, "--event-file", "-"]
         if broker is not None:
-            # Each hook invocation creates its own request ID inside the worker, never a static per-launch ID.
-            hook = (shlex.join([RUNTIME, "agents", "channel", "--handle", broker.handle, "--operation", "stop",
-                               "--event-file", "-"]) + " --request-id \"$(python3 -c 'import secrets; print(secrets.token_hex(16))')\"")
-        require("--settings" not in argv, "profile_settings_conflict")
-        settings = {"hooks": {k: [{"hooks": [{"type": "command", "command": hook, "timeout": 250}]}]
-                              for k in ("Stop", "StopFailure")}}
-        argv = argv + ["--settings", json.dumps(settings)]
+            channel_command = [RUNTIME, "agents", "channel", "--handle", broker.handle, "--operation", "stop", "--event-file", "-"]
+            command = [RUNTIME, "agents", "hook", "--harness", "claude", "--command-json", json.dumps(channel_command), "--event-file", "-"]
+        argv = adapter_argv(argv, state["harness"], command, o.registry, o.launch_id, broker=broker)
     protocol = message(read_file(state["protocol_file"], 32768, private=True))
     if state.get("execution") is None:
-        argv = argv + [protocol]
+        if not state.get("human"):
+            argv = argv + [protocol]
     else:
         execution = state["execution"]
         payload = dict(argv=argv, cwd=execution["cwd"], metadata=metadata, protocol=protocol, registry=o.registry,
-                       launch_id=o.launch_id, token=state["token"], callbacks=state["callbacks"], hook_events=state["hook_events"],
+                       launch_id=o.launch_id, token=state["token"], callbacks=state["callbacks"], hook_events=state["hook_events"], harness=state["harness"],
                        pane=state["target"], store=state["store"])
         encoded = base64.b64encode(json.dumps(payload, ensure_ascii=False).encode()).decode()
         require(len(encoded) <= 98304, "compute_payload_too_large")
         argv = [RUNTIME, "targets", "exec", "--config", execution["config"], "--host", execution["host"], "--tty",
                 "--", "agents", "exec", "--payload", encoded]
     # No output pipe: agent, supervisor and real pointer/keyboard input share the visible terminal.
-    def osc(status, detail):
-        sys.stdout.write("\x1b]7501;" + json.dumps(dict(state=status, title=state["name"], msg=detail)) + "\x07")
-        sys.stdout.flush()
-    osc("working", "visible agent process starting; readiness not assessed")
+    program_status(state, "working", "visible agent process starting; readiness not assessed")
     child = None
     term = None
     try:
         child = subprocess.Popen(argv, env=env, cwd=state["cwd"])
-        update(o.registry, o.launch_id, lambda s: s.update(immediate_child_started_at=now(), protocol_outcome="argument_supplied"))
+        update(o.registry, o.launch_id, lambda s: s.update(immediate_child_started_at=now(), protocol_outcome="not_applicable_human" if state.get("human") else "argument_supplied"))
         def forward(sig, unused):
             # Revoke on cancellation even if the child ignores its forwarded signal.
             if broker is not None:
                 broker.close()
-                update(o.registry, o.launch_id, lambda s: s.update(channel_status="revoked"))
+            # Registry updates stay outside the signal handler: the interrupted code may hold its lock.
             # Only our still-unreaped immediate child. Not a process-tree stop guarantee.
             with contextlib.suppress(ProcessLookupError):
                 child.send_signal(sig)
         signal.signal(signal.SIGTERM, forward)
         signal.signal(signal.SIGINT, forward)
-        if broker is None:
-            code = child.wait()
-        else:
-            while child.poll() is None:
+        last_hook = None
+        channel_closed_reported = False
+        while child.poll() is None:
+            if broker is not None:
                 broker.service()
-            code = child.returncode
+            else:
+                time.sleep(.05)
+            if broker is not None and broker.closed and not channel_closed_reported:
+                update(o.registry, o.launch_id, lambda s: s.update(channel_status="revoked"))
+                channel_closed_reported = True
+            current = load(o.registry, o.launch_id).get("last_hook")
+            if current is not None and current != last_hook:
+                program_status(state, "idle" if current["kind"] == "Stop" else "error", current["text"])
+                last_hook = current
+        code = child.returncode
         term = {"Exited": code} if code >= 0 else {"Signal": -code}
     except OSError as exc:
         term = {"launch_error": str(exc)[:600]}
@@ -1090,7 +1206,7 @@ def supervise(o):
             update(o.registry, o.launch_id, lambda s: s.update(channel_status="revoked"))
         if term is not None:
             update(o.registry, o.launch_id, lambda s: s.update(immediate_child_term=term, immediate_child_ended_at=now()))
-    osc("done" if term == {"Exited": 0} else "error", "immediate child terminated; descendants not verified")
+    program_status(state, "done" if term == {"Exited": 0} else "error", "immediate child terminated; descendants not verified")
     state = load(o.registry, o.launch_id)
     last = state.get("last_hook", {}).get("text", "(no harness last words supplied)")
     role = "SSH transport" if state.get("execution") else "Immediate child"
@@ -1136,14 +1252,10 @@ def profiles(o):
 
 def shell(o):
     cfg = config(o.config)
-    print("# Opt-in shell functions; inspect before sourcing. No personal settings are edited.")
+    print("# Opt-in human launch functions replace existing names; inspect before sourcing. No shell files are edited.")
     for name in cfg["profiles"]:
         require(re.fullmatch(r"[a-z][a-z0-9_-]*", name), "profile_not_shell_identifier")
-        print(f"if typeset -f {name} >/dev/null 2>&1; then")
-        print(f"  printf '%s\\n' 'teerex: preserved existing {name} function; profile wrapper not installed' >&2")
-        print("else")
-        print(f"  {name}() {{ {shlex.join([RUNTIME, 'agents', 'launch', '--config', o.config, '--profile', name])} \"$@\"; }}")
-        print("fi")
+        print(f"{name}() {{ {shlex.join([RUNTIME, 'agents', 'human', '--config', o.config, '--profile', name])} \"$@\"; }}")
     return 0, None
 
 
@@ -1154,7 +1266,7 @@ def parser():
         "No readiness claim, input lease, hidden agent, daemon, automatic retry/close or whole-tree death guarantee."))
     sub = p.add_subparsers(dest="operation", required=True)
     for op in ("profiles", "shell"):
-        q = sub.add_parser(op, help="inspect profiles" if op == "profiles" else "print opt-in shell functions; never edits shell files")
+        q = sub.add_parser(op, help="inspect profiles" if op == "profiles" else "print replacement human-launch functions; no starter/brief needed; never edits shell files")
         q.add_argument("--config", required=True)
     q = sub.add_parser("exec", help="compute-host adapter for an explicit managed execution route; never a channel method")
     q.add_argument("--payload", required=True, help="bounded base64 JSON literal argv/cwd/protocol and callback route")
@@ -1167,6 +1279,12 @@ def parser():
     q.add_argument("--event-file", help="stop only: absolute JSON file or -; <=32KiB/EOF within 2s")
     q.add_argument("--session", help="ack only: exact own session:UUID, not a destination selector")
     q.add_argument("--block", help="ack only: exact own block:UUID, not a destination selector")
+    q = sub.add_parser("hook", help="Codex notify adapter: convert one JSON argv payload into a bounded Stop report")
+    q.add_argument("--harness", required=True, choices=("claude", "codex"))
+    q.add_argument("--command-json", required=True)
+    source = q.add_mutually_exclusive_group(required=True)
+    source.add_argument("--payload", help="Codex notify appends one JSON argv payload")
+    source.add_argument("--event-file", help="normalized bounded Stop JSON file or stdin")
     q = sub.add_parser("launch", help="create visible pane, track jobs, send protocol, await agent ACK, attempt brief once")
     q.add_argument("--config", required=True)
     q.add_argument("--profile", required=True)
@@ -1177,6 +1295,10 @@ def parser():
     q.add_argument("--launch-wait-ms", type=int, default=60000, choices=range(60001), metavar="0..60000",
                    help="pre-creation launch queue wait, default60000ms; busy refuses retry-safe before pane creation; released before ACK wait")
     q.add_argument("--ack-timeout-ms", type=int, default=10000, choices=range(100, 60001), metavar="100..60000")
+    human_parser = sub.add_parser("human", parents=[q], add_help=False,
+                                  help="human interactive launch: visible tracked pane, standing flags, no starter/brief/ACK")
+    human_parser.set_defaults(operation="human")
+    human_parser.add_argument("--routed", action="store_true", help=argparse.SUPPRESS)
     q = sub.add_parser("prune", help="archive records whose agent exited, never started, or whose pane is gone; plan unless --apply")
     q.add_argument("--registry", required=True)
     q.add_argument("--apply", action="store_true", help="move retired records to REGISTRY/archive/<launch_id>/ (never deleted)")
@@ -1220,6 +1342,9 @@ def main():
             code, result = 0, receipt(load(o.registry, o.launch_id), "saved_metadata_not_live_evidence")
         elif o.operation == "exec":
             code, result = remote_exec(o)
+        elif o.operation == "human":
+            require(o.brief_file is None and o.starter_session is None and o.starter_block is None, "human_launch_has_no_brief_or_starter")
+            code, result = launch(o)
         else:
             code, result = globals()[o.operation](o)
         if result is not None:

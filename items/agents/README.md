@@ -62,12 +62,14 @@ Create an operator-selected private directory (`0700`) on a trusted local filesy
       "argv": ["/absolute/bin/codex"],
       "standing_flags": ["--dangerously-bypass-approvals-and-sandbox"],
       "harness": "codex",
-      "protocol_mode": "argument"
+      "protocol_mode": "argument",
+      "hook_events": true
     },
     "pi": {
       "argv": ["/absolute/bin/pi"],
       "harness": "pi",
-      "protocol_mode": "argument"
+      "protocol_mode": "argument",
+      "hook_events": true
     }
   }
 }
@@ -75,7 +77,15 @@ Create an operator-selected private directory (`0700`) on a trusted local filesy
 
 These are **explicit examples of Joshua's requested standing flags**, not silently installed security changes or certified harness adapters. Review the actual harness's interactive prompt-argument semantics and flags. The first argv must be absolute; each configured standing flag is appended exactly once by exact-argument comparison. `protocol_mode:"argument"` is required; the launcher supplies no task text in that initial argument. Profile argv is trusted operator configuration, not parsed for hidden initial tasks or harness-specific prompt options. Do not put a task in profile argv. `resume_session_id` can be explicit metadata with an operator-authored resume argv, but generic resume/recovery is **not proven**.
 
-`hook_events:true` currently supports only an explicit `harness:"claude"` profile with no conflicting `--settings` argument. It adds **per-launch** settings for Stop/StopFailure command callbacks; it never writes a personal Claude settings file. Actual paid-harness stop-hook execution remains a migration acceptance gate; tests exercise the same callback command with synthetic hook JSON. Codex/pi and preserved custom shell-function runners do not yet have certified automatic idle/error hook adapters. Immediate-child termination reporting applies to every profile, independent of turn hooks.
+`hook_events:true` supports explicit `harness:"claude"`, `"codex"`, and `"pi"`; false omits all turn callbacks. These profiles share schema1: absolute `argv`, optional string-array `standing_flags`, `harness`, required `protocol_mode:"argument"`, optional boolean `hook_events`. No extra Pi-specific profile field or global extension install is needed.
+
+| Harness | Per-launch adapter | Verified contract/source |
+| --- | --- | --- |
+| Claude | `--settings JSON` with Stop/StopFailure commands; conflicting settings refused | Existing Claude callback contract and disposable synthetic-hook tests |
+| Codex | `-c 'notify=[...]'`; Codex appends one JSON argv payload; `agents hook --harness codex --command-json JSON --payload JSON` translates `type:"agent-turn-complete"` and `last-assistant-message` to Stop | Installed `codex --version` = 0.159.2 and `codex --help`; [official advanced configuration](https://learn.chatgpt.com/docs/config-file/config-advanced), fetched 2026-11-13 |
+| Pi | `--extension ABS.ts`; private generated extension observes `agent_before_settle` outcome then `agent_settled`, reads the last assistant message on the current branch, sends Stop or StopFailure | Installed Pi1.4.0 `--help`, package `docs/extensions.md` and `dist/core/extensions/types.d.ts`, read 2026-11-13; [upstream extension guide](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/extensions.md) |
+
+Codex notify currently exposes turn completion only; it does not supply a failure or next-turn-start notification. No synthetic failure/start claim is made. Pi's `agent_end` can precede retries or queued continuations, so it is deliberately not the idle boundary. Aborted Pi settlement reports idle; outcome `error` reports StopFailure. Unfenced generated files stay in the private launch registry and archive with the launch. With scoped delivery, Pi's extension lives beside the exposed channel handle and is removed when the grant revokes; the hidden registry never needs a sandbox mount. Explicit Pi `--extension` works even with `--no-extensions`. These tests execute generated callbacks with synthetic payloads, including the actual generated Pi JavaScript in Node; paid live-harness turn execution is still unproven. CI's existing API13 agents suite includes these tests; Node is required for the Pi extension callback test. Immediate-child termination reporting remains independent of hooks.
 
 `report_to_session`/`report_to_block` default explicitly to the configured starter when omitted. Starter and report-to may name different panes **on the same selected server**; both are notified, with an exact-tuple duplicate sent once. Distinct starter/report-to panes and different report-to sessions on the same server are tested through the combined CLI. The initial different-session regression exposed an unjoined Lua control stream; shared spawn now explicitly attaches the supplied report session before inspecting its terminal. This attachment is not a cross-host route or an input lease. All target/starter/report-to tuples use the selected `host` and Unix endpoint. This is not arbitrary cross-host report-to support. Add `store:"/absolute/private/boards"` for the integrated boards store: launch publishes an explicit fleet report with owner/purpose and state `unknown`; Stop publishes a harness-reported `idle`; errors and immediate-child exits publish `unknown` with their exact evidence, never inferred `dead`/`completed`.
 
@@ -98,7 +108,21 @@ With no `--brief-file`, the profile gets the protocol and the same ACK gate but 
 teerex agents shell --config /absolute/private/profiles.json
 ```
 
-This prints Bash/zsh functions such as `claude()` that call managed launch with that config. Review and source the output deliberately to type `claude --brief-file ABS`. Nothing is automatically sourced, installed into PATH, or written to `.zshrc`/personal security settings. Existing functions are preserved with a warning and the wrapper is skipped. This is safer than overwriting them, but **not parity with agent-core's saved-function call-through behavior**; skipped functions do not magically become managed launches. Binary names are shadowed only if the operator explicitly sources the generated functions. Positional harness argv is intentionally not a launch interface: it could inject a brief before the protocol gate.
+This prints replacement Bash/zsh functions, such as `claude()`, calling `teerex agents human --config ABS --profile claude`. Source the reviewed output deliberately. Existing functions with the same names are replaced; the previous function is never called through. Type `claude`, `codex`, or `pi` alone: profile standing flags are applied once and a visible tracked tab opens in the configured existing session. Human launch needs no starter, report-to, brief or ACK; no messaging prompt is inserted. It records a normal jobs/lifecycle entry and emits process/turn status, but never sends human-turn text into another pane. `agents launch` retains its protocol/ACK/one-brief contract. For an agent-started task, keep using that explicit verb; shell names now mean human launch.
+
+The human path requires the same explicit registry/socket/session/cwd/host/owner/purpose defaults as managed launch, minus starter/report-to. It accepts launch target overrides, but refuses a brief or explicit starter. It uses `surfaces open --layout tab`, then verified jobs tracking before starting the harness. `human_launched` certifies that creation/tracking/configuration gate, not harness readiness. `execution`/`delivery` are managed-only; human compute routing uses the following optional top-level `human_route` object in profiles.json:
+
+```json
+{
+  "human_route": {
+    "config": "/absolute/local/hosts.json",
+    "host": "hive",
+    "profiles": "/absolute/on/hive/profiles.json"
+  }
+}
+```
+
+`config` is the existing named-host configuration on the invoking machine; `host` selects its compute entry; `profiles` belongs to that selected host. This reuses `teerex targets exec --tty` for both local and SSH targets, including pinned teerex/Rex paths, strict host-key checks, literal argv and foreground status propagation. No separate SSH transport or kernel-hostname guess is introduced. On the Mac, choose the SSH hive entry; on hive, omit human_route or choose its local entry. The remote call runs `agents human` with profile selection and an internal `--routed` marker that prevents routing loops, using the remote profile's defaults and standing flags. No local paths/config are copied. Remote human launch forwards profile selection only; target overrides belong in the remote config. This route is tested with an actual named-target resolver and literal-argv SSH fixture; physical Mac-to-hive launch remains an installation acceptance check. Nothing is automatically sourced or written to shell startup/security settings.
 
 ## Addresses and gate evidence
 
@@ -128,7 +152,7 @@ teerex agents stop --registry /absolute/private/agents --launch-id HEX --event-f
 
 A Stop hook means **reported idle turn**. It carries `last_assistant_message`, or the most recent assistant text among the final200 lines/256KiB of an explicit transcript; missing/unreadable last words are stated. StopFailure means **reported error**, with up to600 error characters, not verified process death. A hook cannot manufacture `immediate_child_term` evidence. Explicit `--event-id HEX32` can identify a specific callback invocation; duplicate attempts refuse. Without it each invocation is distinct, even when two turns have identical last words. Notifications are once-attempt per event, to starter and report-to, and preserve unresolved delivery. The command does not swallow failures as success.
 
-The supervisor inherits the terminal's stdio, waits for its **own immediate child**, saves the actual exit/signal or launch error, emits OSC7501 program status and attempts an automatic exit alert with the last available harness report. Termination of that child is not proof descendants stopped or a task finished. SIGINT/TERM are forwarded only to that immediate child; no unverified PID/process-tree stop operation exists. A wrapper SIGKILL/crash, server failure, inaccessible registry or failed notification transport can leave an unresolved event and **cannot guarantee an automatic death alert** without a separate live authority. No invisible reaper is installed. Missing panes, silence, expired review dates, last_exit from unrelated retained Rex programs and lost connections are never promoted to death evidence.
+The supervisor inherits the terminal's stdio, waits for its **own immediate child**, saves the actual exit/signal or launch error, emits valid [OSC7501](https://www.superlogical.com/rex/docs/build/program-status) program status (`app=teerex-agent`, base64 title/message) and attempts an automatic exit alert with the last available harness report. The supervisor emits `working` when starting the child, `idle` for observed Stop, `error` for StopFailure or unsuccessful child exit, and `done` for exit0. Turn callbacks update the registry; the supervisor emits them on its own terminal, so callback stdout capture cannot hide the status. It does not infer a later turn start from typing or screen content. Termination of that child is not proof descendants stopped or a task finished. SIGINT/TERM are forwarded only to that immediate child; no unverified PID/process-tree stop operation exists. A wrapper SIGKILL/crash, server failure, inaccessible registry or failed notification transport can leave an unresolved event and **cannot guarantee an automatic death alert** without a separate live authority. No invisible reaper is installed. Missing panes, silence, expired review dates, last_exit from unrelated retained Rex programs and lost connections are never promoted to death evidence.
 
 Integrated presentation (requires alpha.5 jobs relocation):
 
