@@ -25,6 +25,9 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
         });
         observation.addImport("supervised_child", child);
+        const state_sources = b.addOptions();
+        state_sources.addOption([]const u8, "draft", b.build_root.handle.readFileAlloc(b.allocator, "../../items/send/draft.lua", 32768) catch @panic("send draft source unavailable"));
+        observation.addOptions("state_sources", state_sources);
         const leaf = if (std.mem.eql(u8, name, "observe")) observation else b.createModule(.{
             .root_source_file = b.path(b.fmt("../../items/{s}/main.zig", .{name})),
             .target = target,

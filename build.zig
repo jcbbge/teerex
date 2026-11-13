@@ -29,6 +29,9 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    const state_sources = b.addOptions();
+    state_sources.addOption([]const u8, "draft", b.build_root.handle.readFileAlloc(b.allocator, "items/send/draft.lua", 32768) catch @panic("send draft source unavailable"));
+    observation.addOptions("state_sources", state_sources);
     exe.root_module.addImport("rex_observe", observation);
     const child = b.createModule(.{
         .root_source_file = b.path("src/child.zig"),

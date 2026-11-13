@@ -204,7 +204,9 @@ jobs:
       - name: Run disposable-Rex observation, comparison and watch regressions
         env:
           TEEREX_BIN: ${{ github.workspace }}/zig-out/bin/teerex
-        run: python3 items/observe/test_observe.py -v
+        run: |
+          python3 items/observe/test_observe.py -v
+          python3 items/observe/test_state.py -v
 
       - name: Run disposable-Rex mailbox send regressions
         env:

@@ -4,7 +4,7 @@ const supervised = @import("supervised_child");
 pub const presentation = @import("view.zig");
 
 const observation_usage =
-    \\Usage: teerex observe --socket /absolute/path --session session:UUID --block block:UUID [--max-bytes N] [--timeout-ms N] [--tail]
+    \\Usage: teerex observe --socket /absolute/path --session session:UUID --block block:UUID [--max-bytes N] [--timeout-ms N] [--tail | --state]
     \\       teerex compare --before /path/to/before.json --after /path/to/after.json
     \\       teerex watch --socket /absolute/path --session session:UUID --block block:UUID --baseline FILE (--timeout-ms N | --no-deadline) [--interval-ms N]
     \\                    [--status-state idle|working|done|blocked|error [--status-id RECORD_ID]]
@@ -14,6 +14,9 @@ const observation_usage =
     \\Views label declared cosmetic spans; raw text and non-text deltas remain evidence.
     \\Views exclude --status-state and --no-deadline. A deadline is not idle;
     \\cosmetic_only_comparisons is evidence, not busy/working/done state.
+    \\--state opts into conservative harness/state/draft inference with evidence lines; never completion.
+    \\State requires Python3; max-bytes defaults to 65536, timeout-ms5000.
+    \\State reads bounded VT/process/OSC evidence; partial or ambiguous screens remain unknown.
     \\Read bounded terminal text and process/directory/status evidence from an explicit Rex target.
     \\N defaults to 4096; allowed range: 256..65536 JSON-encoded content bytes.
     \\Output is JSON. Capture includes screen and scrollback; a partial capture is a prefix by default; --tail selects the newest suffix (API13).
@@ -365,6 +368,9 @@ pub fn runObservations(allocator: std.mem.Allocator, args: []const []const u8) !
     {
         try std.fs.File.stdout().writeAll(observation_usage);
         return 0;
+    }
+    if (args.len >= 1 and std.mem.eql(u8, args[0], "observe")) {
+        for (args[1..]) |arg| if (std.mem.eql(u8, arg, "--state")) return @import("state.zig").run(allocator, args[1..]);
     }
     if (args.len >= 1 and std.mem.eql(u8, args[0], "compare")) {
         try compare(allocator, args[1..]);
