@@ -18,6 +18,15 @@ const usage =
     \\
 ;
 
+// Explicit new capability; legacy run remains Mac-local exec with its original contract.
+pub fn runVisible(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
+    const self = try std.fs.selfExePathAlloc(allocator);
+    var argv: std.ArrayList([]const u8) = .empty;
+    try argv.appendSlice(allocator, &.{ "python3", "-c", @embedFile("visible.py"), self, @embedFile("visible.py") });
+    try argv.appendSlice(allocator, args);
+    return std.process.execv(allocator, argv.items);
+}
+
 const Source = struct { rex_version: []const u8, platform: []const u8, api_revision: u32 };
 const ExitReport = struct { code: i32, signal: ?[]const u8, timed_out: bool, ok: bool };
 const Frame = struct {

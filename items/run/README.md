@@ -1,5 +1,7 @@
 # run
 
+**New, separate source capability:** [`run-visible`](VISIBLE.md) adds visible foreground argv execution for disposable Mac/Linux/API13, with [acceptance](ACCEPTANCE.md) and an [opt-in Rivet migration patch](MIGRATION.md). It is not in published alpha.5 and does not change the legacy `run` contract below. Root wiring and combined shipping are integration-owned.
+
 [Operator/agent addendum: Who, What, When, Where, Why, How](../../docs/concierge/features.md#5-run-local-argv-and-actual-exit-evidence) covers current alpha.5 use, platform/API support, verification, privacy and lifecycle. [Install/upgrade current alpha.5](../../docs/concierge/setup.md); runtime remains Mac-only/API10–13. The [independent experimental run cartridge](../../docs/cartridges.md) is available on Mac, not marked ready. Dated increment evidence below is historical.
 
 **Experimental Phase 3 #3/#8 run-and-collect slice.** A Zig 0.15.2 CLI uses fixed Lua source and supported `rex.exec.start` callbacks to execute one explicit argv, retain bounded output and report real exit/deadline/cancellation evidence. This is not a ready cartridge, a terminal-input controller, an installer, or a background job service; experimental independent packaging is separate from the combined CLI. It shares the development executable with [observe/compare/watch](../observe/README.md), but owns separate source and tests here. Process-group supervision is shared in `src/child.zig`; execution framing and program-output collection remain owned here.

@@ -1,0 +1,87 @@
+--- a/jobs/src/rex-tab.ts
++++ b/jobs/src/rex-tab.ts
+@@ -3,6 +3,7 @@
+ // the call; the operator sees it live from any Rex app connected to this host. Same contract as shell.run: the command,
+ // its fence prefix and env are exactly what run() would have spawned; output is teed to the log; the exit code comes
+ // back as data. When the node is signalled, open tabs are closed and the call never resolves, as run() does.
++import { runInTabViaTeerex } from "./teerex-tab.ts";
+ import { spawnSync } from "node:child_process";
+ import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+ import { homedir, tmpdir } from "node:os";
+@@ -36 +37,2 @@
+ ): Promise<RunResult> {
++	if (process.env.RIVET_USE_TEEREX_RUN_VISIBLE === "1") return runInTabViaTeerex(label, cmd, args, opts);
+--- /dev/null
++++ b/jobs/src/teerex-tab.ts
+@@ -0,0 +1,71 @@
++// Opt-in Rivet adapter for teerex issue #20. Keep rex-tab.ts until fleet cutover is separately approved.
++import { spawn } from "node:child_process";
++import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
++import { tmpdir } from "node:os";
++import { dirname, isAbsolute, join } from "node:path";
++import type { RunResult } from "./shell.ts";
++
++const active = new Set<ReturnType<typeof spawn>>();
++for (const signal of ["SIGINT", "SIGTERM"] as const) process.on(signal, () => {
++	for (const child of active) child.kill(signal); // Forward request; not a claim of cleanup or tree death.
++});
++const required = (name: string) => {
++	const value = process.env[name];
++	if (!value) throw new Error(`${name} is required for opt-in teerex execution`);
++	return value;
++};
++
++export function runInTabViaTeerex(
++	label: string, cmd: string, args: string[],
++	opts: { cwd: string; log?: string; env: Record<string, string>; input?: string },
++): Promise<RunResult> {
++	const binary = required("RIVET_TEEREX_BIN");
++	const rex = required("RIVET_REX_BIN");
++	const socket = required("RIVET_REX_SOCKET");
++	const session = required("RIVET_REX_SESSION_ID"); // Existing full session ID, never an implicit personal target.
++	if (![binary, rex, socket, opts.cwd].every(isAbsolute)) throw new Error("teerex binary, Rex, socket and cwd must be absolute");
++	const dir = mkdtempSync(join(tmpdir(), "rv-teerex-"));
++	const output = join(dir, "output"); // Must not exist: teerex creates its private retained-output directory.
++	const input = join(dir, "stdin");
++	const envFile = join(dir, "env.json");
++	const base = Object.fromEntries(Object.entries(process.env).filter(([k, v]) => v !== undefined && !k.startsWith("RIVET") && !/^(LC_)?REX_(SESSION|BLOCK)$/.test(k)));
++	writeFileSync(input, opts.input ?? "", { mode: 0o600 });
++	writeFileSync(envFile, JSON.stringify({ ...base, ...opts.env }), { mode: 0o600 });
++	if (opts.log) { mkdirSync(dirname(opts.log), { recursive: true }); appendFileSync(opts.log, `\n$ ${cmd} ${args.join(" ")}   (in ${opts.cwd}; teerex visible tab)\n`); }
++	// Merge before exec using fixed positional shell code. Literal argv, cwd, env and stdin remain untouched;
++	// exec replaces the shim, so teerex waits for the actual program/fence PID and actual signal.
++	const argv = ["--rex", rex, "run-visible", "--socket", socket, "--session", session, "--cwd", opts.cwd,
++		"--env-file", envFile, "--stdin-file", input, "--app", "rivet", "--title", label.slice(0, 60),
++		"--timeout-ms", process.env.RIVET_TEEREX_TIMEOUT_MS ?? "86400000", "--output-dir", output,
++		"--", "/bin/sh", "-c", 'exec "$@" 2>&1', "teerex-rivet", cmd, ...args];
++	return new Promise((resolve, reject) => {
++		const child = spawn(binary, argv, { stdio: ["ignore", "pipe", "pipe"] });
++		active.add(child);
++		let receipt = Buffer.alloc(0), diagnostics = Buffer.alloc(0), overflow = false;
++		child.stdout.on("data", (chunk: Buffer) => {
++			if (receipt.length + chunk.length > 1_048_576) overflow = true;
++			else receipt = Buffer.concat([receipt, chunk]);
++		});
++		child.stderr.on("data", (chunk: Buffer) => { diagnostics = Buffer.concat([diagnostics, chunk]).subarray(0, 4096); });
++		child.on("error", (error) => { active.delete(child); reject(new Error(`${error}; retained evidence ${dir}`)); });
++		child.on("close", () => {
++			active.delete(child);
++			try {
++				if (overflow) throw new Error("oversized controller receipt");
++				const packet = JSON.parse(receipt.toString("utf8"));
++				const term = packet.exit_report;
++				if (packet.outcome !== "exit_reported" || !term || !packet.cleanup?.block_absence_verified || !packet.stdout?.full_complete)
++					throw new Error(`incomplete execution/cleanup evidence: ${packet.outcome}`);
++				let out = readFileSync(packet.stdout.full_path, "utf8");
++				if (opts.log) appendFileSync(opts.log, `${out}\n[exit ${term.exit_code}; signal ${term.signal}]\n`);
++				if (out.length > 2_000_000) out = out.slice(-1_000_000);
++				rmSync(dir, { recursive: true }); // Only after the final receipt and full bytes have been consumed.
++				// Preserve current Rivet convention: a signalled step does not settle into a successful job record.
++				if (term.signal !== null || [130, 137, 143].includes(term.exit_code)) return;
++				resolve({ code: term.exit_code, out, tail: out.split("\n").slice(-60).join("\n") });
++			} catch (error) {
++				reject(new Error(`${error}; ${diagnostics.toString("utf8")}; retained evidence ${dir}. No fallback/retry.`));
++			}
++		});
++	});
++}
