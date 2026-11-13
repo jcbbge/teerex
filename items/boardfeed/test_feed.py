@@ -68,11 +68,14 @@ class FeedTests(unittest.TestCase):
             path=a.agents_registry/'agents-fixture.json'
             path.write_text(json.dumps(dict(launch_id='fixture',name='worker',phase='brief_submitted',target=dict(session_id=session,block_id=block),token='DO NOT PRINT')))
             state=feed.State(a);out=io.StringIO()
+            state.live={block:dict(block_id=block,session=session,label='worker',placement='placed')}
+            state.refresh_inventory=lambda:True
             with contextlib.redirect_stdout(out):
                 state.scan();state.scan()
                 (a.jobs_registry/'state.json').write_text(json.dumps(dict(entries=[dict(owner='worker',session_id=session,block_id=block)])))
                 state.scan()
-                pad.write_text('## Now\n- [ ] Test feed\n');state.scan()
+                old_stamp=pad.stat().st_mtime_ns
+                pad.write_text('## Now\n- [ ] Test feed\n');os.utime(pad,ns=(old_stamp,old_stamp));state.scan()
                 (a.calls/'calls.jsonl').write_text(json.dumps(dict(phase='start',call_id='one',verb='send',body='SECRET'))+'\n'+json.dumps(dict(phase='end',call_id='one',exit=0))+'\n');state.scan()
                 (a.jobs_registry/'state.json').unlink();path.unlink();state.scan()
             rows=[json.loads(x) for x in out.getvalue().splitlines()]
@@ -109,12 +112,15 @@ class FeedTests(unittest.TestCase):
             record=dict(launch_id='fixture',name='worker',phase='brief_submitted',target=dict(session_id=sid,block_id=bid),review_at=1,last_hook=dict(kind='Stop'),argv=['codex','--model=sample'])
             path=a.agents_registry/'agents-fixture.json';path.write_text(json.dumps(record))
             state=feed.State(a);out=io.StringIO()
+            state.live={bid:dict(block_id=bid,session=sid,placement='placed')}
+            state.refresh_inventory=lambda:True
+            state.status[bid]='idle'
             with patch.object(feed.Path,'home',return_value=root),contextlib.redirect_stdout(out):
                 state.scan()
-                row=state.rows['fixture'];self.assertEqual(row['now'],'CLI step');self.assertEqual(row['state'],'idle');self.assertTrue(row['stalled'])
+                row=state.rows[bid];self.assertEqual(row['now'],'CLI step');self.assertEqual(row['state'],'idle');self.assertTrue(row['stalled'])
                 self.assertEqual(row['steps'][0]['outcome'],'fixed');self.assertEqual(row['executor'],'sample')
-                record['immediate_child_term']={'Signal':11};path.write_text(json.dumps(record));state.scan()
-                self.assertEqual(state.rows['fixture']['state'],'error')
+                state.update_status(bid,dict(app='teerex-agent',state='error'));state.scan()
+                self.assertEqual(state.rows[bid]['state'],'error')
             events=[json.loads(line) for line in out.getvalue().splitlines()]
             decisions=[e for e in events if e['kind']=='decisions']
             self.assertEqual(len(decisions),1);self.assertEqual(decisions[0]['decisions'][0]['id'],'one')
@@ -128,6 +134,12 @@ class FeedTests(unittest.TestCase):
             state.rex_event(dict(type='session_event',payload=dict(event=dict(type='block_event',payload=dict(block_id='b',name='program_status_changed',payload=dict(id='',record=dict(state='blocked',msg='Which option?')))))))
             state.rex_event(dict(type='session_event',payload=dict(event=dict(type='block_label_changed',payload={}))))
         self.assertEqual(state.status['b'],'waiting');self.assertEqual(state.questions['b'],'Which option?');self.assertIn('title changed',out.getvalue())
+        state.update_status('b',dict(records=[dict(id='harness',app='codex',state='idle'),dict(id='managed',app='teerex-agent',state='working')]))
+        self.assertEqual(state.status['b'],'working')
+        state.update_status('b',dict(id='harness',record=dict(app='codex',state='error')))
+        self.assertEqual(state.status['b'],'working')
+        state.update_status('b',dict(ids=['managed']))
+        self.assertEqual(state.status['b'],'error')
 
     def test_shutdown_signals_workers_once(self):
         from unittest.mock import patch
@@ -233,6 +245,35 @@ class FeedTests(unittest.TestCase):
                 self.assertEqual([s['state'] for s in agent['steps']],['done','now'])
                 self.assertEqual(agent['waiting']['on'],'peer');self.assertEqual(agent['placement'],'placed')
                 self.assertEqual(agent['scratch_updated_at'],'2026-11-13T19:00:00Z');self.assertIsInstance(agent['scratch_mtime_ms'],int)
+                # Inventory is Rex's, with registry duplicates/stale names excluded.
+                duplicate=root/'agents-registry'/'agents-duplicate.json'
+                duplicate.write_text(json.dumps(dict(launch_id='duplicate',name='worker',target=dict(session_id='session:99999999-9999-9999-9999-999999999999',block_id=block))))
+                (root/'agents-registry'/'agents-dead.json').write_text(json.dumps(dict(launch_id='dead',owner='ghost-owner',target=dict(session_id=session,block_id='block:99999999-9999-9999-9999-999999999999'))))
+                other=subprocess.run([REX,'--autostart=false','-S',endpoint,'new','--json','lua','--',sys.executable,'-c',"import time;print('\\x1b]7501;state=idle:app=codex\\x1b\\\\',flush=True);time.sleep(20)"],capture_output=True,text=True,timeout=5)
+                self.assertEqual(other.returncode,0,other.stderr)
+                other_created=json.loads(other.stdout);other_sid=other_created['session_id'];other_block=other_created['initial_windows'][0]['block_ids'][0]
+                wait_for(lambda e:e['kind']=='agent' and e['block']==other_block and e['state']=='idle')
+                (root/'scratch'/other_sid).mkdir()
+                (root/'scratch'/other_sid/(other_block+'.md')).write_text('## Now\n- [ ] Lua own work\n')
+                # The duplicate's wrong session has a decoy scratchpad.
+                wrong=root/'scratch'/'session:99999999-9999-9999-9999-999999999999';wrong.mkdir()
+                (wrong/(block+'.md')).write_text('## Now\n- [ ] WRONG PAD\n')
+                plain=subprocess.run([REX,'--autostart=false','-S',endpoint,'new','--json','not-an-agent','--','/bin/sh','-c','sleep 20'],capture_output=True,text=True,timeout=5)
+                self.assertEqual(plain.returncode,0,plain.stderr)
+                plain_created=json.loads(plain.stdout)
+                (root/'jobs-registry'/'plain.json').write_text(json.dumps(dict(entries=[dict(owner='not-an-agent',session_id=plain_created['session_id'],block_id=plain_created['initial_windows'][0]['block_ids'][0])])))
+                class Args:pass
+                args=Args();args.host='fixture';args.rex=REX;args.socket=str(socket)
+                for key,folder in [('agents_registry','agents-registry'),('jobs_registry','jobs-registry'),('scratch','scratch'),('calls','calls')]:setattr(args,key,root/folder)
+                inventory=feed.State(args)
+                with contextlib.redirect_stdout(io.StringIO()):inventory.scan()
+                self.assertEqual(set(inventory.rows),{block,other_block})
+                self.assertEqual(inventory.rows[block]['session'],session)
+                self.assertEqual(inventory.rows[block]['now'],'Test push')
+                self.assertEqual(inventory.rows[block]['state'],'waiting')
+                self.assertEqual(inventory.rows[other_block]['now'],'Lua own work')
+                self.assertEqual(inventory.rows[other_block]['state'],'idle')
+                duplicate.unlink()
                 (root/'calls'/'calls.jsonl').write_text(json.dumps(dict(phase='start',call_id='x',verb='send'))+'\n'+json.dumps(dict(phase='end',call_id='x',exit=0))+'\n')
                 wait_for(lambda e:e['kind']=='stream' and e['text']=='message delivered')
                 closed=subprocess.run([REX,'--autostart=false','-S',endpoint,'block','close','--session',session,block],capture_output=True,text=True,timeout=5)

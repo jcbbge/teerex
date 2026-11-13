@@ -35,11 +35,17 @@ The named-host transport injects the configured socket and Rex executable.
 Python 3.9+ is required, using only its standard library.
 
 Rex `events --all --json` provides pane, title, focus, process and program status
-changes. Initial process/status reads seed registered panes. Session view events refresh
-placement and remove closed panes from the agent view. inotify on Linux
+changes. Initial process/status reads seed live panes. Session and pane events
+refresh inventory and placement. Rows are live Rex panes joined to managed
+launch metadata by block id, deduplicated by block; dead registry records never
+produce rows. Unregistered panes appear only when their program status identifies
+`teerex-agent`, `claude`, `codex` or `pi`. Job records alone do not mark agents.
+Pane program status supplies state, with managed `teerex-agent` status taking
+precedence over harness status; absent state is `unknown`. Scratchpads use the
+live pane's own session/block address, never its name, owner or stale record address. inotify on Linux
 and kqueue vnode notifications on macOS watch registries, call logs and
 scratchpads, including directory creation and atomic replacement. Only changed
-agent projections are emitted; a removed record emits `gone`. Successful call
+agent projections are emitted; a closed pane emits `gone`. Successful call
 end records are joined to their starts before projecting plain descriptions.
 Tokens, arguments, brief/report bodies and arbitrary call fields are excluded.
 
@@ -61,7 +67,7 @@ on both operating systems. Tests never use a personal Rex socket or registry.
 
 Revision 2 adds `steps`, `waiting`, `wait_age_ms`, `executor` and `stalled` to
 agent events. Scratch projections use the absolute teerex `scratch show --json`
-and cache by file modification time; explicit source overrides and legacy
+and cache by file modification time and size; explicit source overrides and legacy
 scratchpads retain a Markdown fallback. Only the model name is extracted from
 launch argv; full arguments remain private. `review_at` supplies the deadline.
 

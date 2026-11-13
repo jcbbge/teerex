@@ -290,90 +290,106 @@ def executor(record):
 
 class State:
     def __init__(self, a):
-        self.a=a; self.rows={};self.calls={};self.call_starts={};self.roots={};self.pids={};self.status={};self.questions={};self.reports={};self.seeded=set();self.views={};self.placements={}
+        self.a=a; self.rows={};self.calls={};self.call_starts={};self.roots={};self.pids={};self.status={};self.questions={};self.reports={};self.seeded=set();self.live={};self.reachable=None
         self.lock=threading.RLock(); self.pads={}; self.decision_signature=None; self.next_deadline=None
+
+    def rex_json(self, *args):
+        command=[self.a.rex,'--autostart=false','--server','unix://'+self.a.socket,'--timeout','2s',*args]
+        return json.loads(subprocess.check_output(command,stderr=subprocess.DEVNULL,timeout=3))
+
+    def refresh_inventory(self):
+        live={}
+        try:
+            sessions=self.rex_json('api','call','session.list','{}').get('sessions') or []
+            for session in sessions:
+                sid=session['session_id']
+                result=self.rex_json('block','ls','--session',sid,'--json')
+                blocks=result.get('blocks',[]) if isinstance(result,dict) else result
+                for pane in blocks:
+                    block=pane['block_id']
+                    live[block]=dict(pane,session=sid)
+            self.live=live
+            reachable=True
+        except (OSError,ValueError,TypeError,KeyError,subprocess.SubprocessError):
+            self.live={};reachable=False
+        if reachable!=self.reachable:
+            emit(self.a.host,'host',reachable=reachable,error=None if reachable else 'Cannot read live panes')
+            self.reachable=reachable
+        return reachable
 
     def scan(self):
         with self.lock:
-            rows={}
-            self.next_deadline=None
+            self.refresh_inventory()
+            # Registries provide names/launch metadata, never the pane inventory.
+            records={}
             for registry in (self.a.agents_registry,self.a.jobs_registry):
-                if not registry.exists():
-                    continue
-                for path in registry.glob('*.json'):
+                if not registry.exists():continue
+                for path in sorted(registry.glob('*.json')):
                     try:
-                        records=json.loads(read(path))
-                        if not isinstance(records,dict):continue
-                        for record in records.get('entries', [records]):
+                        data=json.loads(read(path))
+                        if not isinstance(data,dict):continue
+                        for record in data.get('entries',[data]):
                             if not isinstance(record,dict):continue
                             target=record.get('target') or {}
                             block=target.get('block_id') or record.get('block_id')
-                            session=target.get('session_id') or record.get('session_id')
-                            if not isinstance(block,str) or not isinstance(session,str) or not re.fullmatch(r'block:[0-9a-f-]{36}',block) or not re.fullmatch(r'session:[0-9a-f-]{36}',session):
-                                continue
-                            if registry==self.a.jobs_registry and any(row['block']==block for row in rows.values()):continue
-                            identifier=record.get('launch_id') or block
-                            phase=record.get('phase','working')
-                            state={'exited':'gone','archived':'gone','failed':'error','turn_stopped':'idle','reported':'idle','awaiting_protocol_ack':'waiting'}.get(phase,'working')
-                            pad=self.a.scratch/session/(block+'.md')
-                            stamp=None
+                            if block not in self.live:continue
+                            # Prefer named managed launches; duplicates can never add rows.
+                            if block not in records:records[block]=dict(record,_managed=registry==self.a.agents_registry)
+                    except (OSError,ValueError,UnicodeError,TypeError):continue
+            rows={}
+            self.next_deadline=None
+            for block,pane in self.live.items():
+                session=pane['session']
+                if block not in self.seeded:
+                    self.seeded.add(block)
+                    try:
+                        process=self.rex_json('block','call','--session',session,'--block',block,'process','{}')
+                        root=process.get('child') or process.get('foreground') or {}
+                        if type(root.get('pid')) is int:self.pids[block]=root['pid']
+                        status=self.rex_json('block','call','--session',session,'--block',block,'program_status','{}')
+                        self.update_status(block,status)
+                    except (OSError,ValueError,subprocess.SubprocessError):pass
+                record=records.get(block)
+                agent_reports=[r for r in self.reports.get(block,{}).values() if r.get('app') in ('teerex-agent','claude','codex','pi')]
+                if not (record or {}).get('_managed') and not agent_reports:continue
+                record=record or {}
+                pad=self.a.scratch/session/(block+'.md')
+                stamp=None
+                try:
+                    metadata=pad.stat();stamp=metadata.st_mtime_ns
+                    fingerprint=(stamp,metadata.st_size)
+                    cached=self.pads.get(str(pad))
+                    if cached and cached[0]==fingerprint:projection=cached[1]
+                    else:
+                        projection=scratch_projection(read(pad,65536))
+                        if getattr(self.a,'executable',None) and self.a.scratch==Path.home()/'.local/state/teerex/scratch':
                             try:
-                                stamp=pad.stat().st_mtime_ns
-                                cached=self.pads.get(str(pad))
-                                if cached and cached[0]==stamp:projection=cached[1]
-                                else:
-                                    projection=scratch_projection(read(pad,65536))
-                                    if getattr(self.a,'executable',None) and self.a.scratch==Path.home()/'.local/state/teerex/scratch':
-                                        try:
-                                            result=projection_command([self.a.executable,'scratch','show','--session',session,'--block',block,'--json'],3)
-                                            if isinstance(result.get('steps'),list):projection=result
-                                        except (OSError,ValueError,subprocess.SubprocessError):pass
-                                    self.pads[str(pad)]=(stamp,projection)
-                            except (OSError,ValueError,UnicodeError):projection=dict(now=None,steps=[],waiting=None,todo=[],done=[])
-                            hook=record.get('last_hook') or {}
-                            if hook.get('kind')=='Stop': state='idle'
-                            elif hook.get('kind')=='StopFailure': state='error'
-                            if record.get('immediate_child_term') is not None:
-                                state='gone' if record['immediate_child_term']=={'Exited':0} else 'error'
-                            elif record.get('last_report_file') or record.get('report_file'): state='idle'
-                            if session not in self.views:self.refresh_view(session)
-                            if session in self.views and block not in self.views[session]:state='gone'
-                            if block not in self.seeded:
-                                self.seeded.add(block)
-                                try:
-                                    base=[self.a.rex,'--autostart=false','--server','unix://'+self.a.socket,'--timeout','2s','block','call','--session',session,'--block',block]
-                                    process=json.loads(subprocess.check_output(base+['process','{}'],stderr=subprocess.DEVNULL,timeout=3))
-                                    root=process.get('child') or process.get('foreground') or {}
-                                    if type(root.get('pid')) is int:self.pids[block]=root['pid']
-                                    status=json.loads(subprocess.check_output(base+['program_status','{}'],stderr=subprocess.DEVNULL,timeout=3))
-                                    self.update_status(block,status)
-                                except (OSError,ValueError,subprocess.SubprocessError):pass
-                            if state not in ('gone','idle','error'):state=self.status.get(block,state)
-                            row=dict(id=identifier,name=record.get('name') or record.get('owner') or 'agent',session=session,block=block,state=state,placement=self.placements.get(block,'detached' if record.get('placement')=='detached' else 'placed'),now=projection.get('now'),done=len(projection.get('done',[])),total=len(projection.get('steps',[])),steps=projection.get('steps',[]),waiting=projection.get('waiting'),executor=executor(record),scratch_updated_at=projection.get('updated') or None,scratch_mtime_ms=stamp//1000000 if stamp is not None else None,question=self.questions.get(block),since=hook.get('at') or record.get('created_at') or record.get('registered_at_unix_ms') or 0,cpu=None,rss=None)
-                            deadline=record.get('review_at')
-                            row['stalled']=isinstance(deadline,(int,float)) and deadline>0 and deadline<time.time()*1000 and state!='gone'
-                            if isinstance(deadline,(int,float)) and deadline>time.time()*1000 and state!='gone':
-                                self.next_deadline=min(self.next_deadline or deadline,deadline)
-                            row['wait_age_ms']=0
-                            row['wait_since_ms']=0
-                            if row['waiting']:
-                                try:
-                                    row['wait_since_ms']=int(datetime.datetime.fromisoformat(row['waiting']['since'].replace('Z','+00:00')).timestamp()*1000)
-                                    row['wait_age_ms']=max(0,int(time.time()*1000-row['wait_since_ms']))
-                                except (ValueError,KeyError,TypeError):pass
-                            if identifier not in rows or registry==self.a.agents_registry: rows[identifier]=row
-                    except (OSError,ValueError,UnicodeError,TypeError): continue
-            for identifier,row in rows.items():
-                if self.rows.get(identifier)!=row:
-                    if getattr(self.a,'once',False) and row['state']=='gone':continue
-                    emit(self.a.host,'agent',**row)
-                    previous=self.rows.get(identifier)
-                    text=(row['name']+' started') if previous is None else row['name']+' '+({'gone':'exited','idle':'turn ended','waiting':'needs attention','error':'reported a problem'}.get(row['state'],'updated their work'))
-                    if not getattr(self.a,'once',False):emit(self.a.host,'stream',agent=row['name'],text=text,role='problem' if row['state']=='error' else 'words')
-            for identifier,row in self.rows.items():
-                if identifier not in rows:
-                    emit(self.a.host,'agent',**dict(row,state='gone'))
+                                result=projection_command([self.a.executable,'scratch','show','--session',session,'--block',block,'--json'],3)
+                                if isinstance(result.get('steps'),list):projection=result
+                            except (OSError,ValueError,subprocess.SubprocessError):pass
+                        self.pads[str(pad)]=(fingerprint,projection)
+                except (OSError,ValueError,UnicodeError):projection=dict(now=None,steps=[],waiting=None,todo=[],done=[])
+                hook=record.get('last_hook') or {}
+                state=self.status.get(block,'unknown')
+                row=dict(id=block,name=record.get('name') or pane.get('label') or 'agent',session=session,block=block,state=state,placement=pane.get('placement','placed'),now=projection.get('now'),done=len(projection.get('done',[])),total=len(projection.get('steps',[])),steps=projection.get('steps',[]),waiting=projection.get('waiting'),executor=executor(record),scratch_updated_at=projection.get('updated') or None,scratch_mtime_ms=stamp//1000000 if stamp is not None else None,question=self.questions.get(block),since=hook.get('at') or record.get('created_at') or record.get('registered_at_unix_ms') or 0,cpu=None,rss=None)
+                deadline=record.get('review_at')
+                row['stalled']=isinstance(deadline,(int,float)) and deadline>0 and deadline<time.time()*1000 and state!='gone'
+                if isinstance(deadline,(int,float)) and deadline>time.time()*1000 and state!='gone':
+                    self.next_deadline=min(self.next_deadline or deadline,deadline)
+                row['wait_age_ms']=0
+                row['wait_since_ms']=0
+                if row['waiting']:
+                    try:
+                        row['wait_since_ms']=int(datetime.datetime.fromisoformat(row['waiting']['since'].replace('Z','+00:00')).timestamp()*1000)
+                        row['wait_age_ms']=max(0,int(time.time()*1000-row['wait_since_ms']))
+                    except (ValueError,KeyError,TypeError):pass
+                rows[block]=row
+            for block,row in rows.items():
+                if self.rows.get(block)!=row:emit(self.a.host,'agent',**row)
+            for block,row in self.rows.items():
+                if block not in rows:emit(self.a.host,'agent',**dict(row,state='gone'))
             self.rows=rows
+            self.seeded.intersection_update(self.live)
             self.roots={self.pids[row['block']]:row['name'] for row in rows.values() if row['block'] in self.pids}
             directory=getattr(self.a,'decisions',None)
             if not getattr(self.a,'once',False) and directory is not None and getattr(self.a,'executable',None):
@@ -389,15 +405,6 @@ class State:
                         emit(self.a.host,'decisions',decisions=result['decisions'],complete=result.get('complete',False))
                     except (OSError,ValueError,KeyError,subprocess.SubprocessError):pass
             if not getattr(self.a,'once',False):self.tail_calls()
-
-    def refresh_view(self,session):
-        try:
-            command=[self.a.rex,'--autostart=false','--server','unix://'+self.a.socket,'--timeout','2s','block','ls','--session',session,'--json']
-            data=json.loads(subprocess.check_output(command,stderr=subprocess.DEVNULL,timeout=3))
-            blocks=data.get('blocks',[]) if isinstance(data,dict) else data
-            self.views[session]={b['block_id'] for b in blocks}
-            for b in blocks:self.placements[b['block_id']]='placed' if b.get('placement')=='placed' else 'detached'
-        except (OSError,ValueError,TypeError,KeyError,subprocess.SubprocessError):pass
 
     def tail_calls(self):
         for path in self.a.calls.glob('*.jsonl') if self.a.calls.exists() else []:
@@ -444,7 +451,9 @@ class State:
             for identifier in payload['ids']:reports.pop(identifier,None)
         elif 'state' in payload:reports[payload.get('id','')]=payload
         priority={'error':5,'blocked':4,'waiting':4,'working':3,'done':2,'idle':1}
-        record=max(reports.values(),key=lambda r:priority.get(r.get('state'),0),default={})
+        agent_reports=[r for r in reports.values() if r.get('app') in ('teerex-agent','claude','codex','pi')]
+        managed=[r for r in agent_reports if r.get('app')=='teerex-agent']
+        record=managed[-1] if managed else agent_reports[-1] if agent_reports else max(reports.values(),key=lambda r:priority.get(r.get('state'),0),default={})
         state=record.get('state')
         if state in ('working','waiting','error','idle','done'):self.status[block]=state
         elif state=='blocked':self.status[block]='waiting'
@@ -459,8 +468,8 @@ class State:
         block=p.get('block_id');name=p.get('name') if kind=='block_event' else kind
         payload=p.get('payload') or {}
         with self.lock:
-            if name in ('session_view_changed','block_removed','block_closed') and session:
-                self.refresh_view(session);self.scan()
+            if name in ('session_view_changed','block_created','block_removed','block_closed','session_created','session_removed','window_created','window_closed'):
+                self.scan()
             if name=='process_changed':
                 process=payload.get('child') or payload.get('foreground') or {}
                 if block not in self.pids and type(process.get('pid')) is int:self.pids[block]=process['pid']
@@ -485,13 +494,6 @@ def rex_events(a,state):
 
 
 def snapshot(a):
-    # One bounded read, without event subscribers, filesystem watchers or vitals.
-    command=[a.rex,'--autostart=false','--server','unix://'+a.socket,'--timeout','2s','api','call','session.list','{}']
-    try:
-        json.loads(subprocess.check_output(command,stderr=subprocess.DEVNULL,timeout=3))
-        reachable=True
-    except (OSError,ValueError,subprocess.SubprocessError):reachable=False
-    emit(a.host,'host',reachable=reachable,error=None if reachable else 'Rex unavailable')
     State(a).scan()
 
 
@@ -501,7 +503,6 @@ def local(a):
     watcher=Watcher([a.agents_registry,a.jobs_registry,a.scratch,a.calls,a.decisions])
     sample=LinuxVitals() if sys.platform=='linux' else MacVitals()
     thread=threading.Thread(target=rex_events,args=(a,state),daemon=True);thread.start()
-    emit(a.host,'host',reachable=True,error=None)
     state.scan();deadline=time.monotonic()
     try:
         while not STOP.is_set():
@@ -555,7 +556,7 @@ def main(argv=None):
     parser=argparse.ArgumentParser(prog='teerex board feed',description=__doc__)
     parser.add_argument('--config',default=os.path.expanduser('~/.config/teerex/hosts.json'),help='absolute named-host configuration')
     parser.add_argument('--hosts',default='hive,m5',help='comma-separated configured hosts; both by default')
-    parser.add_argument('--once',action='store_true',help='emit one JSONL snapshot of host reachability and current agents, then exit; no watchers or vitals')
+    parser.add_argument('--once',action='store_true',help='emit one JSONL snapshot of live agent panes joined by block id, then exit; no watchers or vitals')
     parser.add_argument('--local',action='store_true',help='read this host only (transport worker)')
     parser.add_argument('--host-name',dest='host',default=platform.node().split('.')[0])
     parser.add_argument('--socket',default=os.environ.get('TEEREX_BOARD_SOCKET', '/run/user/%d/rex/server.sock'%os.getuid() if sys.platform=='linux' else os.path.expanduser('~/Library/Application Support/rex/server.sock')))

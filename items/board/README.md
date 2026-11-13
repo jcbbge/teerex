@@ -28,6 +28,10 @@ grouped by agent. The header's quiet `◇ N` counts open decisions; questions do
 not flash, turn red, or set an attention badge. Red marks a crashed agent, an
 agent past its review deadline, or a stalled wait.
 
+Rows include live working, waiting, idle, done and unknown agents. Header totals
+and state counts come from exactly the selected host's rows; `done` remains
+visible until the pane closes. Unknown state is counted explicitly.
+
 Each collapsed agent occupies one line: name, Now, and progress. Space expands
 its ordered state machine: `✓` Done, `▶` Now with `← now`, then To-do. The
 executor comes from the step, the launch's `--model`, or its harness. Completed

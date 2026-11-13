@@ -369,10 +369,24 @@ class BoardTest(unittest.TestCase):
         ratio.restore(base,sid,board)
         self.assertAlmostEqual(width(),1/3,places=3)
 
-    def test_gone_and_done_remove_rows(self):
+    def test_header_counts_idle_done_and_unknown_from_rows(self):
+        events=[json.loads(line) for line in FIXTURE.read_text().splitlines()]
+        template=next(e for e in events if e['kind']=='agent' and e['host']=='hive')
+        for state in ('idle','done','unknown'):
+            events.append(dict(template,id='hive-'+state,name='agent-'+state,state=state,now=state))
+        path=self.root/'counts.jsonl';path.write_text('\n'.join(map(json.dumps,events)))
+        p=Pane(self.root,width=120,fixture=path);self.addCleanup(p.close)
+        p.until(lambda:b'agent-unknown' in p.output);p.settle()
+        view=p.view()
+        self.assertIn('agents  5 total  1 ► working',view)
+        self.assertIn('idle 1  wait 1  error 0  done 1',view)
+        self.assertIn('unknown 1',view)
+        for state in ('idle','done','unknown'):self.assertIn('agent-'+state,view)
+
+    def test_gone_removes_rows(self):
         events=[json.loads(line) for line in FIXTURE.read_text().splitlines()]
         for e in list(events):
-            if e['kind']=='agent': events.append(dict(e,state='gone' if e['state']=='working' else 'done'))
+            if e['kind']=='agent': events.append(dict(e,state='gone'))
         path=self.root/'gone.jsonl';path.write_text('\n'.join(map(json.dumps,events)))
         result=subprocess.run([BIN,'board','--replay',str(path),'--once'],env=dict(os.environ,TEEREX_CALL_LOG_DIR=str(self.root/'calls')),capture_output=True,text=True)
         self.assertEqual(result.returncode,0,result.stderr)

@@ -10,6 +10,7 @@ const usage =
     \\Usage: teerex board [--config ABS] [--hosts hive,m5] [--replay FILE]
     \\                    [--no-graphics] [--once] [--benchmark N]
     \\Live Rex/teerex events and machine vitals. Event-driven; no screen timer.
+    \\Rows/counts use live agent panes and their own program status, including idle/done.
     \\Feed: teerex board feed --help; feed --once prints a JSONL fleet snapshot.
     \\Replay is JSONL v1; EOF holds the final frame, q exits. --once prints it and exits.
     \\Keys: j/k or arrows select; Enter jump; Space expand; d decisions; m machine;
@@ -121,7 +122,7 @@ const Model = struct {
             for (self.agents.items, 0..) |*old, i| {
                 if (eq(text(old.value, "id"), id) and eq(text(old.value, "host"), name)) {
                     old.deinit();
-                    if (eq(state, "gone") or eq(state, "done")) {
+                    if (eq(state, "gone")) {
                         _ = self.agents.orderedRemove(i);
                     } else {
                         old.* = parsed;
@@ -130,7 +131,7 @@ const Model = struct {
                     return true;
                 }
             }
-            if (!eq(state, "gone") and !eq(state, "done") and self.agents.items.len < 256) {
+            if (!eq(state, "gone") and self.agents.items.len < 256) {
                 try self.agents.append(self.allocator, parsed);
 
                 retained = true;
@@ -282,10 +283,16 @@ const UI = struct {
         var waiting: usize = 0;
         var errors: usize = 0;
         var working: usize = 0;
+        var idle: usize = 0;
+        var done: usize = 0;
+        var unknown: usize = 0;
         for (self.rows.items) |r| {
-            if (priority(r) == 0) waiting += 1 else if (priority(r) == 1) errors += 1 else if (priority(r) == 2) working += 1;
+            const state = text(r, "state");
+            if (eq(state, "waiting")) waiting += 1 else if (eq(state, "error")) errors += 1 else if (eq(state, "working")) working += 1 else if (eq(state, "idle")) idle += 1 else if (eq(state, "done")) done += 1 else unknown += 1;
         }
-        try add(&lines, a, try fmt(a, "agents  {d} ► working  {d} ● waiting  {d} !", .{ working, waiting, errors }), .secondary);
+        try add(&lines, a, try fmt(a, "agents  {d} total  {d} ► working", .{ self.rows.items.len, working }), .secondary);
+        try add(&lines, a, try fmt(a, "idle {d}  wait {d}  error {d}  done {d}", .{ idle, waiting, errors, done }), .secondary);
+        if (unknown > 0) try add(&lines, a, try fmt(a, "unknown {d} · state unavailable", .{unknown}), .secondary);
         try self.section(&lines, a, "working", width);
         const limit = @max(1, height -| (lines.items.len + 3));
         const first = if (self.selected < limit) 0 else self.selected - limit + 1;
