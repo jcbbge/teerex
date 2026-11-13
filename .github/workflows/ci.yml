@@ -150,6 +150,9 @@ jobs:
           TEEREX_OFFLINE_ONLY: '1'
         run: python3 items/doctor/test_doctor.py -v
 
+      - name: Validate readiness evidence and baseline contracts
+        run: python3 -m unittest discover -s tools/acceptance -p test_acceptance.py -v
+
       - name: Run cartridge lifecycle and native installed-payload contracts
         if: runner.os == 'Linux' || matrix.rex-api == 13
         run: |

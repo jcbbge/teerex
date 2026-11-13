@@ -6,11 +6,14 @@ from pathlib import Path
 import shutil
 import subprocess
 import tempfile
+import sys
 
 from cartridges import digest, manifest, require, version
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent.parent
+sys.path.insert(0, str(REPO / "tools/acceptance"))
+from records import readiness
 
 
 def main():
@@ -40,6 +43,7 @@ def main():
         stage = Path(tempfile.mkdtemp(prefix=".catalog-", dir=args.output.parent))
         try:
             entries = []
+            readiness_states = {}
             for recipe in recipes:
                 key = recipe["id"]
                 destination = stage / key / args.version
@@ -50,12 +54,14 @@ def main():
                 for name, source_path in (("README.md", REPO / "items" / key / "README.md"), ("RIGHTS.md", REPO / "RIGHTS.md")):
                     shutil.copyfile(source_path, destination / name)
                     (destination / name).chmod(0o600)
-                value = manifest(dict(schema_version=1, id=key, version=args.version, status="experimental", kind="program",
+                state, evidence = readiness(key, args.platform, revision, REPO, digest(destination / exe))
+                readiness_states[key] = state
+                value = manifest(dict(schema_version=1, id=key, version=args.version, status="ready" if state == "ready" else "experimental", kind="program",
                     platform=args.platform, entrypoint=[exe], dependencies={}, data_policy="retain",
                     permissions=recipe["permissions"],
                     provenance=dict(repository="https://github.com/jcbbge/teerex", source_commit=revision,
                                     source_tree_dirty=dirty, rights="RIGHTS.md", build="Zig 0.15.2 ReleaseSmall"),
-                    compatibility=dict(rex_api_revisions=recipe["rex_api_revisions"], note=recipe["note"]),
+                    compatibility=dict(rex_api_revisions=evidence["evidenced_api_revisions"] if evidence else recipe["rex_api_revisions"], note=recipe["note"], readiness=evidence),
                     files=[dict(path=p.name, sha256=digest(p), executable=bool(p.stat().st_mode & 0o111)) for p in sorted(destination.iterdir())]))
                 (destination / "manifest.json").write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
                 entries.append(dict(path=str(destination.relative_to(stage)), manifest_sha256=digest(destination / "manifest.json")))
@@ -64,7 +70,7 @@ def main():
         finally:
             if stage.exists():
                 shutil.rmtree(stage)
-    print(json.dumps(dict(catalog=str(args.output), platform=args.platform, cartridges=[p["id"] for p in recipes], source_commit=revision, source_tree_dirty=dirty)))
+    print(json.dumps(dict(catalog=str(args.output), platform=args.platform, cartridges=[p["id"] for p in recipes], source_commit=revision, source_tree_dirty=dirty, readiness=readiness_states)))
 
 
 if __name__ == "__main__":

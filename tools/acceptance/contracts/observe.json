@@ -1,0 +1,781 @@
+{
+  "schema_version": 1,
+  "item": "observe",
+  "help_options": {
+    "observe": [
+      "--after",
+      "--baseline",
+      "--before",
+      "--block",
+      "--interval-ms",
+      "--max-bytes",
+      "--no-deadline",
+      "--print-view",
+      "--session",
+      "--socket",
+      "--status-id",
+      "--status-state",
+      "--tail",
+      "--timeout-ms",
+      "--view",
+      "--view-rules"
+    ],
+    "compare": [
+      "--after",
+      "--baseline",
+      "--before",
+      "--block",
+      "--interval-ms",
+      "--max-bytes",
+      "--no-deadline",
+      "--print-view",
+      "--session",
+      "--socket",
+      "--status-id",
+      "--status-state",
+      "--tail",
+      "--timeout-ms",
+      "--view",
+      "--view-rules"
+    ],
+    "watch": [
+      "--after",
+      "--baseline",
+      "--before",
+      "--block",
+      "--interval-ms",
+      "--max-bytes",
+      "--no-deadline",
+      "--print-view",
+      "--session",
+      "--socket",
+      "--status-id",
+      "--status-state",
+      "--tail",
+      "--timeout-ms",
+      "--view",
+      "--view-rules"
+    ]
+  },
+  "help_scope": "The installed leaf shares one observation_usage help block across all three verbs; these are the exact printed option sets.",
+  "covered_paths": [
+    "items/observe",
+    "src/child.zig",
+    "src/child_linux.zig",
+    "tools/cartridges/entry.zig",
+    "tools/cartridges/build.zig",
+    "tools/acceptance/contracts/observe.json"
+  ],
+  "claims": [
+    {
+      "id": "observe.readme-11",
+      "text": "- Select full `session:UUID` / `block:UUID` explicitly. The combined root defaults a missing `--socket` from percent-decoded `REX_SERVER` (`unix://` only), then the platform path. `--socket ABS` overrides both. No current-focus, label or ID-suffix fallback selects session/block.",
+      "readme_line": 11,
+      "tests": [
+        "ObserveTest.test_default_socket_decoding_and_explicit_override",
+        "ObserveTest.test_platform_socket_default_is_reported_without_contact"
+      ]
+    },
+    {
+      "id": "observe.readme-12",
+      "text": "- One explicitly attached `rex do --session FULL --block FULL` runs fixed embedded Lua and five serial supported reads, using `--autostart=false`, an explicit endpoint and a three-second Rex connection/request timeout. Values arrive as JSON arguments, never interpolated source; no configuration is installed. Each response is re-encoded and checked against 128 KiB at the Lua boundary, not before Rex allocates/decodes it. A bounded aggregate buffer independently caps collector output; stderr retention is 4096 bytes. Required RPC/decode/size-limit failures produce no success packet, not fabricated empty evidence.",
+      "readme_line": 12,
+      "tests": [
+        "CompareTest.test_api_range_preserves_revision_and_refuses_outside_bounds",
+        "CompareTest.test_file_limits_malformed_packets_and_arguments",
+        "CompareTest.test_view_long_whitespace_and_protected_lines_are_bounded",
+        "ObserveTest.test_bounded_utf8_capture_marks_partial_prefix",
+        "ObserveTest.test_exact_encoded_string_boundary",
+        "ObserveTest.test_watch_target_source_transport_and_usage_fail_closed"
+      ]
+    },
+    {
+      "id": "observe.readme-13",
+      "text": "- Live `observe` and `watch` support Apple-silicon macOS and Linux x86_64. Standalone `observe --timeout-ms N` defaults to **5000 ms**, range **100\u201360000**. Its supervisor bounds collection, including a stalled executable, then applies the same TERM/KILL/drain limits as `watch`. Deadline exits **124**, SIGINT/SIGTERM **130/143**, with no success JSON from an interrupted sample. Preflight, final serialization/stdout backpressure and kernel stalls are outside a hard real-time promise. Offline `compare` still needs neither Rex nor macOS.",
+      "readme_line": 13,
+      "tests": [
+        "CompareTest.test_api_range_preserves_revision_and_refuses_outside_bounds",
+        "CompareTest.test_view_long_whitespace_and_protected_lines_are_bounded",
+        "ObserveTest.test_bounded_utf8_capture_marks_partial_prefix",
+        "ObserveTest.test_exact_encoded_string_boundary",
+        "ObserveTest.test_watch_quiet_deadline_is_not_completion_or_known_missing_evidence",
+        "ObserveTest.test_watch_multiple_states_and_status_deadlines",
+        "ObserveTest.test_watch_no_deadline_cancellation_and_usage",
+        "ObserveTest.test_deadline_and_cancellation_stop_stalled_collection_not_target",
+        "ObserveTest.test_view_V_W1_cosmetic_deadline_optional_absent_does_not_wake"
+      ]
+    },
+    {
+      "id": "observe.readme-14",
+      "text": "- Output includes an observation ID, client observation time, exact requested target, actual server version/platform/API revision, and bounded capture. Integer API revisions10\u201313 are accepted; an out-of-range refusal names the found revision. Missing bindings/invalid evidence still fail. Revision acceptance does not authenticate the server or certify every old-build behavior. Exact source identity, including revision, is still required for comparison/waiting; no baseline crosses a server revision change silently.",
+      "readme_line": 14,
+      "tests": [
+        "CompareTest.test_partial_prefixes_and_different_capture_limits",
+        "CompareTest.test_api_range_preserves_revision_and_refuses_outside_bounds",
+        "CompareTest.test_incompatible_targets_versions_and_provenance_fail_closed",
+        "CompareTest.test_view_long_whitespace_and_protected_lines_are_bounded",
+        "ObserveTest.test_explicit_target_and_read_only_result",
+        "ObserveTest.test_bounded_utf8_capture_marks_partial_prefix",
+        "ObserveTest.test_exact_encoded_string_boundary",
+        "ObserveTest.test_missing_target_diagnostics_keep_requested_route_and_watch_unknown",
+        "ObserveTest.test_watch_text_change_keeps_target_running_and_does_not_repeat_text",
+        "ObserveTest.test_watch_target_source_transport_and_usage_fail_closed",
+        "ObserveTest.test_deadline_and_cancellation_stop_stalled_collection_not_target"
+      ]
+    },
+    {
+      "id": "observe.readme-15",
+      "text": "- The capture is **screen and scrollback**, not necessarily the visible viewport. Rex returns a **prefix** when limited; this may omit the latest prompt. `capture.complete=false` makes that omission explicit. `observe --tail` (API13) instead returns the longest newest suffix that fits the encoded byte budget, using the original capture\u2019s stable blob ID and total when continuation is needed. `capture.portion=\"tail\"`, `view=\"latest\"` and `incomplete_at=\"start\"` identify omitted older text. Complete latest captures have null `incomplete_at`. Prefix captures retain their original five-field shape, with no additional capture members. Neither partial view establishes unseen content.",
+      "readme_line": 15,
+      "tests": [
+        "CompareTest.test_partial_prefixes_and_different_capture_limits",
+        "CompareTest.test_partial_tail_comparison_preserves_scope",
+        "CompareTest.test_api_range_preserves_revision_and_refuses_outside_bounds",
+        "CompareTest.test_view_V_A1_raw_kept_exact_spans_and_prompt",
+        "CompareTest.test_view_V_A2_protected_and_calibrated_shapes",
+        "CompareTest.test_view_V_A3_A4_non_text_and_missing_whole_method",
+        "CompareTest.test_view_V_A5_A6_A7_hidden_tail_counts_and_span_limit",
+        "CompareTest.test_view_V_A8_rules_refusals_without_rex",
+        "CompareTest.test_view_rules_hash_canonical_and_literals_do_not_collide",
+        "CompareTest.test_view_long_whitespace_and_protected_lines_are_bounded",
+        "CompareTest.test_view_V_C24_documentation_makes_no_state_claim",
+        "ObserveTest.test_tail_exact_unicode_and_same_blob_continuation",
+        "ObserveTest.test_bounded_utf8_capture_marks_partial_prefix",
+        "ObserveTest.test_watch_changed_tail_outside_prefix_stays_unknown",
+        "ObserveTest.test_view_V_W1_cosmetic_deadline_optional_absent_does_not_wake",
+        "ObserveTest.test_view_V_W2_real_events_are_not_suppressed",
+        "ObserveTest.test_view_V_W3_hidden_tail_remains_unknown"
+      ]
+    },
+    {
+      "id": "observe.readme-16",
+      "text": "- `--max-bytes` limits the JSON-encoded **content string**, including its two quotes, not the whole JSON packet or Rex's internal capture memory. Default 4096; range 256\u201365536. Unicode and escaping count toward this budget. The tested Rex counts the escaped string body without the quotes, so teerex reserves those two bytes before requesting and independently checks the returned string. `atomic_snapshot=false`: no atomicity, ownership, completion, process-state, or permission inference is made.",
+      "readme_line": 16,
+      "tests": [
+        "CompareTest.test_partial_prefixes_and_different_capture_limits",
+        "CompareTest.test_api_range_preserves_revision_and_refuses_outside_bounds",
+        "ObserveTest.test_bounded_utf8_capture_marks_partial_prefix"
+      ]
+    },
+    {
+      "id": "observe.readme-17",
+      "text": "- Reads only: no input, session creation, focus/layout changes, configuration edits, background service, or file writes by teerex. The Rex CLI still opens/attaches/closes observation connections. It has the account's full Rex authority; this command is not a security sandbox.",
+      "readme_line": 17,
+      "tests": [
+        "ObserveTest.test_explicit_target_and_read_only_result"
+      ]
+    },
+    {
+      "id": "observe.readme-18",
+      "text": "- Unix transport is explicit, not proof of physical locality: a socket can be an SSH forward. Direct invocation uses the selected Unix socket, not a raw HTTP/SSH URL. Alpha.5's shared named-host route executes teerex on an explicitly configured command host; it does not configure socket forwarding, change hosts files, deploy a VPS or certify attached foreign-block observation.",
+      "readme_line": 18,
+      "tests": [
+        "ObserveTest.test_default_socket_decoding_and_explicit_override",
+        "ObserveTest.test_platform_socket_default_is_reported_without_contact"
+      ]
+    },
+    {
+      "id": "observe.readme-19",
+      "text": "- Terminal content is untrusted data and can contain secrets. JSON is escaped but **not redacted**. Keep observations out of Git, logs and external services unless reviewed. Target/Rex/compatibility failures produce no success JSON; usage errors exit 2, operational failures exit 1. Consumers must check the exit status as well as parsing JSON, since a stdout write failure can leave partial output.",
+      "readme_line": 19,
+      "tests": [
+        "CompareTest.test_incompatible_targets_versions_and_provenance_fail_closed",
+        "CompareTest.test_view_V_A1_raw_kept_exact_spans_and_prompt",
+        "CompareTest.test_view_V_A2_protected_and_calibrated_shapes",
+        "CompareTest.test_view_V_A3_A4_non_text_and_missing_whole_method",
+        "CompareTest.test_view_V_A5_A6_A7_hidden_tail_counts_and_span_limit",
+        "CompareTest.test_view_V_A8_rules_refusals_without_rex",
+        "CompareTest.test_view_rules_hash_canonical_and_literals_do_not_collide",
+        "CompareTest.test_view_long_whitespace_and_protected_lines_are_bounded",
+        "CompareTest.test_view_V_C24_documentation_makes_no_state_claim",
+        "ObserveTest.test_explicit_target_and_read_only_result",
+        "ObserveTest.test_missing_target_diagnostics_keep_requested_route_and_watch_unknown",
+        "ObserveTest.test_watch_text_change_keeps_target_running_and_does_not_repeat_text",
+        "ObserveTest.test_watch_status_predicate_matches_exact_new_report_not_completion",
+        "ObserveTest.test_watch_multiple_states_and_status_deadlines",
+        "ObserveTest.test_watch_target_source_transport_and_usage_fail_closed",
+        "ObserveTest.test_deadline_and_cancellation_stop_stalled_collection_not_target",
+        "ObserveTest.test_view_V_W1_cosmetic_deadline_optional_absent_does_not_wake",
+        "ObserveTest.test_view_V_W2_real_events_are_not_suppressed",
+        "ObserveTest.test_view_V_W3_hidden_tail_remains_unknown"
+      ]
+    },
+    {
+      "id": "observe.readme-68",
+      "text": "| `process` / `rex_observation` | Rex's child and foreground process: PID, name, readable per-process `cwd`; terminal-program `last_exit.exit_code`. Missing process/cwd is null. Other process metadata, executable/argument paths, user/home information and ancestor lists are deliberately not exported. | The foreground process is not necessarily the terminal's original child. `last_exit` is for the terminal's program, not every shell command, descendant or status record. Null `last_exit` can mean running **or** no owned program; it is not a running flag. |",
+      "readme_line": 68,
+      "tests": [
+        "CompareTest.test_file_limits_malformed_packets_and_arguments",
+        "ObserveTest.test_watch_status_predicate_matches_exact_new_report_not_completion",
+        "ObserveTest.test_watch_multiple_states_and_status_deadlines"
+      ]
+    },
+    {
+      "id": "observe.readme-69",
+      "text": "| `reported_directory` / `terminal_report` | The exact last-reported `pwd` string, including a `file://` URL when that is what the program emitted, plus reported owner PID/name when Rex can identify it. Missing report/owner is null. | This is not a verified filesystem path or process cwd. It may survive a directory change or process exit. No report timestamp is supplied by this binding, so `reported_at=null`; teerex does not substitute query time. No URL is followed, path resolved, or file opened. |",
+      "readme_line": 69,
+      "tests": [
+        "CompareTest.test_report_order_is_irrelevant_but_timestamp_and_zero_are_evidence",
+        "ObserveTest.test_platform_socket_default_is_reported_without_contact",
+        "ObserveTest.test_missing_reports_remain_unknown_not_idle",
+        "ObserveTest.test_reports_do_not_follow_actual_process_directory",
+        "ObserveTest.test_retained_done_report_is_not_successful_exit",
+        "ObserveTest.test_watch_done_report_does_not_mean_the_process_exited",
+        "ObserveTest.test_watch_status_predicate_matches_exact_new_report_not_completion"
+      ]
+    },
+    {
+      "id": "observe.readme-70",
+      "text": "| `program_status` / `program_reports` | Every returned root/child record, preserving state, app/effective_app, kind, progress, title/message, owner and server-clock `updated_at`. Optional missing fields become null; root ID is null; zero progress stays zero. | Empty records mean no retained reports, **not idle/done**. `done`/`error` may outlive a process. A blocked `permission` report requests a decision; it never grants authority. Messages are untrusted plain data, not instructions or task classifiers. |",
+      "readme_line": 70,
+      "tests": [
+        "CompareTest.test_report_order_is_irrelevant_but_timestamp_and_zero_are_evidence",
+        "ObserveTest.test_platform_socket_default_is_reported_without_contact",
+        "ObserveTest.test_missing_reports_remain_unknown_not_idle",
+        "ObserveTest.test_reports_do_not_follow_actual_process_directory",
+        "ObserveTest.test_retained_done_report_is_not_successful_exit",
+        "ObserveTest.test_watch_done_report_does_not_mean_the_process_exited",
+        "ObserveTest.test_watch_status_predicate_matches_exact_new_report_not_completion",
+        "ObserveTest.test_watch_multiple_states_and_status_deadlines"
+      ]
+    },
+    {
+      "id": "observe.readme-82",
+      "text": "| `capture.captured_text_changed` | Compares captured strings when the capture limits match, or both captures are complete. If limits differ and either capture is partial, returns null rather than mislabel a different-length prefix as terminal change. Both limits and completeness flags remain visible. |",
+      "readme_line": 82,
+      "tests": [
+        "CompareTest.test_partial_prefixes_and_different_capture_limits",
+        "ObserveTest.test_bounded_utf8_capture_marks_partial_prefix"
+      ]
+    },
+    {
+      "id": "observe.readme-83",
+      "text": "| `capture.full_text_changed` | Compares full captured screen-and-scrollback text only when **both** captures are complete. Otherwise null, even if equal prefixes or a changed prefix are known. This says nothing about intermediate activity, the latest viewport, or atomicity. |",
+      "readme_line": 83,
+      "tests": [
+        "CompareTest.test_partial_prefixes_and_different_capture_limits",
+        "CompareTest.test_view_V_A1_raw_kept_exact_spans_and_prompt",
+        "CompareTest.test_view_V_A2_protected_and_calibrated_shapes",
+        "CompareTest.test_view_V_A3_A4_non_text_and_missing_whole_method",
+        "CompareTest.test_view_V_A5_A6_A7_hidden_tail_counts_and_span_limit",
+        "CompareTest.test_view_V_A8_rules_refusals_without_rex",
+        "CompareTest.test_view_rules_hash_canonical_and_literals_do_not_collide",
+        "CompareTest.test_view_long_whitespace_and_protected_lines_are_bounded",
+        "CompareTest.test_view_V_C24_documentation_makes_no_state_claim",
+        "ObserveTest.test_bounded_utf8_capture_marks_partial_prefix",
+        "ObserveTest.test_view_V_W1_cosmetic_deadline_optional_absent_does_not_wake",
+        "ObserveTest.test_view_V_W2_real_events_are_not_suppressed",
+        "ObserveTest.test_view_V_W3_hidden_tail_remains_unknown"
+      ]
+    },
+    {
+      "id": "observe.readme-84",
+      "text": "| `process.child`, `.foreground`, `.last_exit` | Separately compare returned child/foreground records (PID, name, nullable cwd) and terminal-program exit records. A changed record need not mean a different process: a cwd or its availability can change. It does not identify completed tasks or nested shell commands. |",
+      "readme_line": 84,
+      "tests": [
+        "ObserveTest.test_explicit_target_and_read_only_result"
+      ]
+    },
+    {
+      "id": "observe.readme-85",
+      "text": "| `reported_directory` | Compares the exact reported path plus owner record, without URL/path normalization. Available only when a non-null directory report exists; null owner stays unknown. This is not actual cwd or freshness. |",
+      "readme_line": 85,
+      "tests": [
+        "CompareTest.test_unknown_and_disappearing_evidence_is_not_unchanged",
+        "CompareTest.test_report_order_is_irrelevant_but_timestamp_and_zero_are_evidence",
+        "ObserveTest.test_platform_socket_default_is_reported_without_contact",
+        "ObserveTest.test_missing_reports_remain_unknown_not_idle",
+        "ObserveTest.test_reports_do_not_follow_actual_process_directory",
+        "ObserveTest.test_retained_done_report_is_not_successful_exit",
+        "ObserveTest.test_missing_target_diagnostics_keep_requested_route_and_watch_unknown",
+        "ObserveTest.test_watch_done_report_does_not_mean_the_process_exited",
+        "ObserveTest.test_watch_changed_tail_outside_prefix_stays_unknown",
+        "ObserveTest.test_watch_status_predicate_matches_exact_new_report_not_completion",
+        "ObserveTest.test_view_V_W3_hidden_tail_remains_unknown"
+      ]
+    },
+    {
+      "id": "observe.readme-86",
+      "text": "| `program_status` | Compares the retained records, including server-clock arrival timestamps and nullable fields. Records are matched by ID independent of list order; duplicate IDs are rejected. Zero progress differs from unavailable progress. A new timestamp alone is an evidence change, not proof of meaningful activity. An empty record list is available evidence of no retained reports, not idle/completion. |",
+      "readme_line": 86,
+      "tests": [
+        "CompareTest.test_report_order_is_irrelevant_but_timestamp_and_zero_are_evidence",
+        "ObserveTest.test_platform_socket_default_is_reported_without_contact",
+        "ObserveTest.test_missing_reports_remain_unknown_not_idle",
+        "ObserveTest.test_reports_do_not_follow_actual_process_directory",
+        "ObserveTest.test_retained_done_report_is_not_successful_exit",
+        "ObserveTest.test_watch_done_report_does_not_mean_the_process_exited",
+        "ObserveTest.test_watch_status_predicate_matches_exact_new_report_not_completion",
+        "ObserveTest.test_watch_multiple_states_and_status_deadlines"
+      ]
+    },
+    {
+      "id": "observe.readme-114",
+      "text": "| `change_observed` / exit **0** | A comparable value or availability change was accepted before the deadline. **Not** task success, completion, permission or fresh-report verification. |",
+      "readme_line": 114,
+      "tests": [
+        "CompareTest.test_report_order_is_irrelevant_but_timestamp_and_zero_are_evidence",
+        "ObserveTest.test_platform_socket_default_is_reported_without_contact",
+        "ObserveTest.test_missing_reports_remain_unknown_not_idle",
+        "ObserveTest.test_reports_do_not_follow_actual_process_directory",
+        "ObserveTest.test_retained_done_report_is_not_successful_exit",
+        "ObserveTest.test_watch_quiet_deadline_is_not_completion_or_known_missing_evidence",
+        "ObserveTest.test_watch_done_report_does_not_mean_the_process_exited",
+        "ObserveTest.test_watch_status_predicate_matches_exact_new_report_not_completion",
+        "ObserveTest.test_watch_multiple_states_and_status_deadlines",
+        "ObserveTest.test_watch_no_deadline_cancellation_and_usage",
+        "ObserveTest.test_deadline_and_cancellation_stop_stalled_collection_not_target",
+        "ObserveTest.test_view_V_W1_cosmetic_deadline_optional_absent_does_not_wake"
+      ]
+    },
+    {
+      "id": "observe.readme-115",
+      "text": "| `status_report_matched` / exit **0** | The explicitly selected root/named record matched the requested state with differing evidence relative to the original baseline. Not process exit, task completion, permission or proven report freshness. |",
+      "readme_line": 115,
+      "tests": [
+        "CompareTest.test_report_order_is_irrelevant_but_timestamp_and_zero_are_evidence",
+        "ObserveTest.test_platform_socket_default_is_reported_without_contact",
+        "ObserveTest.test_missing_reports_remain_unknown_not_idle",
+        "ObserveTest.test_reports_do_not_follow_actual_process_directory",
+        "ObserveTest.test_retained_done_report_is_not_successful_exit",
+        "ObserveTest.test_watch_done_report_does_not_mean_the_process_exited",
+        "ObserveTest.test_watch_status_predicate_matches_exact_new_report_not_completion",
+        "ObserveTest.test_watch_multiple_states_and_status_deadlines"
+      ]
+    },
+    {
+      "id": "observe.readme-116",
+      "text": "| `deadline_exceeded` / exit **124** | No qualifying change was accepted in the budget. Not proof of unchanged full text, idle, failure or completion. A collection may have been interrupted or a late sample discarded. |",
+      "readme_line": 116,
+      "tests": [
+        "ObserveTest.test_watch_quiet_deadline_is_not_completion_or_known_missing_evidence",
+        "ObserveTest.test_watch_multiple_states_and_status_deadlines",
+        "ObserveTest.test_watch_no_deadline_cancellation_and_usage",
+        "ObserveTest.test_deadline_and_cancellation_stop_stalled_collection_not_target",
+        "ObserveTest.test_view_V_W1_cosmetic_deadline_optional_absent_does_not_wake"
+      ]
+    },
+    {
+      "id": "observe.readme-117",
+      "text": "| `observation_failed` / exit **1** | Collection/decoding/source compatibility failed; the wait stops, without laundering failure into unavailable evidence or a quiet timeout. `failure_reason` names the error. Bounded collector diagnostics go to stderr, not into the change summary. |",
+      "readme_line": 117,
+      "tests": [
+        "CompareTest.test_api_range_preserves_revision_and_refuses_outside_bounds",
+        "CompareTest.test_view_long_whitespace_and_protected_lines_are_bounded",
+        "ObserveTest.test_bounded_utf8_capture_marks_partial_prefix",
+        "ObserveTest.test_exact_encoded_string_boundary",
+        "ObserveTest.test_watch_quiet_deadline_is_not_completion_or_known_missing_evidence",
+        "ObserveTest.test_watch_target_source_transport_and_usage_fail_closed"
+      ]
+    },
+    {
+      "id": "observe.readme-118",
+      "text": "| `cancel_requested` / exit **130/143** | SIGINT/SIGTERM requested cancellation, including during a poll gap. Previously accepted comparisons survive; an interrupted sample is not treated as complete. |",
+      "readme_line": 118,
+      "tests": [
+        "ObserveTest.test_watch_no_deadline_cancellation_and_usage",
+        "ObserveTest.test_deadline_and_cancellation_stop_stalled_collection_not_target",
+        "ObserveTest.test_watch_poll_gap_cancel_and_later_failure_keep_last_comparison"
+      ]
+    },
+    {
+      "id": "observe.readme-119",
+      "text": "| `changed_fields`, `availability_changed_fields`, `unknown_fields` | Separate named field lists from the **last accepted comparison**. A field can have changed availability while its value comparison remains unknown. Lists are null, not empty, if no comparison was accepted. Raw terminal/report/path/exit values are not repeated. |",
+      "readme_line": 119,
+      "tests": [
+        "CompareTest.test_unknown_and_disappearing_evidence_is_not_unchanged",
+        "CompareTest.test_report_order_is_irrelevant_but_timestamp_and_zero_are_evidence",
+        "ObserveTest.test_platform_socket_default_is_reported_without_contact",
+        "ObserveTest.test_missing_reports_remain_unknown_not_idle",
+        "ObserveTest.test_reports_do_not_follow_actual_process_directory",
+        "ObserveTest.test_retained_done_report_is_not_successful_exit",
+        "ObserveTest.test_missing_target_diagnostics_keep_requested_route_and_watch_unknown",
+        "ObserveTest.test_watch_done_report_does_not_mean_the_process_exited",
+        "ObserveTest.test_watch_changed_tail_outside_prefix_stays_unknown",
+        "ObserveTest.test_watch_status_predicate_matches_exact_new_report_not_completion",
+        "ObserveTest.test_view_V_W3_hidden_tail_remains_unknown"
+      ]
+    },
+    {
+      "id": "observe.readme-120",
+      "text": "| `baseline_observation_id`, `baseline_source`, `target`, `last_comparison` | Caller-selected reference and exact C03 comparison, retaining both observation IDs and the compatibility/provenance boundary. `baseline_source` is not a fresh source observation after a later failure. |",
+      "readme_line": 120,
+      "tests": [
+        "CompareTest.test_api_range_preserves_revision_and_refuses_outside_bounds",
+        "CompareTest.test_incompatible_targets_versions_and_provenance_fail_closed",
+        "CompareTest.test_view_long_whitespace_and_protected_lines_are_bounded",
+        "ObserveTest.test_explicit_target_and_read_only_result",
+        "ObserveTest.test_bounded_utf8_capture_marks_partial_prefix",
+        "ObserveTest.test_exact_encoded_string_boundary",
+        "ObserveTest.test_missing_target_diagnostics_keep_requested_route_and_watch_unknown",
+        "ObserveTest.test_watch_text_change_keeps_target_running_and_does_not_repeat_text",
+        "ObserveTest.test_watch_target_source_transport_and_usage_fail_closed",
+        "ObserveTest.test_deadline_and_cancellation_stop_stalled_collection_not_target"
+      ]
+    },
+    {
+      "id": "observe.readme-121",
+      "text": "| `collector_invocations`, `collection_attempts`, `observations_compared`, `last_comparison_elapsed_ms` | One collector invocation, logical attempt/accepted counts and last accepted comparison's monotonic offset. A previous comparison is **not current evidence** after a later failed/interrupted attempt. It is labelled last, not substituted for the failed sample. |",
+      "readme_line": 121,
+      "tests": [
+        "ObserveTest.test_explicit_target_and_read_only_result"
+      ]
+    },
+    {
+      "id": "observe.readme-122",
+      "text": "| `condition`, `matched_status_report` | Null for a generic wait. A status wait names the selected record/state and differing-evidence requirement. Its match retains only record ID, state and server-clock arrival timestamp, not message/title/progress/owner. |",
+      "readme_line": 122,
+      "tests": [
+        "CompareTest.test_report_order_is_irrelevant_but_timestamp_and_zero_are_evidence",
+        "ObserveTest.test_platform_socket_default_is_reported_without_contact",
+        "ObserveTest.test_missing_reports_remain_unknown_not_idle",
+        "ObserveTest.test_reports_do_not_follow_actual_process_directory",
+        "ObserveTest.test_retained_done_report_is_not_successful_exit",
+        "ObserveTest.test_watch_done_report_does_not_mean_the_process_exited",
+        "ObserveTest.test_watch_status_predicate_matches_exact_new_report_not_completion",
+        "ObserveTest.test_watch_multiple_states_and_status_deadlines"
+      ]
+    },
+    {
+      "id": "observe.readme-123",
+      "text": "| `last_sample_interrupted`, `last_sample_discarded_at_deadline`, `interpretation` | Explicit interrupted/late-sample markers; `interpretation=\"none\"` always. Full-sample collection is at most **1 MiB**, independently of its terminal-content budget; the current internal frame buffer additionally stops at **655680 bytes**. Collector stderr retention is capped at **4096 bytes**. |",
+      "readme_line": 123,
+      "tests": [
+        "ObserveTest.test_watch_quiet_deadline_is_not_completion_or_known_missing_evidence",
+        "ObserveTest.test_watch_multiple_states_and_status_deadlines",
+        "ObserveTest.test_watch_no_deadline_cancellation_and_usage",
+        "ObserveTest.test_deadline_and_cancellation_stop_stalled_collection_not_target",
+        "ObserveTest.test_view_V_W1_cosmetic_deadline_optional_absent_does_not_wake"
+      ]
+    },
+    {
+      "id": "observe.test.CompareTest.test_equal_evidence_ignores_packet_times_ids_and_object_key_order",
+      "text": "Public contract: CompareTest.test_equal_evidence_ignores_packet_times_ids_and_object_key_order",
+      "tests": [
+        "CompareTest.test_equal_evidence_ignores_packet_times_ids_and_object_key_order"
+      ]
+    },
+    {
+      "id": "observe.test.CompareTest.test_distinct_changes_and_new_exit_evidence_are_not_completion",
+      "text": "Public contract: CompareTest.test_distinct_changes_and_new_exit_evidence_are_not_completion",
+      "tests": [
+        "CompareTest.test_distinct_changes_and_new_exit_evidence_are_not_completion"
+      ]
+    },
+    {
+      "id": "observe.test.CompareTest.test_partial_prefixes_and_different_capture_limits",
+      "text": "Public contract: CompareTest.test_partial_prefixes_and_different_capture_limits",
+      "tests": [
+        "CompareTest.test_partial_prefixes_and_different_capture_limits"
+      ]
+    },
+    {
+      "id": "observe.test.CompareTest.test_unknown_and_disappearing_evidence_is_not_unchanged",
+      "text": "Public contract: CompareTest.test_unknown_and_disappearing_evidence_is_not_unchanged",
+      "tests": [
+        "CompareTest.test_unknown_and_disappearing_evidence_is_not_unchanged"
+      ]
+    },
+    {
+      "id": "observe.test.CompareTest.test_report_order_is_irrelevant_but_timestamp_and_zero_are_evidence",
+      "text": "Public contract: CompareTest.test_report_order_is_irrelevant_but_timestamp_and_zero_are_evidence",
+      "tests": [
+        "CompareTest.test_report_order_is_irrelevant_but_timestamp_and_zero_are_evidence"
+      ]
+    },
+    {
+      "id": "observe.test.CompareTest.test_partial_tail_comparison_preserves_scope",
+      "text": "Public contract: CompareTest.test_partial_tail_comparison_preserves_scope",
+      "tests": [
+        "CompareTest.test_partial_tail_comparison_preserves_scope"
+      ]
+    },
+    {
+      "id": "observe.test.CompareTest.test_api_range_preserves_revision_and_refuses_outside_bounds",
+      "text": "Public contract: CompareTest.test_api_range_preserves_revision_and_refuses_outside_bounds",
+      "tests": [
+        "CompareTest.test_api_range_preserves_revision_and_refuses_outside_bounds"
+      ]
+    },
+    {
+      "id": "observe.test.CompareTest.test_incompatible_targets_versions_and_provenance_fail_closed",
+      "text": "Public contract: CompareTest.test_incompatible_targets_versions_and_provenance_fail_closed",
+      "tests": [
+        "CompareTest.test_incompatible_targets_versions_and_provenance_fail_closed"
+      ]
+    },
+    {
+      "id": "observe.test.CompareTest.test_file_limits_malformed_packets_and_arguments",
+      "text": "Public contract: CompareTest.test_file_limits_malformed_packets_and_arguments",
+      "tests": [
+        "CompareTest.test_file_limits_malformed_packets_and_arguments"
+      ]
+    },
+    {
+      "id": "observe.test.CompareTest.test_view_V_A1_raw_kept_exact_spans_and_prompt",
+      "text": "Public contract: CompareTest.test_view_V_A1_raw_kept_exact_spans_and_prompt",
+      "tests": [
+        "CompareTest.test_view_V_A1_raw_kept_exact_spans_and_prompt"
+      ]
+    },
+    {
+      "id": "observe.test.CompareTest.test_view_V_A2_protected_and_calibrated_shapes",
+      "text": "Public contract: CompareTest.test_view_V_A2_protected_and_calibrated_shapes",
+      "tests": [
+        "CompareTest.test_view_V_A2_protected_and_calibrated_shapes"
+      ]
+    },
+    {
+      "id": "observe.test.CompareTest.test_view_V_A3_A4_non_text_and_missing_whole_method",
+      "text": "Public contract: CompareTest.test_view_V_A3_A4_non_text_and_missing_whole_method",
+      "tests": [
+        "CompareTest.test_view_V_A3_A4_non_text_and_missing_whole_method"
+      ]
+    },
+    {
+      "id": "observe.test.CompareTest.test_view_V_A5_A6_A7_hidden_tail_counts_and_span_limit",
+      "text": "Public contract: CompareTest.test_view_V_A5_A6_A7_hidden_tail_counts_and_span_limit",
+      "tests": [
+        "CompareTest.test_view_V_A5_A6_A7_hidden_tail_counts_and_span_limit"
+      ]
+    },
+    {
+      "id": "observe.test.CompareTest.test_view_V_A8_rules_refusals_without_rex",
+      "text": "Public contract: CompareTest.test_view_V_A8_rules_refusals_without_rex",
+      "tests": [
+        "CompareTest.test_view_V_A8_rules_refusals_without_rex"
+      ]
+    },
+    {
+      "id": "observe.test.CompareTest.test_view_rules_hash_canonical_and_literals_do_not_collide",
+      "text": "Public contract: CompareTest.test_view_rules_hash_canonical_and_literals_do_not_collide",
+      "tests": [
+        "CompareTest.test_view_rules_hash_canonical_and_literals_do_not_collide"
+      ]
+    },
+    {
+      "id": "observe.test.CompareTest.test_view_long_whitespace_and_protected_lines_are_bounded",
+      "text": "Public contract: CompareTest.test_view_long_whitespace_and_protected_lines_are_bounded",
+      "tests": [
+        "CompareTest.test_view_long_whitespace_and_protected_lines_are_bounded"
+      ]
+    },
+    {
+      "id": "observe.test.CompareTest.test_view_V_C24_documentation_makes_no_state_claim",
+      "text": "Public contract: CompareTest.test_view_V_C24_documentation_makes_no_state_claim",
+      "tests": [
+        "CompareTest.test_view_V_C24_documentation_makes_no_state_claim"
+      ]
+    },
+    {
+      "id": "observe.test.ObserveTest.test_default_socket_decoding_and_explicit_override",
+      "text": "Public contract: ObserveTest.test_default_socket_decoding_and_explicit_override",
+      "tests": [
+        "ObserveTest.test_default_socket_decoding_and_explicit_override"
+      ]
+    },
+    {
+      "id": "observe.test.ObserveTest.test_platform_socket_default_is_reported_without_contact",
+      "text": "Public contract: ObserveTest.test_platform_socket_default_is_reported_without_contact",
+      "tests": [
+        "ObserveTest.test_platform_socket_default_is_reported_without_contact"
+      ]
+    },
+    {
+      "id": "observe.test.ObserveTest.test_tail_exact_unicode_and_same_blob_continuation",
+      "text": "Public contract: ObserveTest.test_tail_exact_unicode_and_same_blob_continuation",
+      "tests": [
+        "ObserveTest.test_tail_exact_unicode_and_same_blob_continuation"
+      ]
+    },
+    {
+      "id": "observe.test.ObserveTest.test_explicit_target_and_read_only_result",
+      "text": "Public contract: ObserveTest.test_explicit_target_and_read_only_result",
+      "tests": [
+        "ObserveTest.test_explicit_target_and_read_only_result"
+      ]
+    },
+    {
+      "id": "observe.test.ObserveTest.test_missing_reports_remain_unknown_not_idle",
+      "text": "Public contract: ObserveTest.test_missing_reports_remain_unknown_not_idle",
+      "tests": [
+        "ObserveTest.test_missing_reports_remain_unknown_not_idle"
+      ]
+    },
+    {
+      "id": "observe.test.ObserveTest.test_reports_do_not_follow_actual_process_directory",
+      "text": "Public contract: ObserveTest.test_reports_do_not_follow_actual_process_directory",
+      "tests": [
+        "ObserveTest.test_reports_do_not_follow_actual_process_directory"
+      ]
+    },
+    {
+      "id": "observe.test.ObserveTest.test_retained_done_report_is_not_successful_exit",
+      "text": "Public contract: ObserveTest.test_retained_done_report_is_not_successful_exit",
+      "tests": [
+        "ObserveTest.test_retained_done_report_is_not_successful_exit"
+      ]
+    },
+    {
+      "id": "observe.test.ObserveTest.test_bounded_utf8_capture_marks_partial_prefix",
+      "text": "Public contract: ObserveTest.test_bounded_utf8_capture_marks_partial_prefix",
+      "tests": [
+        "ObserveTest.test_bounded_utf8_capture_marks_partial_prefix"
+      ]
+    },
+    {
+      "id": "observe.test.ObserveTest.test_exact_encoded_string_boundary",
+      "text": "Public contract: ObserveTest.test_exact_encoded_string_boundary",
+      "tests": [
+        "ObserveTest.test_exact_encoded_string_boundary"
+      ]
+    },
+    {
+      "id": "observe.test.ObserveTest.test_wrong_block_is_not_replaced_by_focus",
+      "text": "Public contract: ObserveTest.test_wrong_block_is_not_replaced_by_focus",
+      "tests": [
+        "ObserveTest.test_wrong_block_is_not_replaced_by_focus"
+      ]
+    },
+    {
+      "id": "observe.test.ObserveTest.test_missing_target_diagnostics_keep_requested_route_and_watch_unknown",
+      "text": "Public contract: ObserveTest.test_missing_target_diagnostics_keep_requested_route_and_watch_unknown",
+      "tests": [
+        "ObserveTest.test_missing_target_diagnostics_keep_requested_route_and_watch_unknown"
+      ]
+    },
+    {
+      "id": "observe.test.ObserveTest.test_missing_server_is_not_autostarted",
+      "text": "Public contract: ObserveTest.test_missing_server_is_not_autostarted",
+      "tests": [
+        "ObserveTest.test_missing_server_is_not_autostarted"
+      ]
+    },
+    {
+      "id": "observe.test.ObserveTest.test_invalid_options_are_rejected",
+      "text": "Public contract: ObserveTest.test_invalid_options_are_rejected",
+      "tests": [
+        "ObserveTest.test_invalid_options_are_rejected"
+      ]
+    },
+    {
+      "id": "observe.test.ObserveTest.test_watch_quiet_deadline_is_not_completion_or_known_missing_evidence",
+      "text": "Public contract: ObserveTest.test_watch_quiet_deadline_is_not_completion_or_known_missing_evidence",
+      "tests": [
+        "ObserveTest.test_watch_quiet_deadline_is_not_completion_or_known_missing_evidence"
+      ]
+    },
+    {
+      "id": "observe.test.ObserveTest.test_watch_text_change_keeps_target_running_and_does_not_repeat_text",
+      "text": "Public contract: ObserveTest.test_watch_text_change_keeps_target_running_and_does_not_repeat_text",
+      "tests": [
+        "ObserveTest.test_watch_text_change_keeps_target_running_and_does_not_repeat_text"
+      ]
+    },
+    {
+      "id": "observe.test.ObserveTest.test_watch_metadata_only_directory_change",
+      "text": "Public contract: ObserveTest.test_watch_metadata_only_directory_change",
+      "tests": [
+        "ObserveTest.test_watch_metadata_only_directory_change"
+      ]
+    },
+    {
+      "id": "observe.test.ObserveTest.test_watch_done_report_does_not_mean_the_process_exited",
+      "text": "Public contract: ObserveTest.test_watch_done_report_does_not_mean_the_process_exited",
+      "tests": [
+        "ObserveTest.test_watch_done_report_does_not_mean_the_process_exited"
+      ]
+    },
+    {
+      "id": "observe.test.ObserveTest.test_watch_new_exit_evidence_is_an_availability_change",
+      "text": "Public contract: ObserveTest.test_watch_new_exit_evidence_is_an_availability_change",
+      "tests": [
+        "ObserveTest.test_watch_new_exit_evidence_is_an_availability_change"
+      ]
+    },
+    {
+      "id": "observe.test.ObserveTest.test_watch_process_disappearance_and_exit_evidence_can_arrive_separately",
+      "text": "Public contract: ObserveTest.test_watch_process_disappearance_and_exit_evidence_can_arrive_separately",
+      "tests": [
+        "ObserveTest.test_watch_process_disappearance_and_exit_evidence_can_arrive_separately"
+      ]
+    },
+    {
+      "id": "observe.test.ObserveTest.test_watch_changed_tail_outside_prefix_stays_unknown",
+      "text": "Public contract: ObserveTest.test_watch_changed_tail_outside_prefix_stays_unknown",
+      "tests": [
+        "ObserveTest.test_watch_changed_tail_outside_prefix_stays_unknown"
+      ]
+    },
+    {
+      "id": "observe.test.ObserveTest.test_watch_status_predicate_matches_exact_new_report_not_completion",
+      "text": "Public contract: ObserveTest.test_watch_status_predicate_matches_exact_new_report_not_completion",
+      "tests": [
+        "ObserveTest.test_watch_status_predicate_matches_exact_new_report_not_completion"
+      ]
+    },
+    {
+      "id": "observe.test.ObserveTest.test_watch_multiple_states_and_status_deadlines",
+      "text": "Public contract: ObserveTest.test_watch_multiple_states_and_status_deadlines",
+      "tests": [
+        "ObserveTest.test_watch_multiple_states_and_status_deadlines"
+      ]
+    },
+    {
+      "id": "observe.test.ObserveTest.test_watch_no_deadline_cancellation_and_usage",
+      "text": "Public contract: ObserveTest.test_watch_no_deadline_cancellation_and_usage",
+      "tests": [
+        "ObserveTest.test_watch_no_deadline_cancellation_and_usage"
+      ]
+    },
+    {
+      "id": "observe.test.ObserveTest.test_watch_target_source_transport_and_usage_fail_closed",
+      "text": "Public contract: ObserveTest.test_watch_target_source_transport_and_usage_fail_closed",
+      "tests": [
+        "ObserveTest.test_watch_target_source_transport_and_usage_fail_closed"
+      ]
+    },
+    {
+      "id": "observe.test.ObserveTest.test_deadline_and_cancellation_stop_stalled_collection_not_target",
+      "text": "Public contract: ObserveTest.test_deadline_and_cancellation_stop_stalled_collection_not_target",
+      "tests": [
+        "ObserveTest.test_deadline_and_cancellation_stop_stalled_collection_not_target"
+      ]
+    },
+    {
+      "id": "observe.test.ObserveTest.test_watch_fragmented_large_samples_and_broken_frames",
+      "text": "Public contract: ObserveTest.test_watch_fragmented_large_samples_and_broken_frames",
+      "tests": [
+        "ObserveTest.test_watch_fragmented_large_samples_and_broken_frames"
+      ]
+    },
+    {
+      "id": "observe.test.ObserveTest.test_watch_poll_gap_cancel_and_later_failure_keep_last_comparison",
+      "text": "Public contract: ObserveTest.test_watch_poll_gap_cancel_and_later_failure_keep_last_comparison",
+      "tests": [
+        "ObserveTest.test_watch_poll_gap_cancel_and_later_failure_keep_last_comparison"
+      ]
+    },
+    {
+      "id": "observe.test.ObserveTest.test_view_V_W1_cosmetic_deadline_optional_absent_does_not_wake",
+      "text": "Public contract: ObserveTest.test_view_V_W1_cosmetic_deadline_optional_absent_does_not_wake",
+      "tests": [
+        "ObserveTest.test_view_V_W1_cosmetic_deadline_optional_absent_does_not_wake"
+      ]
+    },
+    {
+      "id": "observe.test.ObserveTest.test_view_V_W2_real_events_are_not_suppressed",
+      "text": "Public contract: ObserveTest.test_view_V_W2_real_events_are_not_suppressed",
+      "tests": [
+        "ObserveTest.test_view_V_W2_real_events_are_not_suppressed"
+      ]
+    },
+    {
+      "id": "observe.test.ObserveTest.test_view_V_W3_hidden_tail_remains_unknown",
+      "text": "Public contract: ObserveTest.test_view_V_W3_hidden_tail_remains_unknown",
+      "tests": [
+        "ObserveTest.test_view_V_W3_hidden_tail_remains_unknown"
+      ]
+    }
+  ]
+}
