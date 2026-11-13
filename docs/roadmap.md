@@ -26,10 +26,10 @@ Josh's overnight ruling selected every roadmap item. This table records where ea
 | Q06 actual API11 | Untestable: no legitimate pinned API11 build is available | — |
 | Q07 extra API/build pairs, Q08 OS/arch floor | Not pursued: hive and the M5 are both API13; CI covers Mac API10/12/13 and Linux API13 | — |
 | Q10 painted UI acceptance | Not pursued unattended: it would capture Josh's live screen | — |
-| Q14 lifetime/crash recovery | Partly built (N08 doctors, prune, detach receipts) | — |
-| Q15 encryption, redaction, secure erase | Partly built: env values are never retained (run-visible), call log and friction keep no values; encryption at rest not chosen | — |
+| Q14 lifetime/crash recovery | Built: `recovery reconcile` (read-only discovery, then confirmed apply) for launches orphaned by a Rex restart or supervisor kill, plus N08 doctors, prune and detach receipts | `teerex recovery reconcile` |
+| Q15 encryption, redaction, secure erase | Built: records redact recognized credentials and refuse secret-bearing evidence; the call log drops token-shaped names; `records forget` and `forget-scratchpad` overwrite before unlinking; run-visible never keeps env values. Encryption at rest deferred (reasoning in items/records/README.md) | — |
 | U10 Rex–Rivet integration | Rivet's half; teerex side (run-visible, channel, detach, session ensure) built | — |
-| Issues | #1 #2 #3 #4 #5 #6 #7 #9 #10 #12 #13 #15 #16 #17 #18 #19 #20 #22 #23 closed | GitHub |
+| Issues | #1 #2 #3 #4 #5 #6 #7 #9 #10 #12 #13 #15 #16 #17 #18 #19 #20 #22 #23 #14 closed | GitHub |
 
 ## Current phased plan — 13 November 2026
 
