@@ -115,9 +115,16 @@ local function deliver()
     end
     emit({event="ack", stage="enter"})
     local ok_status, process = pcall(rex.call, "com.superlogical.terminal.process", {session_id=a.session_id, block_id=a.block_id, args={}})
-    if ok_status and type(process) == "table" and type(process.child) == "table" then
-        emit({event="status_target", status_pid=process.child.pid, seat=seat})
+    local status_pid
+    if ok_status and type(process) == "table" and type(process.child) == "table" then status_pid = process.child.pid end
+    local supervised = false
+    local ok_records, records = pcall(rex.call, "com.superlogical.terminal.program_status", {session_id=a.session_id, block_id=a.block_id, args={}})
+    if ok_records and type(records) == "table" then
+        for _, record in ipairs(records.records or {}) do
+            if record.id == "teerex/tint" and record.app == "teerex-agent" then supervised = true end
+        end
     end
+    emit({event="status_target", status_pid=status_pid, seat=seat, supervised=supervised})
     if saved ~= "" then
         rex.sleep(.4)
         local acknowledged = not not paste_text(saved)

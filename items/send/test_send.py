@@ -83,13 +83,14 @@ class SendTest(unittest.TestCase):
                         REX_SESSION="session:wrong", REX_CLIENT="client:wrong",
                         PATH=str(Path(self.rex).parent) + os.pathsep + os.environ.get("PATH", ""))
 
-    def fixture(self):
+    def fixture(self, redirect_stdout=False):
         raw = self.work / ("received-" + str(time.monotonic_ns()))
         # Raw, no echo/canonical line limits. Bracketed paste brackets distinguish each
         # event, independently of the controller's ACK receipt or terminal capture.
         code = ("import os,tty; tty.setraw(0); "
                 "os.write(1,b'\\x1b[?2004hREADY'); "
-                f"f=open({str(raw)!r},'ab',buffering=0)\n"
+                + ("os.dup2(os.open('/dev/null',os.O_WRONLY),1); " if redirect_stdout else "")
+                + f"f=open({str(raw)!r},'ab',buffering=0)\n"
                 "while True:\n b=os.read(0,65536)\n if not b: break\n f.write(b)\n")
         v = self.rex_json("new", "--json", "--keep-open", "--shell=none", "--", sys.executable, "-c", code)
         target = v["session_id"], v["initial_windows"][0]["block_ids"][0]
@@ -145,6 +146,24 @@ class SendTest(unittest.TestCase):
     def prompt_text(self, target):
         return self.rpc("com.superlogical.terminal.format", {"session_id": target[0], "block_id": target[1],
                         "args": {"format": "text", "max_bytes": 65536}})["content"]
+
+    def test_status_failure_does_not_fail_or_repeat_delivered_message(self):
+        target, raw = self.fixture(redirect_stdout=sys.platform == "linux")
+        if sys.platform != "linux":
+            # ps reports the controlling tty even after stdout redirection on macOS.
+            # Force only the optional status helper to fail; Rex/input remain live.
+            helpers = self.work / "helpers"
+            helpers.mkdir()
+            helper = helpers / "python3"
+            helper.write_text("#!/bin/sh\nexit 44\n")
+            helper.chmod(0o700)
+            self.env["PATH"] = str(helpers) + os.pathsep + self.env["PATH"]
+        subprocess.check_call(self.base + ["block", "rename", "-s", target[0], target[1], "seat"])
+        r, packet = self.send(target)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(packet["outcome"], "events_acknowledged")
+        self.assertEqual(packet["status_record"], "tty_unavailable" if sys.platform == "linux" else "failed")
+        self.received(raw, self.pasted(b"hello"))
 
     def test_seat_status_message_and_decision_resolution(self):
         target, raw = self.fixture()

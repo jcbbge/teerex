@@ -29,7 +29,8 @@ import json, os, shlex, signal, subprocess, sys, termios, time, tty
 from pathlib import Path
 out, behavior = Path(sys.argv[1]), sys.argv[2]
 tty.setraw(0, termios.TCSANOW)
-os.write(1,b'\x1b[?2004h')
+signal.signal(signal.SIGUSR1, lambda *_: os.write(1,b'\x1b]11;?\x1b\\'))
+os.write(1,b'\x1b[?2004h\x1b]7501;state=working:app=synthetic\x07')
 args=sys.argv[3:]
 protocol=args[-1] if args and "Messaging protocol (not a task brief):" in args[-1] else None
 with out.open("a") as f:
@@ -99,6 +100,11 @@ while True:
     part=os.read(0,65536)
     if not part: break
     buf+=part
+    if b'\x1b]11;' in buf and (b'\x1b\\' in buf or b'\x07' in buf):
+        start=buf.index(b'\x1b]11;')
+        end=buf.index(b'\x07',start)+1 if b'\x07' in buf[start:] else buf.index(b'\x1b\\',start)+2
+        with out.open('a') as f: f.write(json.dumps({'event':'background','value':buf[start:end].decode()})+'\n')
+        buf=buf[:start]+buf[end:]
     while b"\x1b[201~\r" in buf:
         raw,buf=buf.split(b"\x1b[201~\r",1)
         payload=raw.removeprefix(b"\x1b[200~").decode()
@@ -1600,6 +1606,67 @@ Path('/work/network-harness').touch()
             self.assertEqual(p.returncode, 1, p.stdout + p.stderr)
             self.assertEqual(result["failure_reason"], "profile_notify_conflict")
         self.assertEqual(list(self.registry.glob("agents-*.json")), [])
+
+    def background(self, pid):
+        count = sum(v["event"] == "background" for v in events(self.worker_log))
+        os.kill(pid, signal.SIGUSR1)
+        try:
+            wait_for(lambda: sum(v["event"] == "background" for v in events(self.worker_log)) > count)
+        except AssertionError:
+            self.fail("No OSC11 response from disposable fixture")
+        return [v["value"] for v in events(self.worker_log) if v["event"] == "background"][-1]
+
+    def test_tint_idle_prompt_send_reset_custom_and_disabled(self):
+        self.settings["profiles"]["probe"].update(harness="claude", hook_events=True, tint=dict(idle="#312345"))
+        p, launched = self.launch()
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        launch_id = launched["launch_id"]
+        state = self.record(launch_id)
+        block = state["target"]["block_id"]
+        pid = next(v["pid"] for v in events(self.worker_log) if v["event"] == "started")
+        self.rpc("com.superlogical.terminal.set_theme", dict(session_id=self.session, block_id=block, args=dict(background="#010203")))
+        default = self.background(pid)
+        # Harness owns root; supervisor must never replace it.
+        event = self.work / "event.json"
+        def hook(kind):
+            event.write_text(json.dumps(dict(hook_event_name=kind, last_assistant_message="turn done")))
+            p, _ = self.run_cli("stop", "--registry", str(self.registry), "--launch-id", launch_id, "--event-file", str(event))
+            self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        hook("Stop")
+        wait_for(lambda: self.program_state(block) == "idle")
+        self.assertIn('rgb:3131/2323/4545', self.background(pid))
+        hook("UserPromptSubmit")
+        wait_for(lambda: self.program_state(block) == "working")
+        self.assertEqual(self.background(pid), default)
+        hook("StopFailure")
+        wait_for(lambda: self.program_state(block) == "error")
+        self.assertIn('rgb:2a2a/1414/1414', self.background(pid))
+        message = self.work / "reset.txt"
+        message.write_text("next turn")
+        p = subprocess.run([BIN, "send", "--socket", str(self.socket), "--session", self.session, "--block", block,
+                            "--from", "test", "--message-file", str(message), "--draft", "ignore"], env=self.env, capture_output=True, text=True)
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertEqual(self.background(pid), default)
+        records = self.rpc("com.superlogical.terminal.program_status", dict(session_id=self.session, block_id=block, args={}))
+        self.assertTrue(any(r.get("id") == "teerex/tint" for r in records["records"]))
+        self.assertTrue(any(r.get("app") == "synthetic" and r.get("id", "") == "" for r in records["records"]))
+        started = next(v for v in events(self.worker_log) if v["event"] == "started")
+        injected = json.loads(started["argv"][started["argv"].index("--settings")+1])
+        self.assertIn("UserPromptSubmit", injected["hooks"])
+
+    def test_tint_false_keeps_theme_and_uses_child_record(self):
+        self.settings["profiles"]["probe"].update(harness="codex", hook_events=True, tint=False)
+        p, launched = self.launch(behavior="codex-hook")
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        started = next(v for v in events(self.worker_log) if v["event"] == "started")
+        block = self.record(launched["launch_id"])["target"]["block_id"]
+        wait_for(lambda: self.program_state(block) == "idle")
+        wait_for(lambda: any(v["event"] == "codex-hook" for v in events(self.worker_log)))
+        self.rpc("com.superlogical.terminal.set_theme", dict(session_id=self.session, block_id=block, args=dict(background="#010203")))
+        self.assertIn("rgb:0101/0202/0303", self.background(started["pid"]))
+        self.assertFalse(any(a.startswith("hooks.UserPromptSubmit=") for a in started["argv"]))
+        records = self.rpc("com.superlogical.terminal.program_status", dict(session_id=self.session, block_id=block, args={}))
+        self.assertTrue(any(r.get("id") == "teerex" for r in records["records"]))
 
     def test_codex_notify_adapter_and_osc_idle_then_error_exit(self):
         self.settings["profiles"]["probe"].update(harness="codex", hook_events=True)

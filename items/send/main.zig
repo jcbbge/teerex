@@ -44,6 +44,7 @@ const Clutch = struct { state: []const u8 = "unknown", failure_reason: ?[]const 
 const Frame = struct {
     status_pid: ?i32 = null,
     seat: bool = false,
+    supervised: bool = false,
     clutch: ?Clutch = null,
     event: []const u8,
     source: ?Source = null,
@@ -68,6 +69,7 @@ const Collector = struct {
     enter_acknowledged: bool = false,
     status_pid: ?i32 = null,
     seat: bool = false,
+    tinted_agent: bool = false,
     finished: bool = false,
     reason: ?[]const u8 = null,
     encoded_rpc_bytes: ?usize = null,
@@ -84,6 +86,7 @@ const Collector = struct {
             if (std.mem.eql(u8, f.event, "status_target")) {
                 self.status_pid = f.status_pid;
                 self.seat = f.seat;
+                self.tinted_agent = f.supervised;
             } else if (std.mem.eql(u8, f.event, "source")) {
                 if (self.source != null) return error.InvalidSendFrame;
                 self.source = f.source orelse return error.InvalidSendFrame;
@@ -377,7 +380,7 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
         locked = false;
     }
     const success = std.mem.eql(u8, outcome, "events_acknowledged") and failure == null;
-    const status_outcome = if (success and collector.seat) statusReport(allocator, &env, collector.status_pid, sender, message, status_id, state, status_message) catch "failed" else "not_requested";
+    const status_outcome = if (success and (collector.seat or collector.tinted_agent)) statusReport(allocator, &env, collector.status_pid, sender, message, status_id, state, status_message, collector.seat, collector.tinted_agent) catch "failed" else "not_requested";
     const output = try std.json.Stringify.valueAlloc(allocator, .{
         .schema_version = 1,
         .status_record = status_outcome,
@@ -428,7 +431,7 @@ fn b64(allocator: std.mem.Allocator, bytes: []const u8) ![]const u8 {
     return std.base64.standard.Encoder.encode(out, bytes);
 }
 
-fn statusReport(allocator: std.mem.Allocator, env: *std.process.EnvMap, pid: ?i32, sender: []const u8, message: []const u8, id: ?[]const u8, state: []const u8, detail: ?[]const u8) ![]const u8 {
+fn statusReport(allocator: std.mem.Allocator, env: *std.process.EnvMap, pid: ?i32, sender: []const u8, message: []const u8, id: ?[]const u8, state: []const u8, detail: ?[]const u8, seat: bool, reset_tint: bool) ![]const u8 {
     const child = pid orelse return "tty_unavailable";
     // Encode the sender in the record key too: colon/equal/non-ASCII cannot alter OSC fields.
     const raw_key = id orelse try std.fmt.allocPrint(allocator, "msg/{s}", .{sender});
@@ -453,7 +456,8 @@ fn statusReport(allocator: std.mem.Allocator, env: *std.process.EnvMap, pid: ?i3
         chars += 1;
     }
     const report = try std.fmt.allocPrint(allocator, "\x1b]7501;state={s}:id={s}:app=teerex{s}:title={s}:msg={s}\x1b\\", .{ state, key.items, if (std.mem.eql(u8, state, "blocked")) ":kind=question" else "", try b64(allocator, try std.fmt.allocPrint(allocator, "FROM {s}", .{sender})), try b64(allocator, clean.items) });
-    const argv = [_][]const u8{ "python3", "-I", "-c", @embedFile("status.py"), try std.fmt.allocPrint(allocator, "{d}", .{child}), report };
+    const bytes = try std.fmt.allocPrint(allocator, "{s}{s}", .{ if (reset_tint) "\x1b]111\x1b\\" else "", if (seat) report else "" });
+    const argv = [_][]const u8{ "python3", "-I", "-c", @embedFile("status.py"), try std.fmt.allocPrint(allocator, "{d}", .{child}), bytes };
     var collector = StatusCollector{ .allocator = allocator };
     const result = try supervised.collect(allocator, &argv, env, 250, &collector);
     if (result.deadline_exceeded) return "deadline_exceeded";

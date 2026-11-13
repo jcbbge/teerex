@@ -465,23 +465,33 @@ def validate_adapter(harness, argv):
         require(not any(re.match(r"(?:(?:--config|-c)=?)?notify\s*=", a.strip()) for a in argv), "profile_notify_conflict")
 
 
-def adapter_argv(argv, harness, command, root, launch_id, broker=None):
+def adapter_argv(argv, harness, command, root, launch_id, broker=None, tint_enabled=True):
     """Per-launch hooks only. The common adapter forwards one bounded event to stop/channel."""
     validate_adapter(harness, argv)
     if harness == "claude":
         hook = shlex.join(command)
         settings = {"hooks": {k: [{"hooks": [{"type": "command", "command": hook, "timeout": 250}]}]
-                              for k in ("Stop", "StopFailure")}}
+                              for k in ("Stop", "StopFailure", "UserPromptSubmit")}}
         return argv + ["--settings", json.dumps(settings)]
     if harness == "codex":
         callback = [RUNTIME, "agents", "hook", "--harness", "codex", "--command-json", json.dumps(command), "--payload"]
         # JSON arrays/strings are also TOML arrays/basic strings.
-        return argv + ["-c", "notify=" + json.dumps(callback, ensure_ascii=True)]
+        result = argv + ["-c", "notify=" + json.dumps(callback, ensure_ascii=True)]
+        if tint_enabled:
+            # Stable hook definition: Codex may require /hooks review; never bypass its trust gate.
+            reset = r"printf '\033]111\033\\' > /dev/tty"
+            inline = "hooks.UserPromptSubmit=[{hooks=[{type=\"command\",command=" + json.dumps(reset) + ",timeout=2}]}]"
+            result += ["-c", inline]
+        return result
     # Pi's explicit -e loads even with --no-extensions. Use settled, not agent_end:
     # retries/queued continuations can follow agent_end (installed Pi extension contract).
     source = """import { spawnSync } from 'node:child_process';
 export default function(pi) {
   let outcome = 'completed';
+  pi.on('before_agent_start', async () => {
+    const args = COMMAND;
+    spawnSync(args[0], args.slice(1), {input: JSON.stringify({hook_event_name: 'UserPromptSubmit'}), encoding: 'utf8', timeout: 250000});
+  });
   pi.on('agent_before_settle', async (event) => { outcome = event.outcome; });
   pi.on('agent_settled', async (event, ctx) => {
     const messages = ctx.sessionManager.getBranch().filter(e => e.type === 'message').map(e => e.message);
@@ -533,12 +543,28 @@ def hook(o):
     return result.returncode, None
 
 
+def tint_config(value):
+    if value is False:
+        return False
+    require(value is None or isinstance(value, dict), "invalid_tint")
+    defaults = dict(idle="#2a2013", error="#2a1414", done="#142a1a")
+    if value is not None:
+        require(set(value) <= set(defaults), "invalid_tint_key")
+        require(all(isinstance(c, str) and re.fullmatch(r"#[0-9A-Fa-f]{6}", c) for c in value.values()), "invalid_tint_colour")
+        defaults.update(value)
+    return defaults
+
+
 def program_status(state, status, detail):
     # Rex OSC7501 is colon-separated key=value, NOT JSON; text fields are base64.
     def encoded(value):
         clean = "".join(c if ord(c) >= 32 and not 127 <= ord(c) <= 159 else " " for c in value)
         return base64.b64encode(" ".join(clean.split()).encode()).decode()
-    sys.stdout.write("\x1b]7501;state=" + status + ":app=teerex-agent:title=" + encoded(state["name"]) +
+    tint = state.get("tint", tint_config(None))
+    record_id = "teerex/tint" if tint is not False else "teerex"
+    if tint is not False:
+        sys.stdout.write("\x1b]11;" + tint[status] + "\x1b\\" if status in tint else "\x1b]111\x1b\\")
+    sys.stdout.write("\x1b]7501;state=" + status + ":id=" + record_id + ":app=teerex-agent:title=" + encoded(state["name"]) +
                      ":msg=" + encoded(detail) + "\x07")
     sys.stdout.flush()
 
@@ -547,8 +573,9 @@ def remote_exec(o):
     # Trusted operator argv, not a channel method. All SSH serialization belongs to targets exec.
     require(len(o.payload) <= 98304, "compute_payload_too_large")
     payload = json.loads(base64.b64decode(o.payload, validate=True))
-    require(isinstance(payload, dict) and set(payload) == {"argv", "cwd", "metadata", "protocol", "registry", "launch_id",
+    require(isinstance(payload, dict) and set(payload) - {"tint_enabled"} == {"argv", "cwd", "metadata", "protocol", "registry", "launch_id",
                                                           "token", "callbacks", "hook_events", "harness", "pane", "store"}, "invalid_compute_payload")
+    require(type(payload.get("tint_enabled", True)) is bool, "invalid_compute_tint")
     argv = payload["argv"]
     require(isinstance(argv, list) and argv and all(isinstance(v, str) and "\0" not in v for v in argv), "invalid_compute_argv")
     absolute(argv[0])
@@ -597,7 +624,7 @@ def remote_exec(o):
         # Pi needs a local extension file; use a private temporary directory on compute.
         import tempfile
         with tempfile.TemporaryDirectory(prefix="teerex-hook-") as hook_root:
-            argv = adapter_argv(argv, payload["harness"], command, hook_root, payload["launch_id"])
+            argv = adapter_argv(argv, payload["harness"], command, hook_root, payload["launch_id"], tint_enabled=payload.get("tint_enabled", True))
             return run_remote_child(o, payload, metadata, callbacks, sid, bid, token, argv, protocol)
     return run_remote_child(o, payload, metadata, callbacks, sid, bid, token, argv, protocol)
 
@@ -855,6 +882,7 @@ def launch(o):
         validate_adapter(profile.get("harness", o.profile), argv)
     require(type(profile.get("scratch_pane", True)) is bool, "invalid_scratch_pane")
     execution, callbacks = execution_config(profile)
+    tint = tint_config(profile.get("tint"))
     delivery = delivery_config(profile.get("delivery"))
     require(not (delivery is not None and execution is not None), "remote_fenced_delivery_not_yet_supported")
     if execution is None:
@@ -901,7 +929,7 @@ def launch(o):
                      immediate_child_term=None, notifications={}, brief_file=None, protocol_file=None,
                      hook_events=profile.get("hook_events", False), client_path=os.environ.get("PATH", os.defpath),
                      rex_executable=os.environ.get("TEEREX_INTERNAL_REX"), delivery=delivery, execution=execution,
-                     callbacks=callbacks, remote_child_term=None, human=human, scratch_pane=profile.get("scratch_pane", True))
+                     callbacks=callbacks, remote_child_term=None, human=human, scratch_pane=profile.get("scratch_pane", True), tint=tint)
         # Retire exited/never-started/pane-gone records before the cap can refuse a launch; history is archived.
         pruned = prune_records(root, apply=True, at_least=AUTO_PRUNE_AT)
         state["auto_prune"] = dict(retired=len(pruned["retired"]), live_before=pruned["live_before"])
@@ -1122,7 +1150,7 @@ def stop(o):
 
 def validate_hook_event(event, allow_transcript=True):
     require(isinstance(event, dict), "invalid_hook_event")
-    require(event.get("hook_event_name") in ("Stop", "StopFailure"), "unsupported_hook_event")
+    require(event.get("hook_event_name") in ("Stop", "StopFailure", "UserPromptSubmit"), "unsupported_hook_event")
     require(isinstance(event.get("last_assistant_message", "") or "", str), "invalid_last_words")
     require(len(json.dumps(event).encode()) <= 32768, "hook_event_too_large")
     require(allow_transcript or "transcript_path" not in event, "channel_transcript_path_forbidden")
@@ -1131,6 +1159,9 @@ def validate_hook_event(event, allow_transcript=True):
 def report_stop(root, launch_id, event_id, event, allow_transcript=True):
     validate_hook_event(event, allow_transcript)
     kind = event["hook_event_name"]
+    if kind == "UserPromptSubmit":
+        state = update(root, launch_id, lambda s: s.update(last_hook=dict(kind=kind, at=now(), text="turn started")))
+        return 0, receipt(state, "turn_started")
     last = event.get("last_assistant_message", "") or ""
     if allow_transcript and kind == "Stop" and not last:
         try:
@@ -1192,7 +1223,7 @@ def supervise(o):
         if broker is not None:
             channel_command = [RUNTIME, "agents", "channel", "--handle", broker.handle, "--operation", "stop", "--event-file", "-"]
             command = [RUNTIME, "agents", "hook", "--harness", "claude", "--command-json", json.dumps(channel_command), "--event-file", "-"]
-        argv = adapter_argv(argv, state["harness"], command, o.registry, o.launch_id, broker=broker)
+        argv = adapter_argv(argv, state["harness"], command, o.registry, o.launch_id, broker=broker, tint_enabled=state.get("tint") is not False)
     protocol = message(read_file(state["protocol_file"], 32768, private=True))
     if state.get("execution") is None:
         if not state.get("human"):
@@ -1201,7 +1232,7 @@ def supervise(o):
         execution = state["execution"]
         payload = dict(argv=argv, cwd=execution["cwd"], metadata=metadata, protocol=protocol, registry=o.registry,
                        launch_id=o.launch_id, token=state["token"], callbacks=state["callbacks"], hook_events=state["hook_events"], harness=state["harness"],
-                       pane=state["target"], store=state["store"])
+                       pane=state["target"], store=state["store"], tint_enabled=state.get("tint") is not False)
         encoded = base64.b64encode(json.dumps(payload, ensure_ascii=False).encode()).decode()
         require(len(encoded) <= 98304, "compute_payload_too_large")
         argv = [RUNTIME, "targets", "exec", "--config", execution["config"], "--host", execution["host"], "--tty",
@@ -1235,7 +1266,7 @@ def supervise(o):
                 channel_closed_reported = True
             current = load(o.registry, o.launch_id).get("last_hook")
             if current is not None and current != last_hook:
-                program_status(state, "idle" if current["kind"] == "Stop" else "error", current["text"])
+                program_status(state, {"Stop": "idle", "StopFailure": "error", "UserPromptSubmit": "working"}[current["kind"]], current["text"])
                 last_hook = current
         code = child.returncode
         term = {"Exited": code} if code >= 0 else {"Signal": -code}
@@ -1316,7 +1347,8 @@ def bounded_int(minimum, maximum):
 def parser():
     p = argparse.ArgumentParser(prog="teerex agents", description=(
         "Visible profiles, protocol ACK-before-one-brief, optional named SSH compute and opt-in bounded local fence channel. "
-        "Python3.9+. API13 jobs. Creation, transport ACK, agent ACK, idle and child exit are distinct. "
+        "Python3.9+. API13 jobs. Profiles accept tint: false or {idle,error,done: #RRGGBB}; supervisor uses child status. "
+        "Creation, transport ACK, agent ACK, idle and child exit are distinct. "
         "No readiness claim, input lease, hidden agent, daemon, automatic retry/close or whole-tree death guarantee."))
     sub = p.add_subparsers(dest="operation", required=True)
     for op in ("profiles", "shell"):
