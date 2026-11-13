@@ -23,7 +23,7 @@ Each item below has an implementation-ready spec, handed to its builders under t
 | H02 friction, H06 decisions | [friction-and-decisions.md](planning/workloads/friction-and-decisions.md) | teerex lead, agent-core |
 | H03 replay, H08 observation terms | [observation-replay-measurement.md](planning/workloads/observation-replay-measurement.md) | teerex lead |
 | H07 prepared questions | [attention-policy.md](planning/workloads/attention-policy.md) | teerex lead, agent-core |
-| H04 fence authority, H05 interruption | held privately until the Rivet fence changes install | Rivet lead, teerex lead, rexconfig, agent-core |
+| H04 fence authority, H05 interruption | [authority-task-runtime.md](planning/workloads/authority-task-runtime.md) | Rivet lead, teerex lead, rexconfig, agent-core |
 
 ### Source and release are different baselines
 
