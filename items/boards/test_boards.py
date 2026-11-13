@@ -250,8 +250,10 @@ if args[0]=='targets':
     if name=='m1': sys.exit(1)
     print(json.dumps({'schema_version':1,'host':{'host_id':name,'socket':'/tmp/'+name+'.sock'}}))
 else:
+    if '--jobs-registry' in args:
+        assert args[args.index('--jobs-registry')+1]=='/command-host/'+name+'/jobs'
     if name=='m5': sys.exit(4)
-    print(json.dumps({'version':{'api_revision':13},'identity':{'host_id':'actual-hive','instance_id':'instance-test'},'rows':[]}))
+    print(json.dumps({'version':{'api_revision':13},'identity':{'host_id':'actual-hive','instance_id':'instance-test'},'rows':[], 'registrations':[]}))
 ''')
         transport.chmod(0o700)
         p = self.invoke("fleet", target=False, config=config, hosts="hive,m5,m1", teerex=transport, once=True, json=True, code=1)
@@ -259,6 +261,13 @@ else:
         self.assertEqual([x["outcome"] for x in p["sources"]], ["observed", "unknown", "unknown"])
         self.assertEqual([x["configured_name"] for x in p["sources"]], ["hive", "m5", "m1"])
         self.assertEqual(p["rows"], [])
+        # These paths deliberately do not exist locally: each belongs to its selected command host.
+        command = self.argv("fleet", target=False, config=config, hosts="hive,m5,m1", teerex=transport, once=True, json=True)
+        result = subprocess.run(command + ["--jobs-registry", "hive=/command-host/hive/jobs",
+                                          "--jobs-registry", "m5=/command-host/m5/jobs"],
+                                env=self.env, capture_output=True, text=True, timeout=20)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertEqual([x["outcome"] for x in json.loads(result.stdout)["sources"]], ["observed", "unknown", "unknown"])
 
 
 class RexBoardsTest(unittest.TestCase):
@@ -293,6 +302,87 @@ class RexBoardsTest(unittest.TestCase):
         cls.base = [cls.rex, "--autostart=false", "--server", "unix://" + str(cls.socket), "--timeout", "3s"]
         cls.version = json.loads(subprocess.check_output(cls.base + ["api", "call", "server.version"]))
         print("Disposable live Rex:", json.dumps(cls.version), flush=True)
+
+    def test_jobs_registration_live_status_and_vanished_pane(self):
+        root = self.root / ("jobs-" + str(time.monotonic_ns()))
+        root.mkdir()
+        registry, store = root / "jobs", root / "boards"
+        registry.mkdir(mode=0o700)
+        store.mkdir(mode=0o700)
+        env = dict(os.environ, PATH=str(Path(self.rex).parent) + os.pathsep + os.environ["PATH"])
+        def make(report=False):
+            script = "import time; " + ("print('\\x1b]7501;state=done:app=rivet:title=RmluaXNoZWQ=\\x1b\\\\', flush=True); " if report else "") + "time.sleep(120)"
+            made = json.loads(subprocess.check_output(self.base + ["new", "--json", "--keep-open", "--shell=none", "--", sys.executable, "-c", script]))
+            return made["session_id"], made["initial_windows"][0]["block_ids"][0]
+        worker, untracked, vanished = make(True), make(), make()
+        for _ in range(100):
+            status = json.loads(subprocess.check_output(self.base + ["block", "call", "-s", worker[0], "-b", worker[1], "program_status", "{}"]))
+            if any(r["state"] == "done" for r in status["records"]):
+                break
+            time.sleep(.02)
+        else:
+            self.fail("fixture did not emit done")
+        for sid, bid in (worker, vanished):
+            subprocess.run([BIN, "jobs", "track", "--registry", str(registry), "--socket", str(self.socket),
+                            "--session", sid, "--block", bid, "--owner", "rivet", "--kind", "command",
+                            "--purpose", "item · step", "--deadline-unix-ms", str(int(time.time() * 1000) + 60000),
+                            "--cleanup", "manual"], env=env, check=True, capture_output=True)
+        subprocess.run([BIN, "surfaces", "close", "--socket", str(self.socket), "--session", vanished[0], "--pane", vanished[1]],
+                       env=env, check=True, capture_output=True)
+        before = {p.name: (p.stat().st_mtime_ns, p.read_bytes()) for p in registry.iterdir()}
+        targets = root / "targets.json"
+        targets.write_text(json.dumps([dict(host="hive", server="unix://" + str(self.socket))]))
+        command = [BIN, "boards", "fleet", "--store", str(store), "--targets-file", str(targets), "--once"]
+        def snapshot(extra):
+            result = subprocess.run(command + ["--json"] + extra, env=env, capture_output=True, text=True, timeout=20)
+            self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+            return json.loads(result.stdout)
+        legacy = snapshot([])
+        row = next(r for r in legacy["rows"] if r["target"]["block_id"] == worker[1])
+        self.assertEqual(row["agent_classification"], "unknown_terminal")
+        for key in ("registration", "program_status", "presence"):
+            self.assertNotIn(key, row)
+        subprocess.run([BIN, "boards", "fleet", "report", "--store", str(store), "--host", "hive",
+                        "--socket", str(self.socket), "--session", worker[0], "--block", worker[1],
+                        "--owner", "board-author", "--purpose", "saved report", "--state", "working", "--detail", "separate claim"],
+                       env=env, check=True, capture_output=True)
+        enriched = snapshot(["--jobs-registry", str(registry)])
+        rows = {r["target"]["block_id"]: r for r in enriched["rows"]}
+        row = rows[worker[1]]
+        self.assertEqual(row["registration"]["owner"], "rivet")
+        self.assertEqual(row["registration"]["purpose"], "item · step")
+        self.assertEqual(row["program_status"]["records"][0]["state"], "done")
+        self.assertEqual(row["program_status"]["records"][0]["app"], "rivet")
+        self.assertIsNotNone(row["program_status"]["records"][0]["age_ms"], row["program_status"]["records"][0])
+        self.assertTrue(row["presence"]["present"])
+        self.assertEqual(row["report"]["state"], "working")
+        self.assertEqual(row["state"], "working")
+        self.assertTrue(row["registration_matches_presence"])
+        self.assertIsNone(rows[untracked[1]]["registration"])
+        self.assertEqual(rows[untracked[1]]["agent_classification"], "unknown_terminal")
+        self.assertFalse(rows[vanished[1]]["presence"]["present"])
+        self.assertEqual(rows[vanished[1]]["presence"]["reason"], "registered_pane_absent")
+        rendered = subprocess.check_output(command + ["--jobs-registry", "hive=" + str(registry)], env=env, text=True)
+        for text in ("REGISTRATION [jobs] rivet", "item · step", "PROGRAM_STATUS [terminal report]", "done", "registered_pane_absent"):
+            self.assertIn(text, rendered)
+        self.assertEqual(before, {p.name: (p.stat().st_mtime_ns, p.read_bytes()) for p in registry.iterdir()})
+        for selectors in ([str(registry), str(registry)], ["absent=" + str(registry)], ["relative"],
+                          [str(registry), "hive=" + str(registry)]):
+            result = subprocess.run(command + [v for selector in selectors for v in ("--jobs-registry", selector)],
+                                    env=env, capture_output=True, text=True, timeout=20)
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        stale = json.loads((registry / "state.json").read_text())
+        stale["entries"][0]["source"]["instance_id"] = "old-server-instance"
+        (registry / "state.json").write_text(json.dumps(stale))
+        rows = snapshot(["--jobs-registry", str(registry)])["rows"]
+        row = next(r for r in rows if r["target"]["block_id"] == worker[1])
+        self.assertTrue(row["presence"]["present"])
+        self.assertFalse(row["registration_matches_presence"])
+        (registry / "state.json").write_text("{}")
+        (registry / "state.json").chmod(0o600)
+        failed = subprocess.run(command + ["--jobs-registry", str(registry), "--json"], env=env, capture_output=True, text=True, timeout=20)
+        self.assertEqual(failed.returncode, 1)
+        self.assertEqual(json.loads(failed.stdout)["sources"][0]["outcome"], "unknown")
 
     def test_real_terminal_enumeration_reports_and_offline_host_stay_unknown(self):
         tmp = tempfile.TemporaryDirectory(dir=self.root)

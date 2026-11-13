@@ -13,6 +13,7 @@ const usage =
     \\A focused source requires --focus yes for relocation; no silent focus transfer, retry or recreation.
     \\forget: --owner LABEL --generation N --reason TEXT (local record only; never closes a block)
     \\Live operations optionally take --timeout-ms N (100..60000, default 5000).
+    \\List opens existing files read-only and creates no files, including no lock file.
     \\Registry must already be an absolute, private 0700 owned directory. Max 32 records/256 KiB.
     \\API13 Mac-arm64/Linux-amd64 only; no autostart, agents, daemon, automatic close or enforced deadlines.
     \\Ownership is recorded responsibility, not authority, native ownership, isolation or process control.
@@ -103,7 +104,7 @@ fn validEntry(e: Entry) bool {
 // The lock coordinates this registry only; it is never a Rex or process lease.
 const Registry = struct {
     dir: std.fs.Dir,
-    lock: std.fs.File,
+    lock: ?std.fs.File,
     state: State,
 
     fn privateStat(fd: std.posix.fd_t, directory: bool) !void {
@@ -112,21 +113,24 @@ const Registry = struct {
             (s.mode & std.posix.S.IFMT) != (if (directory) @as(u32, std.posix.S.IFDIR) else @as(u32, std.posix.S.IFREG)) or
             (!directory and s.nlink != 1)) return error.RegistryNotPrivateOwnedRegular;
     }
-    fn file(dir: std.fs.Dir, name: []const u8, create: bool) !std.fs.File {
-        const fd = try std.posix.openat(dir.fd, name, .{ .ACCMODE = .RDWR, .CREAT = create, .NOFOLLOW = true, .CLOEXEC = true, .NONBLOCK = true }, 0o600);
+    fn file(dir: std.fs.Dir, name: []const u8, create: bool, read_only: bool) !std.fs.File {
+        const fd = try std.posix.openat(dir.fd, name, .{ .ACCMODE = if (read_only) .RDONLY else .RDWR, .CREAT = create, .NOFOLLOW = true, .CLOEXEC = true, .NONBLOCK = true }, 0o600);
         errdefer std.posix.close(fd);
         try privateStat(fd, false);
         return .{ .handle = fd };
     }
-    fn open(allocator: std.mem.Allocator, path: []const u8) !Registry {
+    fn open(allocator: std.mem.Allocator, path: []const u8, read_only: bool) !Registry {
         var dir = try std.fs.openDirAbsolute(path, .{ .no_follow = true, .iterate = true });
         errdefer dir.close();
         try privateStat(dir.fd, true);
-        const lock = try file(dir, "lock", true);
-        errdefer lock.close();
-        try std.posix.flock(lock.handle, std.posix.LOCK.EX | std.posix.LOCK.NB);
+        const lock = file(dir, "lock", !read_only, read_only) catch |err| switch (err) {
+            error.FileNotFound => if (read_only) null else return err,
+            else => return err,
+        };
+        errdefer if (lock) |f| f.close();
+        if (lock) |f| try std.posix.flock(f.handle, (if (read_only) @as(i32, std.posix.LOCK.SH) else std.posix.LOCK.EX) | std.posix.LOCK.NB);
         var state: State = .{ .schema_version = 1, .next_generation = 1, .entries = &.{} };
-        const saved = file(dir, "state.json", false) catch |err| switch (err) {
+        const saved = file(dir, "state.json", false, read_only) catch |err| switch (err) {
             error.FileNotFound => null,
             else => return err,
         };
@@ -152,7 +156,7 @@ const Registry = struct {
         return value;
     }
     fn close(self: *Registry) void {
-        self.lock.close();
+        if (self.lock) |f| f.close();
         self.dir.close();
     }
     fn save(self: *Registry, allocator: std.mem.Allocator) !void {
@@ -356,7 +360,7 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
 }
 fn execute(allocator: std.mem.Allocator, o: Options) !u8 {
     if (builtin.os.tag != .macos and builtin.os.tag != .linux) return error.JobsRequiresUnix;
-    var registry = try Registry.open(allocator, o.registry.?);
+    var registry = try Registry.open(allocator, o.registry.?, eq(o.operation, "list"));
     defer registry.close();
     const now = std.time.milliTimestamp();
     if (eq(o.operation, "list")) {

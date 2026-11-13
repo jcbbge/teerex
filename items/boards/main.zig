@@ -71,7 +71,7 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
         (args.len == 1 or std.mem.startsWith(u8, args[1], "--"));
     if (render) try argv.append(allocator, "boards");
     try argv.appendSlice(allocator, args);
-    if (render and std.mem.eql(u8, args[0], "fleet")) {
+    if (args.len > 0 and ((render and std.mem.eql(u8, args[0], "fleet")) or std.mem.eql(u8, args[0], "probe"))) {
         var explicit_self = false;
         for (args) |arg| if (std.mem.eql(u8, arg, "--teerex") or std.mem.startsWith(u8, arg, "--teerex=")) {
             explicit_self = true;

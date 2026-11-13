@@ -107,6 +107,11 @@ class TargetsTest(unittest.TestCase):
                 self.assertEqual(result.returncode, 7, result.stderr)
                 self.assertEqual(json.loads(self.output.read_text()),
                                  ["--rex", self.host["rex"], *path, *selectors, "--fixture", "literal α"])
+        registry_args = ["--jobs-registry", "/command-host/jobs"]
+        for path, selectors in ((["boards", "probe"], socket), (["boards", "fleet"], store)):
+            result = self.call("--config", str(self.config), "--host", "hive", *path, *registry_args)
+            self.assertEqual(result.returncode, 7, result.stderr)
+            self.assertEqual(json.loads(self.output.read_text()), ["--rex", self.host["rex"], *path, *selectors, *registry_args])
         for command, expected in ((["boards", "state", "inspect", "--store=" + str(self.root)],
                                    ["boards", "state", "inspect", "--store=" + str(self.root)]),
                                   (["boards", "fleet", "--config", "/selected/board-config", "--hosts", "m5,m1"],

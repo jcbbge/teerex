@@ -103,6 +103,13 @@ class JobsTest(unittest.TestCase):
         self.block = p["block_id"]
         return self.block
 
+    def test_list_empty_registry_creates_no_files(self):
+        before = list(self.registry.iterdir())
+        result, listing = self.invoke("list")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(listing["entries"], [])
+        self.assertEqual(list(self.registry.iterdir()), before)
+
     def test_tracking_persists_without_owning_process_and_offline_list_is_stale(self):
         before = self.view()
         p = self.track(kind="agent", purpose="visible agent accounting only")

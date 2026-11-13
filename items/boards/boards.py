@@ -1,6 +1,7 @@
 """Foreground boards and explicit seat storage. Embedded by main.zig; Python 3.9+."""
 import argparse
 import contextlib
+import datetime
 import fcntl
 import json
 import os
@@ -397,6 +398,7 @@ local function call(m,a)
   if #rex.json.encode(v)>1048576 then error("response_exceeds_bound") end
   return v
 end
+local include_status=rex.args.include_status
 local version=call("server.version")
 if version.api_revision~=13 then error("fleet_requires_API13") end
 local identity=call("server.status")
@@ -409,7 +411,12 @@ for _,s in ipairs(sessions) do
   for _,b in ipairs(blocks) do
     if b.creator_name=="com.superlogical.terminal" then
       if #rows>=128 then error("terminal_limit_128") end
-      table.insert(rows,{session=s.session_id,block=b.block_id,label=b.label or "",host_id=b.host_id,
+      local status=nil
+      if include_status then
+        status=call("com.superlogical.terminal.program_status",{session_id=s.session_id,block_id=b.block_id,args={}})
+        if type(status.records)~="table" then error("invalid_status_records") end
+      end
+      table.insert(rows,{program_status=status,session=s.session_id,block=b.block_id,label=b.label or "",host_id=b.host_id,
         placement=b.placement,window_id=b.window_id})
     end
   end
@@ -420,10 +427,54 @@ io.write('{"version":',rex.json.encode(version),',"identity":',
 '''
 
 
-def probe(socket):
+def probe(socket, jobs_registry=None, teerex=None):
     check(os.path.isabs(socket), "absolute_socket_required")
-    return bounded_command([os.environ.get("TEEREX_INTERNAL_REX") or "rex", "--autostart=false", "--server", "unix://" + socket,
-                            "--timeout", "3s", "--color", "never", "do", "-e", READ_LUA])
+    registrations = None
+    if jobs_registry is not None:
+        check(os.path.isabs(jobs_registry) and teerex is not None and os.path.isabs(teerex), "absolute_registry_and_teerex_required")
+        registrations = bounded_command([teerex, "jobs", "list", "--registry", jobs_registry])
+        check(registrations.get("kind") == "jobs_list", "invalid_jobs_list")
+    live = bounded_command([os.environ.get("TEEREX_INTERNAL_REX") or "rex", "--autostart=false", "--server", "unix://" + socket,
+                            "--timeout", "3s", "--color", "never", "do", "-e", READ_LUA, "--args", json.dumps(dict(include_status=jobs_registry is not None))])
+    if registrations is not None:
+        live["registrations"] = registrations["entries"]
+    check(len(json.dumps(live).encode()) <= MAX_BYTES, "probe_response_exceeds_bound")
+    return live
+
+
+def status_evidence(raw):
+    check(isinstance(raw, dict), "invalid_program_status")
+    records = raw.get("records")
+    if records == {}:  # Rex Lua encodes an empty table as an object.
+        records = []
+    check(isinstance(records, list) and len(records) <= 128, "invalid_status_records")
+    projected = []
+    seen = set()
+    for record in records:
+        check(isinstance(record, dict), "invalid_status_record")
+        record_id = record.get("id")
+        check(record_id is None or isinstance(record_id, str), "invalid_status_id")
+        check(record_id not in seen, "duplicate_status_id")
+        seen.add(record_id)
+        check(record.get("state") in ("idle", "working", "done", "blocked", "error"), "invalid_status_state")
+        result = {key: record.get(key) for key in ("id", "state", "app", "effective_app", "title", "updated_at")}
+        for value in result.values():
+            check(value is None or isinstance(value, str) and len(value.encode()) <= 4096, "invalid_status_text")
+        result["age_ms"] = None
+        try:
+            timestamp = record["updated_at"].replace("Z", "+00:00")
+            # Rex returns nanoseconds; Python 3.9/3.10 accepts up to microseconds.
+            timestamp = re.sub(r"(\.\d{6})\d+", r"\1", timestamp)
+            at = datetime.datetime.fromisoformat(timestamp)
+            if at.tzinfo is not None:
+                delta = stamp() - int(at.timestamp() * 1000)
+                if delta >= 0:
+                    result["age_ms"] = delta
+        except (KeyError, AttributeError, ValueError, OverflowError):
+            pass
+        projected.append(result)
+    return dict(provenance="terminal_report", freshness="unknown", records=projected,
+                age_basis="board_host_wall_clock_minus_server_timestamp_not_freshness")
 
 
 def fleet_snapshot(a, state):
@@ -443,22 +494,40 @@ def fleet_snapshot(a, state):
         check(1 <= len(names) <= 16 and len(set(names)) == len(names)
               and all(HOST.fullmatch(n) for n in names), "invalid_named_hosts")
         configured = [dict(name=n) for n in names]
+    registries = {}
+    for selection in a.jobs_registry:
+        if selection.startswith("/"):
+            name, path = "*", selection
+        else:
+            name, sep, path = selection.partition("=")
+            check(sep and HOST.fullmatch(name), "jobs_registry_requires_ABS_or_HOST_equals_ABS")
+        check(os.path.isabs(path) and not any(ord(c) < 32 or ord(c) == 127 for c in path), "absolute_jobs_registry_required")
+        check(name not in registries, "duplicate_jobs_registry_host")
+        registries[name] = path
+    check(not ("*" in registries and len(registries) != 1), "jobs_registry_default_cannot_mix_with_host_paths")
+    selected_names = {item.get("name", item.get("host")) for item in configured}
+    check(all(name == "*" or name in selected_names for name in registries), "jobs_registry_host_not_selected")
     rows, sources, found = [], [], set()
     reports = {json.dumps(r["target"], sort_keys=True): r for r in state["fleet"]}
     for item in configured:
         cfg = item.copy()
+        registry = registries.get(item.get("name", item.get("host")), registries.get("*"))
         try:
             if "name" in item:
                 check(a.teerex is not None and os.path.isabs(a.teerex), "explicit_teerex_executable_required")
                 resolved = bounded_command([a.teerex, "targets", "resolve", "--config", a.config, "--host", item["name"]])["host"]
                 cfg = dict(host=resolved["host_id"], server="unix://" + resolved["socket"])
-                live = bounded_command([a.teerex, "--config", a.config, "--host", item["name"], "boards", "probe"], timeout=8)
+                live = bounded_command([a.teerex, "--config", a.config, "--host", item["name"], "boards", "probe"]
+                                       + (["--jobs-registry", registry] if registry else []), timeout=8)
             else:
-                live = probe(cfg["server"][7:])
+                live = probe(cfg["server"][7:], registry, a.teerex)
             check(live["version"]["api_revision"] == 13 and isinstance(live["rows"], list)
                   and len(live["rows"]) <= MAX_FLEET, "invalid_live_response")
             text(live["identity"]["instance_id"], 128, False)
             text(live["identity"]["host_id"], 128, False)
+            registrations = live["registrations"] if registry else []
+            check(isinstance(registrations, list) and len(registrations) <= 32, "invalid_jobs_response")
+            matched_registrations = []
             local_rows, local_found = [], set()
             for b in live["rows"]:
                 t = target(dict(cfg, session_id=b["session"], block_id=b["block"]))
@@ -474,6 +543,34 @@ def fleet_snapshot(a, state):
                                       report=report, state=report["state"] if report else "unknown",
                                       state_provenance="report" if report else "unknown",
                                       agent_classification="reported_agent" if report else "unknown_terminal"))
+                if registry:
+                    registration = next((e for e in registrations if e["session_id"] == b["session"]
+                        and e["block_id"] == b["block"] and (e["socket"] == cfg["server"][7:] or
+                            (e["source"]["instance_id"] == live["identity"]["instance_id"] and e["source"]["host_id"] == live["identity"]["host_id"]))), None)
+                    identity_matches = registration is not None and (
+                        registration["source"]["instance_id"] == live["identity"]["instance_id"]
+                        and registration["source"]["host_id"] == live["identity"]["host_id"]
+                        and registration["block_host_id"] == b["host_id"])
+                    if registration is not None:
+                        matched_registrations.append(registration)
+                    local_rows[-1].update(registration=registration, registration_matches_presence=identity_matches, presence=local_rows[-1]["observation"],
+                                          program_status=status_evidence(b.get("program_status")))
+                    if identity_matches and not report:
+                        local_rows[-1]["agent_classification"] = "registered_" + registration["kind"]
+            for e in registrations:
+                if e in matched_registrations:
+                    continue
+                same_source = (e["source"]["instance_id"] == live["identity"]["instance_id"]
+                               and e["source"]["host_id"] == live["identity"]["host_id"])
+                t = target(dict(host=cfg["host"], server="unix://" + e["socket"], session_id=e["session_id"], block_id=e["block_id"]))
+                key = json.dumps(t, sort_keys=True)
+                report = reports.get(key)
+                presence = dict(present=False if same_source else None,
+                                reason="registered_pane_absent" if same_source else "registration_source_not_observed")
+                local_rows.append(dict(target=t, observation=presence, presence=presence, registration=e, registration_matches_presence=False,
+                                       program_status=None, report=report, state=report["state"] if report else "unknown",
+                                       state_provenance="report" if report else "unknown", agent_classification="registered_" + e["kind"]))
+                local_found.add(key)
             rows.extend(local_rows)
             found.update(local_found)
             sources.append(dict(**cfg, configured_name=item.get("name"), outcome="observed", provenance="observation",
@@ -544,6 +641,19 @@ def render_fleet(snapshot, width):
         lines += wrap("STATE " + row["state"] + " [" + row["state_provenance"] + "]" + (" · reported " + age(r["at"]) if r else " · duration unknown"), width)
         lines += wrap("OWNER " + (r["owner"] if r else "unknown") + " · PURPOSE " + (r["purpose"] if r else "unknown"), width)
         lines += wrap("OBSERVATION presence=" + str(obs["present"]) + " · placement=" + obs.get("placement", "unknown"), width)
+        if "registration" in row:
+            reg = row["registration"]
+            lines += wrap("REGISTRATION [jobs] " + (reg["owner"] + " · " + reg["purpose"] + " · " + reg["kind"]
+                          + " · matches presence=" + str(row["registration_matches_presence"]) + " · generation=" + str(reg["generation"]) + " · deadline=" + str(reg["deadline_unix_ms"]) if reg else "unknown"), width)
+            lines += wrap("PRESENCE [live] " + str(row["presence"]["present"]) + " · " + row["presence"].get("reason", "observed"), width)
+            status = row["program_status"]
+            if status is None or not status["records"]:
+                lines += wrap("PROGRAM_STATUS [terminal report] unknown", width)
+            else:
+                for record in status["records"]:
+                    lines += wrap("PROGRAM_STATUS [terminal report] " + str(record["id"]) + " · " + record["state"]
+                                  + " · app=" + str(record["app"] or record["effective_app"]) + " · title=" + str(record["title"])
+                                  + " · age=" + (str(record["age_ms"]) + "ms (clock difference; freshness unknown)" if record["age_ms"] is not None else "unknown"), width)
         if r:
             lines += wrap("REPORT " + r["detail"], width)
         lines += wrap(t["session_id"] + " / " + t["block_id"], width)
@@ -628,6 +738,8 @@ def parser():
 
     q = commands.add_parser("probe", help="one bounded read-only API13 fleet sample; root named-host routing supplies socket")
     q.add_argument("--socket", required=True)
+    q.add_argument("--jobs-registry", help="absolute read-only jobs registry on this command host; max 32 entries/256 KiB")
+    q.add_argument("--teerex", help="absolute current CLI; native bridge supplies self path")
     c = commands.add_parser("state", help="private authoritative inspect and explicit recovery remapping")
     ops = c.add_subparsers(dest="operation", required=True)
     for op in ("inspect", "remap-preview", "remap-apply"):
@@ -684,6 +796,7 @@ def parser():
             group.add_argument("--targets-file", help='fixture/forwarded endpoints: absolute JSON list of {host,server:unix:///ABS}')
             group.add_argument("--config", help="actual shared config; --hosts selects exact names such as m5,hive,m1")
             q.add_argument("--hosts", help="comma-separated explicit shared-config names; unavailable hosts stay visible")
+            q.add_argument("--jobs-registry", action="append", default=[], help="ABS for all selected command hosts, or repeat HOST=ABS per host (max 16); read-only jobs validation, 32 entries/256 KiB per registry; live status max 128 records/terminal, 1 MiB transport cap")
             q.add_argument("--teerex", help="absolute current CLI; native bridge supplies its self path, never PATH guessing")
     return p
 
@@ -692,12 +805,13 @@ def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     # Unlike argparse's default, reject duplicate options rather than accepting the last.
     options = [x.split("=", 1)[0] for x in argv if x.startswith("--")]
-    check(len(options) == len(set(options)), "duplicate_option")
+    check(len([x for x in options if x != "--jobs-registry"]) == len(set(x for x in options if x != "--jobs-registry")), "duplicate_option")
     a = parser().parse_args(argv)
     if a.command == "try-route":
         a.input_deadline = time.monotonic() + a.timeout_ms / 1000
     if a.command == "probe":
-        print(json.dumps(probe(a.socket)), flush=True)
+        check(options.count("--jobs-registry") <= 1, "duplicate_option")
+        print(json.dumps(probe(a.socket, a.jobs_registry, a.teerex)), flush=True)
         return 0
     if a.command == "state":
         return state_command(a)
