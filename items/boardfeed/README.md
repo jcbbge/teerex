@@ -37,3 +37,10 @@ items/boardfeed/test_feed.py -v`. Tests create private temporary directories and
 a disposable Rex server with restore disabled and `/dev/null` configuration.
 The Linux `/proc` fixture case is selected only on Linux; all other cases run
 on both operating systems. Tests never use a personal Rex socket or registry.
+
+Agent rows start from the live Rex pane inventory, one row per block id.
+Launch records supply metadata only; a dead launch never creates a row.
+A live pane qualifies through a launch record or a `teerex-agent` status record.
+Scratchpads join by the live pane’s session and block id, including idle/done
+panes. State comes only from OSC 7501 `program_status`; `blocked` remains
+`blocked`, and missing status is `unknown`.

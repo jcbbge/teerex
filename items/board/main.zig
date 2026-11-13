@@ -124,7 +124,7 @@ const Model = struct {
                 if (eq(text(old.value, "id"), id) and eq(text(old.value, "host"), name)) {
                     if (priority(v) < 2 and (priority(old.value) >= 2 or !eq(text(v, "question"), text(old.value, "question")))) self.attention[host] = true;
                     old.deinit();
-                    if (eq(state, "gone") or eq(state, "done")) {
+                    if (eq(state, "gone")) {
                         _ = self.agents.orderedRemove(i);
                     } else {
                         old.* = parsed;
@@ -133,7 +133,7 @@ const Model = struct {
                     return true;
                 }
             }
-            if (!eq(state, "gone") and !eq(state, "done") and self.agents.items.len < 256) {
+            if (!eq(state, "gone") and self.agents.items.len < 256) {
                 try self.agents.append(self.allocator, parsed);
                 if (priority(v) < 2) self.attention[host] = true;
                 retained = true;
@@ -203,7 +203,7 @@ fn spark(a: A, host: Host, width: usize) ![]const u8 {
 }
 fn priority(v: Value) usize {
     const state = text(v, "state");
-    return if (eq(state, "waiting")) 0 else if (eq(state, "error")) 1 else if (eq(state, "working")) 2 else 3;
+    return if ((eq(state, "waiting") or eq(state, "blocked"))) 0 else if (eq(state, "error")) 1 else if (eq(state, "working")) 2 else 3;
 }
 fn less(_: void, a: Value, b: Value) bool {
     const pa = priority(a);

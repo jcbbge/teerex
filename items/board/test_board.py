@@ -281,10 +281,10 @@ class BoardTest(unittest.TestCase):
             except ProcessLookupError:continue
             self.fail('board left feed descendant alive: %d'%pid)
 
-    def test_gone_and_done_remove_rows(self):
+    def test_gone_removes_rows(self):
         events=[json.loads(line) for line in FIXTURE.read_text().splitlines()]
         for e in list(events):
-            if e['kind']=='agent': events.append(dict(e,state='gone' if e['state']=='working' else 'done'))
+            if e['kind']=='agent': events.append(dict(e,state='gone'))
         path=self.root/'gone.jsonl';path.write_text('\n'.join(map(json.dumps,events)))
         result=subprocess.run([BIN,'board','--replay',str(path),'--once'],env=dict(os.environ,TEEREX_CALL_LOG_DIR=str(self.root/'calls')),capture_output=True,text=True)
         self.assertEqual(result.returncode,0,result.stderr)
