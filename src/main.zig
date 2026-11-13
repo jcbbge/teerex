@@ -202,27 +202,43 @@ fn eq(a: []const u8, b: []const u8) bool {
     return std.mem.eql(u8, a, b);
 }
 
-// Match leaves, not command families: offline inspection/planning gets no target.
-fn takesSocket(args: []const []const u8) bool {
-    if (args.len == 0) return false;
+fn hasOption(args: []const []const u8, flag: []const u8) bool {
     for (args) |arg| {
         if (eq(arg, "--")) break;
-        if (eq(arg, "--help")) return false;
+        if (eq(arg, flag)) return true;
     }
+    return false;
+}
+
+// Defaults fill required live targets. Configuration-backed and optional socket
+// selectors retain their own precedence; incomplete invocations reach leaf usage.
+fn takesSocket(args: []const []const u8) bool {
+    if (args.len == 0 or hasOption(args, "--help")) return false;
     const command = args[0];
-    for ([_][]const u8{ "observe", "watch", "run", "run-visible", "offstage", "doctor", "send", "spawn", "adapters" }) |name| {
-        if (eq(command, name)) return true;
-    }
-    if (eq(command, "jobs")) return args.len > 1 and !eq(args[1], "list");
-    if (eq(command, "surfaces")) return args.len > 1 and (!eq(args[1], "palette") or (args.len > 2 and eq(args[2], "install")));
-    if (eq(command, "maneuver-check")) {
-        for (args) |arg| if (eq(arg, "--list")) return false;
-        return true;
-    }
-    if (eq(command, "recovery")) return args.len > 1 and !eq(args[1], "inspect");
-    if (eq(command, "snapshot") or eq(command, "restore") or eq(command, "update")) return true;
+    if (eq(command, "agents")) return false;
+    if (eq(command, "jobs") and args.len > 1 and (eq(args[1], "doctor") or eq(args[1], "list"))) return false;
+    if (eq(command, "doctor")) return args.len > 1 and (hasOption(args, "--baseline") or hasOption(args, "--timeout-ms"));
+    if (eq(command, "adapters")) return args.len > 2 and (eq(args[1], "generate") or (eq(args[1], "call") and hasOption(args, "--adapter") and hasOption(args, "--policy") and hasOption(args, "--tool") and hasOption(args, "--arguments")));
     if (eq(command, "boards")) return args.len > 1 and eq(args[1], "probe");
-    if (eq(command, "agents")) return args.len > 1 and (eq(args[1], "launch") or eq(args[1], "human"));
+    if (eq(command, "surfaces")) {
+        if (args.len > 2 and eq(args[1], "session") and eq(args[2], "ensure")) return hasOption(args, "--label");
+        if (args.len > 1 and eq(args[1], "palette")) return args.len > 2 and eq(args[2], "install") and hasOption(args, "--init") and hasOption(args, "--file") and hasOption(args, "--plan");
+        return hasOption(args, "--session");
+    }
+    if (eq(command, "snapshot") or eq(command, "restore") or eq(command, "update") or eq(command, "recovery")) {
+        if (eq(command, "recovery") and (args.len < 2 or eq(args[1], "inspect"))) return false;
+        return hasOption(args, "--directory") or hasOption(args, "--timeout-ms");
+    }
+    if (eq(command, "run")) return hasOption(args, "--cwd") and hasCommand(args);
+    if (!hasOption(args, "--session")) return false;
+    if (eq(command, "spawn")) return !hasOption(args, "--profile") and hasOption(args, "--name") and hasOption(args, "--report-to-session") and hasOption(args, "--report-to-block");
+    if (eq(command, "run-visible") or eq(command, "offstage")) return hasOption(args, "--cwd");
+    if (!hasOption(args, "--block")) return false;
+    if (eq(command, "observe")) return true;
+    if (eq(command, "watch")) return hasOption(args, "--baseline") and (hasOption(args, "--timeout-ms") or hasOption(args, "--no-deadline"));
+    if (eq(command, "send")) return hasOption(args, "--from") and hasOption(args, "--message-file");
+    if (eq(command, "jobs")) return hasOption(args, "--registry");
+    if (eq(command, "maneuver-check")) return hasOption(args, "--observation") and !hasOption(args, "--list");
     return false;
 }
 
@@ -282,4 +298,9 @@ fn withDefaultSocket(allocator: std.mem.Allocator, args: []const []const u8) ![]
     try resolved.appendSlice(allocator, &.{ "--socket", selected.path });
     try resolved.appendSlice(allocator, args[at..]);
     return resolved.items;
+}
+
+fn hasCommand(args: []const []const u8) bool {
+    for (args, 0..) |arg, i| if (eq(arg, "--")) return i + 1 < args.len;
+    return false;
 }

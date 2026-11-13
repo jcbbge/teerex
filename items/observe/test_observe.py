@@ -17,6 +17,8 @@ import unittest
 BIN = Path(os.environ.get("TEEREX_BIN", Path(__file__).resolve().parents[2] / "zig-out/bin/teerex"))
 
 
+ROOT_SOCKET_DEFAULTS = True
+
 def compare_packets(root, before, after, extra=()):
     first, second = root / "before.json", root / "after.json"
     first.write_text(json.dumps(before), encoding="utf-8")
@@ -149,10 +151,10 @@ class CompareTest(unittest.TestCase):
             "before_available": True, "after_available": True, "availability_changed": False, "changed": False})
 
     def test_partial_tail_comparison_preserves_scope(self):
-        self.before["capture"].update(portion="tail", complete=False, incomplete_at="start")
-        self.after["capture"].update(portion="tail", complete=False, incomplete_at="start")
+        self.before["capture"].update(portion="tail", complete=False, incomplete_at="start", view="latest")
+        self.after["capture"].update(portion="tail", complete=False, incomplete_at="start", view="latest")
         self.assertFalse(self.compared()["capture"]["captured_text_changed"])
-        self.after["capture"]["portion"] = "prefix"
+        self.after["capture"].update(portion="prefix", incomplete_at=None, view=None)
         self.assertIsNone(self.compared()["capture"]["captured_text_changed"])
 
     def test_api_range_preserves_revision_and_refuses_outside_bounds(self):
@@ -444,6 +446,7 @@ class ObserveTest(unittest.TestCase):
         )
 
     def test_default_socket_decoding_and_explicit_override(self):
+        if not ROOT_SOCKET_DEFAULTS: self.skipTest("combined-root defaults do not apply to standalone cartridges")
         command = [str(BIN), "observe", "--session", self.a[0], "--block", self.a[1]]
         encoded = "unix://" + str(self.socket).replace("/", "%2F").replace(" ", "%20")
         result = subprocess.run(command, env=dict(os.environ, REX_SERVER=encoded),
@@ -454,6 +457,7 @@ class ObserveTest(unittest.TestCase):
         self.assertEqual(packet["target"]["server"], self.endpoint)
         explicit = self.observe(self.a)
         self.assertNotIn("socket_source", json.loads(explicit.stdout))
+        self.assertEqual(set(json.loads(explicit.stdout)["capture"]), {"scope", "portion", "max_bytes", "complete", "content"})
         if self.rex_json("api", "call", "server.version")["api_revision"] == 13:
             probe = subprocess.run([str(BIN), "boards", "probe"], env=dict(os.environ, REX_SERVER=encoded),
                                    capture_output=True, text=True, timeout=10)
@@ -466,12 +470,13 @@ class ObserveTest(unittest.TestCase):
             self.assertEqual(result.stdout, "")
 
     def test_platform_socket_default_is_reported_without_contact(self):
+        if not ROOT_SOCKET_DEFAULTS: self.skipTest("combined-root defaults do not apply to standalone cartridges")
         shim = self.root / "socket-default-rex"
         shim.write_text(f"#!{sys.executable}\nimport sys\nsys.exit(7)\n")
         shim.chmod(0o700)
         env = dict(os.environ, TEEREX_REX=str(shim), TEEREX_INTERNAL_REX=str(shim))
         env.pop("REX_SERVER", None)
-        result = subprocess.run([str(BIN), "doctor"], env=env, capture_output=True, text=True, timeout=5)
+        result = subprocess.run([str(BIN), "doctor", "--timeout-ms", "5000"], env=env, capture_output=True, text=True, timeout=5)
         self.assertEqual(result.returncode, 1, result.stderr)
         packet = json.loads(result.stdout)
         self.assertEqual(packet["socket_source"], "platform_default")

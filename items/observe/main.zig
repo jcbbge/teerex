@@ -17,7 +17,7 @@ const observation_usage =
     \\Read bounded terminal text and process/directory/status evidence from an explicit Rex target.
     \\N defaults to 4096; allowed range: 256..65536 JSON-encoded content bytes.
     \\Output is JSON. Capture includes screen and scrollback; a partial capture is a prefix by default; --tail selects the newest suffix (API13).
-    \\capture.incomplete_at is start for partial tails, end for partial prefixes, null for complete captures.
+    \\Latest captures carry view=latest and incomplete_at=start (null when complete); prefix schema stays unchanged.
     \\Compare reads two explicit observation files (at most 1 MiB each), without contacting Rex.
     \\Changes describe returned evidence, never activity, completion, freshness, or permission.
     \\Observe/compare do not send input, edit configuration, or save files. No autostart or implicit target.
@@ -99,7 +99,29 @@ pub const Observation = struct {
     atomic_snapshot: bool = false,
     target: struct { server: []const u8, session_id: []const u8, block_id: []const u8 },
     source: struct { rex_version: []const u8, platform: []const u8, api_revision: u32 },
-    capture: struct { scope: []const u8, portion: []const u8, max_bytes: usize, complete: bool, content: []const u8, incomplete_at: ?[]const u8 = null },
+    capture: struct {
+        scope: []const u8,
+        portion: []const u8,
+        max_bytes: usize,
+        complete: bool,
+        content: []const u8,
+        incomplete_at: ?[]const u8 = null,
+        view: ?[]const u8 = null,
+        pub fn jsonStringify(self: @This(), writer: anytype) !void {
+            try writer.beginObject();
+            inline for (.{ "scope", "portion", "max_bytes", "complete", "content" }) |field| {
+                try writer.objectField(field);
+                try writer.write(@field(self, field));
+            }
+            if (self.view) |view| {
+                try writer.objectField("view");
+                try writer.write(view);
+                try writer.objectField("incomplete_at");
+                try writer.write(self.incomplete_at);
+            }
+            try writer.endObject();
+        }
+    },
     process: ?Evidence(ProcessEvidence) = null,
     reported_directory: ?struct {
         method: []const u8,
@@ -467,7 +489,8 @@ fn observation(allocator: std.mem.Allocator, endpoint: []const u8, session_id: [
             .portion = portion,
             .max_bytes = max_bytes,
             .complete = complete,
-            .incomplete_at = if (complete) null else if (std.mem.eql(u8, portion, "tail")) "start" else "end",
+            .view = if (std.mem.eql(u8, portion, "tail")) "latest" else null,
+            .incomplete_at = if (!complete and std.mem.eql(u8, portion, "tail")) "start" else null,
             .content = content.string,
         },
         .process = .{
@@ -510,6 +533,12 @@ pub fn validateObservation(packet: Observation) !Observation {
     }
     if (packet.observation_id.len == 0 or !fullId(packet.target.session_id, "session:") or !fullId(packet.target.block_id, "block:")) return error.InvalidObservationIdentity;
     if (!std.mem.eql(u8, packet.capture.scope, "screen_and_scrollback") or (!std.mem.eql(u8, packet.capture.portion, "prefix") and !std.mem.eql(u8, packet.capture.portion, "tail"))) return error.UnsupportedCaptureScope;
+    if (std.mem.eql(u8, packet.capture.portion, "tail")) {
+        if (packet.capture.view == null or !std.mem.eql(u8, packet.capture.view.?, "latest")) return error.UnsupportedCaptureScope;
+        if (packet.capture.complete) {
+            if (packet.capture.incomplete_at != null) return error.UnsupportedCaptureScope;
+        } else if (packet.capture.incomplete_at == null or !std.mem.eql(u8, packet.capture.incomplete_at.?, "start")) return error.UnsupportedCaptureScope;
+    } else if (packet.capture.view != null or packet.capture.incomplete_at != null) return error.UnsupportedCaptureScope;
     if (packet.capture.max_bytes < 256 or packet.capture.max_bytes > 65536) return error.InvalidCaptureLimit;
     var buffer: [256]u8 = undefined;
     var count: std.Io.Writer.Discarding = .init(&buffer);

@@ -108,6 +108,7 @@ def main():
                 finally:
                     sys.path.pop(0)
                 module.BIN = adapter
+                if key == "observe": module.ROOT_SOCKET_DEFAULTS = False
                 suite.addTests(unittest.defaultTestLoader.loadTestsFromTestCase(getattr(module, class_name)) if class_name else unittest.defaultTestLoader.loadTestsFromModule(module))
             result = unittest.TextTestRunner(verbosity=2).run(suite)
             assert result.wasSuccessful(), "installed standalone contract failed"

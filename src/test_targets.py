@@ -6,6 +6,8 @@ import os
 from pathlib import Path
 import platform
 import pty
+import select
+import time
 import tty
 import subprocess
 import tarfile
@@ -284,16 +286,20 @@ class TargetsTest(unittest.TestCase):
                         tty.setraw(slave)
                         try:
                             proc = subprocess.Popen(command, env=env, stdout=slave, stderr=subprocess.PIPE)
+                            # Darwin can discard unread queued PTY bytes when the
+                            # last slave closes. Drain while our slave stays open.
+                            output = b""
+                            deadline = time.monotonic() + 5
+                            while len(output) < len(raw):
+                                ready, _, _ = select.select([master], [], [], max(0, deadline-time.monotonic()))
+                                if not ready: break
+                                chunk = os.read(master, 8192)
+                                if not chunk: break
+                                output += chunk
                             os.close(slave)
                             slave = None
                             _, error = proc.communicate(timeout=5)
                             self.assertEqual(proc.returncode, 0, error)
-                            output = b""
-                            while True:
-                                try: chunk = os.read(master, 8192)
-                                except OSError: break
-                                if not chunk: break
-                                output += chunk
                         finally:
                             os.close(master)
                             if slave is not None: os.close(slave)
@@ -305,7 +311,7 @@ class TargetsTest(unittest.TestCase):
                     self.assertEqual(actual["pid"], proc.pid)
                     self.assertEqual(actual["tty"], terminal)
                     self.assertEqual(actual["source"], None if explicit else "REX_SERVER")
-                    self.assertEqual(actual["argv"][-5:], ["probe", "--socket", socket, "--teerex", str(BIN)])
+                    self.assertEqual(actual["argv"][-5:], ["probe", "--socket", socket, "--teerex", str(BIN.resolve())])
                     self.assertEqual(output, raw)
 
     def test_explicit_rex_pin_ignores_poisoned_path_without_retry(self):
