@@ -20,8 +20,8 @@ const usage =
     \\  agents launch|profiles|shell|ack|deliver|inspect|stop|present|timeline|prune
     \\         exec|exited|channel|fence-probe       Compute callbacks / local delivery / fence checks
     \\  spawn --profile NAME --profiles ABS           Managed protocol-ACK-before-brief launch
-    \\  records init|new|park|add|attach|set|close|show|resume|navigate|list|lint|export|forget  Private evidence and reasoning
-    \\  recovery snapshot|inspect|restore|update      Private snapshots and reviewed restoration
+    \\  records init|new|park|add|attach|set|close|show|resume|navigate|list|lint|export|forget|forget-scratchpad  Private evidence and reasoning
+    \\  recovery snapshot|inspect|restore|update|reconcile      Private snapshots and reviewed restoration
     \\  snapshot|restore|update                       Recovery aliases; update is manual handoff
     \\  fleet install|rollback                       Explicit named-host installation plan/apply
     \\  cartridges install|list|run|activate|remove|restore  Independent native payloads

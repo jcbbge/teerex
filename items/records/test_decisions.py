@@ -166,6 +166,11 @@ class Decisions(RecordsFixture):
         self.assertLess(shown.index("needs_review:"), shown.index("Claim k1:"))
         self.k["options"][1]["revisit_text"] = "token=" + "z" * 25
         self.decide()
+        self.assertEqual(self.read()["kind_fields"]["options"][1]["revisit_text"], "[REDACTED]")
+        self.assertNotIn("z" * 25, json.dumps(self.call("export", "--id", "a")))
+        legacy = self.read()
+        legacy["kind_fields"]["options"][1]["revisit_text"] = "token=" + "z" * 25
+        (self.store / "records/a/record.json").write_text(json.dumps(legacy))
         self.assertIn("secret_pattern", str(self.call("export", "--id", "a", code=1)))
 
     def test_pin_failures_unavailable_and_strict_decide(self):

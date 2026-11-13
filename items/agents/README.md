@@ -375,3 +375,17 @@ Managed harness hooks check `Updated` against the private launch record's `turn_
 `agents stop` remains the low-level report transport; the installed harness wrapper adds the enforcement marker only for scratchpad-enabled panes. Scoped channel and explicit compute callbacks carry the same decision back to that wrapper; workers never need direct registry access for the check. Tests drive the generated Pi extension with Node, Claude decision output, and a real disposable Rex self-reminder; they do not run paid model turns.
 
 The unmanaged seat uses the installable settings printed by `teerex scratch hook-settings --teerex ABS`; rexconfig can merge the `UserPromptSubmit` and `Stop` groups into its Claude seat settings. Generation only prints settings and never edits personal configuration.
+
+### Physical two-host compute acceptance
+
+`test_compute_hosts.py PhysicalComputeTest.test_physical_compute_ack_literal_argv_brief_and_measured_exit`
+is an opt-in synthetic acceptance test for an actual pane-host/compute-host pair.
+It uses only a disposable Rex server and temporary profiles, callback routes,
+private call-log directories and fixture files. Configure `TEEREX_BIN`, `REX_BIN`,
+`TEEREX_COMPUTE_HOST`, `TEEREX_PANE_HOST`, `TEEREX_HOSTS_CONFIG`,
+`TEEREX_COMPUTE_HOSTS_CONFIG`, `TEEREX_COMPUTE_BIN` and
+`TEEREX_COMPUTE_PYTHON`. Host configs supply existing SSH identities; no credentials
+are copied. Binary/fixture copies are exclusively for tools on the other host.
+It verifies literal argv (including empty strings, quotes and newlines), routed
+protocol ACK, exactly one brief and measured remote exit 7 without a paid model.
+CI discovers the explicit test but skips physical estate access unless enabled.

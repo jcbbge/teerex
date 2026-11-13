@@ -49,6 +49,14 @@ def locked():
 
 
 def append(record):
+    # No arbitrary caller strings survive the append boundary, even for helper callers.
+    record = json.loads(json.dumps(record))
+    caller = record.get("caller")
+    if isinstance(caller, dict):
+        for key in ("via", "agent_name"):
+            value = caller.get(key)
+            if isinstance(value, str) and re.match(r"(?:sk-|gh[pousr]_|github_pat_|xox[abprs]-|ey[jJ])", value) and len(value) >= 20:
+                caller[key] = None
     raw = (json.dumps(record, ensure_ascii=True) + "\n").encode()
     with locked() as directory_fd:
         fd = os.open("calls.jsonl", os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600, dir_fd=directory_fd)

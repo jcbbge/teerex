@@ -473,6 +473,17 @@ class CallsTest(unittest.TestCase):
     def call(self, *args, **kw):
         return subprocess.run([BIN, *args], env=self.env, capture_output=True, text=True, timeout=15, **kw)
 
+    def test_provider_credentials_in_caller_metadata_never_persist(self):
+        enabled = self.call("boards", "friction", "enable", "--log-dir", str(self.log), "--for-days", "1", "--scope", "all")
+        self.assertEqual(enabled.returncode, 0, enabled.stdout + enabled.stderr)
+        for prefix in ("sk-", "ghp_", "github_pat_", "xoxb-"):
+            token = prefix + "a" * 28
+            self.env.update(TEEREX_CALLER=token, AGENT_NAME=token)
+            self.assertEqual(self.call("--version").returncode, 0)
+            for segment in self.log.glob("*.jsonl"):
+                self.assertNotIn(token, segment.read_text())
+        self.assertTrue(all(r["caller"]["agent_name"] is None for r in self.records() if r["phase"] == "start" and r["verb"] == "--version"))
+
     def records(self):
         return [json.loads(line) for line in (self.log / "calls.jsonl").read_text().splitlines()]
 

@@ -319,6 +319,7 @@ jobs:
           BOARDS_ROUTE_HELPER_BIN="$RUNNER_TEMP/boards-route-helper" python3 items/boards/test_boards.py -v
           # TEEREX_AGENTS_FENCE also gates the real fence-probe containment/egress/PTY cases.
           python3 items/agents/test_agents.py -v
+          python3 items/agents/test_compute_hosts.py PhysicalComputeTest.test_physical_compute_ack_literal_argv_brief_and_measured_exit -v
           python3 items/recovery/test_recovery.py -v
           python3 tools/fleet-install/test_fleet_install.py -v
 

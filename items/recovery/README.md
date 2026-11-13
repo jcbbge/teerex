@@ -201,3 +201,26 @@ Zig 0.15.2 compiled the native composition driver on both platforms. Vendor arch
 The inspected public agent-core checkout has the messaging/Rex files cited above, **not** `~/briefs/rex-restart-tabs.sh` or its handwritten restart accounting. The brief mentions those private external files; it is not their source. No deletion patch is justified or supplied, and no existing history is rewritten.
 
 Migration is therefore **blocked**, not completed: obtain the actual private script/accounting through an approved private source; inventory each behavior; compare it against the support table and controlled Mac/Linux acceptance evidence; prove parity for the supported operations and obtain explicit acceptance of each unsupported one; only then prepare the source migration/deletion patch. Do not delete personal files, run a local restore, restart/update Joshua's servers or substitute this structural subset for full agent/draft recovery on the strength of this brief alone.
+
+## Reconcile launch records after a crash or Rex restart (Q14)
+
+`teerex recovery reconcile --socket ABS --registry ABS` is read-only discovery.
+It observes the current API13 server identity and bounded pane inventory under
+the agents registry lock, and reports each launch as `pane_present`,
+`pane_absent` or `different_server`. Process liveness remains `unknown`: neither
+an absent pane nor a saved supervisor PID proves a remote agent died.
+
+Review `archive_files`, then apply the exact plan with
+`recovery reconcile --socket ABS --registry ABS --apply --confirm HASH`.
+It re-observes the server and rehashes records and companion files under an
+exclusive nonblocking lock. A changed server, inventory/record plan or file
+refuses the old confirmation. Only absent-pane launch metadata is moved into
+`archive/reconcile-HASH/`, alongside the plan. Unknown/different-server records
+stay in place. Files must be bounded owned private regular files; symlinks refuse.
+No processes, jobs registrations, scratchpads or panes are changed; nothing is
+killed or relaunched and historical ACKs confer no new authority. Partial I/O
+failures retain the archive plan for inspection; never blindly retry an apply.
+
+The regression `RecoveryTest.test_reconcile_restart_read_only_confirmed_archive_and_lock`
+uses a disposable server restart, proves preview byte preservation, stale-plan
+refusal and lock contention, and checks the archived record bytes.

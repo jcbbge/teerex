@@ -35,7 +35,11 @@ fn append(allocator: std.mem.Allocator, record: anytype) !void {
     defer std.posix.close(fd);
     try private(fd, false);
     const is_start = @hasField(@TypeOf(record), "verb");
-    const captured = if (is_start) friction.collect(allocator, dir, &call_id, @divFloor(started_at, 1000000), record.version, record.verb, record.subverb, server_uri) catch "failed" else null;
+    const caller_raw = std.posix.getenv("TEEREX_CALLER");
+    const agent_raw = std.posix.getenv("AGENT_NAME");
+    const caller_safe = friction.name(caller_raw) == null or callerName(caller_raw) != null;
+    const agent_safe = friction.name(agent_raw) == null or callerName(agent_raw) != null;
+    const captured = if (is_start and caller_safe and agent_safe) friction.collect(allocator, dir, &call_id, @divFloor(started_at, 1000000), record.version, record.verb, record.subverb, server_uri) catch "failed" else null;
     const Packet = struct {
         value: @TypeOf(record),
         state: ?[]const u8,
@@ -83,6 +87,15 @@ fn canonicalId(value: []const u8) bool {
         } else if (!std.ascii.isDigit(c) and !(c >= 'a' and c <= 'f')) return false;
     }
     return true;
+}
+
+// Caller names are the only free strings in the call shape. A valid name can
+// still be a lower-case provider credential; omit it before serialization.
+fn callerName(value: ?[]const u8) ?[]const u8 {
+    const name = friction.name(value) orelse return null;
+    const prefixes = [_][]const u8{ "sk-", "ghp_", "gho_", "ghu_", "ghs_", "ghr_", "github_pat_", "xoxb-", "xoxp-", "xoxa-", "xoxr-", "xoxs-", "eyj" };
+    for (prefixes) |prefix| if (std.mem.startsWith(u8, name, prefix) and name.len >= 20) return null;
+    return name;
 }
 
 pub fn start(allocator: std.mem.Allocator, version: []const u8) void {
@@ -134,7 +147,7 @@ fn startInner(allocator: std.mem.Allocator, version: []const u8) !void {
         }
         if (selected_flags.items.len >= 64) break;
     }
-    try append(allocator, .{ .schema_version = 1, .call_id = &call_id, .caller = .{ .via = friction.name(std.posix.getenv("TEEREX_CALLER")), .via_invalid = std.posix.getenv("TEEREX_CALLER") != null and friction.name(std.posix.getenv("TEEREX_CALLER")) == null, .agent_name = friction.name(std.posix.getenv("AGENT_NAME")) }, .phase = "start", .at = @divFloor(started_at, 1000000), .start_at = started_at, .pid = pid(), .version = version, .verb = if (words.items.len > 0) words.items[0] else if (args.len == 1 and std.mem.eql(u8, args[0], "--version")) "--version" else "help", .subverb = if (words.items.len > 1) @as(?[]const u8, words.items[1]) else null, .flags = selected_flags.items, .ids = ids.items });
+    try append(allocator, .{ .schema_version = 1, .call_id = &call_id, .caller = .{ .via = callerName(std.posix.getenv("TEEREX_CALLER")), .via_invalid = std.posix.getenv("TEEREX_CALLER") != null and callerName(std.posix.getenv("TEEREX_CALLER")) == null, .agent_name = callerName(std.posix.getenv("AGENT_NAME")) }, .phase = "start", .at = @divFloor(started_at, 1000000), .start_at = started_at, .pid = pid(), .version = version, .verb = if (words.items.len > 0) words.items[0] else if (args.len == 1 and std.mem.eql(u8, args[0], "--version")) "--version" else "help", .subverb = if (words.items.len > 1) @as(?[]const u8, words.items[1]) else null, .flags = selected_flags.items, .ids = ids.items });
 }
 
 pub fn end(allocator: std.mem.Allocator, code: u8) void {

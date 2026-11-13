@@ -710,6 +710,72 @@ def summary(saved):
             "drafts_captured": False, "omissions": saved["omissions"], "snapshot_sha256": digest(saved)}
 
 
+def reconcile(rex, args):
+    """No PID inference: a missing pane retires routing metadata, never a process."""
+    require(not args.confirm or args.apply, "confirmation_is_only_for_apply")
+    with contextlib.closing(Store(args.registry)) as registry:
+        lock = os.open("agents.lock", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=registry.fd)
+        try:
+            private_stat(lock)
+            fcntl.flock(lock, (fcntl.LOCK_EX if args.apply else fcntl.LOCK_SH) | fcntl.LOCK_NB)
+            source = rex.identity()
+            sessions = rex.call("session.list").get("sessions") or []
+            require(len(sessions) <= MAX_SESSIONS, "reconcile_session_bound")
+            present = set()
+            for session in sessions:
+                for block in rex.call("session.list_blocks", {"session_id": session["session_id"]}).get("blocks") or []:
+                    present.add((session["session_id"], block["block_id"]))
+                    require(len(present) <= MAX_PANES, "reconcile_pane_bound")
+            names = sorted(n for n in os.listdir(registry.fd) if re.fullmatch(r"agents-[0-9a-f]{32}\.json", n))
+            require(len(names) <= MAX_PANES, "reconcile_record_bound")
+            rows, files = [], []
+            for name in names:
+                state = registry.read(name)
+                target = state.get("target") or {}
+                same = target.get("server") == rex.server
+                status = "pane_present" if same and (target.get("session_id"), target.get("block_id")) in present else "pane_absent" if same else "different_server"
+                rows.append(dict(record=name, sha256=digest(state), status=status, process_liveness="unknown"))
+                if status == "pane_absent":
+                    prefix = name[:-5]
+                    owned = sorted(n for n in os.listdir(registry.fd) if n == name or n.startswith(prefix + "-"))
+                    for n in owned:
+                        require(re.fullmatch(r"agents-[0-9a-f]{32}(?:-[A-Za-z0-9_.-]+)?\.(?:json|txt|ts)", n), "unexpected_launch_file")
+                        fd = os.open(n, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=registry.fd)
+                        try:
+                            private_stat(fd)
+                            require(os.fstat(fd).st_size <= LIMIT, "reconcile_file_bound")
+                            raw = os.read(fd, LIMIT + 1)
+                            files.append(dict(name=n, sha256=hashlib.sha256(raw).hexdigest()))
+                        finally:
+                            os.close(fd)
+            require(rex.identity() == source, "server_changed_during_reconcile")
+            plan = dict(schema_version=1, kind="launch_reconcile", source=source, records=rows, archive_files=files,
+                        processes_changed=False, relaunch_performed=False)
+            token = digest(plan)
+            plan.update(confirm=token, applied=False)
+            if args.apply:
+                require(args.confirm == token, "reconcile_confirmation_mismatch")
+                if files:
+                    try:
+                        os.mkdir("archive", 0o700, dir_fd=registry.fd)
+                    except FileExistsError:
+                        pass
+                    with contextlib.closing(Store(os.path.join(args.registry, "archive"))) as archive:
+                        batch = "reconcile-" + token
+                        os.mkdir(batch, 0o700, dir_fd=archive.fd)
+                        with contextlib.closing(Store(os.path.join(archive.path, batch))) as destination:
+                            destination.create("plan.json", plan)
+                            for entry in files:
+                                os.rename(entry["name"], entry["name"], src_dir_fd=registry.fd, dst_dir_fd=destination.fd)
+                            os.fsync(destination.fd)
+                        os.fsync(archive.fd)
+                    os.fsync(registry.fd)
+                plan["applied"] = True
+            return plan
+        finally:
+            os.close(lock)
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(prog="teerex recovery", description="Private bounded Rex snapshot and restore (API13), update inventory (API10..13). Python 3.9+. No updater, close, screen scraping or retries.",
                                      epilog="Exit 0: requested structural evidence only, not complete recovery; 1: refusal/uncertainty; 2: usage; 3: explicit partial restore; 124: controller deadline; 130/143: cancellation. See items/recovery/README.md for omissions.")
@@ -737,10 +803,22 @@ def main(argv=None):
             p.add_argument("--accept-omissions", action="store_true", help="preview/apply holding shells for missing commands or gated agents; never pretends resume")
         if name == "update":
             p.add_argument("--snapshot", action="store_true", help="save snapshot before manual update; requires --directory")
+    p = sub.add_parser("reconcile", help="Read-only launch inventory after a crash/restart; explicit confirmed apply archives absent-pane metadata only.")
+    p.add_argument("--registry", required=True)
+    p.add_argument("--socket", required=True)
+    p.add_argument("--timeout-ms", type=int, default=5000)
+    p.add_argument("--apply", action="store_true")
+    p.add_argument("--confirm")
+    p.set_defaults(root=None)
     args = parser.parse_args(argv)
     signal.signal(signal.SIGTERM, cancelled)
     signal.signal(signal.SIGINT, cancelled)
     try:
+        if args.operation == "reconcile":
+            require(100 <= args.timeout_ms <= 60000, "timeout_must_be_100_to_60000_ms")
+            result = reconcile(Rex(args.socket, args.timeout_ms / 1000), args)
+            print(json.dumps(result))
+            return 0
         if args.root:
             require(os.path.isabs(args.root), "root_must_be_absolute")
             if args.operation == "snapshot" or args.operation == "update" and args.snapshot:

@@ -204,6 +204,11 @@ class Store:
             raise Refusal("internal_error", outcome="uncertain", exception_class=type(error).__name__)
 
     def _save(self, r, packets, new=False):
+        # Never persist recognized credentials, including private notes/history or packet copies.
+        # Refuse structural values rather than silently changing evidence identities.
+        redact_record(r)
+        for data in packets.values():
+            require(not CREDENTIAL.search(data.decode("utf-8", "replace")), "secret_in_evidence")
         raw = encoded(r)
         require(len(raw) <= LIMIT, "record_oversize")
         p = self.path / "records" / r["id"]
@@ -860,6 +865,47 @@ def as_text(value):
 SECRET = re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----|(?i:\b(api[_-]?key|secret|token|passwd|password|bearer)\b\s*[:=]\s*\S{8,})|\bgh[pousr]_[A-Za-z0-9]{20,}|\bgithub_pat_[A-Za-z0-9_]{20,}|\bsk-[A-Za-z0-9_-]{20,}|\bxox[abpr]-[A-Za-z0-9-]{10,}|\bAKIA[0-9A-Z]{16}\b|eyJ[A-Za-z0-9_-]{10,}\.|[A-Za-z0-9+/=_-]{40,}")
 
 
+# Deliberately excludes generic long strings: hashes and identity pins must remain exact.
+CREDENTIAL = re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)|(?i:\b(?:api[_-]?key|secret|token|passwd|password)\b\s*[:=]\s*[^\s\"',}]{8,}|\bbearer\s+[A-Za-z0-9._~-]{8,})|\bgh[pousr]_[A-Za-z0-9]{20,}|\bgithub_pat_[A-Za-z0-9_]{20,}|\bsk-[A-Za-z0-9_-]{20,}|\bxox[abprs]-[A-Za-z0-9-]{10,}|\b(?:AKIA|ASIA)[0-9A-Z]{16}\b|\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+")
+
+
+def redact_record(value):
+    """Redact prose before storage; identifiers/locators refuse instead of losing identity."""
+    prose = {"question", "notes", "text", "step", "stop_when", "hypothesis", "discriminating_experiment", "reason", "why", "what", "establishes", "does_not_establish", "command", "revisit_text"}
+    def walk(v, field=None):
+        if isinstance(v, dict):
+            for k in v:
+                require(not CREDENTIAL.search(k), "secret_in_field_name")
+                v[k] = walk(v[k], k)
+        elif isinstance(v, list):
+            for i in range(len(v)):
+                v[i] = walk(v[i], field)
+        elif isinstance(v, str) and CREDENTIAL.search(v):
+            require(field in prose, "secret_in_structural_field")
+            return CREDENTIAL.sub("[REDACTED]", v)
+        return v
+    walk(value)
+
+
+def erase_file(path):
+    """Best effort logical overwrite; no physical-media erasure claim on SSD/COW/backups."""
+    fd = os.open(path, os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK)
+    try:
+        private(fd)
+        remaining = os.fstat(fd).st_size
+        require(remaining <= LIMIT, "record_oversize")
+        while remaining:
+            count = os.write(fd, b"\0" * min(remaining, 65536))
+            require(count > 0, "erase_short_write")
+            remaining -= count
+        os.fsync(fd)
+        os.ftruncate(fd, 0)
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    path.unlink()
+
+
 def export_record(r):
     out = copy.deepcopy(r)
     omitted = list(r["private"])
@@ -1252,6 +1298,25 @@ def decision_view(r):
 
 def execute(o):
     op = o.operation
+    if op == "forget-scratchpad":
+        require(o.archived_scratchpad and o.expect_sha256 and o.reason, "archive_digest_reason_required", 2)
+        path = Path(absolute(o.archived_scratchpad))
+        require(path.parent.parent.name == "archive" and re.fullmatch(r"session:[0-9a-f-]{36}", path.parent.name) and
+                re.fullmatch(r"block:[0-9a-f-]{36}(?:-[0-9]+)?\.md", path.name), "archived_scratchpad_required")
+        handles = []
+        try:
+            for parent in (path.parent.parent, path.parent):
+                fd = os.open(parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+                handles.append(fd)
+                private(fd, True)
+            raw = read_file(path, store=True)
+            require(hashlib.sha256(raw).hexdigest() == o.expect_sha256.removeprefix("sha256:"), "scratchpad_digest_mismatch")
+            erase_file(path)
+            os.fsync(handles[-1])
+        finally:
+            for fd in handles:
+                os.close(fd)
+        return 0, dict(schema_version=1, kind="records_result", operation=op, outcome="forgotten", erasure="logical_overwrite_fsync_unlink", physical_erasure="not_guaranteed")
     require(op not in ("add", "attach", "close") or o.by is not None, "by_required", 2)
     writes = op in ("pin", "decide", "claim-status") or op == "revalidate" and o.write or op in ("init", "new", "park", "add", "attach", "set", "close", "forget")
     if o.check_command:
@@ -1351,12 +1416,12 @@ def execute(o):
                 require(re.fullmatch(r"e[0-9]+\.json", p.name), "store_hazard")
                 read_file(p, store=True)
             for p in (folder / "evidence").iterdir():
-                p.unlink()
+                erase_file(p)
             (folder / "evidence").rmdir()
-            (folder / "record.json").unlink()
+            erase_file(folder / "record.json")
             folder.rmdir()
             os.fsync(store.records)
-            return 0, dict(schema_version=1, kind="records_result", operation=op, outcome="forgotten", id=r["id"], generation=r["generation"])
+            return 0, dict(schema_version=1, kind="records_result", operation=op, outcome="forgotten", id=r["id"], generation=r["generation"], erasure="logical_overwrite_fsync_unlink", physical_erasure="not_guaranteed")
         actor = o.by or o.writer or "operator"
         if op in ("pin", "decide", "claim-status"):
             assigned.extend(decision_mutate(r, o))
@@ -1490,10 +1555,12 @@ class SafeParser(argparse.ArgumentParser):
 
 
 def parser():
-    p = SafeParser(prog='teerex records', description=__doc__, epilog="new requires handoff direction/from/to/undo or receipt shipped_identity repo/commit. Repair older records with set kind_fields=JSON or close --fields-file and --expect-generation; decisions use decide.")
+    p = SafeParser(prog='teerex records', description=__doc__, epilog="new requires handoff direction/from/to/undo or receipt shipped_identity repo/commit. Writes redact recognized credentials in prose and refuse credential-bearing identities or evidence. Forget overwrites/fsyncs/unlinks; physical erasure is not guaranteed. Repair older records with set kind_fields=JSON or close --fields-file and --expect-generation; decisions use decide.")
     sub = p.add_subparsers(dest="operation", required=True)
-    for op in ("init", "new", "park", "add", "attach", "set", "close", "show", "resume", "navigate", "list", "lint", "export", "forget", "pin", "decide", "claim-status", "revalidate"):
+    for op in ("init", "new", "park", "add", "attach", "set", "close", "show", "resume", "navigate", "list", "lint", "export", "forget", "forget-scratchpad", "pin", "decide", "claim-status", "revalidate"):
         q = sub.add_parser(op, help={"resume": "read reasoning, historical evidence and live target; zero writes", "navigate": "one explicit verified focus; never relaunch", "park": "write private reasoning for an explicit Rex target"}.get(op, op + " private records"))
+        q.add_argument("--archived-scratchpad", help="forget-scratchpad only: exact private archived scratchpad path")
+        q.add_argument("--expect-sha256", help="forget-scratchpad only: SHA256 of reviewed file")
         q.add_argument("--store", default=str(Path.home() / ".local/state/teerex-records"))
         for key in ("id", "writer", "by", "supersedes", "fields-file", "question", "next-actor", "next-step", "next-stop-when", "hypothesis", "discriminating-experiment", "uncertainty", "git-repo", "subject-artifact",
                     "host", "socket", "session", "block", "card-id", "seat-host", "seat-socket", "seat-session", "seat-block", "supplied-by", "check-command", "command", "text", "scope", "what", "reason", "where", "owner", "out", "type", "target", "value", "gh", "depends-on", "contradicts", "claim", "status", "override-reason"):

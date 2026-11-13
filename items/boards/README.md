@@ -377,3 +377,10 @@ Detached live agents remain in the compact fleet with a `[detached]` marker.
 `p` presents the selected detached agent beside its own session's currently focused
 pane, in the right third, through jobs owner/generation checks. Enter still requests
 focus; the presentation key is the path that first places a detached pane.
+
+Call-history caller metadata now omits recognized provider-token prefixes even
+when the token passes the caller-name grammar. Native start logging also withholds
+friction collection for such caller/agent metadata, preventing a second retained
+copy. Argument values and bodies remain absent from the call shape. The Python
+append boundary applies the same provider-prefix floor. This does not rewrite old
+segments or promise detection of arbitrary secrets.

@@ -81,6 +81,43 @@ class RecordsFixture(unittest.TestCase):
 
 
 class RecordsTest(RecordsFixture):
+    def test_credentials_redacted_before_storage_and_packet_refused(self):
+        token = "sk-" + "aB9" * 12
+        self.new(fields=dict(self.fields, question="Inspect " + token, notes="password=" + "secretvalue123"))
+        raw = (self.store / "records/a/record.json").read_text()
+        self.assertNotIn(token, raw)
+        self.assertNotIn("secretvalue123", raw)
+        self.assertIn("[REDACTED]", raw)
+        packet = self.packet(extra=token)
+        before = raw
+        self.attach(packet, code=1)
+        self.assertEqual((self.store / "records/a/record.json").read_text(), before)
+        self.assertEqual(list((self.store / "records/a/evidence").iterdir()), [])
+        result = self.call("new", "--id", "b", "--kind", "investigation", "--writer", token, fields=self.fields, code=1)
+        self.assertEqual(result["failure_reason"], "secret_in_structural_field")
+        self.assertFalse((self.store / "records/b").exists())
+
+    def test_forget_overwrites_open_inode_and_archived_scratchpad(self):
+        self.new()
+        path = self.store / "records/a/record.json"
+        with path.open("rb") as retained:
+            result = self.call("forget", "--id", "a", "--expect-generation", "1", "--reason", "fixture retention ended")
+            self.assertEqual(result["physical_erasure"], "not_guaranteed")
+            self.assertEqual(retained.read(), b"")
+        archive = self.root / "archive" / ("session:" + "a" * 36)
+        archive.mkdir(mode=0o700, parents=True)
+        archive.parent.chmod(0o700)
+        scratch = archive / ("block:" + "b" * 36 + ".md")
+        scratch.write_text("archived private fixture")
+        scratch.chmod(0o600)
+        digest = hashlib.sha256(scratch.read_bytes()).hexdigest()
+        self.call("forget-scratchpad", "--archived-scratchpad", scratch, "--expect-sha256", "0" * 64, "--reason", "fixture", code=1)
+        self.assertTrue(scratch.exists())
+        with scratch.open("rb") as retained:
+            self.call("forget-scratchpad", "--archived-scratchpad", scratch, "--expect-sha256", digest, "--reason", "fixture")
+            self.assertEqual(retained.read(), b"")
+        self.assertFalse(scratch.exists())
+
     def legacy_handoff(self, rid):
         # Model alpha.6's already-created incomplete record without weakening new.
         self.new(rid)
@@ -248,6 +285,11 @@ class RecordsTest(RecordsFixture):
 
     def test_R11_export_refuses_secret_caveat_without_output_file(self):
         self.new(fields=dict(self.fields, uncertainty=dict(text="token=SYNTHETICTOKEN0000000000", confidence="low")))
+        self.assertEqual(self.read()["uncertainty"]["text"], "[REDACTED]")
+        # Pre-protection records still need the stricter export guard.
+        record = self.read()
+        record["uncertainty"]["text"] = "token=SYNTHETICTOKEN0000000000"
+        (self.store / "records/a/record.json").write_text(json.dumps(record))
         out = self.root / "export.json"
         v = self.call("export", "--id", "a", "--out", out, code=1)
         self.assertEqual(v["failure_reason"], "secret_pattern:uncertainty.text")

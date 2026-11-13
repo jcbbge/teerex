@@ -133,3 +133,31 @@ teerex records lint --id existing-handoff
 ```
 
 Alternatively, `close --id ID --by NAME --state concluded --expect-generation N --fields-file ABS|-` accepts an object containing `kind_fields`, repairs it and closes it in one checked write. Unknown keys, invalid types and stale generations refuse before saving; close also refuses remaining lint violations. No migration rewrites existing records. Decision kind fields continue through `decide` and the guarded option commands so repair cannot bypass decision immutability or revisit conditions. Missing required fields on `new` return `kind_fields_required` plus public `missing_fields` paths, without creating a partial record.
+
+## Write-time credential protection and explicit erasure (Q15)
+
+All saves redact recognized provider tokens, bearer values, credential assignments,
+JWTs and private-key blocks in prose (including notes and history). A recognized
+credential in an identity, locator, JSON key or copied evidence packet refuses the
+write before any new files are created. Evidence is never silently edited or
+rehash-labelled. This is a heuristic floor: arbitrary secrets and older stored
+records are not automatically discovered or rewritten. Existing export scanning
+remains stricter, including generic long strings. Revalidation and other writes
+use the same boundary.
+
+`records forget --id ID --expect-generation N --reason TEXT` now overwrites each
+owned regular file with zeros, fsyncs, truncates, fsyncs and unlinks before deleting
+the directories. Original evidence outside the store is untouched.
+
+`records forget-scratchpad --archived-scratchpad ABS --expect-sha256 HEX --reason TEXT`
+explicitly forgets one reviewed archived scratchpad. Only private owned files under
+`archive/session:UUID/block:UUID[-timestamp].md` qualify; a changed digest refuses.
+Active scratchpads are refused. The command opens no personal store by default.
+
+Receipts report `erasure: logical_overwrite_fsync_unlink` and
+`physical_erasure: not_guaranteed`. SSD wear levelling, copy-on-write filesystems,
+snapshots and backups can retain old extents; no software overwrite can certify
+physical erasure there. Application encryption at rest is deferred: a key beside
+the data adds no meaningful protection against the same UID, and a separately
+unlocked key would add a credential/recovery workflow. Host disk encryption is a
+separate operator-owned control, not established by this CLI.

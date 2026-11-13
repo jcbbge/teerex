@@ -85,6 +85,47 @@ class RecoveryTest(unittest.TestCase):
         self.assertEqual(result.returncode, code, result.stdout + result.stderr)
         return json.loads(result.stdout)
 
+    def test_reconcile_restart_read_only_confirmed_archive_and_lock(self):
+        self.fixture()
+        registry = self.root / "registry"
+        registry.mkdir(mode=0o700)
+        lock = registry / "agents.lock"
+        lock.touch(mode=0o600)
+        record = registry / ("agents-" + "a" * 32 + ".json")
+        record.write_text(json.dumps(dict(target=self.target(self.blocks[0]["block_id"]), supervisor_pid=os.getpid())))
+        record.chmod(0o600)
+        def invoke(*args, code=0):
+            return self.invoke("reconcile", "--registry", str(registry), *args, directory=False, code=code)
+        foreign = registry / ("agents-" + "b" * 32 + ".json")
+        foreign.write_text(json.dumps(dict(target=dict(self.target(self.blocks[0]["block_id"]), server="unix:///foreign.sock"))))
+        foreign.chmod(0o600)
+        foreign_before = foreign.read_bytes()
+        before = record.read_bytes()
+        preview = invoke()
+        self.assertEqual(preview["records"][0]["status"], "pane_present")
+        self.assertEqual(record.read_bytes(), before)
+        self.restart()
+        plan = invoke()
+        self.assertEqual(plan["records"][0]["status"], "pane_absent")
+        self.assertFalse((registry / "archive").exists())
+        invoke("--apply", "--confirm", preview["confirm"], code=1)
+        self.assertTrue(record.exists())
+        import fcntl
+        with lock.open("rb") as held:
+            fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            invoke(code=1)
+        result = invoke("--apply", "--confirm", plan["confirm"])
+        self.assertTrue(result["applied"])
+        self.assertFalse(result["processes_changed"])
+        self.assertFalse(record.exists())
+        archived = list((registry / "archive").glob("reconcile-*/agents-*.json"))
+        self.assertEqual(len(archived), 1)
+        self.assertEqual(archived[0].read_bytes(), before)
+        self.assertEqual(foreign.read_bytes(), foreign_before)
+        self.stop()
+        invoke(code=1)
+        self.assertEqual(foreign.read_bytes(), foreign_before)
+
     def fixture(self, nested=False):
         block = lambda label: {"block": {"flavor": "com.superlogical.terminal.shell", "label": label,
                                          "options": {"shell": "none", "cwd": str(self.root), "command": ["/bin/sh", "-c", "sleep 90"], "exit": {"on_completion": False}}}}
