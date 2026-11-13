@@ -69,6 +69,9 @@ jobs:
         with:
           python-version: '3.13'
 
+      - name: Isolate invocation history for every regression suite
+        run: echo "TEEREX_CALL_LOG_DIR=$RUNNER_TEMP/teerex-call-history" >> "$GITHUB_ENV"
+
       - name: Select Xcode 26.1.1 for Zig 0.15.2
         if: runner.os == 'macOS'
         run: |
@@ -232,7 +235,6 @@ jobs:
         env:
           TEEREX_BIN: ${{ github.workspace }}/zig-out/bin/teerex
         run: |
-          export TEEREX_CALL_LOG_DIR="$RUNNER_TEMP/teerex-call-history"
           python3 src/test_targets.py -v
           python3 items/boards/test_boards.py CallsTest -v
 

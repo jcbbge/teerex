@@ -109,6 +109,8 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     exe.root_module.addImport("rex_boards", boards);
+    surfaces.addImport("rex_boards", boards);
+    rex_run.addImport("rex_boards", boards);
     const recovery = b.createModule(.{
         .root_source_file = b.path("items/recovery/main.zig"),
         .target = target,
@@ -116,6 +118,7 @@ pub fn build(b: *std.Build) void {
     });
     recovery.addImport("supervised_child", child);
     exe.root_module.addImport("rex_recovery", recovery);
+    recovery.addImport("rex_boards", boards);
     const agents = b.createModule(.{
         .root_source_file = b.path("items/agents/main.zig"),
         .target = target,
@@ -125,6 +128,7 @@ pub fn build(b: *std.Build) void {
     const channel = b.createModule(.{ .root_source_file = b.path("src/scoped_channel.zig"), .target = target, .optimize = optimize });
     agents.addImport("scoped_channel", channel);
     rex_run.addImport("scoped_channel", channel);
+    agents.addImport("rex_boards", boards);
     b.installArtifact(exe);
 
     const run = b.addRunArtifact(exe);

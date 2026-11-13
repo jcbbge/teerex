@@ -900,7 +900,7 @@ def calls_board(a):
         else:
             lines = ["RECENT TEEREX CALLS", "Bypasses: unknown (Rex does not identify the creating command)"]
             for row in rows:
-                lines.append("{host} {verb} {subverb} {outcome} {elapsed_ms}ms exit={exit}".format(**dict(row, subverb=row.get("subverb") or "")))
+                lines.append("{command_host} {verb} {subverb} {outcome} {elapsed_ms}ms exit={exit}".format(**dict(row, command_host=row.get("command_host", "local"), subverb=row.get("subverb") or "")))
             lines.extend(source["host"] + ": " + source["outcome"] for source in sources)
             print(("\x1b[2J\x1b[H" if sys.stdout.isatty() else "") + "\n".join(lines), flush=True)
         if a.once:
@@ -983,7 +983,7 @@ def parser():
     q.add_argument("--answer", help="resolution answer, or optional Reply hint on a new card")
     c = commands.add_parser("boards", help="run in a visible Rex terminal; Ctrl+C stops; never starts a hidden watcher")
     views = c.add_subparsers(dest="view", required=True)
-    q = views.add_parser("calls", help="recent private invocation metadata", description="Private call metadata in ~/.local/state/teerex/calls (TEEREX_CALL_LOG_DIR overrides). Active log rotates at 1 MiB; immutable history segments never deleted. No message bodies, arbitrary argv or free-text errors. Live TTY transports retain exit-only evidence. No daemon.")
+    q = views.add_parser("calls", help="recent private invocation metadata", description="Private Zig start/helper or native end metadata in ~/.local/state/teerex/calls (TEEREX_CALL_LOG_DIR overrides). Active log rotates at 1 MiB; immutable history never deleted. Pairs latest 8 MiB by PID/start timestamp; missing end is unknown. Only flag names and canonical IDs; no bodies or other argument values. Logging is silent best effort; no supervisor or daemon.")
     q.add_argument("--once", action="store_true")
     q.add_argument("--json", action="store_true")
     q.add_argument("--limit", type=int, default=32, choices=range(1, 129))

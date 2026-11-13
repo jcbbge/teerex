@@ -33,7 +33,7 @@ const usage =
     \\Why: report actual activity/results and unknowns, not infer readiness or completion.
     \\How: explicit config/host or socket/full IDs; no retries, fallback or autostart.
     \\Python3.9+ is required for targets, boards, agents, recovery, fleet, cartridges and palette install.
-    \\Legacy direct-socket native tools do not require Python. SSH trust/key are explicit.
+    \\Native call history adds no runtime dependency; missing end records stay unknown.
     \\Personal install/restart/close/config actions need their own authorization.
     \\Guides: docs/alpha5.md and items/{surfaces,boards,agents,recovery}/README.md.
     \\
@@ -42,18 +42,22 @@ const usage =
 pub fn main() void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
-    _ = @import("rex_boards").supervise(arena.allocator(), version) catch |err| {
-        std.debug.print("teerex: call history supervisor unavailable ({s}); running command\n", .{@errorName(err)});
-    };
+    @import("rex_boards").call_log.start(arena.allocator(), version);
     run(arena.allocator()) catch |err| {
         std.debug.print("teerex: {s}\n", .{@errorName(err)});
-        std.process.exit(1);
+        finish(arena.allocator(), 1);
     };
+    @import("rex_boards").call_log.end(arena.allocator(), 0);
+}
+
+fn finish(allocator: std.mem.Allocator, code: u8) noreturn {
+    @import("rex_boards").call_log.end(allocator, code);
+    std.process.exit(code);
 }
 
 fn python(allocator: std.mem.Allocator, args: []const []const u8) !void {
     var argv: std.ArrayList([]const u8) = .empty;
-    try argv.appendSlice(allocator, &.{ "python3", "-c", @embedFile("targets.py") });
+    try argv.appendSlice(allocator, &.{ "python3", "-I", "-c", try @import("rex_boards").call_log.python(allocator, @embedFile("targets.py")) });
     try argv.appendSlice(allocator, args);
     return std.process.execv(allocator, argv.items);
 }
@@ -114,7 +118,7 @@ fn run(allocator: std.mem.Allocator) !void {
         }
         if (i < args.len and std.mem.eql(u8, args[i], "cartridges")) {
             try std.fs.File.stderr().writeAll("{\"error\": \"cartridges cannot use named-host routing; run teerex cartridges on that machine\", \"next_step\": \"Log in to the selected machine and run teerex cartridges there.\", \"ok\": false, \"schema_version\": 1}\n");
-            std.process.exit(1);
+            finish(allocator, 1);
         }
         var forwarded: std.ArrayList([]const u8) = .empty;
         try forwarded.appendSlice(allocator, &.{ "exec", "--config", config orelse return error.ExplicitConfigRequired, "--host", host orelse return error.ExplicitHostRequired, "--" });
@@ -126,6 +130,7 @@ fn run(allocator: std.mem.Allocator) !void {
         var env = try std.process.getEnvMap(allocator);
         try env.put("TEEREX_INTERNAL_REX", args[1]);
         try env.put("TEEREX_REX", args[1]);
+        try env.put("TEEREX_CALL_START", try @import("rex_boards").call_log.context(allocator));
         const self = try std.fs.selfExePathAlloc(allocator);
         var forwarded: std.ArrayList([]const u8) = .empty;
         try forwarded.append(allocator, self);
@@ -138,33 +143,33 @@ fn run(allocator: std.mem.Allocator) !void {
     if (std.mem.eql(u8, command, "fleet") and rest.len > 0 and (std.mem.eql(u8, rest[0], "install") or std.mem.eql(u8, rest[0], "rollback"))) {
         const sources = @import("fleet_sources");
         var forwarded: std.ArrayList([]const u8) = .empty;
-        try forwarded.appendSlice(allocator, &.{ "python3", "-c", @embedFile("fleet_bridge.py"), sources.controller, sources.worker, sources.installer, sources.resolver });
+        try forwarded.appendSlice(allocator, &.{ "python3", "-I", "-c", try @import("rex_boards").call_log.python(allocator, @embedFile("fleet_bridge.py")), sources.controller, sources.worker, sources.installer, sources.resolver });
         try forwarded.appendSlice(allocator, rest);
         return std.process.execv(allocator, forwarded.items);
     }
     if (std.mem.eql(u8, command, "cartridges")) {
         var argv: std.ArrayList([]const u8) = .empty;
-        try argv.appendSlice(allocator, &.{ "python3", "-I", "-c", @import("cartridge_sources").manager });
+        try argv.appendSlice(allocator, &.{ "python3", "-I", "-c", try @import("rex_boards").call_log.python(allocator, @import("cartridge_sources").manager) });
         try argv.appendSlice(allocator, rest);
         const err = std.process.execv(allocator, argv.items);
         var buf: [512]u8 = undefined;
         const line = std.fmt.bufPrint(&buf, "{{\"error\": \"cannot execute python3 ({s}): teerex cartridges requires Python 3.9+\", \"next_step\": \"Install Python 3.9+ on this machine and retry.\", \"ok\": false, \"schema_version\": 1}}\n", .{@errorName(err)}) catch unreachable;
         std.fs.File.stderr().writeAll(line) catch {};
-        std.process.exit(1);
+        finish(allocator, 1);
     }
-    if (std.mem.eql(u8, command, "recovery")) std.process.exit(try @import("rex_recovery").run(allocator, rest));
-    if (std.mem.eql(u8, command, "snapshot") or std.mem.eql(u8, command, "restore") or std.mem.eql(u8, command, "update")) std.process.exit(try @import("rex_recovery").run(allocator, args));
-    if (std.mem.eql(u8, command, "surfaces")) std.process.exit(try @import("rex_surfaces").run(allocator, rest));
-    if (std.mem.eql(u8, command, "run")) std.process.exit(try @import("rex_run").run(allocator, rest));
-    if (std.mem.eql(u8, command, "run-visible")) std.process.exit(try @import("rex_run").runVisible(allocator, rest));
-    if (std.mem.eql(u8, command, "offstage")) std.process.exit(try @import("rex_offstage").run(allocator, rest));
-    if (std.mem.eql(u8, command, "doctor")) std.process.exit(try @import("rex_doctor").run(allocator, rest));
-    if (std.mem.eql(u8, command, "jobs")) std.process.exit(try @import("rex_jobs").run(allocator, rest));
-    if (std.mem.eql(u8, command, "adapters")) std.process.exit(try @import("rex_adapters").run(allocator, rest));
-    if (std.mem.eql(u8, command, "send")) std.process.exit(try send(allocator, rest));
-    if (std.mem.eql(u8, command, "boards")) std.process.exit(try @import("rex_boards").run(allocator, rest));
-    if (std.mem.eql(u8, command, "seat") or std.mem.eql(u8, command, "inbox") or std.mem.eql(u8, command, "ask") or std.mem.eql(u8, command, "fleet")) std.process.exit(try @import("rex_boards").run(allocator, args));
-    if (std.mem.eql(u8, command, "agents")) std.process.exit(try @import("rex_agents").run(allocator, rest));
+    if (std.mem.eql(u8, command, "recovery")) finish(allocator, try @import("rex_recovery").run(allocator, rest));
+    if (std.mem.eql(u8, command, "snapshot") or std.mem.eql(u8, command, "restore") or std.mem.eql(u8, command, "update")) finish(allocator, try @import("rex_recovery").run(allocator, args));
+    if (std.mem.eql(u8, command, "surfaces")) finish(allocator, try @import("rex_surfaces").run(allocator, rest));
+    if (std.mem.eql(u8, command, "run")) finish(allocator, try @import("rex_run").run(allocator, rest));
+    if (std.mem.eql(u8, command, "run-visible")) finish(allocator, try @import("rex_run").runVisible(allocator, rest));
+    if (std.mem.eql(u8, command, "offstage")) finish(allocator, try @import("rex_offstage").run(allocator, rest));
+    if (std.mem.eql(u8, command, "doctor")) finish(allocator, try @import("rex_doctor").run(allocator, rest));
+    if (std.mem.eql(u8, command, "jobs")) finish(allocator, try @import("rex_jobs").run(allocator, rest));
+    if (std.mem.eql(u8, command, "adapters")) finish(allocator, try @import("rex_adapters").run(allocator, rest));
+    if (std.mem.eql(u8, command, "send")) finish(allocator, try send(allocator, rest));
+    if (std.mem.eql(u8, command, "boards")) finish(allocator, try @import("rex_boards").run(allocator, rest));
+    if (std.mem.eql(u8, command, "seat") or std.mem.eql(u8, command, "inbox") or std.mem.eql(u8, command, "ask") or std.mem.eql(u8, command, "fleet")) finish(allocator, try @import("rex_boards").run(allocator, args));
+    if (std.mem.eql(u8, command, "agents")) finish(allocator, try @import("rex_agents").run(allocator, rest));
     if (std.mem.eql(u8, command, "spawn")) {
         var managed = false;
         for (rest) |arg| {
@@ -175,11 +180,11 @@ fn run(allocator: std.mem.Allocator) !void {
             var forwarded: std.ArrayList([]const u8) = .empty;
             try forwarded.append(allocator, "launch");
             for (rest) |arg| try forwarded.append(allocator, if (std.mem.eql(u8, arg, "--profiles")) "--config" else arg);
-            std.process.exit(try @import("rex_agents").run(allocator, forwarded.items));
+            finish(allocator, try @import("rex_agents").run(allocator, forwarded.items));
         }
-        std.process.exit(try @import("rex_spawn").run(allocator, rest));
+        finish(allocator, try @import("rex_spawn").run(allocator, rest));
     }
-    if (std.mem.eql(u8, command, "maneuver-check")) std.process.exit(try @import("rex_maneuvers").run(allocator, rest, @import("rex_observe")));
-    if (std.mem.eql(u8, command, "filter")) std.process.exit(try @import("rex_filter").run(allocator, rest, @import("rex_observe")));
-    std.process.exit(try @import("rex_observe").runObservations(allocator, args));
+    if (std.mem.eql(u8, command, "maneuver-check")) finish(allocator, try @import("rex_maneuvers").run(allocator, rest, @import("rex_observe")));
+    if (std.mem.eql(u8, command, "filter")) finish(allocator, try @import("rex_filter").run(allocator, rest, @import("rex_observe")));
+    finish(allocator, try @import("rex_observe").runObservations(allocator, args));
 }

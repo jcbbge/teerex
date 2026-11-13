@@ -338,14 +338,17 @@ class CallsTest(unittest.TestCase):
         result = self.call(*send)
         self.assertEqual(json.loads(result.stdout)["outcome"], "uncertain", result.stdout + result.stderr)
         records = self.records()
-        self.assertEqual(len(records), 3)
-        self.assertEqual(records[-1]["outcome"], "uncertain")
-        self.assertEqual(records[-1]["failure_reason"], "enter_call_failed")
-        self.assertEqual(records[-1]["exit"], 1)
-        self.assertEqual(records[-1]["target"]["block_id"], "block:" + ZERO)
-        self.assertTrue(all(type(r["elapsed_ms"]) is int for r in records))
+        self.assertEqual(len(records), 6)
+        starts = [r for r in records if r["phase"] == "start"]
+        ends = [r for r in records if r["phase"] == "end"]
+        self.assertEqual(len(starts), 3)
+        self.assertEqual(ends[-1]["exit"], 1)
+        self.assertIn("block:" + ZERO, starts[-1]["ids"])
+        self.assertIn("--message-file", starts[-1]["flags"])
+        self.assertTrue(all(type(r["elapsed_ms"]) is int for r in ends))
+        self.assertEqual({(r["pid"], r["start_at"]) for r in starts}, {(r["pid"], r["start_at"]) for r in ends})
         raw = (self.log / "calls.jsonl").read_text()
-        for secret in ("SECRET_BODY", "SECRET_PAYLOAD", "--message-file"):
+        for secret in ("SECRET_BODY", "SECRET_PAYLOAD", "fixture.sock"):
             self.assertNotIn(secret, raw)
         self.assertEqual(self.log.stat().st_mode & 0o777, 0o700)
         self.assertEqual((self.log / "calls.jsonl").stat().st_mode & 0o777, 0o600)
@@ -373,7 +376,59 @@ class CallsTest(unittest.TestCase):
         path.chmod(0o644)
         result = self.call("--version")
         self.assertEqual(result.returncode, 0)
-        self.assertIn("call history unavailable", result.stderr)
+        self.assertEqual(result.stderr, "")
+
+    def foreign_target(self, program):
+        executable = self.root / "foreign"
+        executable.write_text("#!" + sys.executable + " -I\n" + program)
+        executable.chmod(0o700)
+        config = self.root / "hosts.json"
+        config.write_text(json.dumps(dict(schema_version=1, hosts=dict(fixture=dict(
+            host_id="fixture", transport="local", home=str(self.root), platform="linux-x86_64",
+            socket=str(self.root / "rex.sock"), rex="/bin/false", teerex=str(executable), store=str(self.root / "store"))))))
+        return ["--config", str(config), "--host", "fixture", "observe"]
+
+    def test_exec_pid_preserved_and_foreign_exit_remains_unknown(self):
+        command = self.foreign_target("import os,json\nprint(json.dumps(dict(pid=os.getpid())),flush=True)\nraise SystemExit(23)\n")
+        proc = subprocess.Popen([BIN, *command], env=self.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        output, error = proc.communicate(timeout=10)
+        self.assertEqual(proc.returncode, 23, error)
+        self.assertEqual(json.loads(output)["pid"], proc.pid)
+        self.assertEqual(len(self.records()), 1)
+        board = self.call("boards", "calls", "--once", "--json")
+        rows = json.loads(board.stdout)["calls"]
+        row = next(r for r in rows if r["pid"] == proc.pid)
+        self.assertEqual(row["outcome"], "unknown")
+        self.assertIsNone(row["exit"])
+
+    def test_signal_passthrough_keeps_foreign_pid_output_and_exit(self):
+        command = self.foreign_target("import os,signal,json\nsignal.signal(signal.SIGTERM,lambda *_:exit(23))\nprint(json.dumps(dict(pid=os.getpid())),flush=True)\nsignal.pause()\n")
+        proc = subprocess.Popen([BIN, *command], env=self.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            ready = proc.stdout.readline()
+            self.assertEqual(json.loads(ready)["pid"], proc.pid)
+            proc.send_signal(signal.SIGTERM)
+            output, error = proc.communicate(timeout=10)
+            self.assertEqual(proc.returncode, 23, error)
+            self.assertEqual(output, "")
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait()
+            proc.stdout.close()
+            proc.stderr.close()
+
+    def test_native_logging_needs_no_python_and_helper_imports_are_isolated(self):
+        self.env["PATH"] = str(self.root / "no-python")
+        result = self.call("--version")
+        self.assertEqual((result.returncode, result.stderr), (0, ""))
+        self.assertEqual([r["phase"] for r in self.records()], ["start", "end"])
+        self.env["PATH"] = os.environ["PATH"]
+        sentinel = self.root / "POISON_RAN"
+        (self.root / "json.py").write_text("from pathlib import Path\nPath(" + repr(str(sentinel)) + ").touch()\nraise RuntimeError('poison')\n")
+        result = self.call("targets", "resolve", "--config", str(self.root / "missing-config"), "--host", "fixture", cwd=self.root)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(sentinel.exists())
 
     def test_cross_host_calls_show_unavailable_sources(self):
         fixture = self.root / "remote"

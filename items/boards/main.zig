@@ -13,7 +13,7 @@ fn routeSignal(sig: i32) callconv(.c) void {
 pub fn tryRoute(allocator: std.mem.Allocator, args: []const []const u8) !?u8 {
     var argv: std.ArrayList([]const u8) = .empty;
     defer argv.deinit(allocator);
-    try argv.appendSlice(allocator, &.{ "python3", "-c", @embedFile("boards.py"), "try-route" });
+    try argv.appendSlice(allocator, &.{ "python3", "-I", "-c", @embedFile("boards.py"), "try-route" });
     try argv.appendSlice(allocator, args);
     var child = std.process.Child.init(argv.items, allocator);
     child.stdin_behavior = .Inherit;
@@ -59,18 +59,7 @@ pub fn tryRoute(allocator: std.mem.Allocator, args: []const []const u8) !?u8 {
     return if (sig != 0) 128 + sig else if (term == .Exited) term.Exited else if (term == .Signal) @intCast(@min(255, 128 + term.Signal)) else 1;
 }
 
-/// A foreground supervisor survives exec-based leaves and records their actual exit.
-pub fn supervise(allocator: std.mem.Allocator, version: []const u8) !bool {
-    if (std.posix.getenv("TEEREX_CALL_LOG_CHILD")) |parent| {
-        const expected = try std.fmt.allocPrint(allocator, "{d}", .{if (@import("builtin").os.tag == .linux) std.os.linux.getppid() else std.c.getppid()});
-        if (std.mem.eql(u8, parent, expected)) return false;
-    }
-    const args = try std.process.argsAlloc(allocator);
-    var argv: std.ArrayList([]const u8) = .empty;
-    try argv.appendSlice(allocator, &.{ "python3", "-c", @embedFile("calls.py"), try std.fs.selfExePathAlloc(allocator), version });
-    try argv.appendSlice(allocator, args[1..]);
-    return std.process.execv(allocator, argv.items);
-}
+pub const call_log = @import("calls.zig");
 
 /// Foreground Python3.9+ stdlib implementation. exec preserves the visible pane,
 /// PID/signal lifetime and terminal; no detached renderer or hidden service.
@@ -79,9 +68,7 @@ pub fn supervise(allocator: std.mem.Allocator, version: []const u8) !bool {
 pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
     var argv: std.ArrayList([]const u8) = .empty;
     defer argv.deinit(allocator);
-    const calls_source = try std.json.Stringify.valueAlloc(allocator, @embedFile("calls.py"), .{});
-    const script = try std.fmt.allocPrint(allocator, "import types,sys\n_calls=types.ModuleType('teerex_calls')\nexec({s}, _calls.__dict__)\nsys.modules['teerex_calls']=_calls\n{s}", .{ calls_source, @embedFile("boards.py") });
-    try argv.appendSlice(allocator, &.{ "python3", "-c", script });
+    try argv.appendSlice(allocator, &.{ "python3", "-I", "-c", try call_log.python(allocator, @embedFile("boards.py")) });
     const render = args.len > 0 and (std.mem.eql(u8, args[0], "inbox") or std.mem.eql(u8, args[0], "fleet") or std.mem.eql(u8, args[0], "calls")) and
         (args.len == 1 or std.mem.startsWith(u8, args[1], "--"));
     if (render) try argv.append(allocator, "boards");
