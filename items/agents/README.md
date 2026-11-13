@@ -19,6 +19,18 @@ Queue timeout returns exit1, `outcome/failure_reason:launch_queue_busy`, `retry_
 
 Native jobs exclusive operations now wait up to10s before reading or mutating state; their registry-busy result is retry-safe only because no live operation or record mutation began. Agents jobs-call subprocess budgets cover that wait plus the live query/cleanup budget. The in-pane supervisor allows60s for verified tracking/protocol preparation (and stops early on explicit tracking failure), separately from the caller-selected ACK deadline. Default relative review deadlines are calculated after queue acquisition. The queue does not keep a daemon running or retry work on its own.
 
+## Retiring finished launches: `agents prune`
+
+The registry holds at most 32 live launch records. `teerex agents prune --registry DIR` plans (changes nothing) and `--apply` acts. A record retires only on evidence, never on age alone:
+
+- `agent_exited`: the in-pane supervisor recorded the agent's exit (`immediate_child_term`).
+- `never_started`: the launch ended `creation_uncertain` or `tracking_uncertain`, so no agent ran.
+- `pane_gone`: `surfaces inspect` reports the pane absent from its session (`pane_not_attached_terminal`). Any other answer, including an unreachable server, keeps the record. Its jobs registration is forgotten too (local record only).
+
+Records younger than 120 s are never judged, so a launch still in its queue/spawn/track window is untouched. Retired records and their brief/protocol/notice files move to `DIR/archive/<launch_id>/` (0700) with a `retired.json` stating reason, evidence and time; message files whose record is gone move to `DIR/archive/orphans/`. Nothing is deleted, no pane is closed and no process is signalled. Prune holds the launch queue lock, so it never races a launch.
+
+`agents launch` runs the same prune automatically, under its queue lock, whenever 24 or more live records exist; the receipt's `auto_prune` reports `{retired, live_before}`. `registry_full` now means 32 records that are all live or unknown: retire live agents explicitly.
+
 ## Configure deliberately
 
 Create an operator-selected private directory (`0700`) on a trusted local filesystem. This item does not create the directory or select a personal endpoint. Configuration uses schema1, an object of profiles, and optional explicit defaults:

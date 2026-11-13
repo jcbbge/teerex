@@ -412,6 +412,73 @@ class AgentsTest(unittest.TestCase):
         self.assertEqual(len(state["notifications"]["child-exit"]["results"]), 2)
         wait_for(lambda: [v for v in events(report_log) if v["event"] == "input"])
 
+    def backdate(self, launch_id, **changes):
+        path = self.registry / ("agents-" + launch_id + ".json")
+        state = json.loads(path.read_text())
+        state.update(created_at=state["created_at"] - 600000, **changes)
+        path.write_text(json.dumps(state))
+        path.chmod(0o600)
+        return state
+
+    def test_prune_archives_exited_never_started_and_gone_panes_and_launch_prunes_automatically(self):
+        alive = self.launch("ack")[1]["launch_id"]
+        exited = self.launch("exit7")[1]["launch_id"]
+        gone = self.launch("ack")[1]["launch_id"]
+        wait_for(lambda: self.record(exited)["immediate_child_term"])
+        gone_block = self.record(gone)["target"]["block_id"]
+        closed = subprocess.run([BIN, "surfaces", "close", "--socket", str(self.socket), "--session", self.session, "--pane", gone_block],
+                                capture_output=True, text=True, env=self.env)
+        self.assertIn("closed_and_absent", closed.stdout)
+        for launch_id in (alive, exited, gone):
+            self.backdate(launch_id)
+        stale = self.backdate(alive)
+        never = dict(stale, launch_id="e" * 32, phase="tracking_uncertain", tracked=False)
+        never["target"] = dict(stale["target"], block_id=None)
+        (self.registry / ("agents-" + "e" * 32 + ".json")).write_text(json.dumps(never))
+        (self.registry / ("agents-" + "e" * 32 + ".json")).chmod(0o600)
+        orphan = self.registry / ("agents-" + "f" * 32 + "-brief.txt")
+        orphan.write_text("old brief")
+        os.utime(orphan, (time.time() - 600, time.time() - 600))
+        recent = self.launch("ack")[1]["launch_id"]  # inside the settle window: never judged
+
+        before = sorted(p.name for p in self.registry.iterdir())
+        p, plan = self.run_cli("prune", "--registry", str(self.registry), timeout=60)
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertEqual(plan["outcome"], "prune_plan")
+        self.assertEqual(sorted(p.name for p in self.registry.iterdir()), before, "a plan must change nothing")
+        reasons = {r["launch_id"]: r["reason"] for r in plan["retired"]}
+        self.assertEqual(reasons, {exited: "agent_exited", gone: "pane_gone", "e" * 32: "never_started"})
+        self.assertEqual(plan["kept"], 2)
+        self.assertEqual(plan["orphans"], [orphan.name])
+
+        p, done = self.run_cli("prune", "--registry", str(self.registry), "--apply", timeout=60)
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertEqual(done["live_after"], 2)
+        for launch_id, reason in reasons.items():
+            archived = self.registry / "archive" / launch_id
+            self.assertEqual(json.loads((archived / "retired.json").read_text())["retired"]["reason"], reason)
+            self.assertEqual(list(self.registry.glob("agents-" + launch_id + "*")), [])
+        self.assertTrue((self.registry / "archive" / exited / ("agents-" + exited + "-brief.txt")).exists())
+        self.assertTrue((self.registry / "archive" / "orphans" / orphan.name).exists())
+        self.assertEqual(oct((self.registry / "archive").stat().st_mode & 0o777), "0o700")
+        self.assertTrue(self.record(alive) and self.record(recent))
+        jobs = json.loads(subprocess.check_output([BIN, "jobs", "list", "--registry", str(self.registry)], env=self.env))
+        self.assertNotIn(gone_block, [e["block_id"] for e in jobs["entries"]], "a gone pane's jobs registration is forgotten")
+        self.assertIn(self.record(alive)["target"]["block_id"], [e["block_id"] for e in jobs["entries"]])
+
+        # Fill to the auto-prune threshold with old exited records; the next launch archives them itself.
+        template = self.record(alive)
+        for i in range(24):
+            fake = dict(template, launch_id="%032x" % (i + 1), created_at=template["created_at"] - 600000,
+                        immediate_child_term={"Exited": 0})
+            path = self.registry / ("agents-" + fake["launch_id"] + ".json")
+            path.write_text(json.dumps(fake))
+            path.chmod(0o600)
+        p, packet = self.launch("ack")
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertEqual(packet["auto_prune"]["retired"], 24)
+        self.assertEqual(len(list(self.registry.glob("agents-" + "?" * 32 + ".json"))), 3)
+
     def test_immediate_exit7_alert_with_retained_visible_pane(self):
         p, packet = self.launch("exit7")
         self.assertEqual(p.returncode, 0, p.stderr + p.stdout)

@@ -179,11 +179,152 @@ def load(root, launch_id):
         return registry.read(launch_id)
 
 
+RECORD = re.compile(r"agents-([0-9a-f]{32})\.json")
+AUTO_PRUNE_AT = 24
+SETTLE_MS = 120000  # A launch still inside its queue/spawn/track window is never judged.
+
+
+def pane_absent(state):
+    """True only on the surfaces verb's explicit absence from the session view; anything else is unknown."""
+    t = state.get("target") or {}
+    if not t.get("block_id"):
+        return None
+    code, packet = invoke(["surfaces", "inspect", "--socket", state["socket"], "--session", t["session_id"],
+                           "--pane", t["block_id"], "--timeout-ms", "3000"], client_path=state.get("client_path"),
+                          rex_executable=state.get("rex_executable"))
+    if isinstance(packet, dict) and packet.get("outcome") == "refused" and packet.get("failure_reason") == "pane_not_attached_terminal":
+        return True
+    if code == 0 and isinstance(packet, dict) and packet.get("outcome") == "inspected":
+        return False
+    return None
+
+
+def retirement(state, check_panes=True):
+    """Why a record may leave the live registry, or None. Evidence first from the record, then one live pane read."""
+    age = now() - int(state.get("created_at") or 0)
+    if age < SETTLE_MS:
+        return None, None
+    if state.get("immediate_child_term") is not None:
+        return "agent_exited", dict(immediate_child_term=state["immediate_child_term"])
+    if state.get("phase") in ("creation_uncertain", "tracking_uncertain"):
+        return "never_started", dict(phase=state["phase"])
+    if check_panes:
+        absent = pane_absent(state)
+        if absent:
+            return "pane_gone", dict(pane=state["target"]["block_id"], basis="surfaces_inspect_pane_not_attached_terminal")
+    return None, None
+
+
+def archive_dir(registry):
+    try:
+        os.mkdir("archive", 0o700, dir_fd=registry.fd)
+    except FileExistsError:
+        pass
+    fd = os.open("archive", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=registry.fd)
+    s = os.fstat(fd)
+    if not (s.st_uid == os.getuid() and stat.S_IMODE(s.st_mode) == 0o700):
+        os.close(fd)
+        raise Refusal("private_owned_archive_required")
+    return fd
+
+
+def forget_job(root, state):
+    """The pane is gone, so its jobs registration is history too. Local record only; never closes anything."""
+    t = state["target"]
+    code, listed = invoke(["jobs", "list", "--registry", root])
+    entry = next((e for e in (listed or {}).get("entries", []) if isinstance(listed, dict)
+                  and e.get("block_id") == t["block_id"] and e.get("session_id") == t["session_id"]), None)
+    if entry is None:
+        return "no_jobs_record"
+    code, packet = invoke(["jobs", "forget", "--registry", root, "--socket", state["socket"], "--session", t["session_id"],
+                           "--block", t["block_id"], "--owner", entry["owner"], "--generation", str(entry["generation"]),
+                           "--reason", "agents prune: pane gone"])
+    return packet.get("outcome", "uncertain") if isinstance(packet, dict) else "uncertain"
+
+
+def prune_records(root, apply, at_least=0):
+    """Move retired launch records (and their message files) to ROOT/archive/<launch_id>/; history is kept, never deleted."""
+    with Registry(root) as registry:
+        names = sorted(n for n in os.listdir(registry.fd))
+    ids = [m.group(1) for m in map(RECORD.fullmatch, names) if m]
+    result = dict(live_before=len(ids), retired=[], kept=0, unknown=0, orphans=[], applied=apply)
+    if len(ids) < at_least:
+        result["skipped"] = "below_auto_prune_threshold"
+        return result
+    for launch_id in ids:
+        try:
+            state = load(root, launch_id)
+        except (Refusal, OSError, ValueError, KeyError):
+            result["unknown"] += 1
+            continue
+        reason, evidence = retirement(state)
+        if reason is None:
+            result["kept"] += 1
+            continue
+        item = dict(launch_id=launch_id, name=state.get("name"), owner=state.get("owner"), phase=state.get("phase"),
+                    reason=reason, evidence=evidence)
+        if apply:
+            if reason == "pane_gone":
+                item["jobs"] = forget_job(root, state)
+            with Registry(root) as registry:
+                fd = archive_dir(registry)
+                try:
+                    os.mkdir(launch_id, 0o700, dir_fd=fd)
+                    state["retired"] = dict(at=now(), reason=reason, evidence=evidence, by="teerex agents prune")
+                    raw = json.dumps(state, ensure_ascii=False, sort_keys=True).encode()
+                    out = os.open(launch_id + "/retired.json", os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=fd)
+                    with os.fdopen(out, "wb") as f:
+                        f.write(raw)
+                        f.flush()
+                        os.fsync(f.fileno())
+                    prefix = "agents-" + launch_id
+                    for n in os.listdir(registry.fd):
+                        if n.startswith(prefix):
+                            os.rename(n, launch_id + "/" + n, src_dir_fd=registry.fd, dst_dir_fd=fd)
+                    os.fsync(fd)
+                    os.fsync(registry.fd)
+                finally:
+                    os.close(fd)
+        result["retired"].append(item)
+    # Message files whose record is gone (crash residue) are archived too, after the settle window.
+    live = set(ids) - {r["launch_id"] for r in result["retired"]} if apply else set(ids)
+    with Registry(root) as registry:
+        for n in sorted(os.listdir(registry.fd)):
+            m = re.fullmatch(r"agents-([0-9a-f]{32})(-.+\.txt|\.json\.next)", n)
+            if not m or m.group(1) in live:
+                continue
+            st = os.stat(n, dir_fd=registry.fd, follow_symlinks=False)
+            if not stat.S_ISREG(st.st_mode) or (time.time() - st.st_mtime) * 1000 < SETTLE_MS:
+                continue
+            result["orphans"].append(n)
+            if apply:
+                fd = archive_dir(registry)
+                try:
+                    try:
+                        os.mkdir("orphans", 0o700, dir_fd=fd)
+                    except FileExistsError:
+                        pass
+                    os.rename(n, "orphans/" + n, src_dir_fd=registry.fd, dst_dir_fd=fd)
+                finally:
+                    os.close(fd)
+    result["live_after"] = result["live_before"] - (len(result["retired"]) if apply else 0)
+    return result
+
+
+def prune(o):
+    root = absolute(o.registry)
+    with Registry(root, lock_name="launch.lock", wait_ms=o.launch_wait_ms):
+        result = prune_records(root, o.apply)
+    return 0, dict(schema_version=1, kind="agents_result", outcome="pruned" if o.apply else "prune_plan", **result,
+                   archive=str(Path(root) / "archive"), process_lifetime="unchanged_not_verified", panes_closed=False)
+
+
 def receipt(state, outcome, **extra):
     # Tokens, full argv, briefs and reports stay private; state files are the recovery interface.
     result = {k: state.get(k) for k in ("launch_id", "name", "owner", "purpose", "review_at", "profile", "target",
                                         "starter", "report_to", "phase", "tracked", "protocol_acknowledged",
-                                        "brief_attempted", "brief_outcome", "immediate_child_term", "remote_child_term", "notifications")}
+                                        "brief_attempted", "brief_outcome", "immediate_child_term", "remote_child_term", "notifications",
+                                        "auto_prune")}
     result["execution_host"] = state.get("execution", {}).get("host") if state.get("execution") else None
     result["immediate_child_role"] = "ssh_transport" if state.get("execution") else "agent_program"
     result.update(schema_version=1, kind="agents_result", outcome=outcome, agent_readiness="not_assessed",
@@ -701,6 +842,9 @@ def launch(o):
                      hook_events=profile.get("hook_events", False), client_path=os.environ.get("PATH", os.defpath),
                      rex_executable=os.environ.get("TEEREX_INTERNAL_REX"), delivery=delivery, execution=execution,
                      callbacks=callbacks, remote_child_term=None)
+        # Retire exited/never-started/pane-gone records before the cap can refuse a launch; history is archived.
+        pruned = prune_records(root, apply=True, at_least=AUTO_PRUNE_AT)
+        state["auto_prune"] = dict(retired=len(pruned["retired"]), live_before=pruned["live_before"])
         with Registry(root) as registry:
             if brief is not None:
                 state["brief_file"] = registry.write_message(launch_id, "brief", brief)
@@ -1108,6 +1252,10 @@ def parser():
     q.add_argument("--launch-wait-ms", type=int, default=60000, choices=range(60001), metavar="0..60000",
                    help="pre-creation launch queue wait, default60000ms; busy refuses retry-safe before pane creation; released before ACK wait")
     q.add_argument("--ack-timeout-ms", type=int, default=10000, choices=range(100, 60001), metavar="100..60000")
+    q = sub.add_parser("prune", help="archive records whose agent exited, never started, or whose pane is gone; plan unless --apply")
+    q.add_argument("--registry", required=True)
+    q.add_argument("--apply", action="store_true", help="move retired records to REGISTRY/archive/<launch_id>/ (never deleted)")
+    q.add_argument("--launch-wait-ms", type=int, default=60000, choices=range(60001), metavar="0..60000")
     for op in ("ack", "deliver", "inspect", "present", "stop", "supervise", "exited"):
         q = sub.add_parser(op, help={"ack": "record agent protocol ACK; token plus exact pane required",
                                     "deliver": "explicitly attempt a not-yet-attempted brief after ACK",
