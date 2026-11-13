@@ -122,6 +122,35 @@ def events(path):
     return [json.loads(v) for v in path.read_text().splitlines()] if path.exists() else []
 
 
+class HelpRangesTest(unittest.TestCase):
+    def test_agent_numeric_ranges_keep_help_and_errors_compact(self):
+        with tempfile.TemporaryDirectory(prefix="tagents-help-") as temporary:
+            env = dict(os.environ, TEEREX_CALL_LOG_DIR=str(Path(temporary) / "calls"))
+            for operation, flag, lower, upper in [
+                ("launch", "--launch-wait-ms", 0, 60000),
+                ("launch", "--ack-timeout-ms", 100, 60000),
+                ("human", "--launch-wait-ms", 0, 60000),
+                ("human", "--ack-timeout-ms", 100, 60000),
+                ("prune", "--launch-wait-ms", 0, 60000),
+            ]:
+                with self.subTest(operation=operation, flag=flag):
+                    def invoke(*args):
+                        return subprocess.run([BIN, "agents", operation, *args], env=env,
+                                              capture_output=True, text=True, timeout=10)
+                    help_text = invoke("--help")
+                    self.assertEqual(help_text.returncode, 0, help_text.stderr)
+                    self.assertIn(flag + " " + str(lower) + ".." + str(upper), help_text.stdout)
+                    self.assertLess(len(help_text.stdout.encode()), 8192)
+                    for value in (str(lower), str(upper)):
+                        accepted = invoke(flag, value, "--help")
+                        self.assertEqual(accepted.returncode, 0, accepted.stderr)
+                    for value in (str(lower - 1), str(upper + 1), "not-an-integer"):
+                        refused = invoke(flag, value, "--help")
+                        self.assertEqual(refused.returncode, 2, refused.stderr)
+                        self.assertIn("expected integer in " + str(lower) + ".." + str(upper), refused.stderr)
+                        self.assertLess(len(refused.stderr.encode()), 8192)
+
+
 class AgentsTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

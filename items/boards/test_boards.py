@@ -430,6 +430,34 @@ class CallsTest(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertFalse(sentinel.exists())
 
+    def test_numeric_range_help_and_errors_stay_compact(self):
+        cases = [
+            (["boards", "calls"], "--limit", 1, 128),
+            (["boards", "calls"], "--interval-ms", 500, 60000),
+            (["boards", "inbox", "inspect"], "--limit", 1, 1024),
+            (["boards", "try-route"], "--draft-wait-ms", 0, 55000),
+            (["boards", "try-route"], "--timeout-ms", 100, 115000),
+            (["ask"], "--draft-wait-ms", 0, 55000),
+            (["boards", "inbox"], "--width", 32, 160),
+            (["boards", "inbox"], "--interval-ms", 500, 60000),
+            (["boards", "fleet"], "--width", 32, 160),
+            (["boards", "fleet"], "--interval-ms", 500, 60000),
+        ]
+        for command, flag, lower, upper in cases:
+            with self.subTest(command=command, flag=flag):
+                help_text = self.call(*command, "--help")
+                self.assertEqual(help_text.returncode, 0, help_text.stderr)
+                self.assertIn(flag + " " + str(lower) + ".." + str(upper), help_text.stdout)
+                self.assertLess(len(help_text.stdout.encode()), 8192)
+                for value in (str(lower), str(upper)):
+                    accepted = self.call(*command, flag, value, "--help")
+                    self.assertEqual(accepted.returncode, 0, accepted.stderr)
+                for value in (str(lower - 1), str(upper + 1), "not-an-integer"):
+                    refused = self.call(*command, flag, value, "--help")
+                    self.assertEqual(refused.returncode, 2, refused.stderr)
+                    self.assertIn("expected integer in " + str(lower) + ".." + str(upper), refused.stderr)
+                    self.assertLess(len(refused.stderr.encode()), 8192)
+
     def test_cross_host_calls_show_unavailable_sources(self):
         fixture = self.root / "remote"
         fixture.write_text("#!" + sys.executable + "\nimport json,sys\n"

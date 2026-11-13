@@ -1267,6 +1267,18 @@ def shell(o):
     return 0, None
 
 
+def bounded_int(minimum, maximum):
+    def parse(value):
+        try:
+            number = int(value)
+        except ValueError:
+            raise argparse.ArgumentTypeError(f"expected integer in {minimum}..{maximum}") from None
+        if not minimum <= number <= maximum:
+            raise argparse.ArgumentTypeError(f"expected integer in {minimum}..{maximum}")
+        return number
+    return parse
+
+
 def parser():
     p = argparse.ArgumentParser(prog="teerex agents", description=(
         "Visible profiles, protocol ACK-before-one-brief, optional named SSH compute and opt-in bounded local fence channel. "
@@ -1301,9 +1313,9 @@ def parser():
                 "report-to-block", "host", "owner", "purpose", "store", "brief-file"):
         q.add_argument("--" + key)
     q.add_argument("--review-at", type=int, help="absolute future Unix milliseconds, <=30 days; default config review_after_ms")
-    q.add_argument("--launch-wait-ms", type=int, default=60000, choices=range(60001), metavar="0..60000",
+    q.add_argument("--launch-wait-ms", type=bounded_int(0, 60000), default=60000, metavar="0..60000",
                    help="pre-creation launch queue wait, default60000ms; busy refuses retry-safe before pane creation; released before ACK wait")
-    q.add_argument("--ack-timeout-ms", type=int, default=10000, choices=range(100, 60001), metavar="100..60000")
+    q.add_argument("--ack-timeout-ms", type=bounded_int(100, 60000), default=10000, metavar="100..60000")
     human_parser = sub.add_parser("human", parents=[q], add_help=False,
                                   help="human interactive launch: visible tracked pane, standing flags, no starter/brief/ACK")
     human_parser.set_defaults(operation="human")
@@ -1311,7 +1323,7 @@ def parser():
     q = sub.add_parser("prune", help="archive records whose agent exited, never started, or whose pane is gone; plan unless --apply")
     q.add_argument("--registry", required=True)
     q.add_argument("--apply", action="store_true", help="move retired records to REGISTRY/archive/<launch_id>/ (never deleted)")
-    q.add_argument("--launch-wait-ms", type=int, default=60000, choices=range(60001), metavar="0..60000")
+    q.add_argument("--launch-wait-ms", type=bounded_int(0, 60000), default=60000, metavar="0..60000")
     for op in ("ack", "deliver", "inspect", "present", "stop", "supervise", "exited"):
         q = sub.add_parser(op, help={"ack": "record agent protocol ACK; token plus exact pane required",
                                     "deliver": "explicitly attempt a not-yet-attempted brief after ACK",

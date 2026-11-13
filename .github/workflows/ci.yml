@@ -239,6 +239,7 @@ jobs:
         run: |
           python3 src/test_targets.py -v
           python3 items/boards/test_boards.py CallsTest -v
+          python3 items/agents/test_agents.py HelpRangesTest -v
 
       - name: Run visible surfaces and native palette plan/apply contracts
         env:

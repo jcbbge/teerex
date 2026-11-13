@@ -160,6 +160,8 @@ teerex inbox inspect --store "$STORE" --host "$HOST_ID" --socket "$SOCKET" \
   --session "$SESSION" --block "$SEAT" --archive --limit 128
 ```
 
+Numeric options show compact `MIN..MAX` labels in help and reject non-integers or values outside the same inclusive bounds with a short usage error (exit 2).
+
 Calls supports `--once`, `--json`, `--limit 1..128`, `--interval-ms 500..60000`. It pairs the most recent eight segments (at most 8 MiB); history outside that read window remains on disk. Partial append lines are ignored rather than interpreted as an end. Named-host reads use the existing explicit targets transport; unavailable sources stay visible and one-shot partial failure exits 1. Archive inspect supports `--limit 1..1024` (default 128), reads private immutable segments without deleting them, and can include records still active after an interrupted save.
 
 `rex api describe session.view --json` on API13 exposes `creator_name` as the **block type** (e.g. `com.superlogical.terminal`) and `owner` as the **current owning client**. Neither proves which shell command created a block. Bypass attribution is therefore **unknown**, not a false “not via teerex” label. Physical M5 execution and Mac suites are separate acceptance; Linux fixtures do not certify them.

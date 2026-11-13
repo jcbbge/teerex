@@ -908,6 +908,18 @@ def calls_board(a):
         time.sleep(a.interval_ms / 1000)
 
 
+def bounded_int(minimum, maximum):
+    def parse(value):
+        try:
+            number = int(value)
+        except ValueError:
+            raise argparse.ArgumentTypeError(f"expected integer in {minimum}..{maximum}") from None
+        if not minimum <= number <= maximum:
+            raise argparse.ArgumentTypeError(f"expected integer in {minimum}..{maximum}")
+        return number
+    return parse
+
+
 def parser():
     p = argparse.ArgumentParser(prog="teerex", description="Guarded decision delivery, private history and visible boards. Inbox history rotates above 128 non-open records to 96; open decisions pinned separately (max 32); immutable 0600 archives never deleted. Python3 required; no daemon. Reports never certify completion.")
     commands = p.add_subparsers(dest="command", required=True)
@@ -946,7 +958,7 @@ def parser():
                 q.add_argument("--reason", required=True)
             if cmd == "inbox" and op == "inspect":
                 q.add_argument("--archive", action="store_true", help="read retained immutable archive segments, newest first; bounded by --limit")
-                q.add_argument("--limit", type=int, default=128, choices=range(1, 1025))
+                q.add_argument("--limit", type=bounded_int(1, 1024), default=128, metavar="1..1024")
             if op == "append":
                 q.add_argument("--from", dest="sender", required=True)
                 q.add_argument("--message-file", required=True)
@@ -959,8 +971,8 @@ def parser():
     q.add_argument("--from", dest="sender", required=True)
     q.add_argument("--message-file", required=True)
     q.add_argument("--draft", choices=("guard", "ignore"), default="guard", help="native fallback draft policy; registered inbox append never types")
-    q.add_argument("--draft-wait-ms", type=int, default=30000, choices=range(55001), metavar="0..55000")
-    q.add_argument("--timeout-ms", type=int, default=None, choices=range(100, 115001), metavar="100..115000",
+    q.add_argument("--draft-wait-ms", type=bounded_int(0, 55000), default=30000, metavar="0..55000")
+    q.add_argument("--timeout-ms", type=bounded_int(100, 115000), default=None, metavar="100..115000",
                    help="registered stdin must reach EOF; native fallback guard defaults to draft wait+10000ms, ignore10000")
     q = commands.add_parser("ask", help="type complete decision into target pane through native guarded send; optional store history")
     q.add_argument("--store", help="optional existing private history store; seat must be registered")
@@ -968,7 +980,7 @@ def parser():
         q.add_argument("--" + k, required=True)
     q.add_argument("--teerex", help="absolute native CLI; supplied by compiled bridge")
     q.add_argument("--draft", choices=("guard", "ignore"), default="guard")
-    q.add_argument("--draft-wait-ms", type=int, default=30000, choices=range(55001), metavar="0..55000")
+    q.add_argument("--draft-wait-ms", type=bounded_int(0, 55000), default=30000, metavar="0..55000")
     q.set_defaults(operation="ask")
     q.add_argument("--from", dest="sender", required=True)
     group = q.add_mutually_exclusive_group(required=True)
@@ -986,8 +998,8 @@ def parser():
     q = views.add_parser("calls", help="recent private invocation metadata", description="Private Zig start/helper or native end metadata in ~/.local/state/teerex/calls (TEEREX_CALL_LOG_DIR overrides). Active log rotates at 1 MiB; immutable history never deleted. Pairs latest 8 MiB by PID/start timestamp; missing end is unknown. Only flag names and canonical IDs; no bodies or other argument values. Logging is silent best effort; no supervisor or daemon.")
     q.add_argument("--once", action="store_true")
     q.add_argument("--json", action="store_true")
-    q.add_argument("--limit", type=int, default=32, choices=range(1, 129))
-    q.add_argument("--interval-ms", type=int, default=2000, choices=range(500, 60001))
+    q.add_argument("--limit", type=bounded_int(1, 128), default=32, metavar="1..128")
+    q.add_argument("--interval-ms", type=bounded_int(500, 60000), default=2000, metavar="500..60000")
     q.add_argument("--config", help="shared named-host config for cross-host calls")
     q.add_argument("--hosts", help="comma-separated command hosts, max 16; unavailable hosts visible")
     q.add_argument("--teerex", help="absolute native CLI; supplied by compiled bridge")
@@ -996,8 +1008,8 @@ def parser():
         common(q, v == "inbox")
         q.add_argument("--once", action="store_true", help="one bounded snapshot, including non-TTY capture")
         q.add_argument("--json", action="store_true")
-        q.add_argument("--width", type=int, default=80, choices=range(32, 161), metavar="32..160")
-        q.add_argument("--interval-ms", type=int, default=2000, choices=range(500, 60001), metavar="500..60000")
+        q.add_argument("--width", type=bounded_int(32, 160), default=80, metavar="32..160")
+        q.add_argument("--interval-ms", type=bounded_int(500, 60000), default=2000, metavar="500..60000")
         if v == "fleet":
             group = q.add_mutually_exclusive_group(required=True)
             group.add_argument("--targets-file", help='fixture/forwarded endpoints: absolute JSON list of {host,server:unix:///ABS}')

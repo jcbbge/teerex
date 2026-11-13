@@ -11,6 +11,8 @@
 - **Why:** a visible creation ACK is not readiness; terminal input immediately after creation races shell/harness startup. The initial protocol is therefore an explicitly supported **final prompt argv argument**, never a startup-delay guess or a screen-scraped readiness heuristic. Only the agent's explicit ACK opens the brief gate.
 - **How:** configure explicit profiles/default targets once, inspect them, then use one managed launch command. Opt-in shell functions can make the profile's name the launch command without editing global shell/security settings.
 
+Numeric CLI ranges use compact `MIN..MAX` help labels. Non-integers and out-of-range values return a short usage error (exit 2); defaults and inclusive limits are unchanged.
+
 ## Concurrent launch queue (source follow-on)
 
 `agents launch --launch-wait-ms N` waits **0..60000 ms**, default **60000**, for the selected registry's dedicated `launch.lock` before saving launch intent or creating a pane. The existing private0700 directory and owned, single-link, no-follow0600 lock checks apply. The lock serializes spawn, native jobs tracking, fleet reporting and protocol preparation. It is released **before waiting for the agent's ACK** or delivering the brief. This is cooperative serialization on that local registry, not FIFO fairness, an input lease or a distributed queue. Existing `agents.lock` still protects short state updates with its2s wait; it is not held across network calls or the ACK wait.
