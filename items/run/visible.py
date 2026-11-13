@@ -2,6 +2,7 @@
 import argparse
 import base64
 import contextlib
+import errno
 import hashlib
 import json
 import os
@@ -96,6 +97,80 @@ def await_permission(root, config):
     return identity
 
 
+def canonical_env(env):
+    return json.dumps(env, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+
+
+def receive_env(root, config):
+    # Rex starts the pane separately: a private FIFO transfers values in kernel memory.
+    path = root / "env.pipe"
+    descriptor = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)
+    try:
+        if not stat.S_ISFIFO(os.fstat(descriptor).st_mode):
+            raise ValueError("environment_fifo_required")
+        raw = bytearray()
+        end = time.monotonic() + config["startup_ms"] / 1000
+        while not STOP and not (root / "cancel.json").exists() and time.monotonic() < end:
+            if not select.select([descriptor], [], [], .02)[0]:
+                continue
+            chunk = os.read(descriptor, 65536)
+            if not chunk:
+                if raw:
+                    raise ValueError("environment_handoff_incomplete")
+                time.sleep(.02)
+                continue
+            raw.extend(chunk)
+            if len(raw) > 131073:
+                raise ValueError("environment_handoff_too_large")
+            if raw.endswith(b"\n"):
+                encoded = bytes(raw[:-1])
+                if hashlib.sha256(encoded).hexdigest() != config["environment"]["sha256"]:
+                    raise ValueError("environment_handoff_hash_mismatch")
+                env = json.loads(encoded)
+                if sorted(env) != config["environment"]["keys"]:
+                    raise ValueError("environment_handoff_keys_mismatch")
+                return env
+        raise ValueError("environment_handoff_deadline_or_cancelled")
+    finally:
+        os.close(descriptor)
+        path.unlink(missing_ok=True)
+
+
+def send_env(root, encoded, end):
+    path = root / "env.pipe"
+    descriptor = None
+    try:
+        while not STOP and time.monotonic() < end:
+            try:
+                descriptor = os.open(path, os.O_WRONLY | os.O_NONBLOCK | os.O_NOFOLLOW)
+                break
+            except OSError as exc:
+                if exc.errno != errno.ENXIO:
+                    raise
+                time.sleep(.02)
+        if descriptor is None:
+            raise ValueError("environment_handoff_deadline_or_cancelled")
+        if not stat.S_ISFIFO(os.fstat(descriptor).st_mode):
+            raise ValueError("environment_fifo_required")
+        pending = memoryview(encoded + b"\n")
+        while pending and not STOP and time.monotonic() < end:
+            if select.select([], [descriptor], [], .02)[1]:
+                try:
+                    pending = pending[os.write(descriptor, pending):]
+                except BlockingIOError:
+                    pass
+        if pending:
+            raise ValueError("environment_handoff_deadline_or_cancelled")
+        # Confirm consumption/removal before a detached launch receipt can return.
+        while path.exists() and not STOP and time.monotonic() < end:
+            time.sleep(.02)
+        if path.exists():
+            raise ValueError("environment_handoff_not_consumed")
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+
+
 def supervise(root, identity=None):
     """Collects the actual child in the visible pane, or its detached supervisor's thread."""
     root = Path(root)
@@ -135,7 +210,8 @@ def supervise(root, identity=None):
             return os.waitid(os.P_PID, child.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT) is not None
         return bool(watcher.control([], 1, 0))
     try:
-        env = config["env"]
+        env = receive_env(root, config)
+        start = time.monotonic()  # The startup handoff is not the child's execution budget.
         env.update(REX_SESSION=identity["session_id"], REX_BLOCK=identity["block_id"])
         with open(root / "stdin", "rb") as source:
             child = subprocess.Popen(config["argv"], cwd=config["cwd"], env=env, stdin=source,
@@ -420,7 +496,8 @@ def controller(runtime, source, args):
         "Read detached evidence with run-visible receipt --file ABS [--wait-ms N]. "
         "Closing a pane does not prove descendant/remote death; supervisor loss cannot guarantee cleanup."))
     for name in ("socket", "session", "cwd", "env-file", "stdin-file", "app", "title"):
-        parser.add_argument("--" + name, required=True)
+        parser.add_argument("--" + name, required=True,
+                            help="exact JSON map; values handed off through private FIFO, only sorted keys/canonical SHA-256 persist" if name == "env-file" else None)
     parser.add_argument("--registry", help="opt-in existing private jobs registry; requires --owner and --purpose")
     parser.add_argument("--owner", help="jobs responsibility label (requires --registry and --purpose)")
     parser.add_argument("--purpose", help="jobs purpose text (requires --registry and --owner)")
@@ -504,12 +581,14 @@ def controller(runtime, source, args):
         root.mkdir(mode=0o700)
     else:
         root = Path(tempfile.mkdtemp(prefix="teerex-visible-"))
-    config = dict(argv=o.argv[1:], cwd=o.cwd, env=request_env, timeout_ms=o.timeout_ms, startup_ms=o.startup_ms,
+    env_encoded = canonical_env(request_env)
+    environment = dict(keys=sorted(request_env), sha256=hashlib.sha256(env_encoded).hexdigest(), transport="private_fifo")
+    config = dict(argv=o.argv[1:], cwd=o.cwd, environment=environment, timeout_ms=o.timeout_ms, startup_ms=o.startup_ms,
                   max_bytes=o.max_bytes, full_output=bool(o.output_dir), app=o.app, title=o.title)
     if o.detach:
         config["detach"] = dict(runtime=runtime, pin=pin, launch_id=secrets.token_hex(16),
                                 options={key: getattr(o, key) for key in ("socket", "session", "output_dir", "max_bytes", "keep_open", "app", "channel_dir", "report_to_session", "report_to_block")})
-    if len(json.dumps(config).encode()) > 131072:
+    if len(json.dumps(dict(config, env=request_env)).encode()) > 131072:
         root.rmdir()
         raise ValueError("encoded_request_exceeds_128KiB")
     save(root / "request.json", config)
@@ -528,7 +607,7 @@ def controller(runtime, source, args):
                   painted_visibility="not_assessed", task_completion="not_assessed", all_descendants_verified_gone=False,
                   storage_dir=str(root), storage_retained=True, full_output_requested=bool(o.output_dir),
                   capture_scope="separate_raw_pipes_teed_to_terminal", retention_policy="combined_first_arrivals_per_stream_prefix",
-                  exit_report=None, outcome="uncertain", success=False, created=None, placement=None,
+                  environment=environment, exit_report=None, outcome="uncertain", success=False, created=None, placement=None,
                   cleanup=dict(scope="identified_owned_pane", attempted=False, block_absence_verified=False),
                   limits=dict(startup_ms=o.startup_ms, execution_ms=o.timeout_ms, max_bytes=o.max_bytes, full_output_bytes=FILE_LIMIT))
     if o.detach:
@@ -546,6 +625,7 @@ def controller(runtime, source, args):
     bid = None
     permitted = False
     reason = None
+    os.mkfifo(root / "env.pipe", 0o600)
     placement = invoke(runtime, pin, open_args + ["--", sys.executable, str(root / "runner.py"), "_supervise", str(root)])
     packet["placement"] = placement
     receipt = placement["receipt"] or {}
@@ -592,7 +672,14 @@ def controller(runtime, source, args):
             reason = "pane_identity_unavailable_or_foreign_host"
     else:
         reason = "creation_or_placement_uncertain"
-    if permitted and o.detach:
+    if permitted:
+        try:
+            send_env(root, env_encoded, end)
+        except (OSError, ValueError):
+            reason = "environment_handoff_failed"
+    if reason:
+        (root / "env.pipe").unlink(missing_ok=True)
+    if permitted and not reason and o.detach:
         while time.monotonic() < end and not STOP:
             handoff = load(root / "detached-ready.json")
             if handoff:
@@ -609,7 +696,7 @@ def controller(runtime, source, args):
         packet.update(kind="run_visible_launch", outcome="handoff_uncertain", success=False)
         print(json.dumps(packet, ensure_ascii=True), flush=True)
         return 128 + STOP if STOP else 1
-    if permitted:
+    if permitted and not reason:
         end = None if o.timeout_ms is None else time.monotonic() + o.timeout_ms / 1000 + 1
         while (end is None or time.monotonic() < end) and not STOP:
             result = load(root / "result.json")
@@ -813,6 +900,7 @@ def main():
             packet["outcome"] = "controller_error_unknown"
             with contextlib.suppress(OSError, ValueError):
                 save(Path(packet["storage_dir"]) / "cancel.json", dict(reason="controller_error", signal=signal.SIGTERM))
+                (Path(packet["storage_dir"]) / "env.pipe").unlink(missing_ok=True)
             if packet["created"] and not packet["cleanup"]["attempted"]:
                 packet["cleanup"]["attempted"] = True
                 with contextlib.suppress(OSError, ValueError, subprocess.SubprocessError):

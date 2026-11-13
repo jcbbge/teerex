@@ -4,6 +4,7 @@ TEEREX_BIN may name the combined CLI or items/run/test_visible_cli.zig build.
 REX_BIN must select the deliberately downloaded disposable test Rex.
 """
 import base64
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -586,6 +587,68 @@ assert json.loads(data)['result']['failure_reason']=='channel_request_limit'
                                 env=self.runtime_env, capture_output=True, text=True, timeout=10)
         self.assertEqual(result.returncode, 2)
         self.assertEqual(self.blocks(), set())
+
+    def check_env_files(self, directory, secret, receipt):
+        self.assertNotIn(secret, json.dumps(receipt, ensure_ascii=False))
+        self.assertFalse((directory / "env.pipe").exists())
+        for path in directory.rglob("*"):
+            if path.is_file():
+                data = path.read_bytes()
+                self.assertNotIn(secret.encode(), data, str(path))
+                self.assertNotIn(json.dumps(secret)[1:-1].encode(), data, str(path))
+        requested = json.loads((directory / "request.json").read_text())
+        self.assertNotIn("env", requested)
+        expected = json.loads(self.envfile.read_text())
+        encoded = json.dumps(expected, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
+        metadata = dict(keys=sorted(expected), sha256=hashlib.sha256(encoded).hexdigest(), transport="private_fifo")
+        self.assertEqual(requested["environment"], metadata)
+        self.assertEqual(receipt["environment"], metadata)
+        self.assertEqual((directory / "stdin").read_bytes(), self.stdin.read_bytes())
+
+    def env_privacy_run(self, detached):
+        # This synthetic value never occurs in argv/stdin/output; compare in the child
+        # against the caller's input file rather than printing a credential.
+        secret = "synthetic-env-only-" + str(time.monotonic_ns()) + "-é\n'😀"
+        expected = {"PATH": "/usr/bin:/bin", "LC_ALL": "C", "SECRET_VALUE": secret, "EMPTY": "",
+                    "LARGE_VALUE": "large-" * 9000}
+        self.envfile.write_text(json.dumps(expected, ensure_ascii=False))
+        directory = self.work / "private-output"
+        gate = self.work / "finish"
+        script = """import json,os,sys,time
+from pathlib import Path
+expected=json.loads(Path(sys.argv[1]).read_text())
+actual=dict(os.environ)
+assert actual.pop('REX_SESSION').startswith('session:')
+assert actual.pop('REX_BLOCK').startswith('block:')
+assert actual==expected,'environment was not delivered exactly'
+if sys.argv[2]=='detached':
+ while not Path(sys.argv[3]).exists():time.sleep(.02)
+print('exact environment received')
+"""
+        args = [sys.executable, "-c", script, str(self.envfile), "detached" if detached else "attached", str(gate)]
+        result, packet = self.invoke(argv=args, extra=["--output-dir", str(directory)] + (["--detach"] if detached else []))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        if detached:
+            self.assertEqual(packet["kind"], "run_visible_launch")
+            self.check_env_files(directory, secret, packet)
+            gate.touch()
+            packet = self.receipt(packet, 10000)
+            self.assertEqual(packet["receipt_state"], "final")
+            self.assertEqual(packet["exit_report"]["exit_code"], 0)
+        else:
+            self.assert_good(result, packet)
+        self.assertEqual(raw(packet["stdout"]), b"exact environment received\n")
+        self.check_env_files(directory, secret, packet)
+        # The large value forces multiple FIFO reads/writes, and must not persist either.
+        for path in directory.rglob("*"):
+            if path.is_file():
+                self.assertNotIn(expected["LARGE_VALUE"].encode(), path.read_bytes(), str(path))
+
+    def test_attached_env_values_not_retained_and_exact_child_environment(self):
+        self.env_privacy_run(False)
+
+    def test_detached_env_values_not_retained_at_launch_or_exit(self):
+        self.env_privacy_run(True)
 
     def test_exact_argv_cwd_env_binary_stdin_and_owned_close(self):
         anchor = self.anchor_pane()
