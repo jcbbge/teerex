@@ -898,13 +898,18 @@ def redact_record(value):
     walk(value)
 
 
-def erase_file(path):
+def erase_file(path, expected=None):
     """Best effort logical overwrite; no physical-media erasure claim on SSD/COW/backups."""
     fd = os.open(path, os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK)
     try:
         private(fd)
         remaining = os.fstat(fd).st_size
         require(remaining <= LIMIT, "record_oversize")
+        if expected is not None:
+            with os.fdopen(os.dup(fd), "rb") as source:
+                raw = source.read(LIMIT + 1)
+            require(hashlib.sha256(raw).hexdigest() == expected.removeprefix("sha256:"), "scratchpad_digest_mismatch")
+            os.lseek(fd, 0, os.SEEK_SET)
         while remaining:
             count = os.write(fd, b"\0" * min(remaining, 65536))
             require(count > 0, "erase_short_write")
@@ -1320,9 +1325,7 @@ def execute(o):
                 fd = os.open(parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
                 handles.append(fd)
                 private(fd, True)
-            raw = read_file(path, store=True)
-            require(hashlib.sha256(raw).hexdigest() == o.expect_sha256.removeprefix("sha256:"), "scratchpad_digest_mismatch")
-            erase_file(path)
+            erase_file(path, expected=o.expect_sha256)
             os.fsync(handles[-1])
         finally:
             for fd in handles:
