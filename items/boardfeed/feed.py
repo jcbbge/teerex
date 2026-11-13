@@ -1,6 +1,7 @@
-"""Foreground, event-driven board feed. Python 3.9+, no service or dependencies."""
+"""Foreground board feed: agent steps, waiting edges, decisions and vitals. Python 3.9+."""
 import argparse
 import ctypes
+import datetime
 import json
 import os
 from pathlib import Path
@@ -22,6 +23,19 @@ CHILDREN = []
 def emit(host, kind, **fields):
     with LOCK:
         print(json.dumps(dict(v=1, t=time.time_ns() // 1000000, host=host, kind=kind, **fields), separators=(',', ':')), flush=True)
+
+
+def projection_command(argv, timeout):
+    if STOP.is_set():raise OSError('feed stopping')
+    process=subprocess.Popen(argv,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,text=True)
+    CHILDREN.append(process)
+    try:
+        output,_=process.communicate(timeout=timeout)
+        if process.returncode:raise ValueError('projection unavailable')
+        return json.loads(output)
+    finally:
+        if process.poll() is None:process.kill();process.wait()
+        CHILDREN.remove(process)
 
 
 def read(path, limit=262144):
@@ -243,14 +257,45 @@ class MacVitals:
         return dict(cpu=cpu,cpu_total=sum(cpu)/max(1,len(cpu)),load=list(os.getloadavg()),mem=dict(total=total,used=max(0,total-available)),swap=dict(total=byte_value('total'),used=byte_value('used')),disks=disks,net=net,top=group_processes(processes,roots))
 
 
+def scratch_projection(contents):
+    sections={'Now':[], 'To-do':[], 'Done':[]}; section=None; waiting=None
+    for line in contents.splitlines():
+        if line.startswith(('## ', '# ')): section=line.lstrip('# ').strip()
+        elif line.startswith('Waiting: '):
+            parts=line[9:].split(' · ',2)
+            if len(parts)==3: waiting=dict(on=parts[0],what=parts[1],since=(parts[2][6:] if parts[2].startswith('since ') else parts[2]))
+        elif section in sections and line.startswith(('- [ ] ', '- [x] ', '- ')):
+            sections[section].append(line[6:] if line.startswith(('- [ ] ', '- [x] ')) else line[2:])
+    steps=[]
+    for title,state in [('Done','done'),('Now','now'),('To-do','todo')]:
+        for item in sections[title]:
+            parts=item.split(' · '); step=dict(state=state,text=parts[0],by=None,outcome=None,handoff=None)
+            for part in parts[1:]:
+                if part.startswith('■ '):step['outcome']=part[2:]
+                elif part.startswith('⇥ '):step['handoff']=part[2:]
+                else:step['by']=part
+            steps.append(step)
+    return dict(now=next((x['text'] for x in steps if x['state']=='now'),None), steps=steps, waiting=waiting,
+                todo=[x['text'] for x in steps if x['state']=='todo'],done=[x['text'] for x in steps if x['state']=='done'])
+
+
+def executor(record):
+    argv=record.get('argv') or []
+    for i,arg in enumerate(argv):
+        if arg=='--model' and i+1<len(argv):return argv[i+1]
+        if arg.startswith('--model='):return arg.split('=',1)[1]
+    return record.get('harness') or record.get('profile') or 'agent'
+
+
 class State:
     def __init__(self, a):
         self.a=a; self.rows={};self.calls={};self.call_starts={};self.roots={};self.pids={};self.status={};self.questions={};self.reports={};self.seeded=set();self.views={};self.placements={}
-        self.lock=threading.RLock()
+        self.lock=threading.RLock(); self.pads={}; self.decision_signature=None; self.next_deadline=None
 
     def scan(self):
         with self.lock:
             rows={}
+            self.next_deadline=None
             for registry in (self.a.agents_registry,self.a.jobs_registry):
                 if not registry.exists():
                     continue
@@ -270,16 +315,24 @@ class State:
                             phase=record.get('phase','working')
                             state={'exited':'gone','archived':'gone','failed':'error','turn_stopped':'idle','reported':'idle','awaiting_protocol_ack':'waiting'}.get(phase,'working')
                             pad=self.a.scratch/session/(block+'.md')
-                            sections={'Now':[],'To-do':[],'Done':[]};section=None
                             try:
-                                for line in read(pad,65536).splitlines():
-                                    if line.startswith('## '): section=line[3:]
-                                    elif section in sections and line.startswith(('- [ ] ','- [x] ')): sections[section].append(line[6:])
-                            except (OSError,ValueError,UnicodeError): pass
+                                stamp=pad.stat().st_mtime_ns
+                                cached=self.pads.get(str(pad))
+                                if cached and cached[0]==stamp:projection=cached[1]
+                                else:
+                                    projection=scratch_projection(read(pad,65536))
+                                    if getattr(self.a,'executable',None) and self.a.scratch==Path.home()/'.local/state/teerex/scratch':
+                                        try:
+                                            result=projection_command([self.a.executable,'scratch','show','--session',session,'--block',block,'--json'],3)
+                                            if isinstance(result.get('steps'),list):projection=result
+                                        except (OSError,ValueError,subprocess.SubprocessError):pass
+                                    self.pads[str(pad)]=(stamp,projection)
+                            except (OSError,ValueError,UnicodeError):projection=dict(now=None,steps=[],waiting=None,todo=[],done=[])
                             hook=record.get('last_hook') or {}
                             if hook.get('kind')=='Stop': state='idle'
                             elif hook.get('kind')=='StopFailure': state='error'
-                            if record.get('immediate_child_term') is not None: state='gone'
+                            if record.get('immediate_child_term') is not None:
+                                state='gone' if record['immediate_child_term']=={'Exited':0} else 'error'
                             elif record.get('last_report_file') or record.get('report_file'): state='idle'
                             if session not in self.views:self.refresh_view(session)
                             if session in self.views and block not in self.views[session]:state='gone'
@@ -293,8 +346,19 @@ class State:
                                     status=json.loads(subprocess.check_output(base+['program_status','{}'],stderr=subprocess.DEVNULL,timeout=3))
                                     self.update_status(block,status)
                                 except (OSError,ValueError,subprocess.SubprocessError):pass
-                            if state!='gone':state=self.status.get(block,state)
-                            row=dict(id=identifier,name=record.get('name') or record.get('owner') or 'agent',session=session,block=block,state=state,placement=self.placements.get(block,'detached' if record.get('placement')=='detached' else 'placed'),now=next(iter(sections['Now']),None),done=len(sections['Done']),total=sum(map(len,sections.values())),question=self.questions.get(block),since=hook.get('at') or record.get('created_at') or record.get('registered_at_unix_ms') or 0,cpu=None,rss=None)
+                            if state not in ('gone','idle','error'):state=self.status.get(block,state)
+                            row=dict(id=identifier,name=record.get('name') or record.get('owner') or 'agent',session=session,block=block,state=state,placement=self.placements.get(block,'detached' if record.get('placement')=='detached' else 'placed'),now=projection.get('now'),done=len(projection.get('done',[])),total=len(projection.get('steps',[])),steps=projection.get('steps',[]),waiting=projection.get('waiting'),executor=executor(record),question=self.questions.get(block),since=hook.get('at') or record.get('created_at') or record.get('registered_at_unix_ms') or 0,cpu=None,rss=None)
+                            deadline=record.get('review_at')
+                            row['stalled']=isinstance(deadline,(int,float)) and deadline>0 and deadline<time.time()*1000 and state!='gone'
+                            if isinstance(deadline,(int,float)) and deadline>time.time()*1000 and state!='gone':
+                                self.next_deadline=min(self.next_deadline or deadline,deadline)
+                            row['wait_age_ms']=0
+                            row['wait_since_ms']=0
+                            if row['waiting']:
+                                try:
+                                    row['wait_since_ms']=int(datetime.datetime.fromisoformat(row['waiting']['since'].replace('Z','+00:00')).timestamp()*1000)
+                                    row['wait_age_ms']=max(0,int(time.time()*1000-row['wait_since_ms']))
+                                except (ValueError,KeyError,TypeError):pass
                             if identifier not in rows or registry==self.a.agents_registry: rows[identifier]=row
                     except (OSError,ValueError,UnicodeError,TypeError): continue
             for identifier,row in rows.items():
@@ -308,6 +372,19 @@ class State:
                     emit(self.a.host,'agent',**dict(row,state='gone'))
             self.rows=rows
             self.roots={self.pids[row['block']]:row['name'] for row in rows.values() if row['block'] in self.pids}
+            directory=getattr(self.a,'decisions',None)
+            if directory is not None and getattr(self.a,'executable',None):
+                stamps=[]
+                for path in directory.glob('*.json'):
+                    try:stamps.append((str(path),path.stat().st_mtime_ns))
+                    except OSError:pass
+                signature=tuple(sorted(stamps))
+                if signature!=self.decision_signature:
+                    self.decision_signature=signature
+                    try:
+                        result=projection_command([self.a.executable,'decide','list','--json'],5)
+                        emit(self.a.host,'decisions',decisions=result['decisions'],complete=result.get('complete',False))
+                    except (OSError,ValueError,KeyError,subprocess.SubprocessError):pass
             self.tail_calls()
 
     def refresh_view(self,session):
@@ -406,7 +483,7 @@ def rex_events(a,state):
 
 def local(a):
     state=State(a)
-    watcher=Watcher([a.agents_registry,a.jobs_registry,a.scratch,a.calls])
+    watcher=Watcher([a.agents_registry,a.jobs_registry,a.scratch,a.calls,a.decisions])
     sample=LinuxVitals() if sys.platform=='linux' else MacVitals()
     thread=threading.Thread(target=rex_events,args=(a,state),daemon=True);thread.start()
     emit(a.host,'host',reachable=True,error=None)
@@ -421,12 +498,16 @@ def local(a):
                 except (OSError,ValueError,KeyError,IndexError,subprocess.SubprocessError):
                     emit(a.host,'stream',agent=None,text='Machine measurements unavailable',role='problem')
                 deadline=now+1
-            if watcher.wait(max(0,deadline-time.monotonic())):state.scan()
+            timeout=max(0,deadline-time.monotonic())
+            if state.next_deadline is not None:timeout=min(timeout,max(0,(state.next_deadline-time.time()*1000)/1000))
+            changed=watcher.wait(timeout)
+            if changed or (state.next_deadline is not None and time.time()*1000>=state.next_deadline):state.scan()
     finally:watcher.close()
 
 
 def merge(a):
     threads=[]
+    decisions={}
     def host_feed(host):
         command=[a.executable,'targets','exec','--config',a.config,'--host',host,'--','board','feed','--local','--host-name',host]
         try:
@@ -435,9 +516,13 @@ def merge(a):
                 if STOP.is_set():break
                 try:
                     event=json.loads(line)
-                    if event.get('v')!=1 or event.get('kind') not in ('host','agent','stream','vitals'):continue
+                    if event.get('v')!=1 or event.get('kind') not in ('host','agent','stream','vitals','decisions'):continue
                     event['host']=host
-                    with LOCK: print(json.dumps(event,separators=(',',':')),flush=True)
+                    with LOCK:
+                        if event['kind']=='decisions':
+                            decisions[host]=[dict(d,host=host) for d in event.get('decisions',[])]
+                            event['decisions']=sorted([d for batch in decisions.values() for d in batch],key=lambda d:d.get('opened_at_ms',0))
+                        print(json.dumps(event,separators=(',',':')),flush=True)
                 except (ValueError,TypeError):continue
             if not STOP.is_set():emit(host,'host',reachable=False,error='Host feed disconnected')
         except OSError:emit(host,'host',reachable=False,error='Host feed unavailable')
@@ -459,13 +544,14 @@ def main(argv=None):
         parser.add_argument('--'+flag,type=Path,default=default,help='absolute read-only source directory on this host')
     args=parser.parse_args(argv)
     args.executable=EXECUTABLE
+    args.decisions=home/'teerex/decisions'
     if not os.path.isabs(args.config) or any(not re.fullmatch(r'[A-Za-z0-9_-]+',h) for h in args.hosts.split(',')):
         parser.error('absolute --config and valid host names required')
     for path in (args.agents_registry,args.jobs_registry,args.scratch,args.calls):
         if not path.is_absolute():parser.error('source paths must be absolute')
     def stop(signum,frame):
         STOP.set()
-        for p in CHILDREN:
+        for p in list(CHILDREN):
             if p.poll() is None:p.terminate()
     signal.signal(signal.SIGTERM,stop);signal.signal(signal.SIGINT,stop)
     try:
@@ -473,7 +559,7 @@ def main(argv=None):
     except BrokenPipeError:STOP.set()
     finally:
         stop(0,None)
-        for p in CHILDREN:
+        for p in list(CHILDREN):
             try:p.wait(timeout=3)
             except subprocess.TimeoutExpired:p.kill();p.wait()
 

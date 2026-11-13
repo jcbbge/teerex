@@ -73,19 +73,20 @@ def screen(data, width, height=30):
 
 
 class Pane:
-    def __init__(self, root, width=60, fixture=FIXTURE, config=None):
+    def __init__(self, root, width=60, fixture=FIXTURE, config=None, env_overrides=None):
         self.master, self.slave = pty.openpty()
         self.saved = termios.tcgetattr(self.slave)
         self.width = width
         self.resize(width)
         env = dict(os.environ, HOME=str(root), XDG_STATE_HOME=str(root / 'state'),
                    TEEREX_CALL_LOG_DIR=str(root / 'calls'), REX_SERVER='unix:///tmp/poison-board.sock')
+        env.update(env_overrides or {})
         env.pop('NO_COLOR', None)
         argv = [BIN, 'board'] + (['--replay', str(fixture)] if fixture else [])
         if config: argv += ['--config', str(config)]
         self.proc = subprocess.Popen(argv, stdin=self.slave, stdout=self.slave, stderr=self.slave, env=env)
         self.output = b''
-        self.until(lambda: b'jump' in self.output)
+        self.until(lambda: b'working' in self.output)
     def resize(self, width, height=30):
         self.width = width
         fcntl.ioctl(self.slave, termios.TIOCSWINSZ, struct.pack('HHHH', height, width, 0, 0))
@@ -134,7 +135,7 @@ class BoardTest(unittest.TestCase):
     def pane(self, **kw):
         p = Pane(self.root, **kw)
         self.addCleanup(p.close)
-        p.until(lambda: b'Which sound' in p.output)
+        p.until(lambda: b'codex-render' in p.output)
         p.settle()
         return p
     def test_layout_40(self): self.layout(40)
@@ -144,14 +145,12 @@ class BoardTest(unittest.TestCase):
         p = self.pane(width=width)
         view, scrolls = screen(p.output,width)
         self.assertEqual(scrolls,0,view)
-        for word in ['hive','REPLAY','cpu','mem','disk','net','needs you','working','Which sound','4/6','2/6','jump']:
+        for word in ['hive','REPLAY','cpu','mem','disk','net','working','◇ 1','Choose','4/6','2/6','jump']:
             self.assertIn(word,view)
-        self.assertLess(view.index('Which sound'),view.index('codex-render'))
-        # The event stream was noise (Josh, 2026-11-13): no stream section and no stream key.
-        self.assertNotIn('Listening for the next event',view)
-        self.assertNotIn(' stream',view)
+        self.assertNotIn('needs you',view)
+        self.assertNotIn('stream',view)
         self.assertIn(b'\x1b[?2026h',p.output)
-        self.assertIn(b'7501;state=blocked:id=teerex/board',p.output)
+        self.assertNotIn(b'7501;state=blocked',p.output)
         self.assertNotIn(b'\x1b[2J',p.output)
         self.assertNotRegex(p.output,rb'\x1b\[(?:38|48);(?:2|5);')
         if width==120:
@@ -163,9 +162,16 @@ class BoardTest(unittest.TestCase):
         p.key(b'm'); self.assertIn('m5  REPLAY',p.view())
         p.key(b'?'); self.assertIn('double-click jumps',p.view())
         p.key(b'?'); p.key(b'j'); p.key(b' ')
-        self.assertIn('Scratchpad',p.view())
-        self.assertIn('three widths',p.view())
-        p.key(b's'); self.assertNotIn('stream',p.view())
+        self.assertIn('end:',p.view())
+        self.assertIn('← now',p.view())
+        self.assertIn('end: —',p.view())
+        self.assertIn('■ 14 closed',p.view())
+        self.assertIn('⇥ teerex',p.view())
+        p.key(b' '); self.assertNotIn('end:',p.view())
+        p.key(b'd'); self.assertIn('Which sound',p.view())
+        self.assertIn('← default',p.view())
+        p.key(b'\r'); self.assertIn('No open decisions',p.view())
+        p.key(b'\x1b'); self.assertNotIn('No open decisions',p.view())
         p.resize(40)
         p.until(lambda: len(p.output)>0 and b'\x1b[30;1H' in p.output)
         p.settle()
@@ -187,7 +193,7 @@ class BoardTest(unittest.TestCase):
         p.key(b'\x1b_Gi=31;OK\x1b\\')
         self.assertIn(b'a=T,f=32',p.output[start:])
         self.assertIn(b'\x1b[39m',p.output)
-        self.assertIn('Which sound',p.view())
+        self.assertIn('Choose',p.view())
     def test_mouse_selects_and_controls_cannot_escape(self):
         events=[json.loads(line) for line in FIXTURE.read_text().splitlines()]
         for e in events:
@@ -198,7 +204,7 @@ class BoardTest(unittest.TestCase):
         # Click the working row, then expand its scratchpad.
         row=next(i+1 for i,line in enumerate(p.view().splitlines()) if 'codex-render' in line)
         p.key(('\x1b[<0;5;%dM'%row).encode());p.key(b' ')
-        self.assertIn('Scratchpad · codex-render',p.view())
+        self.assertIn('end:',p.view())
     def test_eof_and_signal_restore_terminal(self):
         p=self.pane()
         self.assertIsNone(p.proc.poll())
@@ -281,6 +287,77 @@ class BoardTest(unittest.TestCase):
             except ProcessLookupError:continue
             self.fail('board left feed descendant alive: %d'%pid)
 
+    def test_wait_edges_and_stalled_idle(self):
+        events=[json.loads(line) for line in FIXTURE.read_text().splitlines()]
+        for event in events:
+            if event.get('name')=='teerex':
+                event.update(waiting=dict(on='codex-render',what='render proof',since='2026-11-13T18:58:00Z'),wait_age_ms=120000)
+            elif event.get('name')=='codex-render':
+                event.update(state='idle',now=None,waiting=None)
+        path=self.root/'wait.jsonl';path.write_text('\n'.join(map(json.dumps,events)))
+        p=self.pane(fixture=path,width=120)
+        self.assertIn('⧗ codex-render · render proof · 2m · stalled',p.view())
+        self.assertIn('stalled · waiting on nothing',p.view())
+        self.assertIn(b'\x1b[31m',p.output)
+        # A working target makes the wait calm; an unknown target is broken.
+        for event in events:
+            if event.get('name')=='codex-render':event.update(state='working',now='Render')
+        path.write_text('\n'.join(map(json.dumps,events)))
+        calm=self.pane(fixture=path,width=120)
+        self.assertIn('⧗ codex-render · render proof · 2m',calm.view())
+        self.assertNotIn('stalled',calm.view())
+        self.assertNotIn(b'\x1b[31m',calm.output)
+
+    def test_decision_digit_and_default(self):
+        p=self.pane()
+        p.key(b'd');self.assertIn('Which sound',p.view())
+        p.key(b'9');self.assertIn('Which sound',p.view())
+        p.key(b'1');self.assertIn('No open decisions',p.view())
+        p.key(b'\x1b');self.assertIn('◇ 0',p.view())
+
+    def test_ratio_restore_after_pane_insert(self):
+        import importlib.util
+        spec=importlib.util.spec_from_file_location('board_ratio',Path(__file__).with_name('ratio.py'))
+        ratio=importlib.util.module_from_spec(spec);spec.loader.exec_module(ratio)
+        rex=os.environ.get('REX_BIN') or shutil.which('rex')
+        self.assertTrue(rex,'explicit disposable-capable Rex required')
+        socket=self.root/'ratio.sock';endpoint='unix://'+str(socket)
+        log=(self.root/'ratio.log').open('w');self.addCleanup(log.close)
+        server=subprocess.Popen([rex,'server','run','--listen',endpoint,'--restore=false','--config','/dev/null','--state-dir',str(self.root/'rex-state')],stdout=log,stderr=log)
+        self.addCleanup(lambda:(server.terminate(),server.wait(timeout=5)))
+        end=time.monotonic()+5
+        while not socket.exists():
+            if server.poll() is not None or time.monotonic()>end:self.fail('disposable Rex did not start')
+            time.sleep(.02)
+        base=[rex,'--autostart=false','--server',endpoint]
+        def run(*args):return json.loads(subprocess.check_output(base+list(args),timeout=5))
+        created=run('new','board-ratio','--json','--','/bin/sh','-c','sleep 60')
+        sid=created['session_id'];anchor=created['initial_windows'][0]['block_ids'][0]
+        board=run('split','--session',sid,'--block',anchor,'--ratio','33','--json','--','/bin/sh','-c','sleep 60')['block_ids'][0]
+        def width():
+            view=run('api','call','session.view',json.dumps(dict(session_id=sid)))
+            def find(node):
+                if node.get('block_id')==board:return node['rect'][2]
+                if node.get('split'):
+                    return find(node['split']['before']) or find(node['split']['after'])
+            return next(w for window in view['windows'] for layer in window['layers'] if (w:=find(layer['layout'])) is not None)
+        run('split','--session',sid,'--block',anchor,'--json','--','/bin/sh','-c','sleep 60')
+        # Rex can change the outer split to 50%; emulate that documented failure
+        # after the real insertion, then use the exact helper embedded by board.
+        run('api','call','session.resize_pane',json.dumps(dict(session_id=sid,direction='horizontal',before_block_id=anchor,after_block_id=board,ratio=.5)))
+        self.assertAlmostEqual(width(),.5,places=3)
+        config=self.root/'ratio-hosts.json'
+        config.write_text(json.dumps(dict(schema_version=1,hosts=dict(hive=dict(host_id='hive',transport='local',home=str(self.root),platform='macos-arm64' if os.uname().sysname=='Darwin' else 'linux-x86_64',socket=str(socket),rex=rex,teerex=BIN,store=str(self.root/'store'))))))
+        live=Pane(self.root,fixture=None,config=config,env_overrides=dict(REX_SESSION=sid,REX_BLOCK=board,REX_SERVER=endpoint,REX_BIN=rex))
+        self.addCleanup(live.close)
+        self.assertAlmostEqual(width(),1/3,places=3)
+        run('api','call','session.resize_pane',json.dumps(dict(session_id=sid,direction='horizontal',before_block_id=anchor,after_block_id=board,ratio=.5)))
+        live.resize(70)
+        live.until(lambda:abs(width()-1/3)<.001)
+        self.assertAlmostEqual(width(),1/3,places=3)
+        ratio.restore(base,sid,board)
+        self.assertAlmostEqual(width(),1/3,places=3)
+
     def test_gone_and_done_remove_rows(self):
         events=[json.loads(line) for line in FIXTURE.read_text().splitlines()]
         for e in list(events):
@@ -289,7 +366,7 @@ class BoardTest(unittest.TestCase):
         result=subprocess.run([BIN,'board','--replay',str(path),'--once'],env=dict(os.environ,TEEREX_CALL_LOG_DIR=str(self.root/'calls')),capture_output=True,text=True)
         self.assertEqual(result.returncode,0,result.stderr)
         self.assertIn('No agents working',result.stdout)
-        self.assertNotIn('Which sound',result.stdout)
+        self.assertNotIn('Choose',result.stdout)
 
 
 if __name__=='__main__': unittest.main()

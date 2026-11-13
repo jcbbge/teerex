@@ -79,6 +79,46 @@ class FeedTests(unittest.TestCase):
             self.assertEqual(len(agents),3);self.assertEqual(agents[0]['total'],3);self.assertEqual(agents[-1]['state'],'gone')
             self.assertIn('message delivered',out.getvalue());self.assertNotIn('SECRET',out.getvalue());self.assertNotIn('DO NOT PRINT',out.getvalue())
 
+    def test_steps_waiting_and_model_projection(self):
+        pad=feed.scratch_projection('# Now\n- [ ] Render · gpt high\n# To-do\n- [ ] Ship · computer · ⇥ lead\n# Done\n- [x] Fix · computer · ■ fixed\nWaiting: lead · integration · since 2026-11-13T19:00:00Z\n')
+        self.assertEqual([step['state'] for step in pad['steps']],['done','now','todo'])
+        self.assertEqual(pad['steps'][0]['outcome'],'fixed')
+        self.assertEqual(pad['steps'][1]['by'],'gpt high')
+        self.assertEqual(pad['steps'][2]['handoff'],'lead')
+        self.assertEqual(pad['waiting']['on'],'lead')
+        self.assertEqual(pad['now'],'Render')
+        self.assertEqual(feed.executor(dict(argv=['codex','--model','sample'],harness='codex')),'sample')
+        self.assertEqual(feed.executor(dict(argv=['codex','--model=sample'],harness='codex')),'sample')
+        self.assertEqual(feed.executor(dict(harness='codex')),'codex')
+
+    def test_cli_steps_decisions_and_deadline_projection(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)
+            class Args:pass
+            a=Args();a.host='fixture';a.rex='/not-found';a.socket=str(root/'none')
+            for field in ('agents_registry','jobs_registry','calls','decisions'):
+                setattr(a,field,root/field);getattr(a,field).mkdir()
+            a.scratch=root/'.local/state/teerex/scratch';a.scratch.mkdir(parents=True)
+            a.executable=str(root/'teerex-fixture')
+            Path(a.executable).write_text('#!'+sys.executable+"\nimport json,sys\nif sys.argv[1]=='scratch': print(json.dumps(dict(now='CLI step',todo=[],done=['Read'],waiting=None,steps=[dict(state='done',text='Read',by='computer',outcome='fixed',handoff=None),dict(state='now',text='CLI step',by='sample',outcome=None,handoff=None)])))\nelse: print(json.dumps(dict(complete=True,decisions=[dict(id='one',title='Fixture decision',host='fixture')])) )\n")
+            Path(a.executable).chmod(0o700)
+            sid='session:11111111-1111-1111-1111-111111111111';bid='block:22222222-2222-2222-2222-222222222222'
+            (a.scratch/sid).mkdir();(a.scratch/sid/(bid+'.md')).write_text('# Now\n- [ ] fallback\n')
+            record=dict(launch_id='fixture',name='worker',phase='brief_submitted',target=dict(session_id=sid,block_id=bid),review_at=1,last_hook=dict(kind='Stop'),argv=['codex','--model=sample'])
+            path=a.agents_registry/'agents-fixture.json';path.write_text(json.dumps(record))
+            state=feed.State(a);out=io.StringIO()
+            with patch.object(feed.Path,'home',return_value=root),contextlib.redirect_stdout(out):
+                state.scan()
+                row=state.rows['fixture'];self.assertEqual(row['now'],'CLI step');self.assertEqual(row['state'],'idle');self.assertTrue(row['stalled'])
+                self.assertEqual(row['steps'][0]['outcome'],'fixed');self.assertEqual(row['executor'],'sample')
+                record['immediate_child_term']={'Signal':11};path.write_text(json.dumps(record));state.scan()
+                self.assertEqual(state.rows['fixture']['state'],'error')
+            events=[json.loads(line) for line in out.getvalue().splitlines()]
+            decisions=[e for e in events if e['kind']=='decisions']
+            self.assertEqual(len(decisions),1);self.assertEqual(decisions[0]['decisions'][0]['id'],'one')
+            self.assertFalse(feed.CHILDREN,'projection children must be reaped')
+
     def test_status_and_title_projection(self):
         class Args:host='fixture'
         state=feed.State(Args());state.scan=lambda:None

@@ -37,3 +37,15 @@ items/boardfeed/test_feed.py -v`. Tests create private temporary directories and
 a disposable Rex server with restore disabled and `/dev/null` configuration.
 The Linux `/proc` fixture case is selected only on Linux; all other cases run
 on both operating systems. Tests never use a personal Rex socket or registry.
+
+Revision 2 adds `steps`, `waiting`, `wait_age_ms`, `executor` and `stalled` to
+agent events. Scratch projections use the absolute teerex `scratch show --json`
+and cache by file modification time; explicit source overrides and legacy
+scratchpads retain a Markdown fallback. Only the model name is extracted from
+launch argv; full arguments remain private. `review_at` supplies the deadline.
+
+Decision-directory changes invoke the absolute teerex `decide list --json`.
+`decisions` events carry the contract's open-decision array and `complete` flag;
+the merge combines both hosts in opening order. Registry/scratch/decision reads
+remain filesystem-event driven. The renderer ignores legacy `stream` events.
+Projection subprocesses are tracked and reaped during foreground feed shutdown.

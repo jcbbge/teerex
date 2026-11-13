@@ -12,7 +12,7 @@ const usage =
     \\Live Rex/teerex events and machine vitals. Event-driven; no screen timer.
     \\Feed: teerex board feed --help
     \\Replay is JSONL v1; EOF holds the final frame, q exits. --once prints it and exits.
-    \\Keys: j/k or arrows select; Enter jump; Space scratchpad; m machine;
+    \\Keys: j/k or arrows select; Enter jump; Space expand; d decisions; m machine;
     \\      ? keys; q quit. Mouse selects; double-click jumps; wheel scrolls.
     \\Uses ANSI theme slots, queries contrast, and uses kitty charts when supported.
     \\NO_COLOR disables colour and graphics. --no-graphics forces Unicode marks.
@@ -73,18 +73,16 @@ const Model = struct {
     allocator: A,
     hosts: [2]Host = .{ .{ .name = "hive" }, .{ .name = "m5" } },
     agents: std.ArrayList(Parsed) = .empty,
-    stream: std.ArrayList(Parsed) = .empty,
+    decisions: ?Parsed = null,
     timestamp: i64 = 0,
     replay: bool = false,
     ended: bool = false,
     invalid: usize = 0,
-    attention: [2]bool = @splat(false),
     fn deinit(self: *Model) void {
         for (&self.hosts) |*h| if (h.vitals) |*v| v.deinit();
         for (self.agents.items) |*v| v.deinit();
-        for (self.stream.items) |*v| v.deinit();
+        if (self.decisions) |*v| v.deinit();
         self.agents.deinit(self.allocator);
-        self.stream.deinit(self.allocator);
     }
     fn ingest(self: *Model, bytes: []const u8) !bool {
         const parsed = std.json.parseFromSlice(Value, self.allocator, bytes, .{ .allocate = .alloc_always, .max_value_len = 65536 }) catch {
@@ -122,7 +120,6 @@ const Model = struct {
             const state = text(v, "state");
             for (self.agents.items, 0..) |*old, i| {
                 if (eq(text(old.value, "id"), id) and eq(text(old.value, "host"), name)) {
-                    if (priority(v) < 2 and (priority(old.value) >= 2 or !eq(text(v, "question"), text(old.value, "question")))) self.attention[host] = true;
                     old.deinit();
                     if (eq(state, "gone") or eq(state, "done")) {
                         _ = self.agents.orderedRemove(i);
@@ -135,16 +132,15 @@ const Model = struct {
             }
             if (!eq(state, "gone") and !eq(state, "done") and self.agents.items.len < 256) {
                 try self.agents.append(self.allocator, parsed);
-                if (priority(v) < 2) self.attention[host] = true;
+
                 retained = true;
             }
-        } else if (eq(kind, "stream")) {
-            if (self.stream.items.len == 128) {
-                var old = self.stream.orderedRemove(0);
-                old.deinit();
-            }
-            try self.stream.append(self.allocator, parsed);
+        } else if (eq(kind, "decisions")) {
+            if (self.decisions) |*old| old.deinit();
+            self.decisions = parsed;
             retained = true;
+        } else if (eq(kind, "stream")) {
+            return false;
         } else {
             self.invalid += 1;
             return false;
@@ -205,6 +201,18 @@ fn priority(v: Value) usize {
     const state = text(v, "state");
     return if (eq(state, "waiting")) 0 else if (eq(state, "error")) 1 else if (eq(state, "working")) 2 else 3;
 }
+fn stalled(model: *Model, row: Value) bool {
+    if (get(row, "stalled") == .bool and get(row, "stalled").bool) return true;
+    const wait = get(row, "waiting");
+    if (wait == .object) {
+        for (model.agents.items) |entry| {
+            const target = entry.value;
+            if (eq(text(target, "name"), text(wait, "on"))) return eq(text(target, "state"), "error") or (eq(text(target, "state"), "idle") and text(target, "now").len == 0 and get(target, "waiting") != .object);
+        }
+        return true;
+    }
+    return eq(text(row, "state"), "idle") and text(row, "now").len == 0;
+}
 fn less(_: void, a: Value, b: Value) bool {
     const pa = priority(a);
     const pb = priority(b);
@@ -223,12 +231,11 @@ const UI = struct {
     pad_len: usize = 0,
     pad_host: usize = 0,
     help: bool = false,
-    stream_focus: bool = false,
-    stream_offset: usize = 0,
+    decisions_open: bool = false,
+    decision_index: usize = 0,
     status: []const u8 = "",
     rows: std.ArrayList(Value) = .empty,
     hit: [256]?usize = @splat(null),
-    flash: bool = false,
     fn visible(self: *UI, model: *Model) !void {
         self.rows.clearRetainingCapacity();
         for (model.agents.items) |entry| if (eq(text(entry.value, "host"), model.hosts[self.host].name)) {
@@ -258,9 +265,11 @@ const UI = struct {
         self.hit = @splat(null);
         var lines: std.ArrayList(Line) = .empty;
         const host = model.hosts[self.host];
-        const inner = width -| 4;
+        const inner = width -| 7;
         const clock: u64 = @intCast(@mod(@divTrunc(model.timestamp, 1000), 86400));
-        const title = try fmt(a, " {s}  {s}  {d:0>2}:{d:0>2} ", .{ host.name, if (model.replay) "REPLAY" else "LIVE", clock / 3600, clock / 60 % 60 });
+        const decisions = if (model.decisions) |v| arr(get(v.value, "decisions")) else &.{};
+        const decision_count = if (model.decisions == null) "?" else try fmt(a, "{d}", .{decisions.len -| self.decision_index});
+        const title = try fmt(a, " {s}  {s}  {d:0>2}:{d:0>2}  ◇ {s} ", .{ host.name, if (model.replay) "REPLAY" else "LIVE", clock / 3600, clock / 60 % 60, decision_count });
         try add(&lines, a, try fmt(a, "╭{s}{s}╮", .{ title, try repeat(a, "─", (width -| 3) -| cells(title)) }), .lines);
         if (host.reachable == false) try add(&lines, a, "! Connection lost · showing last readings", .problem);
         if (host.vitals) |v| {
@@ -277,67 +286,49 @@ const UI = struct {
             if (priority(r) == 0) waiting += 1 else if (priority(r) == 1) errors += 1 else if (priority(r) == 2) working += 1;
         }
         try add(&lines, a, try fmt(a, "agents  {d} ► working  {d} ● waiting  {d} !", .{ working, waiting, errors }), .secondary);
-        try self.section(&lines, a, "needs you", width);
-        if (waiting + errors == 0) try add(&lines, a, "All clear · nothing needs an answer", .secondary);
-        const available = height -| (lines.items.len + 7);
-        const limit = @max(1, available / 2);
+        try self.section(&lines, a, "working", width);
+        const limit = @max(1, height -| (lines.items.len + 3));
         const first = if (self.selected < limit) 0 else self.selected - limit + 1;
         for (self.rows.items, 0..) |r, i| {
-            if (priority(r) > 1 or (i < first or i >= first + limit)) continue;
-            const question = if (text(r, "question").len > 0) text(r, "question") else if (priority(r) == 1) "Needs a look" else "Waiting for your answer";
-            try self.agentLine(&lines, a, model, r, i, question, inner, .problem);
+            if (i < first or i >= first + limit) continue;
+            const broken = stalled(model, r);
+            const label = if (broken and text(r, "now").len == 0 and get(r, "waiting") != .object) "stalled · waiting on nothing" else if (broken) "stalled" else text(r, "now");
+            try self.agentLine(&lines, a, model, r, i, label, inner, if (broken or eq(text(r, "state"), "error")) .problem else .words);
+            if (self.inline_pad and i == self.selected) {
+                const pad = if (!model.replay and arr(get(r, "steps")).len > 0) r else if (self.pad != null and self.pad_host == self.host and eq(self.pad_id[0..self.pad_len], text(r, "id"))) self.pad.?.value else r;
+                try self.machine(&lines, a, pad, r, inner);
+            }
+            const wait = get(r, "waiting");
+            if (wait == .object) try add(&lines, a, try fmt(a, "  ⧗ {s} · {s} · {d}m{s}", .{ text(wait, "on"), text(wait, "what"), integer((if (num(get(r, "wait_since_ms")) > 0) @max(0, @as(f64, @floatFromInt(model.timestamp)) - num(get(r, "wait_since_ms"))) else num(get(r, "wait_age_ms"))) / 60000), if (broken) " · stalled" else "" }), if (broken) .problem else .secondary);
         }
-        try self.section(&lines, a, "working", width);
-        var shown: usize = 0;
-        for (self.rows.items, 0..) |r, i| {
-            if (priority(r) < 2 or i < first or i >= first + limit) continue;
-            try self.agentLine(&lines, a, model, r, i, if (text(r, "now").len > 0) text(r, "now") else "No Now line yet", inner, if (priority(r) == 2) .words else .secondary);
-            shown += 1;
-        }
-        if (shown == 0) try add(&lines, a, "No agents working here", .secondary);
+        if (self.rows.items.len == 0) try add(&lines, a, "No agents working here", .secondary);
         if (self.rows.items.len > limit) try add(&lines, a, try fmt(a, "{d} more · arrows to browse", .{self.rows.items.len - limit}), .secondary);
-        if (self.inline_pad and self.rows.items.len > 0) {
-            const r = self.rows.items[self.selected];
-            try add(&lines, a, try fmt(a, "Scratchpad · {s}", .{text(r, "name")}), .accent);
-            // Complete Now line is wrapped, never treated as executable text.
-            const pad = if (self.pad != null and self.pad_host == self.host and eq(self.pad_id[0..self.pad_len], text(r, "id"))) self.pad.?.value else .null;
-            const now = try clip(a, if (pad == .object) text(pad, "now") else text(r, "now"), 8192);
-            var it = (try std.unicode.Utf8View.init(now)).iterator();
-            var part: std.ArrayList(u8) = .empty;
-            var count: usize = 0;
-            while (it.nextCodepointSlice()) |cp| {
-                const cw = cellWidth(try std.unicode.utf8Decode(cp));
-                if (count + cw > inner and part.items.len > 0) {
-                    try add(&lines, a, try a.dupe(u8, part.items), .words);
-                    part.clearRetainingCapacity();
-                    count = 0;
-                }
-                try part.appendSlice(a, cp);
-                count += cw;
-            }
-            if (part.items.len > 0) try add(&lines, a, try a.dupe(u8, part.items), .words);
-            if (pad == .object) {
-                for ([_][]const u8{ "todo", "done" }, [_][]const u8{ "□", "ok" }) |key, glyph| {
-                    for (arr(get(pad, key))) |item| {
-                        try add(&lines, a, try fmt(a, "{s} {s}", .{ glyph, str(item) }), .secondary);
-                    }
-                }
-            }
-            try add(&lines, a, try fmt(a, "{d}/{d} steps done", .{ integer(num(get(r, "done"))), integer(num(get(r, "total"))) }), .secondary);
+        if (self.decisions_open) {
+            lines.shrinkRetainingCapacity(@min(lines.items.len, 1));
+            self.hit = @splat(null);
+            try self.section(&lines, a, "decisions", width);
+            if (self.decision_index < decisions.len) {
+                const d = decisions[self.decision_index];
+                try add(&lines, a, text(d, "title"), .accent);
+                try add(&lines, a, text(d, "ask"), .words);
+                if (text(d, "context").len > 0) try add(&lines, a, text(d, "context"), .secondary);
+                for (arr(get(d, "options"))) |o| try add(&lines, a, try fmt(a, "{s}  {s}{s}", .{ text(o, "key"), text(o, "label"), if (eq(text(o, "key"), text(d, "default"))) "  ← default" else "" }), .words);
+                try add(&lines, a, "Enter accepts default · Esc returns", .secondary);
+            } else try add(&lines, a, "No open decisions · Esc returns", .secondary);
         }
         if (self.help) {
             lines.shrinkRetainingCapacity(@min(lines.items.len, 2));
             self.hit = @splat(null);
             try add(&lines, a, "↑↓ / j k  select · Enter  jump to pane", .accent);
-            try add(&lines, a, "Space  Now + progress · m  hive / m5", .words);
-            try add(&lines, a, "wheel  browse · q  quit", .words);
+            try add(&lines, a, "Space  expand steps · m  hive / m5", .words);
+            try add(&lines, a, "d  decisions · wheel  browse · q  quit", .words);
             try add(&lines, a, "Click selects · double-click jumps", .words);
         }
         if (model.invalid > 0) try add(&lines, a, try fmt(a, "! {d} unreadable events ignored", .{model.invalid}), .problem);
         if (self.status.len > 0) try add(&lines, a, self.status, .accent);
         if (model.ended and !model.replay) try add(&lines, a, "! Live feed stopped · q quits", .problem);
         // Keep keys anchored and never let the terminal's bottom-right cell scroll.
-        const footer = if (width < 55) "╰ ⏎ jump  ␣ pad  m host  ? ╯" else "╰ ⏎ jump  ␣ scratchpad  m machine  ? keys ╯";
+        const footer = if (width < 55) "╰ ⏎ jump  ␣ steps  d ◇  m host  ? ╯" else "╰ ⏎ jump  ␣ steps  d decisions  m host  ? keys ╯";
         if (lines.items.len >= height) lines.shrinkRetainingCapacity(height - 1);
         while (lines.items.len + 1 < height) try add(&lines, a, "", .words);
         try add(&lines, a, footer, .lines);
@@ -351,13 +342,34 @@ const UI = struct {
         const done = num(get(r, "done"));
         const total = num(get(r, "total"));
         const progress = if (total > 0) try fmt(a, "{s} {d}/{d}", .{ try bar(a, done * 100 / total, if (width < 45) 5 else 8), integer(done), integer(total) }) else "░░░░░ —";
-        const ago = @max(0, model.timestamp - @as(i64, @intFromFloat(@min(1e15, @max(0, num(get(r, "since")))))));
-        const name = try clip(a, text(r, "name"), @max(6, @min(20, width -| (cells(progress) + 10))));
-        const header = try fmt(a, "{s} {s}  {s}  {d}{s}{s}", .{ if (selected) "►" else if (priority(r) == 0) "●" else if (priority(r) == 1) "!" else "·", name, progress, @divTrunc(ago, if (ago >= 60000) @as(i64, 60000) else 1000), if (ago >= 60000) "m" else "s", if (eq(text(r, "placement"), "detached")) " detached" else "" });
+        _ = model;
+        const name = try clip(a, text(r, "name"), 18);
+        const room = width -| (cells(name) + cells(progress) + 8);
+        const header = try fmt(a, "{s} {s} · {s} · {s}", .{ if (selected) "►" else "·", name, try clip(a, now, room), progress });
         if (lines.items.len < 256) self.hit[lines.items.len] = index;
-        try lines.append(a, .{ .value = header, .role = role, .selected = priority(r) < 2 and self.flash });
-        if (lines.items.len < 256) self.hit[lines.items.len] = index;
-        try add(lines, a, try fmt(a, "  {s}", .{now}), role);
+        try lines.append(a, .{ .value = header, .role = role });
+    }
+    fn machine(_: *UI, lines: *std.ArrayList(Line), a: A, pad: Value, row: Value, width: usize) !void {
+        const executor = if (text(row, "executor").len > 0) text(row, "executor") else "agent";
+        const steps = arr(get(pad, "steps"));
+        var outcome: []const u8 = "—";
+        var unfinished = false;
+        if (steps.len > 0) {
+            for (steps) |step| {
+                const state = text(step, "state");
+                if (!eq(state, "done")) unfinished = true;
+                const by = if (text(step, "by").len > 0) text(step, "by") else executor;
+                const result = text(step, "outcome");
+                if (eq(state, "done") and result.len > 0) outcome = result;
+                const label = try clip(a, text(step, "text"), @max(8, width -| (cells(by) + 15)));
+                try add(lines, a, try fmt(a, "  {s} {s}  {s}{s}{s}{s}{s}{s}", .{ if (eq(state, "done")) "✓" else if (eq(state, "now")) "▶" else " ", label, by, if (eq(state, "now")) " ← now" else "", if (result.len > 0) " ■ " else "", result, if (text(step, "handoff").len > 0) " ⇥ " else "", text(step, "handoff") }), if (eq(state, "now")) .accent else .secondary);
+            }
+        } else {
+            for (arr(get(pad, "done"))) |item| try add(lines, a, try fmt(a, "  ✓ {s}  {s}", .{ str(item), executor }), .secondary);
+            if (text(pad, "now").len > 0) try add(lines, a, try fmt(a, "  ▶ {s}  {s} ← now", .{ text(pad, "now"), executor }), .accent);
+            for (arr(get(pad, "todo"))) |item| try add(lines, a, try fmt(a, "    {s}  {s}", .{ str(item), executor }), .secondary);
+        }
+        try add(lines, a, try fmt(a, "  end: {s}", .{if (unfinished) "—" else outcome}), .secondary);
     }
     fn vitals(_: *UI, lines: *std.ArrayList(Line), a: A, host: Host, v: Value, width: usize) !void {
         const mem = get(v, "mem");
@@ -559,6 +571,26 @@ fn scratch(allocator: A, self: []const u8, config: []const u8, row: Value) !?Par
     return std.json.parseFromSlice(Value, allocator, result.stdout, .{ .allocate = .alloc_always }) catch null;
 }
 
+fn refreshDecisions(a: A, self: []const u8, opts: Options, model: *Model) !void {
+    const result = try std.process.Child.run(.{ .allocator = a, .argv = &.{ self, "decide", "list", "--config", opts.config, "--hosts", opts.hosts, "--json" }, .max_output_bytes = 262144 });
+    defer a.free(result.stdout);
+    defer a.free(result.stderr);
+    if (result.term != .Exited or result.term.Exited != 0) return;
+    const parsed = try std.json.parseFromSlice(Value, a, result.stdout, .{ .allocate = .alloc_always });
+    if (model.decisions) |*old| old.deinit();
+    model.decisions = parsed;
+}
+fn answerDecision(a: A, self: []const u8, config: []const u8, d: Value, option: []const u8) !bool {
+    const result = try std.process.Child.run(.{ .allocator = a, .argv = &.{ self, "decide", "answer", "--config", config, "--host", text(d, "host"), "--id", text(d, "id"), "--option", option }, .max_output_bytes = 262144 });
+    defer a.free(result.stdout);
+    defer a.free(result.stderr);
+    return result.term == .Exited and result.term.Exited == 0;
+}
+fn restoreRatio(a: A) void {
+    const result = std.process.Child.run(.{ .allocator = a, .argv = &.{ "python3", "-I", "-c", @embedFile("ratio.py") }, .max_output_bytes = 65536 }) catch return;
+    a.free(result.stdout);
+    a.free(result.stderr);
+}
 const Options = struct { config: []const u8, hosts: []const u8 = "hive,m5", replay: ?[]const u8 = null, once: bool = false, graphics: bool = true, benchmark: usize = 0 };
 fn options(a: A, args: []const []const u8) !Options {
     const home = try std.process.getEnvVarOwned(a, "HOME");
@@ -642,6 +674,10 @@ pub fn run(allocator: A, args: []const []const u8) !u8 {
     try std.fs.File.stdout().writeAll(ESC ++ "[?1049h" ++ ESC ++ "[?25l" ++ ESC ++ "[?1000h" ++ ESC ++ "[?1006h" ++ ESC ++ "[?1004h");
     defer std.fs.File.stdout().writeAll(ESC ++ "[?2026l" ++ ESC ++ "_Ga=d,d=I,i=197845,q=2" ++ ESC ++ "\\" ++ ESC ++ "[0m" ++ ESC ++ "[?1000l" ++ ESC ++ "[?1006l" ++ ESC ++ "[?1004l" ++ ESC ++ "[?25h" ++ ESC ++ "[?1049l" ++ ESC ++ "]7501;state=clear:id=teerex/board:app=teerex-board" ++ ESC ++ "\\") catch {};
     const self = try std.fs.selfExePathAlloc(allocator);
+    if (!model.replay) {
+        refreshDecisions(allocator, self, opts, &model) catch {};
+        restoreRatio(allocator);
+    }
     var child: ?std.process.Child = null;
     var replay: ?std.fs.File = null;
     var fd: p.fd_t = undefined;
@@ -669,46 +705,22 @@ pub fn run(allocator: A, args: []const []const u8) !u8 {
     var size = dimensions();
     var dirty = true;
     var kitty = false;
-    var flash_until: i64 = 0;
     var last_query: i64 = 0;
     var last_click: i64 = 0;
     var last_click_index: usize = 256;
-    var waiting_count: usize = 0;
     try query();
     while (!stopping) {
         const now = std.time.milliTimestamp();
         if (resized) {
             resized = false;
+            const previous_width = size.col;
             size = dimensions();
+            if (size.col != previous_width and !model.replay) restoreRatio(allocator);
             dirty = true;
             try query();
         }
-        if (flash_until != 0 and now >= flash_until) {
-            flash_until = 0;
-            ui.flash = false;
-            dirty = true;
-        }
         if (dirty) {
             try ui.visible(&model);
-            const count = blk: {
-                var n: usize = 0;
-                for (ui.rows.items) |r| if (priority(r) < 2) {
-                    n += 1;
-                };
-                break :blk n;
-            };
-            if (model.attention[ui.host] and count > 0) {
-                ui.flash = true;
-                flash_until = now + 180;
-            }
-            model.attention[ui.host] = false;
-            var total_waiting: usize = 0;
-            for (model.agents.items) |entry| if (priority(entry.value) < 2) {
-                total_waiting += 1;
-            };
-            if (total_waiting > 0 and waiting_count == 0) try std.fs.File.stdout().writeAll(ESC ++ "]7501;state=blocked:id=teerex/board:app=teerex-board" ++ ESC ++ "\\");
-            if (total_waiting == 0 and waiting_count > 0) try std.fs.File.stdout().writeAll(ESC ++ "]7501;state=working:id=teerex/board:app=teerex-board" ++ ESC ++ "\\");
-            waiting_count = total_waiting;
             var arena = std.heap.ArenaAllocator.init(allocator);
             defer arena.deinit();
             const a = arena.allocator();
@@ -724,8 +736,8 @@ pub fn run(allocator: A, args: []const []const u8) !u8 {
             dirty = false;
         }
         var fds = [_]p.pollfd{ .{ .fd = 0, .events = p.POLL.IN, .revents = 0 }, .{ .fd = if (model.ended) -1 else fd, .events = p.POLL.IN, .revents = 0 }, .{ .fd = signal_pipe[0], .events = p.POLL.IN, .revents = 0 } };
-        // The only deadline is a one-shot attention flash. At rest, poll sleeps indefinitely.
-        _ = try p.poll(&fds, if (flash_until > now) @intCast(flash_until - now) else -1);
+        // At rest, poll sleeps indefinitely; decisions never summon attention.
+        _ = try p.poll(&fds, -1);
         if (fds[2].revents & p.POLL.IN != 0) {
             var signals: [64]u8 = undefined;
             _ = p.read(signal_pipe[0], &signals) catch 0;
@@ -765,6 +777,12 @@ pub fn run(allocator: A, args: []const []const u8) !u8 {
             var consumed: usize = 0;
             while (consumed < keys.items.len) {
                 const input = keys.items[consumed..];
+                if (input[0] == 27 and ui.decisions_open and input.len == 1) {
+                    ui.decisions_open = false;
+                    dirty = true;
+                    consumed += 1;
+                    continue;
+                }
                 if (input[0] == 27) {
                     if (input.len < 2) break;
                     if (input[1] == ']' or input[1] == '_' or input[1] == 'P') {
@@ -785,11 +803,11 @@ pub fn run(allocator: A, args: []const []const u8) !u8 {
                         if (end == input.len) break;
                         const key = input[end];
                         if (key == 'A') {
-                            if (ui.stream_focus) ui.stream_offset += 1 else ui.selected -|= 1;
+                            ui.selected -|= 1;
                             dirty = true;
                         }
                         if (key == 'B') {
-                            if (ui.stream_focus) ui.stream_offset -|= 1 else ui.selected += 1;
+                            ui.selected += 1;
                             dirty = true;
                         }
                         if (key == 'I') {
@@ -811,9 +829,9 @@ pub fn run(allocator: A, args: []const []const u8) !u8 {
                                     last_click_index = idx;
                                 }
                             } else if (button == 64) {
-                                if (ui.stream_focus) ui.stream_offset += 1 else ui.selected -|= 1;
+                                ui.selected -|= 1;
                             } else if (button == 65) {
-                                if (ui.stream_focus) ui.stream_offset -|= 1 else ui.selected += 1;
+                                ui.selected += 1;
                             }
                             dirty = true;
                         }
@@ -825,23 +843,48 @@ pub fn run(allocator: A, args: []const []const u8) !u8 {
                 }
                 const key = input[0];
                 consumed += 1;
+                if (ui.decisions_open and (key == '\r' or key == '\n' or (key >= '1' and key <= '9'))) {
+                    const decisions = if (model.decisions) |v| arr(get(v.value, "decisions")) else &.{};
+                    if (ui.decision_index < decisions.len) {
+                        const d = decisions[ui.decision_index];
+                        const option = if (key == '\r' or key == '\n') text(d, "default") else input[0..1];
+                        var valid = false;
+                        for (arr(get(d, "options"))) |o| {
+                            if (eq(text(o, "key"), option)) valid = true;
+                        }
+                        if (valid) {
+                            if (model.replay) {
+                                ui.decision_index += 1;
+                            } else {
+                                ui.status = if (answerDecision(allocator, self, opts.config, d, option) catch false) "Answer delivered" else "Answer unavailable · decision remains open";
+                                refreshDecisions(allocator, self, opts, &model) catch {};
+                            }
+                        }
+                    }
+                    dirty = true;
+                    continue;
+                }
                 switch (key) {
                     'q', 3, 4 => {
                         stopping = true;
                         break;
                     },
                     'j' => {
-                        if (ui.stream_focus) ui.stream_offset -|= 1 else ui.selected += 1;
+                        ui.selected += 1;
                         dirty = true;
                     },
                     'k' => {
-                        if (ui.stream_focus) ui.stream_offset += 1 else ui.selected -|= 1;
+                        ui.selected -|= 1;
                         dirty = true;
                     },
                     'm' => {
                         ui.host = 1 - ui.host;
                         ui.selected = 0;
-                        ui.stream_offset = 0;
+                        dirty = true;
+                    },
+                    'd' => {
+                        ui.decisions_open = true;
+                        if (!model.replay) refreshDecisions(allocator, self, opts, &model) catch {};
                         dirty = true;
                     },
                     ' ' => {

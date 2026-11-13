@@ -24,25 +24,44 @@ feed and explicit named-host actions; the renderer itself is native Zig.
 
 The current host has CPU trend, memory/swap, load, disk and network bands.
 Wide panes add per-core heat, the other host's summary and top process trees
-grouped by agent. Needs-you rows precede working rows; words and glyphs carry
-meaning without colour. One new question flashes its callout once (180 ms),
-and OSC 7501's documented `blocked` state marks the board as needing attention.
-The board owns only its `teerex/board` status record and clears it on exit.
+grouped by agent. The header's quiet `◇ N` counts open decisions; questions do
+not flash, turn red, or set an attention badge. Red marks a crashed agent, an
+agent past its review deadline, or a stalled wait.
 
-The selected host filters agents. There is no event stream section: it
-repeated low-value events and cost attention (Josh, 2026-11-13). The host key
-switches both panels; both feeds continue receiving events. Host failures
-retain the last readings with an explicit unavailable notice.
+Each collapsed agent occupies one line: name, Now, and progress. Space expands
+its ordered state machine: `✓` Done, `▶` Now with `← now`, then To-do. The
+executor comes from the step, the launch's `--model`, or its harness. Completed
+outcomes use `■`, handoffs use `⇥`, and the machine ends with `end: …`.
+Legacy scratchpads with Now/To-do/Done arrays still render.
+
+A waiting edge reads `⧗ target · exact wait · age`. It is stalled when the
+target is unknown, crashed, or idle without Now or Waiting. An idle agent with
+neither Now nor Waiting reads `stalled · waiting on nothing`. Target lookup
+includes both hosts. The selected host filters agent rows; both feeds remain
+active. Host failures retain the last readings with an unavailable notice.
 
 | Key | Action |
 |---|---|
 | Up/Down, j/k | Select a live agent |
-| Enter | `teerex --config … --host ROW_HOST surfaces focus` on that exact pane |
-| Space | Inline scratchpad via the selected host's `scratch show --json`; the event's Now/progress remain available if the read fails |
+| Enter | Focus that agent on its exact named host |
+| Space | Expand/collapse steps; refresh using `scratch show --json` |
+| d | Pull open decisions, oldest first: digit answers, Enter accepts default, Esc returns |
 | m | Switch hive / M5 |
 | ? | Keys overlay |
 | q, Ctrl-C, Ctrl-D | Exit and restore terminal settings |
 | Mouse | Click selects, double-click jumps, wheel browses |
+
+Decision listing and answering invoke the absolute running teerex executable.
+Replay fixtures supply the same JSON shape and consume answers locally, without
+sending messages. There is no stream or needs-you section.
+
+At startup and on a terminal width change, the board reads its own Rex tiled
+layout and restores its width to one third of the window through
+`session.resize_pane`. It preserves focus and other panes, skips floating/solo
+layouts, and avoids resizing an already correct border. This uses Rex's
+`session.view` rects and documented fractional border ratio (API13 schema
+queried on a disposable server). The board needs its `REX_SESSION`/`REX_BLOCK`
+(or forwarded `LC_REX_*`) address and the selected Rex executable/socket.
 
 The board scales from 40-column side panes to full tabs; scarce rows are
 bounded with an omitted-agent count and selection scrolls the visible window.
@@ -101,7 +120,7 @@ silently change renderer behavior.
 
 The measured prototype redraws a changed row in a 60×30 frame. The UI uses
 `poll` indefinitely when idle, with a signal pipe for resize/shutdown; only
-the one-shot attention flash has a deadline. Text and optional kitty updates
+there is no attention-flash timer. Text and optional kitty updates
 share one DEC 2026 transaction. No whole-screen clears or blank intermediary
 frames are emitted during redraw.
 
@@ -139,14 +158,12 @@ TEEREX_BIN="$PWD/zig-out/bin/teerex" python3 items/board/measure.py --output /tm
 teerex board --benchmark 10000
 ```
 
-The 11 public-CLI tests cover PTYs at 40/60/120 columns, no scrolling/clear
-flashes, keys/inline scratchpads, mouse selection, fragmented palette and
-kitty replies, contrast fallback, terminal-control sanitizing, event removal,
-invalid-event visibility, blocked status, EOF hold, idle output and terminal
-restoration on quit/signal. The integration case starts two **disposable** Rex
-servers and uses named-host routing to verify Enter's target, full scratchpad
-contents, normal live-feed startup/vitals and feed descendant cleanup.
-The CI workflow runs this suite on both native API13 lanes.
+The public CLI tests cover PTYs at 40/60/120 columns, collapsed/expanded
+machines, annotation and legacy rendering, decision default/digit answers,
+waiting/stalled edges, no stream/attention badge, terminal sanitizing, graphics,
+idle output and restoration. Disposable Rex checks verify named-host navigation,
+full scratchpads, live feed cleanup and restoring a board from 50% to one third
+after inserting a pane beside the anchor. Both API13 CI lanes run this suite.
 
 Darwin sets the kernel's `PENDIN` bit when canonical mode returns. The test
 excludes only that kernel-maintained bit, following the existing fleet PTY
@@ -155,6 +172,4 @@ settings must still match. The probe/PTY evidence establishes protocol behavior,
 not a human visual review. Installation and replacement of the seat's current
 fleet pane belong to the integrating lead.
 
-Latest focused local gate: board 11/11 on hive and 11/11 on the M5; feed 7/7
-on hive and 6 passes plus one Linux-only skip on the M5. Both native targets
-built with ReleaseSmall after rebasing onto origin/main; Zig formatting passed.
+Revision 2 focused Linux gate and rendered replay are recorded in the change report.
