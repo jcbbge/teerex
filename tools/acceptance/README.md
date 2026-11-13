@@ -9,7 +9,7 @@ python3 tools/acceptance/readiness.py --item observe --catalog ABS --rex ABS \
   --out ABS
 ```
 
-Two existing root-only tests (socket defaults and doctor routing) execute the combined CLI, as their test guards and README explicitly scope them to that root. All observation/compare/watch payload tests execute installed bytes.
+Root-only controls (socket defaults, doctor routing and state defaulting) execute the combined CLI, as their test guards and README explicitly scope them to that root. The observation and state public suites share their existing private-server fixtures. All explicit observation/state/compare/watch payload tests execute installed bytes.
 
 The catalog must identify the current clean source commit. `--merge OLD` accepts only matching source, payload and rubric identities. Missing or author-identical executor labels remain `not_ready` (R12); labels attribute an execution and do not authenticate it. Public records contain sanitized row details and hashes. Packet evidence is private and discarded after each run. Manager lease/data/retired paths are seeded before the exact N6 file-listing control.
 
@@ -28,3 +28,5 @@ The executor warms the exact missing-server refusal before N6: the macOS Rex cli
 Phase B launches its harness at the exact already-trusted workspace parent and puts fixture commands/files in an owned scratch child. It never answers trust prompts or edits personal trust configuration. A non-repository child does not inherit Codex's parent trust; this distinction was observed during acceptance. All owned scratch children are removed after their condition.
 
 Actual-agent tasks name the absolute paths inside the counting PATH directory because Codex login shells can reset PATH. A correct answer with zero counted calls fails measurement acceptance; the uninstrumented probe is not evidence for round-trip ratios.
+
+The U05 state interpretation is part of the current whole-cartridge contract. Its public suite and `--state` help option are mapped; embedded `items/send/draft.lua` is an additional covered compilation input. Earlier pre-U05 records are superseded by the rebased run.

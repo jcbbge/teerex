@@ -13,6 +13,7 @@
       "--print-view",
       "--session",
       "--socket",
+      "--state",
       "--status-id",
       "--status-state",
       "--tail",
@@ -31,6 +32,7 @@
       "--print-view",
       "--session",
       "--socket",
+      "--state",
       "--status-id",
       "--status-state",
       "--tail",
@@ -49,6 +51,7 @@
       "--print-view",
       "--session",
       "--socket",
+      "--state",
       "--status-id",
       "--status-state",
       "--tail",
@@ -64,7 +67,8 @@
     "src/child_linux.zig",
     "tools/cartridges/entry.zig",
     "tools/cartridges/build.zig",
-    "tools/acceptance/contracts/observe.json"
+    "tools/acceptance/contracts/observe.json",
+    "items/send/draft.lua"
   ],
   "claims": [
     {
@@ -775,6 +779,204 @@
       "text": "Public contract: ObserveTest.test_view_V_W3_hidden_tail_remains_unknown",
       "tests": [
         "ObserveTest.test_view_V_W3_hidden_tail_remains_unknown"
+      ]
+    },
+    {
+      "id": "state.ClassifyTest.test_all_harnesses_and_states_have_evidence",
+      "text": "Agent-state public contract: ClassifyTest.test_all_harnesses_and_states_have_evidence",
+      "tests": [
+        "ClassifyTest.test_all_harnesses_and_states_have_evidence"
+      ]
+    },
+    {
+      "id": "state.ClassifyTest.test_partial_conflicting_quoted_and_old_evidence_stay_unknown_or_idle",
+      "text": "Agent-state public contract: ClassifyTest.test_partial_conflicting_quoted_and_old_evidence_stay_unknown_or_idle",
+      "tests": [
+        "ClassifyTest.test_partial_conflicting_quoted_and_old_evidence_stay_unknown_or_idle"
+      ]
+    },
+    {
+      "id": "state.ClassifyTest.test_draft_text_is_not_copied_into_evidence",
+      "text": "Agent-state public contract: ClassifyTest.test_draft_text_is_not_copied_into_evidence",
+      "tests": [
+        "ClassifyTest.test_draft_text_is_not_copied_into_evidence"
+      ]
+    },
+    {
+      "id": "state.ClassifyTest.test_shell_and_measured_exit_are_distinct_from_done_report",
+      "text": "Agent-state public contract: ClassifyTest.test_shell_and_measured_exit_are_distinct_from_done_report",
+      "tests": [
+        "ClassifyTest.test_shell_and_measured_exit_are_distinct_from_done_report"
+      ]
+    },
+    {
+      "id": "state.ClassifyTest.test_osc_reports_are_preserved_with_unknown_freshness",
+      "text": "Agent-state public contract: ClassifyTest.test_osc_reports_are_preserved_with_unknown_freshness",
+      "tests": [
+        "ClassifyTest.test_osc_reports_are_preserved_with_unknown_freshness"
+      ]
+    },
+    {
+      "id": "state.StateTest.test_drawn_claude_codex_placeholders_and_real_drafts",
+      "text": "Agent-state public contract: StateTest.test_drawn_claude_codex_placeholders_and_real_drafts",
+      "tests": [
+        "StateTest.test_drawn_claude_codex_placeholders_and_real_drafts"
+      ]
+    },
+    {
+      "id": "state.StateTest.test_drawn_working_menus_questions_and_errors",
+      "text": "Agent-state public contract: StateTest.test_drawn_working_menus_questions_and_errors",
+      "tests": [
+        "StateTest.test_drawn_working_menus_questions_and_errors"
+      ]
+    },
+    {
+      "id": "state.StateTest.test_pi_editor_uses_shared_style_filter_and_real_text",
+      "text": "Agent-state public contract: StateTest.test_pi_editor_uses_shared_style_filter_and_real_text",
+      "tests": [
+        "StateTest.test_pi_editor_uses_shared_style_filter_and_real_text"
+      ]
+    },
+    {
+      "id": "state.StateTest.test_partial_capture_is_unknown_and_no_input_is_sent",
+      "text": "Agent-state public contract: StateTest.test_partial_capture_is_unknown_and_no_input_is_sent",
+      "tests": [
+        "StateTest.test_partial_capture_is_unknown_and_no_input_is_sent"
+      ]
+    },
+    {
+      "id": "state.StateTest.test_real_exit_and_retained_done_are_not_completion",
+      "text": "Agent-state public contract: StateTest.test_real_exit_and_retained_done_are_not_completion",
+      "tests": [
+        "StateTest.test_real_exit_and_retained_done_are_not_completion"
+      ]
+    },
+    {
+      "id": "state.StateTest.test_root_socket_default_and_separate_tail_mode",
+      "text": "Agent-state public contract: StateTest.test_root_socket_default_and_separate_tail_mode",
+      "tests": [
+        "StateTest.test_root_socket_default_and_separate_tail_mode"
+      ]
+    },
+    {
+      "id": "state.StateTest.test_bad_options_and_missing_targets_never_guess",
+      "text": "Agent-state public contract: StateTest.test_bad_options_and_missing_targets_never_guess",
+      "tests": [
+        "StateTest.test_bad_options_and_missing_targets_never_guess"
+      ]
+    },
+    {
+      "id": "state.readme-302",
+      "text": "`teerex observe --state --socket /absolute/server.sock --session session:FULL-ID --block block:FULL-ID` returns a read-only JSON interpretation. Python 3 is required. `--max-bytes` defaults to 65536 (256\u201365536); `--timeout-ms` defaults to 5000 (100\u201360000). Targets are explicit canonical lowercase IDs. Combined-root socket defaults also apply to `--state`, with `socket_source` recorded when defaulted. `--tail` and `--state` are separate modes; their combination is refused. State retains its bounded complete-VT requirement rather than treating a partial tail as complete evidence. Normal `observe`, `compare` and `watch` retain their contracts.",
+      "readme_line": 302,
+      "tests": [
+        "ClassifyTest.test_all_harnesses_and_states_have_evidence",
+        "ClassifyTest.test_partial_conflicting_quoted_and_old_evidence_stay_unknown_or_idle",
+        "ClassifyTest.test_draft_text_is_not_copied_into_evidence",
+        "ClassifyTest.test_shell_and_measured_exit_are_distinct_from_done_report",
+        "ClassifyTest.test_osc_reports_are_preserved_with_unknown_freshness",
+        "StateTest.test_drawn_claude_codex_placeholders_and_real_drafts",
+        "StateTest.test_drawn_working_menus_questions_and_errors",
+        "StateTest.test_pi_editor_uses_shared_style_filter_and_real_text",
+        "StateTest.test_partial_capture_is_unknown_and_no_input_is_sent",
+        "StateTest.test_real_exit_and_retained_done_are_not_completion",
+        "StateTest.test_root_socket_default_and_separate_tail_mode",
+        "StateTest.test_bad_options_and_missing_targets_never_guess"
+      ]
+    },
+    {
+      "id": "state.readme-304",
+      "text": "The receipt names `harness` (`claude`, `codex`, `pi`, `shell`, `unknown`), `state` (`idle_prompt`, `working`, `awaiting_choice`, `awaiting_text`, `error`, `exited`, `unknown`), nullable `draft_present`, `evidence_lines`, `state_basis`, `reason`, `capture_complete` and the unmodified `osc7501` records. It includes collection times and marks `atomic_snapshot:false`, `read_only:true`, `freshness:\"unknown\"`, and `completion:\"not_inferred\"`. No input, focus, acknowledgement, hooks or files in the target are changed.",
+      "readme_line": 304,
+      "tests": [
+        "ClassifyTest.test_all_harnesses_and_states_have_evidence",
+        "ClassifyTest.test_partial_conflicting_quoted_and_old_evidence_stay_unknown_or_idle",
+        "ClassifyTest.test_draft_text_is_not_copied_into_evidence",
+        "ClassifyTest.test_shell_and_measured_exit_are_distinct_from_done_report",
+        "ClassifyTest.test_osc_reports_are_preserved_with_unknown_freshness",
+        "StateTest.test_drawn_claude_codex_placeholders_and_real_drafts",
+        "StateTest.test_drawn_working_menus_questions_and_errors",
+        "StateTest.test_pi_editor_uses_shared_style_filter_and_real_text",
+        "StateTest.test_partial_capture_is_unknown_and_no_input_is_sent",
+        "StateTest.test_real_exit_and_retained_done_are_not_completion",
+        "StateTest.test_root_socket_default_and_separate_tail_mode",
+        "StateTest.test_bad_options_and_missing_targets_never_guess"
+      ]
+    },
+    {
+      "id": "state.readme-306",
+      "text": "This is a conservative heuristic, not task completion detection. Complete bounded VT, nearby recognized prompts/interrupt indicators, menu headings plus options plus navigation keys, process identity and recorded process exit supply evidence. Conflicting harness identity or a partial prefix returns `unknown`; long real panes will therefore often be unknown. An OSC root working/error/permission/question report can supply otherwise missing state, with explicitly unknown freshness. An idle/done report alone never proves an idle screen or completed task. Recorded process exit describes the process, not success of its assignment.",
+      "readme_line": 306,
+      "tests": [
+        "ClassifyTest.test_all_harnesses_and_states_have_evidence",
+        "ClassifyTest.test_partial_conflicting_quoted_and_old_evidence_stay_unknown_or_idle",
+        "ClassifyTest.test_draft_text_is_not_copied_into_evidence",
+        "ClassifyTest.test_shell_and_measured_exit_are_distinct_from_done_report",
+        "ClassifyTest.test_osc_reports_are_preserved_with_unknown_freshness",
+        "StateTest.test_drawn_claude_codex_placeholders_and_real_drafts",
+        "StateTest.test_drawn_working_menus_questions_and_errors",
+        "StateTest.test_pi_editor_uses_shared_style_filter_and_real_text",
+        "StateTest.test_partial_capture_is_unknown_and_no_input_is_sent",
+        "StateTest.test_real_exit_and_retained_done_are_not_completion",
+        "StateTest.test_root_socket_default_and_separate_tail_mode",
+        "StateTest.test_bad_options_and_missing_targets_never_guess"
+      ]
+    },
+    {
+      "id": "state.readme-308",
+      "text": "Draft detection embeds the **same source** as [send's guard](../send/draft.lua), including dim/grey suggestions, NBSP and styled cursor movement. Pi's horizontal editor lines pass through that parser too. Evidence masks prompt drafts; `draft_present:null` means the relevant editor was not established. Other displayed evidence and preserved program status can contain application text; this is not a transcript redactor. Screen heuristics can be fooled by application output imitating its UI and remain observations, never authorization to send.",
+      "readme_line": 308,
+      "tests": [
+        "ClassifyTest.test_all_harnesses_and_states_have_evidence",
+        "ClassifyTest.test_partial_conflicting_quoted_and_old_evidence_stay_unknown_or_idle",
+        "ClassifyTest.test_draft_text_is_not_copied_into_evidence",
+        "ClassifyTest.test_shell_and_measured_exit_are_distinct_from_done_report",
+        "ClassifyTest.test_osc_reports_are_preserved_with_unknown_freshness",
+        "StateTest.test_drawn_claude_codex_placeholders_and_real_drafts",
+        "StateTest.test_drawn_working_menus_questions_and_errors",
+        "StateTest.test_pi_editor_uses_shared_style_filter_and_real_text",
+        "StateTest.test_partial_capture_is_unknown_and_no_input_is_sent",
+        "StateTest.test_real_exit_and_retained_done_are_not_completion",
+        "StateTest.test_root_socket_default_and_separate_tail_mode",
+        "StateTest.test_bad_options_and_missing_targets_never_guess"
+      ]
+    },
+    {
+      "id": "state.readme-310",
+      "text": "Fixtures draw Claude and Codex styled prompts, busy/permission/error states, and Pi 1.4.0's installed horizontal editor/status/trust UI. Pi UI shapes were read from its installed `custom-editor.js`, `status-indicator.js`, `trust-selector.js` and pi-tui `editor.js`; these are fixture shapes, not a claim that all versions render identically. Run `python3 items/observe/test_state.py -v` with a disposable Rex available on PATH. The suite also covers partial captures, ambiguity, real drafts, recorded exit and OSC done without inferred completion.",
+      "readme_line": 310,
+      "tests": [
+        "ClassifyTest.test_all_harnesses_and_states_have_evidence",
+        "ClassifyTest.test_partial_conflicting_quoted_and_old_evidence_stay_unknown_or_idle",
+        "ClassifyTest.test_draft_text_is_not_copied_into_evidence",
+        "ClassifyTest.test_shell_and_measured_exit_are_distinct_from_done_report",
+        "ClassifyTest.test_osc_reports_are_preserved_with_unknown_freshness",
+        "StateTest.test_drawn_claude_codex_placeholders_and_real_drafts",
+        "StateTest.test_drawn_working_menus_questions_and_errors",
+        "StateTest.test_pi_editor_uses_shared_style_filter_and_real_text",
+        "StateTest.test_partial_capture_is_unknown_and_no_input_is_sent",
+        "StateTest.test_real_exit_and_retained_done_are_not_completion",
+        "StateTest.test_root_socket_default_and_separate_tail_mode",
+        "StateTest.test_bad_options_and_missing_targets_never_guess"
+      ]
+    },
+    {
+      "id": "state.readme-312",
+      "text": "A read-only hive API-13 check on 13 November 2026 found the real Codex replay pane idle with a dim placeholder and no draft. The lead Claude pane rendered `\u00b7 Gesticulating\u2026 (3h 31m 1s \u00b7 \u2193 200.2k tokens)` above its input; that observed elapsed/token spinner shape is covered alongside its Esc-to-interrupt shape. No live Pi process was exercised; Pi coverage is installed-source-derived fixtures. Mac behavior remains for the Mac CI lane to establish.",
+      "readme_line": 312,
+      "tests": [
+        "ClassifyTest.test_all_harnesses_and_states_have_evidence",
+        "ClassifyTest.test_partial_conflicting_quoted_and_old_evidence_stay_unknown_or_idle",
+        "ClassifyTest.test_draft_text_is_not_copied_into_evidence",
+        "ClassifyTest.test_shell_and_measured_exit_are_distinct_from_done_report",
+        "ClassifyTest.test_osc_reports_are_preserved_with_unknown_freshness",
+        "StateTest.test_drawn_claude_codex_placeholders_and_real_drafts",
+        "StateTest.test_drawn_working_menus_questions_and_errors",
+        "StateTest.test_pi_editor_uses_shared_style_filter_and_real_text",
+        "StateTest.test_partial_capture_is_unknown_and_no_input_is_sent",
+        "StateTest.test_real_exit_and_retained_done_are_not_completion",
+        "StateTest.test_root_socket_default_and_separate_tail_mode",
+        "StateTest.test_bad_options_and_missing_targets_never_guess"
       ]
     }
   ]

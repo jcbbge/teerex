@@ -36,6 +36,13 @@ def suite_outcomes(binary, server, combined):
     spec.loader.exec_module(module)
     module.BIN = binary
     suite = unittest.defaultTestLoader.loadTestsFromModule(module)
+    # The state suite imports the same explicit private-server fixtures.
+    previous_fixture = sys.modules.get("test_observe")
+    sys.modules["test_observe"] = module
+    state_spec = importlib.util.spec_from_file_location("readiness_state_contract", path.with_name("test_state.py"))
+    state_module = importlib.util.module_from_spec(state_spec)
+    state_spec.loader.exec_module(state_module)
+    suite.addTests(unittest.defaultTestLoader.loadTestsFromModule(state_module))
     class Result(unittest.TestResult):
         def __init__(self):
             super().__init__()
@@ -44,7 +51,7 @@ def suite_outcomes(binary, server, combined):
             return ".".join(test.id().split(".")[-2:])
         def startTest(self, test):
             super().startTest(test)
-            root_only = self.name(test) in {"ObserveTest.test_default_socket_decoding_and_explicit_override", "ObserveTest.test_platform_socket_default_is_reported_without_contact"}
+            root_only = test._testMethodName in {"test_default_socket_decoding_and_explicit_override", "test_platform_socket_default_is_reported_without_contact", "test_root_socket_default_and_separate_tail_mode"}
             module.BIN = Path(combined) if root_only else binary
         def addSuccess(self, test):
             super().addSuccess(test)
@@ -75,6 +82,10 @@ def suite_outcomes(binary, server, combined):
     finally:
         os.environ.clear()
         os.environ.update(old)
+        if previous_fixture is None:
+            sys.modules.pop("test_observe", None)
+        else:
+            sys.modules["test_observe"] = previous_fixture
     return result.outcomes, result.wasSuccessful(), result.testsRun
 
 
@@ -148,7 +159,7 @@ def run_one(args, payload, version, index):
                 if not successful or any(outcomes.get(name) != "pass" for name in named):
                     failed = sorted(name for name in named if outcomes.get(name) != "pass")
                     raise ValueError("public_contract_failed:" + ",".join(failed)[:140])
-                return "help_exact;root_only_controls=2;public_tests=" + str(count) + ";all_claim_tests_passed"
+                return "help_exact;root_only_control_methods=3;public_tests=" + str(count) + ";all_claim_tests_passed"
             row("R1", R1)
             revision = identity.get("api_revision")
             rows["R2"] = dict(pass_=type(revision) is int and 10 <= revision <= 13, detail="observed_api=" + str(revision))
