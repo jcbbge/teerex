@@ -21,6 +21,8 @@ class ScratchTest(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.env = dict(os.environ, HOME=str(self.root), REX_SESSION=SESSION, REX_BLOCK=BLOCK,
                         TEEREX_CALL_LOG_DIR=str(self.root / "calls"))
+        self.env.pop("AGENT_SCRATCHPAD", None)
+        self.env.pop("LC_AGENT_SCRATCHPAD", None)
         self.path = self.root / ".local/state/teerex/scratch" / SESSION / (BLOCK + ".md")
 
     def cli(self, *args, check=True):
@@ -49,7 +51,7 @@ class ScratchTest(unittest.TestCase):
         self.path.write_text(self.path.read_text().replace(self.data()["updated"], "2000-01-01T00:00:00Z"))
         first = self.hook("Stop")
         self.assertEqual(first.returncode, 0, first.stderr)
-        self.assertEqual(json.loads(first.stdout), dict(decision="block", reason="update your scratchpad (Now/To-do/Done) before ending the turn"))
+        self.assertEqual(json.loads(first.stdout), dict(decision="block", reason="say what you are waiting on: teerex scratch wait --on … --what …"))
         second = self.hook("Stop", stop_hook_active=True)
         self.assertEqual(json.loads(second.stdout)["scratchpad_check"]["status"], "stale")
         self.assertEqual(json.loads(second.stdout)["scratchpad_check"]["action"], "allow")
@@ -97,7 +99,7 @@ class ScratchTest(unittest.TestCase):
         self.assertEqual(self.data()["done"], ["Third", "Second"])
         self.cli("now", "Later")
         self.assertEqual(self.data()["todo"], ["First"])
-        self.assertEqual(set(self.data()), {"purpose", "intent", "now", "todo", "done", "updated"})
+        self.assertEqual(set(self.data()), {"purpose", "intent", "now", "todo", "done", "updated", "steps", "waiting"})
 
     def test_handwritten_missing_sections_blank_lines_round_trip(self):
         self.init()
@@ -143,6 +145,143 @@ class ScratchTest(unittest.TestCase):
             finally:
                 proc.terminate()
                 proc.wait(timeout=5)
+
+    def test_annotations_order_and_legacy_steps(self):
+        self.init()
+        self.cli("now", "Read", "--by", "opus high")
+        self.cli("now", "Build", "--done", "--outcome", "understood", "--by", "computer")
+        self.cli("done", "--outcome", "fixed")
+        self.cli("todo", "Integrate", "--by", "computer", "--handoff", "codex-board")
+        self.cli("now", "Review", "--by", "gpt-5 xhigh")
+        steps = self.data()["steps"]
+        self.assertEqual([(v["state"], v["text"]) for v in steps],
+                         [("done", "Read"), ("done", "Build"), ("now", "Review"), ("todo", "Integrate")])
+        self.assertEqual(steps[0]["outcome"], "understood")
+        self.assertEqual(steps[1]["by"], "computer")
+        self.assertEqual(steps[1]["outcome"], "fixed")
+        self.assertEqual(steps[3]["handoff"], "codex-board")
+        self.init()
+        self.assertEqual(self.data()["steps"], steps)
+        for text in ("■ fixed", "⇥ codex-board", "opus high"):
+            self.assertIn(text, self.cli("show").stdout)
+        self.cli("now", "Integrate")
+        self.assertEqual(self.data()["steps"][-2]["by"], "computer")
+        self.path.write_text("# Legacy\n## Done\n- [x] old\n## Now\n- [ ] work\n")
+        self.assertEqual(self.data()["steps"], [dict(state="done", text="old", by=None, outcome=None, handoff=None),
+                                               dict(state="now", text="work", by=None, outcome=None, handoff=None)])
+
+    def test_waiting_round_trip_clear_now_and_discovery(self):
+        self.init()
+        self.cli("wait", "--on", "teerex", "--what", "integration report")
+        waiting = self.data()["waiting"]
+        self.assertEqual((waiting["on"], waiting["what"]), ("teerex", "integration report"))
+        self.assertTrue(waiting["since"].endswith("Z"))
+        self.assertIn("Waiting: teerex · integration report · since ", self.path.read_text())
+        self.assertIn("⧗ teerex", self.cli("show").stdout)
+        self.init()
+        self.assertEqual(self.data()["waiting"], waiting)
+        self.assertEqual(json.loads(self.cli("waiters", "--on", "teerex", "--json").stdout),
+                         [dict(session=SESSION, block=BLOCK, name="worker β")])
+        self.cli("wait", "--clear")
+        self.assertIsNone(self.data()["waiting"])
+        self.cli("wait", "--on", "teerex", "--what", "answer")
+        self.cli("now", "Continue")
+        self.assertIsNone(self.data()["waiting"])
+        self.assertEqual(json.loads(self.cli("waiters", "--on", "teerex", "--json").stdout), [])
+        original = self.path.read_bytes()
+        for args in (("--on", "a"), ("--on", "a", "--what", "x\ny"),
+                     ("--on", "a · b", "--what", "x"), ("--clear", "--what", "x")):
+            self.assertNotEqual(self.cli("wait", *args, check=False).returncode, 0)
+            self.assertEqual(self.path.read_bytes(), original)
+
+    def test_hook_requires_progress_or_waiting_not_timestamp(self):
+        self.init()
+        self.env["AGENT_SCRATCHPAD"] = str(self.path)
+        self.cli("now", "Working")
+        self.hook("UserPromptSubmit")
+        self.cli("todo", "Only planning")
+        self.assertEqual(json.loads(self.hook("Stop").stdout)["decision"], "block")
+        self.hook("UserPromptSubmit")
+        self.cli("done", "--outcome", "fixed")
+        self.assertEqual(json.loads(self.hook("Stop").stdout)["scratchpad_check"]["action"], "allow")
+        self.hook("UserPromptSubmit")
+        self.cli("wait", "--on", "teerex", "--what", "review")
+        self.assertEqual(json.loads(self.hook("Stop").stdout)["scratchpad_check"]["action"], "allow")
+        self.hook("UserPromptSubmit")
+        self.assertEqual(json.loads(self.hook("Stop").stdout)["scratchpad_check"]["action"], "allow")
+
+    def test_watch_exits_zero_when_shown_file_archived_or_removed(self):
+        for archive in (True, False):
+            self.init()
+            proc = subprocess.Popen([BIN, "scratch", "watch"], env=self.env, stdout=subprocess.PIPE,
+                                    stderr=subprocess.PIPE, text=True)
+            try:
+                # First line proves the viewer read the file before it disappears.
+                self.assertEqual(proc.stdout.readline().strip(), "worker β")
+                if archive:
+                    self.path.rename(self.root / "archived.md")
+                else:
+                    self.path.unlink()
+                out, err = proc.communicate(timeout=5)
+                self.assertEqual(proc.returncode, 0, out + err)
+            finally:
+                if proc.poll() is None:
+                    proc.kill()
+                    proc.communicate()
+
+    def test_one_shot_wait_notifies_filters_and_times_out(self):
+        self.init()
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("scratch_library", Path(__file__).with_name("scratch.py"))
+        library = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(library)
+        self.assertFalse(library.scratch_wake(self.path))
+        for until in ("done", "report"):
+            proc = subprocess.Popen([BIN, "scratch", "wait", "--on", "teerex", "--what", "answer",
+                                     "--until", until, "--timeout-ms", "5000"], env=self.env,
+                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            try:
+                end = time.monotonic() + 4
+                while not Path(str(self.path) + ".wait.fifo").exists():
+                    self.assertLess(time.monotonic(), end)
+                    time.sleep(.01)
+                # The write lock fences registration, so notification cannot race publication.
+                with library.scratch_lock(self.path):
+                    self.assertTrue(library.scratch_wake(self.path, "done"))
+                if until == "report":
+                    self.assertIsNone(proc.poll())
+                    self.assertTrue(library.scratch_wake(self.path, "report"))
+                out, err = proc.communicate(timeout=5)
+                self.assertEqual(proc.returncode, 0, err)
+                self.assertEqual(json.loads(out)["outcome"], "notified")
+                self.assertFalse(Path(str(self.path) + ".wait.fifo").exists())
+            finally:
+                if proc.poll() is None:
+                    proc.kill()
+                    proc.communicate()
+        result = self.cli("wait", "--on", "teerex", "--what", "answer", "--until", "done",
+                          "--timeout-ms", "1", check=False)
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(json.loads(result.stdout)["outcome"], "timeout")
+        self.assertIsNotNone(self.data()["waiting"])
+
+    def test_annotation_validation_and_fifo_refuses_existing_file(self):
+        self.init()
+        original = self.path.read_bytes()
+        for args in (("now", "work", "--by", "one\ntwo"),
+                     ("todo", "later", "--handoff", "a · b"),
+                     ("now", "work", "--outcome", "not completed")):
+            self.assertNotEqual(self.cli(*args, check=False).returncode, 0)
+            self.assertEqual(self.path.read_bytes(), original)
+        fifo = Path(str(self.path) + ".wait.fifo")
+        other = self.root / "untouched"
+        other.write_text("keep")
+        fifo.symlink_to(other)
+        self.assertNotEqual(self.cli("wait", "--on", "teerex", "--what", "answer", "--until", "done",
+                                     "--timeout-ms", "10", check=False).returncode, 0)
+        self.assertEqual(other.read_text(), "keep")
+        self.assertTrue(fifo.is_symlink())
+        self.assertEqual(self.path.read_bytes(), original)
 
     def test_explicit_target_and_lc_environment(self):
         self.init()
