@@ -838,7 +838,8 @@ class RexBoardsTest(unittest.TestCase):
         wait_for("Filter: dash-agent-alpha", selected="dash-agent-alpha")
         os.write(master, b"/dash-agent-beta\r")
         selected_screen = wait_for("Filter: dash-agent-beta", selected="dash-agent-beta")
-        self.assertRegex(selected_screen, r"dash-agent-beta[^\r\n]+working \[OSC\]\s+\d+s\s+\d{2}:\d{2}:\d{2}")
+        # Clock-derived OSC age may be unknown; that is a documented display value.
+        self.assertRegex(selected_screen, r"dash-agent-beta[^\r\n]+working \[OSC\]\s+(?:\d+s|\?)\s+\d{2}:\d{2}:\d{2}")
         self.assertEqual(initial, view(), "selection/filtering must not focus or move any pane")
         os.write(master, b"\r")
         wait_for("focus exit=0")
