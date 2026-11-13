@@ -8,7 +8,7 @@ const usage =
     \\doctor: [--socket ABS] [--timeout-ms N] read-only per-record live/identity/deadline/intent and orphan findings.
     \\Doctor uses recorded sockets unless explicitly overridden; identity checks still apply; no mutation or retries.
     \\Every operation except list/doctor selects --socket ABS --session session:UUID --block block:UUID.
-    \\track: --owner LABEL --kind agent|command --purpose TEXT --deadline-unix-ms N --cleanup manual
+    \\track: --owner LABEL --kind agent|command --purpose TEXT --deadline-unix-ms N --cleanup manual [--receipt-file ABS]
     \\adopt: --from-owner LABEL --owner LABEL --generation N --reason TEXT --deadline-unix-ms N
     \\present: --owner LABEL --generation N --reason TEXT --anchor block:UUID --focus yes|no [--label TEXT] [--relocate yes|no]
     \\Relocation defaults no (placed panes stay in place); yes explicitly moves beside anchor at half width.
@@ -50,10 +50,12 @@ const Entry = struct {
     generation: u64 = 1,
     registered_at_unix_ms: i64,
     last_action: ?Action = null,
+    receipt_path: ?[]const u8 = null,
 };
 const State = struct { schema_version: u8, next_generation: u64, entries: []Entry };
 const Options = struct {
     operation: []const u8,
+    receipt_file: ?[]const u8 = null,
     registry: ?[]const u8 = null,
     socket: ?[]const u8 = null,
     session: ?[]const u8 = null,
@@ -98,6 +100,7 @@ fn validEntry(e: Entry) bool {
     return std.fs.path.isAbsolute(e.socket) and textValid(e.socket, 4096) and fullId(e.session_id, "session:") and
         fullId(e.block_id, "block:") and validSource(e.source) and textValid(e.block_host_id, 128) and
         textValid(e.owner, 128) and (eq(e.kind, "agent") or eq(e.kind, "command")) and textValid(e.purpose, 256) and
+        (if (e.receipt_path) |path| std.fs.path.isAbsolute(path) and textValid(path, 4096) else true) and
         e.deadline_unix_ms > 0 and eq(e.cleanup, "manual") and e.generation > 0 and e.generation < std.math.maxInt(u64) and
         e.registered_at_unix_ms > 0 and (if (e.last_action) |a| textValid(a.operation, 16) and textValid(a.reason, 256) and
         textValid(a.outcome, 64) and a.at_unix_ms > 0 else true);
@@ -297,7 +300,7 @@ fn parse(args: []const []const u8) !Options {
     if (args.len == 0) return error.Usage;
     var o: Options = .{ .operation = args[0] };
     const allowed: []const []const u8 = if (eq(o.operation, "list")) &.{} else if (eq(o.operation, "doctor")) &.{ "socket", "timeout-ms" } else if (eq(o.operation, "track"))
-        &.{ "owner", "kind", "purpose", "deadline-unix-ms", "cleanup", "timeout-ms" }
+        &.{ "owner", "kind", "purpose", "deadline-unix-ms", "cleanup", "timeout-ms", "receipt-file" }
     else if (eq(o.operation, "inspect")) &.{"timeout-ms"} else if (eq(o.operation, "adopt"))
         &.{ "from-owner", "owner", "generation", "reason", "deadline-unix-ms", "timeout-ms" }
     else if (eq(o.operation, "present")) &.{ "owner", "generation", "reason", "anchor", "focus", "label", "relocate", "timeout-ms" } else if (eq(o.operation, "forget"))
@@ -348,6 +351,7 @@ fn parse(args: []const []const u8) !Options {
                 if (eq(key, field)) @field(o, field) = value;
             }
             if (eq(key, "from-owner")) o.from_owner = value;
+            if (eq(key, "receipt-file")) o.receipt_file = value;
         }
     }
     if (o.registry == null or !std.fs.path.isAbsolute(o.registry.?)) return error.Usage;
@@ -356,6 +360,7 @@ fn parse(args: []const []const u8) !Options {
         if (o.socket == null or !std.fs.path.isAbsolute(o.socket.?) or o.session == null or !fullId(o.session.?, "session:") or
             o.block == null or !fullId(o.block.?, "block:")) return error.Usage;
     }
+    if (o.receipt_file) |path| if (!std.fs.path.isAbsolute(path)) return error.Usage;
     if (o.timeout_ms) |n| if (n < 100 or n > 60000) return error.Usage;
     if (o.generation) |n| if (n == 0 or n >= std.math.maxInt(u64) - 1) return error.Usage;
     for ([_]?[]const u8{ o.owner, o.from_owner, o.label }) |value| if (value) |s| if (!textValid(s, 128)) return error.Usage;
@@ -515,7 +520,7 @@ fn execute(allocator: std.mem.Allocator, o: Options) !u8 {
                 eq(existing.source.instance_id, live.collector.source.?.instance_id) and
                 eq(existing.source.host_id, live.collector.source.?.host_id)) return error.TargetAlreadyTrackedThroughAnotherEndpoint;
         }
-        entry = .{ .socket = o.socket.?, .session_id = o.session.?, .block_id = o.block.?, .source = live.collector.source.?, .block_host_id = live.collector.observation.?.block_host_id, .owner = o.owner.?, .kind = o.kind.?, .purpose = o.purpose.?, .deadline_unix_ms = o.deadline_unix_ms.?, .generation = try registry.generation(), .registered_at_unix_ms = now };
+        entry = .{ .socket = o.socket.?, .session_id = o.session.?, .block_id = o.block.?, .source = live.collector.source.?, .block_host_id = live.collector.observation.?.block_host_id, .owner = o.owner.?, .kind = o.kind.?, .purpose = o.purpose.?, .deadline_unix_ms = o.deadline_unix_ms.?, .generation = try registry.generation(), .registered_at_unix_ms = now, .receipt_path = o.receipt_file };
         registry.state.entries = try std.mem.concat(allocator, Entry, &.{ registry.state.entries, &.{entry.?} });
         try registry.save(allocator);
     } else if (live.code == 0 and eq(o.operation, "adopt")) {

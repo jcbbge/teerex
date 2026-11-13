@@ -16,6 +16,8 @@ import subprocess
 import sys
 import tempfile
 import time
+import threading
+import secrets
 
 INPUT_LIMIT = 1048576
 FILE_LIMIT = 64 * 1024 * 1024
@@ -80,20 +82,28 @@ def osc(state, config):
         os.write(1, ("\x1b]7501;state=" + state + ":app=" + config["app"] + ":title=" + title + ":msg=" + title + "\x1b\\").encode())
 
 
-def supervise(root):
-    """Runs only as the actual attached terminal command, never from the controller."""
-    root = Path(root)
-    config = load(root / "request.json")
+def await_permission(root, config):
     identity = dict(machine=machine(), session_id=os.environ.get("REX_SESSION"), block_id=os.environ.get("REX_BLOCK"))
     save(root / "ready.json", identity)
     # A lost create ACK must not start argv. No permission file means no execution.
     end = time.monotonic() + config["startup_ms"] / 1000
     while not (root / "permit.json").exists():
         if STOP or (root / "cancel.json").exists() or time.monotonic() >= end:
-            return 125
+            return None
         time.sleep(.02)
     if load(root / "permit.json") != identity:
-        return 125
+        return None
+    return identity
+
+
+def supervise(root, identity=None):
+    """Collects the actual child in the visible pane, or its detached supervisor's thread."""
+    root = Path(root)
+    config = load(root / "request.json")
+    if identity is None:
+        identity = await_permission(root, config)
+        if identity is None:
+            return 125
     osc("working", config)
     seen = dict(stdout=0, stderr=0)
     retained = dict(stdout=0, stderr=0)
@@ -407,7 +417,8 @@ def controller(runtime, source, args):
         "API13 only; Python3.9+. No retries, autostart, implicit shell, hidden worker or daemon. "
         "Child stdout/stderr are pipes teed live to the terminal, not TTYs. Exact env replaces inherited env "
         "except actual REX_SESSION/REX_BLOCK and opted-in AGENT_CHANNEL/LC_AGENT_CHANNEL. Stdin is a regular file (max1MiB) or /dev/null. "
-        "Closing a pane does not prove descendant/remote death; SIGKILL/controller loss cannot guarantee cleanup."))
+        "Read detached evidence with run-visible receipt --file ABS [--wait-ms N]. "
+        "Closing a pane does not prove descendant/remote death; supervisor loss cannot guarantee cleanup."))
     for name in ("socket", "session", "cwd", "env-file", "stdin-file", "app", "title"):
         parser.add_argument("--" + name, required=True)
     parser.add_argument("--registry", help="opt-in existing private jobs registry; requires --owner and --purpose")
@@ -426,6 +437,7 @@ def controller(runtime, source, args):
     parser.add_argument("--startup-ms", type=int, default=10000, help="placement/identity gate1000..60000ms; separate from execution")
     parser.add_argument("--max-bytes", type=int, default=4096, help="combined raw prefix retention1..65536 bytes")
     parser.add_argument("--output-dir", help="NEW absolute private directory; retains full separate raw files up to64MiB combined, caller deletes")
+    parser.add_argument("--detach", action="store_true", help="return a launch receipt after verified placement/visible supervisor handoff; pane program owns execution, final receipt and cleanup")
     parser.add_argument("--keep-open", action="store_true", help="retain exited pane; cancellation/deadline still requests owned-pane close")
     parser.add_argument("argv", nargs=argparse.REMAINDER)
     o = parser.parse_args(args)
@@ -474,8 +486,19 @@ def controller(runtime, source, args):
         return 128 + STOP
     identity = machine()
     if o.channel_dir:
-        BROKER = VisibleChannel(o.channel_dir, runtime, pin, o)
-        request_env.update(AGENT_CHANNEL=BROKER.handle, LC_AGENT_CHANNEL=BROKER.handle)
+        if o.detach:
+            descriptor = os.open(o.channel_dir, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+            try:
+                info = os.fstat(descriptor)
+                channel_require(info.st_uid == os.getuid() and stat.S_IMODE(info.st_mode) == 0o700 and not os.listdir(descriptor), "channel_directory_requires_empty_owned_0700")
+                channel_require(len(os.fsencode(str(Path(o.channel_dir) / "channel.sock"))) < 100, "channel_socket_path_too_long")
+            finally:
+                os.close(descriptor)
+            handle = str(Path(o.channel_dir) / "handle.json")
+            request_env.update(AGENT_CHANNEL=handle, LC_AGENT_CHANNEL=handle)
+        else:
+            BROKER = VisibleChannel(o.channel_dir, runtime, pin, o)
+            request_env.update(AGENT_CHANNEL=BROKER.handle, LC_AGENT_CHANNEL=BROKER.handle)
     if o.output_dir:
         root = Path(o.output_dir)
         root.mkdir(mode=0o700)
@@ -483,6 +506,9 @@ def controller(runtime, source, args):
         root = Path(tempfile.mkdtemp(prefix="teerex-visible-"))
     config = dict(argv=o.argv[1:], cwd=o.cwd, env=request_env, timeout_ms=o.timeout_ms, startup_ms=o.startup_ms,
                   max_bytes=o.max_bytes, full_output=bool(o.output_dir), app=o.app, title=o.title)
+    if o.detach:
+        config["detach"] = dict(runtime=runtime, pin=pin, launch_id=secrets.token_hex(16),
+                                options={key: getattr(o, key) for key in ("socket", "session", "output_dir", "max_bytes", "keep_open", "app", "channel_dir", "report_to_session", "report_to_block")})
     if len(json.dumps(config).encode()) > 131072:
         root.rmdir()
         raise ValueError("encoded_request_exceeds_128KiB")
@@ -505,6 +531,8 @@ def controller(runtime, source, args):
                   exit_report=None, outcome="uncertain", success=False, created=None, placement=None,
                   cleanup=dict(scope="identified_owned_pane", attempted=False, block_absence_verified=False),
                   limits=dict(startup_ms=o.startup_ms, execution_ms=o.timeout_ms, max_bytes=o.max_bytes, full_output_bytes=FILE_LIMIT))
+    if o.detach:
+        packet.update(detached=True, launch_id=config["detach"]["launch_id"], receipt_path=str(root / "receipt.json"))
     if o.no_deadline:
         packet["timeout_ms"] = None
     if o.registry:
@@ -541,7 +569,7 @@ def controller(runtime, source, args):
                         jobs["track_outcome"] = "uncertain"
                         tracked = invoke(runtime, pin, ["jobs", "track", "--registry", o.registry, *common, "--block", bid,
                                          "--owner", o.owner, "--kind", "command", "--purpose", o.purpose,
-                                         "--deadline-unix-ms", str(deadline_ms), "--cleanup", "manual"])
+                                         "--deadline-unix-ms", str(deadline_ms), "--cleanup", "manual", *(["--receipt-file", packet["receipt_path"]] if o.detach else [])])
                         jobs["track"] = tracked
                         entry = tracked["receipt"].get("entry") if tracked["receipt"] else None
                         if tracked["code"] != 0 or not entry or tracked["receipt"].get("outcome") != "verified":
@@ -552,14 +580,35 @@ def controller(runtime, source, args):
                             if time.monotonic() >= end:
                                 reason = "jobs_tracking_exceeded_startup_budget"
                     if not reason and not STOP:
+                        if o.detach:
+                            save(root / "controller.json", packet)
                         save(root / "permit.json", ready)
                         permitted = True
+                        if o.detach:
+                            packet["cleanup_owner"] = "visible_supervisor"
                 break
             time.sleep(.02)
         if not permitted and reason is None:
             reason = "pane_identity_unavailable_or_foreign_host"
     else:
         reason = "creation_or_placement_uncertain"
+    if permitted and o.detach:
+        while time.monotonic() < end and not STOP:
+            handoff = load(root / "detached-ready.json")
+            if handoff:
+                if handoff["identity"] != packet["pane_identity_report"]:
+                    raise ValueError("detached_supervisor_identity_mismatch")
+                packet.update(kind="run_visible_launch", outcome="launched", success=True,
+                              supervisor_pid=handoff["pid"], channel=handoff.get("channel") if o.channel_dir else None)
+                if not o.channel_dir:
+                    packet.pop("channel", None)
+                print(json.dumps(packet, ensure_ascii=True), flush=True)
+                return 0
+            time.sleep(.02)
+        save(root / "cancel.json", dict(signal=STOP or signal.SIGTERM, reason="detach_handoff_unavailable"))
+        packet.update(kind="run_visible_launch", outcome="handoff_uncertain", success=False)
+        print(json.dumps(packet, ensure_ascii=True), flush=True)
+        return 128 + STOP if STOP else 1
     if permitted:
         end = None if o.timeout_ms is None else time.monotonic() + o.timeout_ms / 1000 + 1
         while (end is None or time.monotonic() < end) and not STOP:
@@ -619,16 +668,139 @@ def controller(runtime, source, args):
     return code
 
 
+def detached_close(runtime, pin, root, packet):
+    # Publish execution evidence first. Rex kills this pane program during its own close.
+    packet["cleanup"].update(attempted=True, block_absence_verified=False, block_absence="unknown")
+    packet["receipt_state"] = "cleanup_pending_or_unknown"
+    packet["success"] = False
+    save(root / "receipt.json", packet)
+    transport = invoke(runtime, pin, ["surfaces", "close", "--socket", packet["server"][7:], "--session", packet["session_id"],
+                                     "--pane", packet["created"]["block_id"], "--timeout-ms", "5000",
+                                     "--publish-receipt-file", packet["receipt_path"]], budget=8)
+    # Reached only when closing did not terminate this pane program. Preserve diagnostics;
+    # never repeat the close or replace independently verified publisher evidence.
+    current = load(root / "receipt.json")
+    if current["receipt_state"] == "cleanup_pending_or_unknown":
+        current["cleanup"]["transport"] = transport
+        current["receipt_state"] = "final"
+        save(root / "receipt.json", current)
+    return 0
+
+
+def detached_supervise(root):
+    """The visible pane program owns both collection and the scoped channel after handoff."""
+    global BROKER
+    config = load(root / "request.json")
+    detached = config["detach"]
+    runtime, pin = detached["runtime"], detached["pin"]
+    o = argparse.Namespace(**detached["options"])
+    if o.channel_dir:
+        BROKER = VisibleChannel(o.channel_dir, runtime, pin, o)
+    identity = await_permission(root, config)
+    if identity is None:
+        if BROKER is not None:
+            BROKER.close()
+        return 125
+    packet = load(root / "controller.json")
+    packet["cleanup_owner"] = "visible_supervisor"
+    if BROKER is not None:
+        packet["channel"] = BROKER.summary
+    errors = []
+    def collect():
+        try:
+            supervise(root, identity)
+        except Exception as exc:
+            errors.append(str(exc)[:600])
+    worker = threading.Thread(target=collect, name="visible-output-collector")
+    started = time.monotonic()
+    worker.start()
+    save(root / "detached-ready.json", dict(pid=os.getpid(), identity=identity, channel=BROKER.summary if BROKER is not None else None))
+    try:
+        while worker.is_alive():
+            if BROKER is not None:
+                BROKER.service()
+            else:
+                worker.join(.02)
+    except (OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError) as exc:
+        errors.append(str(exc)[:600])
+        save(root / "cancel.json", dict(signal=signal.SIGTERM, reason="detached_supervisor_error"))
+    worker.join()
+    if BROKER is not None:
+        BROKER.close()
+        BROKER.revoked()
+    result = load(root / "result.json")
+    packet["exit_report"] = result
+    packet["cancellation_signal"] = STOP or None
+    packet["outcome"] = (result["stop_reason"] or ("launch_error" if result["launch_error"] else "exit_reported")) if result else "supervisor_error_unknown"
+    if errors:
+        packet["supervisor_error"] = errors[0]
+        packet["outcome"] = "supervisor_error_unknown"
+    for stream in ("stdout", "stderr"):
+        packet[stream] = capture(root, stream, o.max_bytes, result)
+        packet[stream]["full_path"] = str(root / (stream + ".full")) if o.output_dir else None
+        packet[stream]["full_complete"] = bool(o.output_dir and result and result["pipes_eof"] and result["stop_reason"] != "full_output_limit_exceeded")
+    packet["elapsed_ms"] = int((time.monotonic() - started) * 1000)
+    retain = bool(o.keep_open and result and not result["stop_reason"] and not STOP and not errors)
+    packet["pane_retained_on_request"] = retain
+    packet["success"] = bool(retain and result and packet["outcome"] == "exit_reported" and result["exit_code"] == 0)
+    forget_job(runtime, pin, packet)
+    if retain:
+        packet["receipt_state"] = "final"
+        save(root / "receipt.json", packet)
+        return 0
+    # The native bounded close operation must publish after Rex terminates this pane program.
+    return detached_close(runtime, pin, root, packet)
+
+
+def read_receipt(args):
+    parser = argparse.ArgumentParser(prog="teerex run-visible receipt", description="Read a private final receipt or report pending; no Rex access, mutation, retry or execution.")
+    parser.add_argument("--file", required=True, help="absolute receipt_path from the detached launch")
+    parser.add_argument("--wait-ms", type=int, default=0, help="foreground wait0..86400000ms; default0; expiry returns pending, not execution deadline124")
+    o = parser.parse_args(args)
+    if not os.path.isabs(o.file) or not 0 <= o.wait_ms <= 86400000:
+        parser.error("absolute --file and --wait-ms0..86400000 required")
+    end = time.monotonic() + o.wait_ms / 1000
+    while not STOP:
+        try:
+            descriptor = os.open(o.file, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        except FileNotFoundError:
+            if time.monotonic() >= end:
+                break
+            time.sleep(min(.05, max(0, end - time.monotonic())))
+            continue
+        with os.fdopen(descriptor, "rb") as f:
+            info = os.fstat(f.fileno())
+            if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o600 or info.st_nlink != 1:
+                raise ValueError("private_owned_regular_receipt_required")
+            raw = f.read(INPUT_LIMIT + 1)
+        if len(raw) > INPUT_LIMIT:
+            raise ValueError("receipt_exceeds_1MiB")
+        packet = json.loads(raw)
+        if not isinstance(packet, dict) or packet.get("schema_version") != 1 or packet.get("kind") != "run_visible_result":
+            raise ValueError("invalid_run_visible_receipt")
+        if packet.get("receipt_state") == "cleanup_pending_or_unknown" and time.monotonic() < end:
+            time.sleep(min(.05, max(0, end - time.monotonic())))
+            continue
+        print(json.dumps(packet, ensure_ascii=True), flush=True)
+        return 0
+    print(json.dumps(dict(schema_version=1, kind="run_visible_receipt", outcome="cancel_requested" if STOP else "pending",
+                          receipt_path=o.file, retry_safe=False)), flush=True)
+    return 128 + STOP if STOP else 0
+
+
 def main():
     signal.signal(signal.SIGINT, stopped)
     signal.signal(signal.SIGTERM, stopped)
     if len(sys.argv) == 3 and sys.argv[1] == "_supervise":
         # Set display fd nonblocking before any output; keep collection independent of client consumption.
         os.set_blocking(1, False)
-        return supervise(sys.argv[2])
+        root = Path(sys.argv[2])
+        return detached_supervise(root) if load(root / "request.json").get("detach") else supervise(root)
     try:
+        if sys.argv[3:4] == ["receipt"]:
+            return read_receipt(sys.argv[4:])
         return controller(sys.argv[1], sys.argv[2], sys.argv[3:])
-    except (OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError) as exc:
+    except (OSError, ValueError, TypeError, KeyError, RecursionError, subprocess.SubprocessError) as exc:
         if BROKER is not None:
             BROKER.close()
             BROKER.revoked()
@@ -636,7 +808,8 @@ def main():
         if BROKER is not None:
             packet["channel"] = BROKER.summary
         packet.update(success=False, failure_reason=str(exc)[:600])
-        if RECEIPT is not None:
+        handed_off = packet.get("cleanup_owner") == "visible_supervisor"
+        if RECEIPT is not None and not handed_off:
             packet["outcome"] = "controller_error_unknown"
             with contextlib.suppress(OSError, ValueError):
                 save(Path(packet["storage_dir"]) / "cancel.json", dict(reason="controller_error", signal=signal.SIGTERM))
@@ -647,7 +820,8 @@ def main():
                     packet["cleanup"]["transport"] = invoke(sys.argv[1], pin, ["surfaces", "close", "--socket",
                         packet["server"][7:], "--session", packet["session_id"], "--pane", packet["created"]["block_id"]])
                 # Keep unknown: this exception path did not finish verifying the close receipt.
-        forget_job(sys.argv[1], os.environ.get("TEEREX_INTERNAL_REX") or os.environ.get("TEEREX_REX"), packet)
+        if not handed_off:
+            forget_job(sys.argv[1], os.environ.get("TEEREX_INTERNAL_REX") or os.environ.get("TEEREX_REX"), packet)
         print(json.dumps(packet, ensure_ascii=True), flush=True)
         return 1
 

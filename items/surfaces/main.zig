@@ -30,6 +30,9 @@ const usage =
     \\a focused source because Rex moves its focus too. Explicit yes permits that and verifies focus.
     \\Focus explicitly selects the pane/window. Close explicitly ends that block, including the last pane;
     \\close verifies absence from view/list, not death of all descendant/remote processes.
+    \\close --publish-receipt-file ABS atomically completes a private prepared run-visible receipt.json.
+    \\Target must match; one close attempt; hard exit after timeout+2000ms includes publication.
+    \\If killed, prepared exit/output evidence remains, with block_absence unknown.
     \\       teerex surfaces palette agents --file ABS --teerex ABS --rex ABS [--profiles ABS]
     \\       teerex surfaces palette hosts --file ABS --teerex ABS [--config ABS]
     \\Generates native profile/workspace menus, frozen until regenerated; never changes personal config.
@@ -247,6 +250,79 @@ fn paletteController(allocator: std.mem.Allocator, args: []const []const u8, scr
     return if (sig != 0) 128 + sig else if (deadline) 124 else 1;
 }
 
+// Detached run-visible prepares exit/output evidence before its own pane is closed.
+// Only this already bounded native close may replace unknown absence with its ACK.
+const ReceiptPublisher = struct {
+    dir: std.fs.Dir,
+    packet: std.json.Value,
+
+    fn string(value: std.json.Value, key: []const u8) ?[]const u8 {
+        if (value != .object) return null;
+        const item = value.object.get(key) orelse return null;
+        return if (item == .string) item.string else null;
+    }
+    fn matches(value: std.json.Value, key: []const u8, expected: []const u8) bool {
+        return std.mem.eql(u8, string(value, key) orelse return false, expected);
+    }
+    fn open(allocator: std.mem.Allocator, path: []const u8, socket: []const u8, session: []const u8, pane: []const u8) !ReceiptPublisher {
+        if (!std.fs.path.isAbsolute(path) or !std.mem.eql(u8, std.fs.path.basename(path), "receipt.json")) return error.InvalidCompletionPath;
+        var dir = try std.fs.openDirAbsolute(std.fs.path.dirname(path).?, .{ .no_follow = true });
+        errdefer dir.close();
+        const ds = try std.posix.fstat(dir.fd);
+        if (ds.uid != std.posix.getuid() or (ds.mode & 0o7777) != 0o700) return error.CompletionDirectoryNotPrivate;
+        const fd = try std.posix.openat(dir.fd, "receipt.json", .{ .ACCMODE = .RDONLY, .NOFOLLOW = true, .NONBLOCK = true, .CLOEXEC = true }, 0);
+        const file: std.fs.File = .{ .handle = fd };
+        defer file.close();
+        const info = try file.stat();
+        const raw_stat = try std.posix.fstat(fd);
+        if (info.kind != .file or info.size > 1048576 or raw_stat.uid != std.posix.getuid() or
+            (raw_stat.mode & 0o7777) != 0o600 or raw_stat.nlink != 1) return error.CompletionFileNotPrivate;
+        const raw = try file.readToEndAlloc(allocator, 1048576);
+        const packet = (try std.json.parseFromSlice(std.json.Value, allocator, raw, .{ .allocate = .alloc_always })).value;
+        if (!matches(packet, "kind", "run_visible_result") or !matches(packet, "receipt_state", "cleanup_pending_or_unknown") or
+            !matches(packet, "cleanup_owner", "visible_supervisor") or !matches(packet, "receipt_path", path) or
+            !matches(packet, "server", try std.fmt.allocPrint(allocator, "unix://{s}", .{socket})) or !matches(packet, "session_id", session)) return error.CompletionTargetMismatch;
+        const schema = packet.object.get("schema_version") orelse return error.InvalidCompletionReceipt;
+        if (schema != .integer or schema.integer != 1) return error.InvalidCompletionReceipt;
+        const created = packet.object.get("created") orelse return error.CompletionTargetMismatch;
+        if (!matches(created, "block_id", pane)) return error.CompletionTargetMismatch;
+        const cleanup = packet.object.get("cleanup") orelse return error.InvalidCompletionReceipt;
+        if (cleanup != .object or !matches(cleanup, "block_absence", "unknown")) return error.InvalidCompletionReceipt;
+        return .{ .dir = dir, .packet = packet };
+    }
+    fn publish(self: *ReceiptPublisher, allocator: std.mem.Allocator, verified: bool, code: u8, receipt: anytype) !void {
+        const encoded = try std.json.Stringify.valueAlloc(allocator, receipt, .{});
+        const value = (try std.json.parseFromSlice(std.json.Value, allocator, encoded, .{ .allocate = .alloc_always })).value;
+        var transport: std.json.ObjectMap = .init(allocator);
+        try transport.put("code", .{ .integer = code });
+        try transport.put("receipt", value);
+        var cleanup = self.packet.object.getPtr("cleanup").?;
+        try cleanup.object.put("transport", .{ .object = transport });
+        try cleanup.object.put("block_absence_verified", .{ .bool = verified });
+        try cleanup.object.put("block_absence", .{ .string = if (verified) "verified_absent" else "unknown" });
+        try self.packet.object.put("receipt_state", .{ .string = "final" });
+        const report = self.packet.object.get("exit_report") orelse .null;
+        const exit = if (report == .object) report.object.get("exit_code") orelse .null else .null;
+        const command_ok = matches(self.packet, "outcome", "exit_reported") and exit == .integer and exit.integer == 0;
+        try self.packet.object.put("success", .{ .bool = command_ok and verified });
+        const raw = try std.json.Stringify.valueAlloc(allocator, self.packet, .{});
+        if (raw.len > 1048576) return error.CompletionReceiptTooLarge;
+        var output = try self.dir.createFile("receipt.json.next", .{ .exclusive = true, .mode = 0o600 });
+        defer output.close();
+        try output.writeAll(raw);
+        try output.sync();
+        try self.dir.rename("receipt.json.next", "receipt.json");
+    }
+};
+
+fn publisherDeadline(done: *std.Thread.ResetEvent, milliseconds: u64) void {
+    done.timedWait(milliseconds * std.time.ns_per_ms) catch {
+        // Covers publication too, after the owned RPC's normal deadline/cleanup.
+        // Never turn a watchdog exit into verified absence: the prepared file stays unknown.
+        std.process.exit(124);
+    };
+}
+
 pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
     if (args.len == 1 and std.mem.eql(u8, args[0], "--help")) {
         try std.fs.File.stdout().writeAll(usage);
@@ -277,7 +353,7 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
         return 0;
     }
     var options: std.StringHashMap([]const u8) = .init(allocator);
-    const allowed = [_][]const u8{ "--socket", "--session", "--anchor", "--pane", "--window", "--layout", "--direction", "--ratio", "--bounds", "--label", "--cwd", "--timeout-ms", "--create-session", "--file", "--name", "--title", "--focus" };
+    const allowed = [_][]const u8{ "--socket", "--session", "--anchor", "--pane", "--window", "--layout", "--direction", "--ratio", "--bounds", "--label", "--cwd", "--timeout-ms", "--create-session", "--file", "--name", "--title", "--focus", "--publish-receipt-file" };
     var i: usize = 1;
     while (i < args.len and !std.mem.eql(u8, args[i], "--")) : (i += 2) {
         if (i + 1 >= args.len) return usageError("every option needs a value");
@@ -289,6 +365,8 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
         if (!known or options.contains(args[i])) return usageError("unknown or repeated option");
         try options.put(args[i], args[i + 1]);
     }
+    const publish_path = options.get("--publish-receipt-file");
+    if (publish_path != null and !close) return usageError("--publish-receipt-file is close-only");
     const socket = options.get("--socket");
     const session = options.get("--session");
     const pane = options.get("--pane");
@@ -337,7 +415,7 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
         if (i != args.len or options.count() > 5 or anchor != null or layout != null or cwd != null or options.contains("--direction") or options.contains("--ratio") or options.contains("--bounds")) return usageError("rename takes only socket, session, window or pane, label and timeout");
     } else if (inspect or focus or close) {
         if (pane == null or !selectorValid(pane.?, "block:")) return usageError("--pane TEXT is required");
-        if (i != args.len or options.count() > 4 or anchor != null or layout != null or label != null or cwd != null or options.contains("--direction") or options.contains("--ratio") or options.contains("--bounds")) return usageError("inspect/focus/close take only socket, session, pane and timeout");
+        if (i != args.len or options.count() > (if (publish_path != null) @as(usize, 5) else 4) or anchor != null or layout != null or label != null or cwd != null or options.contains("--direction") or options.contains("--ratio") or options.contains("--bounds")) return usageError("inspect/focus/close take only socket, session, pane and timeout");
     } else {
         if (!move and pane != null) return usageError("--pane is inspect/focus/close/move-only");
         if (move and (pane == null or !selectorValid(pane.?, "block:") or i != args.len)) return usageError("move requires --pane TEXT and no program argv");
@@ -393,6 +471,17 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
         try writeJson(allocator, .{ .schema_version = 1, .kind = "surface_palette_result", .outcome = "fragment_written", .file = file, .name = name, .registered_in_running_server = false, .next = "Use surfaces palette install to plan/apply native config inclusion and verify selected-server registration" });
         return 0;
     }
+    var publisher_done: std.Thread.ResetEvent = .{};
+    const watchdog: ?std.Thread = if (publish_path != null) try std.Thread.spawn(.{}, publisherDeadline, .{ &publisher_done, budget + 2000 }) else null;
+    defer if (watchdog) |thread| {
+        publisher_done.set();
+        thread.join();
+    };
+    var publisher: ?ReceiptPublisher = if (publish_path) |path| ReceiptPublisher.open(allocator, path, socket.?, session.?, pane.?) catch |err| {
+        std.debug.print("teerex surfaces: invalid private completion receipt: {s}\n", .{@errorName(err)});
+        return 2;
+    } else null;
+    defer if (publisher) |*receipt_publisher| receipt_publisher.dir.close();
     var env = try std.process.getEnvMap(allocator);
     for ([_][]const u8{ "REX_SERVER", "REX_SESSION", "REX_BLOCK", "REX_CLIENT" }) |key| env.remove(key);
     const endpoint = try std.fmt.allocPrint(allocator, "unix://{s}", .{socket.?});
@@ -420,6 +509,9 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
     const success = ok and sig == 0 and ((resolve and std.mem.eql(u8, r.outcome, "resolved") and r.resolved == .object) or ((session_ensure or ensure) and (std.mem.eql(u8, r.outcome, "existing") or std.mem.eql(u8, r.outcome, "created")) and r.actual == .object and r.resolved == .object and (!ensure or !move_focus or ensureFocusVerified(r))) or ((!ensure and r.actual == .object and (std.mem.eql(u8, r.outcome, "created_and_verified") and r.requested_geometry_verified and r.created == .object or std.mem.eql(u8, r.outcome, "renamed_and_verified") and rename and r.control_acknowledged and r.requested_label_verified or std.mem.eql(u8, r.outcome, "inspected") and inspect or std.mem.eql(u8, r.outcome, "focused_and_verified") and focus and r.control_acknowledged or std.mem.eql(u8, r.outcome, "moved_and_verified") and move and r.control_acknowledged and r.requested_geometry_verified and r.move_receipt == .object and (!move_focus or r.focus_acknowledged))) or (close and std.mem.eql(u8, r.outcome, "closed_and_absent") and r.control_acknowledged and r.block_absence_verified)));
     const reported_success = std.mem.eql(u8, r.outcome, "resolved") or std.mem.eql(u8, r.outcome, "existing") or std.mem.eql(u8, r.outcome, "created") or std.mem.eql(u8, r.outcome, "renamed_and_verified") or std.mem.eql(u8, r.outcome, "created_and_verified") or std.mem.eql(u8, r.outcome, "inspected") or std.mem.eql(u8, r.outcome, "focused_and_verified") or std.mem.eql(u8, r.outcome, "closed_and_absent") or std.mem.eql(u8, r.outcome, "moved_and_verified");
     const outcome = if (sig != 0) "cancel_requested" else if (deadline) "deadline_exceeded" else if (ok and (!reported_success or success)) r.outcome else "uncertain";
-    try writeJson(allocator, .{ .schema_version = 1, .kind = "surface_result", .target = .{ .server = endpoint, .session_id = session }, .resolved = r.resolved, .candidates = r.candidates, .requested = request, .source = r.source, .created = if (r.created != .null) r.created else c.created, .actual = r.actual, .previous = r.previous, .previous_anchor = r.previous_anchor, .move_receipt = r.move_receipt, .focus_acknowledged = r.focus_acknowledged, .outcome = outcome, .creation_attempted = !c.control and c.attempt, .control_attempted = c.control and c.attempt, .control_acknowledged = r.control_acknowledged, .block_absence_verified = ok and r.block_absence_verified, .close_scope = "rex_block_absence_not_descendant_process_death", .attempt_evidence = "received_local_frame_not_server_dispatch_proof", .requested_geometry_verified = success and r.requested_geometry_verified, .requested_label_verified = success and r.requested_label_verified, .failure_reason = failure orelse r.failure_reason orelse if (!ok or reported_success and !success) @as(?[]const u8, "rex_transport_incomplete") else null, .backend_stderr_base64 = try encodedDiagnostic(allocator, if (transport) |v| v.stderr else ""), .retry_safe = false, .automatic_close = false, .focus_requested = focus or move_focus, .close_requested = close, .geometry_units = "window_fraction", .painted_visibility = "not_assessed", .program_readiness = "not_assessed", .ensure_lock = if (lock) |held| held.path else null, .timeout_ms = budget });
-    return if (sig != 0) 128 + sig else if (deadline) 124 else if (success) 0 else 1;
+    const public_result = .{ .schema_version = 1, .kind = "surface_result", .target = .{ .server = endpoint, .session_id = session }, .resolved = r.resolved, .candidates = r.candidates, .requested = request, .source = r.source, .created = if (r.created != .null) r.created else c.created, .actual = r.actual, .previous = r.previous, .previous_anchor = r.previous_anchor, .move_receipt = r.move_receipt, .focus_acknowledged = r.focus_acknowledged, .outcome = outcome, .creation_attempted = !c.control and c.attempt, .control_attempted = c.control and c.attempt, .control_acknowledged = r.control_acknowledged, .block_absence_verified = ok and r.block_absence_verified, .close_scope = "rex_block_absence_not_descendant_process_death", .attempt_evidence = "received_local_frame_not_server_dispatch_proof", .requested_geometry_verified = success and r.requested_geometry_verified, .requested_label_verified = success and r.requested_label_verified, .failure_reason = failure orelse r.failure_reason orelse if (!ok or reported_success and !success) @as(?[]const u8, "rex_transport_incomplete") else null, .backend_stderr_base64 = try encodedDiagnostic(allocator, if (transport) |v| v.stderr else ""), .retry_safe = false, .automatic_close = false, .focus_requested = focus or move_focus, .close_requested = close, .geometry_units = "window_fraction", .painted_visibility = "not_assessed", .program_readiness = "not_assessed", .ensure_lock = if (lock) |held| held.path else null, .timeout_ms = budget };
+    const code: u8 = if (sig != 0) 128 + sig else if (deadline) 124 else if (success) 0 else 1;
+    if (publisher) |*receipt_publisher| try receipt_publisher.publish(allocator, success and r.block_absence_verified, code, public_result);
+    try writeJson(allocator, public_result);
+    return code;
 }

@@ -318,6 +318,7 @@ jobs:
         env:
           TEEREX_BIN: ${{ github.workspace }}/zig-out/bin/teerex
           REX_BIN: ${{ runner.temp }}/rex-bin/rex
+          TEEREX_AGENTS_FENCE: ${{ runner.os == 'Linux' && '1' || '0' }}
         run: python3 items/run/test_visible.py -v
 
       - name: Refuse visible execution before creation on older APIs

@@ -490,6 +490,74 @@ class SurfacesTest(unittest.TestCase):
         self.rect(nested["rect"], [0, .6, .77, .4])
         self.assertEqual(len(nested["split_path"]), 2)
 
+    def test_close_receipt_publisher_preflight_and_verified_atomic_update(self):
+        directory = self.work / "completion"
+        directory.mkdir(mode=0o700)
+        file = directory / "receipt.json"
+        packet = dict(schema_version=1, kind="run_visible_result", receipt_state="cleanup_pending_or_unknown",
+                      cleanup_owner="visible_supervisor", receipt_path=str(file), server="unix://" + str(self.socket),
+                      session_id=self.session, created=dict(block_id=self.anchor),
+                      cleanup=dict(attempted=True, block_absence="unknown", block_absence_verified=False),
+                      outcome="exit_reported", exit_report=dict(exit_code=0), success=False)
+        file.write_text(json.dumps(packet)); file.chmod(0o600)
+        other = self.open("tab")["created"]["block_id"]
+        before = self.view()
+        command = [BIN, "surfaces", "close", "--socket", str(self.socket), "--session", self.session,
+                   "--pane", other, "--publish-receipt-file", str(file)]
+        rejected = subprocess.run(command, env=self.env, capture_output=True, text=True, timeout=10)
+        self.assertEqual(rejected.returncode, 2, rejected.stdout + rejected.stderr)
+        self.assertEqual(self.view(), before, "mismatched prepared target must refuse before any close")
+        command[command.index("--pane") + 1] = self.anchor
+        file.chmod(0o644)
+        rejected = subprocess.run(command, env=self.env, capture_output=True, text=True, timeout=10)
+        self.assertEqual(rejected.returncode, 2)
+        self.assertEqual(self.view(), before)
+        file.chmod(0o600)
+        result, close = self.run_json(command)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        final = json.loads(file.read_text())
+        self.assertEqual(final["exit_report"], {"exit_code": 0})
+        self.assertTrue(final["success"])
+        self.assertTrue(final["cleanup"]["block_absence_verified"])
+        self.assertEqual(final["cleanup"]["block_absence"], "verified_absent")
+        self.assertEqual(final["cleanup"]["transport"]["receipt"], close)
+        self.assertEqual(final["receipt_state"], "final")
+        self.assertEqual(file.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(self.inspect(other)["block_id"], other)
+
+    def test_close_publisher_hard_deadline_covers_blocked_final_stdout(self):
+        directory = self.work / "blocked-publisher"
+        directory.mkdir(mode=0o700)
+        file = directory / "receipt.json"
+        file.write_text(json.dumps(dict(schema_version=1, kind="run_visible_result", receipt_state="cleanup_pending_or_unknown",
+            cleanup_owner="visible_supervisor", receipt_path=str(file), server="unix://" + str(self.socket), session_id=self.session,
+            created=dict(block_id=self.anchor), cleanup=dict(block_absence="unknown", block_absence_verified=False),
+            outcome="exit_reported", exit_report=dict(exit_code=0), success=False)))
+        file.chmod(0o600)
+        reader, writer = os.pipe()
+        process = None
+        try:
+            os.set_blocking(writer, False)
+            while True:
+                try:os.write(writer, b"x" * 4096)
+                except BlockingIOError:break
+            os.set_blocking(writer, True)
+            started = time.monotonic()
+            process = subprocess.Popen([BIN, "surfaces", "close", "--socket", str(self.socket), "--session", self.session,
+                "--pane", self.anchor, "--timeout-ms", "1000", "--publish-receipt-file", str(file)],
+                env=self.env, stdout=writer, stderr=subprocess.PIPE)
+            process.wait(timeout=6)
+            stderr = process.stderr.read().decode(errors="replace")
+            process.stderr.close()
+            self.assertEqual(process.returncode, 124, stderr)
+            self.assertLess(time.monotonic() - started, 5)
+            # Publication preceded stdout. A late watchdog exit cannot erase known evidence.
+            self.assertTrue(json.loads(file.read_text())["cleanup"]["block_absence_verified"])
+        finally:
+            os.close(reader);os.close(writer)
+            if process is not None and process.poll() is None:
+                process.kill();process.communicate(timeout=5)
+
     def test_explicit_focus_and_close_verify_only_the_requested_pane(self):
         tab = self.open("tab")["actual"]
         self.assertNotEqual(self.view()["active_window_id"], tab["window_id"])

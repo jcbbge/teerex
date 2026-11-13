@@ -125,3 +125,22 @@ TEEREX_BIN="$PWD/zig-out/bin/teerex" REX_BIN=/absolute/test-rex TEEREX_AGENTS_FE
 ```
 
 Integrator adds root `run-visible` dispatch to `rex_run.runVisible`, root help and named-host socket injection immediately after this verb; run and agents import the shared `scoped_channel` embedded Python module; no host/config schema is added. Root routing/combined CI/release and Rivet fleet cutover remain separate delivery steps. Do not remove `rex-tab.ts`, restart Rex, touch personal M5/hive, or delete existing relay/guards based on these disposable tests.
+
+### Detached visible execution
+
+`--detach` keeps supervision in the **visible pane's own program** and returns after verified placement, same-host identity, optional jobs registration and the supervisor handoff. The launch receipt has `kind:run_visible_launch`, `outcome:launched`, a32-hex `launch_id`, `session_id`, `created.block_id`, `supervisor_pid` and an absolute `receipt_path`. Its success describes launch, not command completion. A missing/lost launch ACK never authorizes retry. Other argv/cwd/env/stdin, deadline, retention, channel and jobs flags keep their contracts. The default execution deadline remains10000ms; LONG callers explicitly choose `--no-deadline`.
+
+Before self-close, the pane atomically writes exit/output evidence to the named receipt with `receipt_state:cleanup_pending_or_unknown`, `cleanup.block_absence:unknown` and `success:false`. Rex terminates the pane program when it closes itself. One already bounded native `surfaces close --publish-receipt-file ABS` invocation therefore publishes the verified absence afterward, marking `receipt_state:final` and recomputing final success. It has a5000ms RPC budget plus a hard2000ms publication/cleanup allowance, and never retries. A killed/lost publisher loses only absence evidence: the prepared command exit/output survives and stays unknown. This short-lived close is not a long-running supervisor.
+
+The pane program owns the actual command, capture thread and optional scoped channel after handoff; no separate long-running supervisor/daemon is started. The launch client can exit or disappear. After actual child exit, the supervisor closes the channel and forgets its tracked job. `jobs inspect` exposes `entry.receipt_path` while registered. The final private `run_visible_result` preserves exit/signal, separate output summaries, jobs/channel results and cleanup evidence. `--keep-open` retains normally exited success/failure panes; deadline/cancellation still requests scoped cleanup. Full-file capture still requires `--output-dir`.
+
+Read the final evidence independently of Rex:
+
+```sh
+teerex run-visible receipt --file /absolute/receipt_path
+teerex run-visible receipt --file /absolute/receipt_path --wait-ms 10000
+```
+
+`--wait-ms` defaults0, range0..86400000. While cleanup is pending/unknown, a positive wait also waits for final publication until its budget expires, then returns the preserved receipt with unknown absence. A zero wait returns any preserved receipt immediately; inspect `receipt_state` and `cleanup.block_absence`. An absent final file yields `kind:run_visible_receipt,outcome:pending`, exit0, including on wait expiry. Pending means **no final receipt yet**, not proof the command is running; supervisor loss or failed publication can remain pending. INT/TERM cancels only the read wait (130/143), never the command. Final reads return the stored JSON with exit0 even if the command failed; inspect `success`, `outcome`, `exit_report` and cleanup. Input must be an owned, single-link, nonsymlink regular0600 file, at most1MiB. Named-host routing selects only the command host; it injects no Rex socket into this offline leaf.
+
+Detached launch directories are retained, including the default private temporary directory. The caller consumes the final receipt and explicitly deletes its own directory after reconciling unknown outcomes; teerex starts no deletion timer. Choose `--output-dir` under persistent caller-owned storage when OS temporary-file lifetime is insufficient. Directory contents include sensitive argv/env/stdin and output; protect them accordingly. Controller death before handoff, supervisor SIGKILL, Rex loss and host loss cannot guarantee execution evidence or closure; do not replay uncertain work automatically.

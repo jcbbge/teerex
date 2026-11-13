@@ -103,6 +103,17 @@ class JobsTest(unittest.TestCase):
         self.block = p["block_id"]
         return self.block
 
+    def test_receipt_pointer_is_metadata_and_never_opens_the_file(self):
+        path = self.root / "missing-receipt.json"
+        tracked = self.track(receipt_file=path)["entry"]
+        self.assertEqual(tracked["receipt_path"], str(path))
+        self.assertFalse(path.exists())
+        result, inspected = self.invoke("inspect")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(inspected["entry"]["receipt_path"], str(path))
+        self.assertEqual(self.invoke("list")[1]["entries"][0]["receipt_path"], str(path))
+        self.assertFalse(path.exists())
+
     def test_list_empty_registry_creates_no_files(self):
         before = list(self.registry.iterdir())
         result, listing = self.invoke("list")

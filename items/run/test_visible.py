@@ -110,6 +110,149 @@ class VisibleTest(unittest.TestCase):
         self.anchor = json.loads(r.stdout)["created"]["block_id"]
         return self.anchor
 
+    def receipt(self, launch, wait=0):
+        process = subprocess.run([BIN, "run-visible", "receipt", "--file", launch["receipt_path"], "--wait-ms", str(wait)],
+                                 capture_output=True, text=True, env=self.runtime_env, timeout=max(10, wait / 1000 + 5))
+        self.assertEqual(process.returncode, 0, process.stdout + process.stderr)
+        return json.loads(process.stdout)
+
+    def test_detach_keep_open_handoff_jobs_metadata_and_private_receipt(self):
+        registry = self.work / "detach-jobs"
+        registry.mkdir(mode=0o700)
+        gate = self.work / "gate"
+        script = f"from pathlib import Path;import time,sys\nwhile not Path({str(gate)!r}).exists():time.sleep(.02)\nprint('detached α');sys.stderr.write('separate stderr');sys.exit(7)"
+        # Call directly: the detached receipt directory must outlive the launch client's exit.
+        process = subprocess.run(self.command(script, extra=["--detach", "--keep-open", "--no-deadline", "--registry", str(registry),
+                                                             "--owner", "rivet", "--purpose", "detached fixture"]),
+                                 env=self.runtime_env, capture_output=True, text=True, timeout=10)
+        self.assertEqual(process.returncode, 0, process.stdout + process.stderr)
+        launch = json.loads(process.stdout)
+        self.addCleanup(shutil.rmtree, launch["storage_dir"], True)
+        self.assertEqual(launch["kind"], "run_visible_launch")
+        self.assertEqual(launch["outcome"], "launched")
+        self.assertEqual(len(launch["launch_id"]), 32)
+        self.assertFalse(gate.exists())
+        self.assertIn(launch["created"]["block_id"], self.blocks())
+        self.assertEqual(self.receipt(launch, 50)["outcome"], "pending")
+        inspected = json.loads(subprocess.check_output([BIN, "--rex", self.rex, "jobs", "inspect", "--registry", str(registry),
+                               "--socket", str(self.socket), "--session", self.session, "--block", launch["created"]["block_id"]], env=self.runtime_env))
+        self.assertEqual(inspected["entry"]["receipt_path"], launch["receipt_path"])
+        gate.touch()
+        final = self.receipt(launch, 10000)
+        self.assertEqual(final["kind"], "run_visible_result")
+        self.assertEqual(final["exit_report"]["exit_code"], 7)
+        self.assertFalse(final["success"])
+        self.assertTrue(final["pane_retained_on_request"])
+        self.assertFalse(final["cleanup"]["attempted"])
+        self.assertEqual(raw(final["stdout"]), "detached α\n".encode())
+        self.assertEqual(raw(final["stderr"]), b"separate stderr")
+        self.assertEqual(final["jobs"]["forget_outcome"], "forgotten")
+        self.assertEqual(json.loads(subprocess.check_output([BIN, "jobs", "list", "--registry", str(registry)]))["entries"], [])
+        self.assertEqual(Path(launch["receipt_path"]).stat().st_mode & 0o777, 0o600)
+        self.assertIn(launch["created"]["block_id"], self.blocks())
+        # Reader is private, bounded, no-follow and independent of a Rex endpoint.
+        for mode in (0o644,):
+            Path(launch["receipt_path"]).chmod(mode)
+            rejected = subprocess.run([BIN, "run-visible", "receipt", "--file", launch["receipt_path"]], capture_output=True, text=True)
+            self.assertEqual(rejected.returncode, 1)
+        Path(launch["receipt_path"]).chmod(0o600)
+        link = self.work / "receipt-link"
+        link.symlink_to(launch["receipt_path"])
+        rejected = subprocess.run([BIN, "run-visible", "receipt", "--file", str(link)], capture_output=True, text=True)
+        self.assertEqual(rejected.returncode, 1)
+
+    def test_detach_success_failure_and_deadline_close_owned_pane(self):
+        sentinel = self.anchor_pane()
+        for code in (0, 7):
+            with self.subTest(code=code):
+                process = subprocess.run(self.command(f"import time,sys;time.sleep(.4);print('code {code}');sys.exit({code})", extra=["--detach"]),
+                                         env=self.runtime_env, capture_output=True, text=True, timeout=10)
+                self.assertEqual(process.returncode, 0, process.stdout + process.stderr)
+                launch = json.loads(process.stdout)
+                self.addCleanup(shutil.rmtree, launch["storage_dir"], True)
+                final = self.receipt(launch, 10000)
+                self.assertEqual(final["exit_report"]["exit_code"], code)
+                self.assertEqual(final["success"], code == 0)
+                self.assertTrue(final["cleanup"]["block_absence_verified"])
+                self.assertNotIn(launch["created"]["block_id"], self.blocks())
+                self.assertIn(sentinel, self.blocks())
+                self.assertEqual(json.loads(Path(launch["receipt_path"]).read_text()), final)
+        process = subprocess.run(self.command("import time;time.sleep(60)", extra=["--detach", "--keep-open", "--timeout-ms", "150"]),
+                                 env=self.runtime_env, capture_output=True, text=True, timeout=10)
+        launch = json.loads(process.stdout)
+        self.addCleanup(shutil.rmtree, launch["storage_dir"], True)
+        final = self.receipt(launch, 10000)
+        self.assertEqual(final["outcome"], "deadline_exceeded")
+        self.assertIsNotNone(final["exit_report"]["signal"])
+        self.assertTrue(final["cleanup"]["block_absence_verified"])
+        self.assertFalse(final["pane_retained_on_request"])
+
+    def test_detach_caller_loss_channel_jobs_and_binary_output_survive(self):
+        channel = self.root / ("detach-channel-" + self.work.name)
+        channel.mkdir(mode=0o700)
+        registry = self.work / "jobs"
+        registry.mkdir(mode=0o700)
+        block, log = self.receiver()
+        gate = self.work / "caller-lost-gate"
+        script = f'''import os,subprocess,time,sys
+from pathlib import Path
+while not Path({str(gate)!r}).exists():time.sleep(.02)
+p=subprocess.run([{BIN!r},'agents','channel','--handle',os.environ['AGENT_CHANNEL'],'--request-id','f'*32,'--operation','send','--to','report-to','--message-file','-'],input=b'caller is gone',capture_output=True)
+assert p.returncode==0,(p.stdout,p.stderr)
+os.write(1,b'\\x00\\xffdetached\\n');sys.exit(0)
+'''
+        command = self.command(script, extra=["--detach", "--no-deadline", "--registry", str(registry), "--owner", "rivet", "--purpose", "caller loss",
+                                             *self.channel_options(channel, block)])
+        wrapper = ("import subprocess,time,sys\n" + f"p=subprocess.run({command!r},capture_output=True,text=True)\n" +
+                   "assert p.returncode==0,(p.stdout,p.stderr)\nprint(p.stdout,flush=True)\ntime.sleep(60)\n")
+        caller = subprocess.Popen([sys.executable, "-c", wrapper], env=self.runtime_env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        launch = None
+        try:
+            import select
+            self.assertTrue(select.select([caller.stdout], [], [], 10)[0])
+            launch = json.loads(caller.stdout.readline())
+            self.addCleanup(shutil.rmtree, launch["storage_dir"], True)
+            self.assertEqual(launch["kind"], "run_visible_launch")
+            caller.kill()
+            caller.communicate(timeout=5)
+            self.assertEqual(self.receipt(launch)["outcome"], "pending")
+            gate.touch()
+            final = self.receipt(launch, 15000)
+            self.assertTrue(final["success"], final)
+            self.assertEqual(raw(final["stdout"]), b"\x00\xffdetached\n")
+            self.assertTrue(final["cleanup"]["block_absence_verified"])
+            self.assertEqual(final["jobs"]["forget_outcome"], "forgotten")
+            self.assertEqual(final["channel"]["outcomes"], {"delivered": 1})
+            self.assertEqual([json.loads(line) for line in log.read_text().splitlines()], ["FROM teerex-test: caller is gone"])
+            self.assertEqual({p.name for p in channel.iterdir()}, {"receipts.jsonl"})
+        finally:
+            if caller.poll() is None:
+                caller.kill();caller.communicate(timeout=5)
+            gate.touch()
+
+    def test_detach_close_publisher_loss_and_timeout_keep_exit_evidence(self):
+        for mode in ("kill-publisher", "hang-close", "drop-close"):
+            with self.subTest(mode=mode):
+                wrapper, log = self.wrapper(mode)
+                result = subprocess.run(self.command("print('exit evidence survives')", extra=["--detach"], rex=wrapper),
+                                        env=self.runtime_env, capture_output=True, text=True, timeout=10)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                launch = json.loads(result.stdout)
+                self.addCleanup(shutil.rmtree, launch["storage_dir"], True)
+                started = time.monotonic()
+                final = self.receipt(launch, 12000)
+                self.assertLess(time.monotonic() - started, 12)
+                self.assertEqual(final["exit_report"]["exit_code"], 0)
+                self.assertEqual(raw(final["stdout"]), b"exit evidence survives\n")
+                self.assertFalse(final["success"])
+                self.assertFalse(final["cleanup"]["block_absence_verified"])
+                self.assertEqual(final["cleanup"]["block_absence"], "unknown")
+                self.assertEqual(log.read_text().splitlines().count("close"), 1)
+                if mode == "hang-close":
+                    self.assert_stopped(int(Path(str(log) + "-pid").read_text()))
+                if mode == "drop-close":
+                    self.assertNotIn(launch["created"]["block_id"], self.blocks())
+
     def channel_options(self, directory, block):
         return ["--channel-dir", str(directory), "--report-to-session", self.session, "--report-to-block", block]
 
@@ -135,7 +278,7 @@ class VisibleTest(unittest.TestCase):
         self.assertTrue(ready.exists())
         return block, log
 
-    def channel_round_trip(self, fenced):
+    def channel_round_trip(self, fenced, detached=False):
         directory = self.root / ("channel-" + self.work.name)
         directory.mkdir(mode=0o700)
         registry = self.root / ("registry-" + self.work.name)
@@ -185,15 +328,24 @@ if {fenced!r}:
         options = self.channel_options(directory, block) + ["--timeout-ms", "60000"]
         if fenced:
             options += ["--registry", str(registry), "--owner", "rivet", "--purpose", "fenced channel"]
+        if detached:
+            options += ["--detach"]
         process = subprocess.Popen(self.command(argv=argv, extra=options),
                                    env=self.runtime_env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        launch = None
         try:
+            if detached:
+                stdout, stderr = process.communicate(timeout=10)
+                self.assertEqual(process.returncode, 0, stdout + stderr)
+                launch = json.loads(stdout)
+                self.addCleanup(shutil.rmtree, launch["storage_dir"], True)
             for _ in range(700):
-                if sent.exists() or process.poll() is not None:
+                if sent.exists() or (not detached and process.poll() is not None):
                     break
                 time.sleep(.02)
             self.assertTrue(sent.exists(), "child stopped before both sends")
-            self.assertIsNone(process.poll())
+            if not detached:
+                self.assertIsNone(process.poll())
             receipts = directory / "receipts.jsonl"
             live = [json.loads(line) for line in receipts.read_text().splitlines()]
             self.assertEqual([line["body"] for line in live], ["first β\n", "second report"])
@@ -201,9 +353,14 @@ if {fenced!r}:
             self.assertEqual(stat.S_IMODE(receipts.stat().st_mode), 0o600)
             (directory / "caller-owned").write_text("keep")
             gate.touch()
-            stdout, stderr = process.communicate(timeout=15)
-            packet = json.loads(stdout)
-            self.assertEqual(process.returncode, 0, stderr + stdout)
+            if detached:
+                packet = self.receipt(launch, 15000)
+                self.assertTrue(packet["success"], packet)
+                self.assertTrue(packet["cleanup"]["block_absence_verified"])
+            else:
+                stdout, stderr = process.communicate(timeout=15)
+                packet = json.loads(stdout)
+                self.assertEqual(process.returncode, 0, stderr + stdout)
             if fenced:
                 self.assertEqual(packet["jobs"]["track_outcome"], "tracked")
                 self.assertEqual(packet["jobs"]["forget_outcome"], "forgotten")
@@ -221,6 +378,9 @@ if {fenced!r}:
             self.assertTrue(directory.is_dir())
             self.assertEqual({p.name for p in directory.iterdir()}, {"receipts.jsonl", "caller-owned"})
         finally:
+            gate.touch()
+            if launch is not None:
+                self.receipt(launch, 10000)
             if process.poll() is None:
                 process.terminate()
                 process.communicate(timeout=10)
@@ -233,6 +393,12 @@ if {fenced!r}:
         self.assertEqual(sys.platform, "linux")
         self.assertIsNotNone(shutil.which("bwrap"))
         self.channel_round_trip(True)
+
+    @unittest.skipUnless(os.environ.get("TEEREX_AGENTS_FENCE") == "1", "explicit real Linux bubblewrap acceptance gate")
+    def test_detached_channel_through_real_read_only_bubblewrap_bind(self):
+        self.assertEqual(sys.platform, "linux")
+        self.assertIsNotNone(shutil.which("bwrap"))
+        self.channel_round_trip(True, detached=True)
 
     def test_channel_receipt_cap_and_cancellation_cleanup(self):
         block = self.anchor_pane()
@@ -638,6 +804,11 @@ assert json.loads(data)['result']['failure_reason']=='channel_request_limit'
             " except (ValueError,IndexError): pass\n"
             "if operation:\n"
             " with open(log,'a') as f:f.write(operation+'\\n')\n"
+            "if mode=='kill-publisher' and operation=='close': os.kill(os.getppid(),9);sys.exit(0)\n"
+            "if mode=='hang-close' and operation=='close':\n"
+            " import time\n"
+            " from pathlib import Path\n"
+            " Path(log+'-pid').write_text(str(os.getpid()));time.sleep(60)\n"
             "p=subprocess.run([real,*a],capture_output=True)\n"
             "out=p.stdout\n"
             "if mode=='old-api' and 'server.version' in a: out=json.dumps({'api_revision':12}).encode()\n"
