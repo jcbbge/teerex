@@ -137,6 +137,22 @@ class FeedTests(unittest.TestCase):
                 wait_for(lambda e:e['kind']=='agent' and e['now']=='Test push')
                 (root/'calls'/'calls.jsonl').write_text(json.dumps(dict(phase='start',call_id='x',verb='send'))+'\n'+json.dumps(dict(phase='end',call_id='x',exit=0))+'\n')
                 wait_for(lambda e:e['kind']=='stream' and e['text']=='message delivered')
+                if os.environ.get('TEEREX_BIN'):
+                    config=root/'hosts.json'
+                    config.write_text(json.dumps(dict(schema_version=1,hosts=dict(hive=dict(host_id='hive',platform='linux-x86_64' if sys.platform=='linux' else 'macos-arm64',transport='local',home=tmp,socket=str(socket),rex=REX,teerex=os.environ['TEEREX_BIN'],store=str(root/'store'))))))
+                    merged=subprocess.Popen([os.environ['TEEREX_BIN'],'board','feed','--config',str(config),'--hosts','hive,absent'],stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,env=dict(os.environ,HOME=tmp))
+                    try:
+                        received=queue.Queue()
+                        threading.Thread(target=lambda:[received.put(json.loads(line)) for line in merged.stdout],daemon=True).start()
+                        found=set();end=time.monotonic()+8
+                        while len(found)<2 and time.monotonic()<end:
+                            event=received.get(timeout=max(.01,end-time.monotonic()))
+                            if event['host']=='hive' and event['kind']=='vitals':found.add('healthy')
+                            if event['host']=='absent' and event['kind']=='host' and not event['reachable']:found.add('absent')
+                        self.assertEqual(found,{'healthy','absent'})
+                    finally:
+                        merged.terminate();merged.communicate(timeout=5)
+
             finally:
                 if process:
                     process.terminate();process.communicate(timeout=5)
