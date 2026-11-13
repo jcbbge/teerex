@@ -19,7 +19,7 @@ import time
 import unittest
 
 from common import ROOT, Server, alive, controls, execute, observations, save, sha
-from records import ROWS, RUBRIC, contract, read_json, validate, verdict
+from records import ROWS, RUBRIC, contract, input_snapshot, read_json, validate, verdict
 
 MANAGER = ROOT / "tools/cartridges/cartridges.py"
 
@@ -249,7 +249,7 @@ def run_one(args, payload, version, index):
                         time.sleep(1)
                     stdout, stderr = watcher.communicate(timeout=5)
                     if watcher.returncode != 124 or len(samples) < 50:
-                        raise ValueError("long_watch_exit_or_samples_failed")
+                        raise ValueError("long_watch_exit_or_samples_failed;exit=" + str(watcher.returncode) + ";samples=" + str(len(samples)) + ";elapsed_ms=" + str(round((time.monotonic() - began) * 1000)))
                     first = next(rss for elapsed, rss in samples if elapsed >= 10)
                     growth = max(0, max(rss for elapsed, rss in samples if elapsed >= 10) - first)
                     if growth > 256:
@@ -364,9 +364,10 @@ def main(argv=None):
         record = dict(schema_version=1, kind="cartridge_readiness", id=args.item, platform=package["platform"],
             rubric=RUBRIC, rubric_sha256=sha(ROOT / RUBRIC), source_commit=revision, source_tree_dirty=False,
             covered_paths=contract(args.item)["covered_paths"], payload_sha256=sha(payload), runs=[])
+        record.update(input_snapshot(record["covered_paths"]))
         if args.merge:
             previous = validate(read_json(args.merge), args.item, package["platform"], record["covered_paths"])
-            if any(previous[key] != record[key] for key in ("source_commit", "payload_sha256", "rubric_sha256")):
+            if any(previous[key] != record[key] for key in ("covered_inputs_sha256", "payload_sha256", "rubric_sha256")):
                 raise ValueError("readiness_merge_identity_mismatch")
             record["runs"].extend(previous["runs"])
         for index in range(args.runs):
@@ -376,6 +377,16 @@ def main(argv=None):
         args.out.parent.mkdir(parents=True, exist_ok=True)
         save(args.out, record, mode=0o644)
         print(json.dumps(dict(kind="readiness_result", verdict=record["verdict"], failed_rows=record["failed_rows"], evidenced_api_revisions=record["evidenced_api_revisions"])))
+        detailed = set()
+        for index, run in enumerate(record["runs"]):
+            for row, result in run["rows"].items():
+                if not result["pass"]:
+                    detailed.add(row)
+                    print(json.dumps(dict(kind="readiness_failed_row", run_index=index, row=row, detail=result["detail"])))
+        for row in record["failed_rows"]:
+            if row not in detailed:
+                detail = "requires three fully passing runs per API with distinct server identities" if row == "R3" else "aggregate evidence criterion failed"
+                print(json.dumps(dict(kind="readiness_failed_row", row=row, detail=detail)))
         return 0 if record["verdict"] == "ready" else 1
     except (ValueError, OSError, KeyError, TypeError, subprocess.SubprocessError) as error:
         print(json.dumps(dict(kind="readiness_error", reason=str(error).splitlines()[0][:200])), file=sys.stderr)

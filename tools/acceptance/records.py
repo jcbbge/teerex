@@ -37,7 +37,27 @@ def sha(path):
 
 
 def contract(item, root=ROOT):
-    return read_json(root / "tools/acceptance/contracts" / (item + ".json"))
+    value = read_json(root / "tools/acceptance/contracts" / (item + ".json"))
+    # Managed execution is part of readiness, alongside the native payload.
+    value["covered_paths"] = list(dict.fromkeys([*value["covered_paths"], "tools/cartridges/cartridges.py",
+        "tools/cartridges/package.py", "tools/cartridges/manifests/source.json"]))
+    return value
+
+
+def inputs_hash(files):
+    return hashlib.sha256(json.dumps(files, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()).hexdigest()
+
+
+def input_snapshot(paths, root=ROOT):
+    names = subprocess.check_output(["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z", "--", *paths], cwd=root).decode().split("\0")
+    files = {}
+    for name in sorted(set(filter(None, names))):
+        path = root / name
+        require(not path.is_symlink(), "symlink_readiness_input")
+        if path.exists():
+            require(path.is_file(), "nonregular_readiness_input")
+            files[name] = sha(path)
+    return dict(covered_files_sha256=files, covered_inputs_sha256=inputs_hash(files))
 
 
 def verdict(record):
@@ -86,6 +106,14 @@ def validate(record, item=None, platform=None, expected_paths=None):
     for path in paths:
         require(isinstance(path, str) and not PurePosixPath(path).is_absolute() and str(PurePosixPath(path)) == path and ".." not in PurePosixPath(path).parts, "unsafe_readiness_path")
     require(expected_paths is None or paths == expected_paths, "readiness_coverage_mismatch")
+    if "covered_files_sha256" in record or "covered_inputs_sha256" in record:
+        files = record.get("covered_files_sha256")
+        require(isinstance(files, dict) and files, "invalid_readiness_input_files")
+        for name, digest in files.items():
+            require(isinstance(name, str) and any(name == p or name.startswith(p + "/") for p in paths)
+                    and ".." not in PurePosixPath(name).parts and not PurePosixPath(name).is_absolute()
+                    and isinstance(digest, str) and HEX.fullmatch(digest), "invalid_readiness_input_file")
+        require(record.get("covered_inputs_sha256") == inputs_hash(files), "readiness_input_hash_mismatch")
     runs = record.get("runs")
     require(isinstance(runs, list) and len(runs) <= 128, "invalid_readiness_runs")
     for run in runs:
@@ -110,23 +138,20 @@ def readiness(item, platform, revision, root=ROOT, payload_hash=None):
     if not path.exists():
         return "absent", None
     mapping = contract(item, root)
-    record = validate(read_json(path), item, platform, mapping["covered_paths"])
+    record = validate(read_json(path), item, platform)
+    if "covered_inputs_sha256" not in record:
+        return "stale:missing_content_hash", None
+    require(record["covered_paths"] == mapping["covered_paths"], "readiness_coverage_mismatch")
     if record["verdict"] != "ready":
         return "experimental", None
-    def git(*args):
-        return subprocess.run(["git", *args], cwd=root, capture_output=True, text=True)
-    if git("merge-base", "--is-ancestor", record["source_commit"], revision).returncode:
-        return "stale:source_commit", None
-    changes = git("diff", "--name-only", record["source_commit"], revision, "--", *record["covered_paths"])
-    require(changes.returncode == 0, "readiness_git_diff_failed")
-    if changes.stdout.strip():
-        return "stale:" + changes.stdout.splitlines()[0], None
-    dirty = git("status", "--porcelain", "--", *record["covered_paths"])
-    if dirty.stdout.strip():
-        return "stale:working_tree", None
+    current = input_snapshot(record["covered_paths"], root)
+    if current["covered_inputs_sha256"] != record["covered_inputs_sha256"]:
+        before, after = record["covered_files_sha256"], current["covered_files_sha256"]
+        changed = sorted(name for name in before.keys() | after.keys() if before.get(name) != after.get(name))
+        return "stale:" + ",".join(changed), None
     if sha(root / RUBRIC) != record["rubric_sha256"]:
         return "stale:" + RUBRIC, None
-    if payload_hash is not None and payload_hash != record["payload_sha256"]:
-        return "stale:payload_sha256", None
-    return "ready", dict(record=str(path.relative_to(root)), source_commit=record["source_commit"],
-                         evidenced_api_revisions=record["evidenced_api_revisions"])
+    # Artifact bytes and source commit describe the measured run. Covered
+    # input content is the staleness authority, including across rebuilds.
+    return "ready", dict(record=str(path.relative_to(root)), source_commit=record["source_commit"], covered_inputs_sha256=record["covered_inputs_sha256"],
+                         measured_payload_sha256=record["payload_sha256"], evidenced_api_revisions=record["evidenced_api_revisions"])

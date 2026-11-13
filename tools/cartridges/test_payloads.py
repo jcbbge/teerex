@@ -258,11 +258,16 @@ def main():
         packages = {m["id"]: m for m in receipt["packages"]}
         assert packages, "catalog contains no native packages"
         cases = []
+        ready_plan = call("install", "--all", "--catalog", str(args.catalog.resolve()))
+        assert sorted(item["id"] for item in ready_plan["packages"]) == sorted(key for key, item in packages.items() if item["status"] == "ready")
         for key, item in packages.items():
             result = subprocess.run(command + ["run", key, "--", "--help"], env=env, capture_output=True, text=True, timeout=10)
             assert result.returncode == 0, result.stderr
             assert "Usage:" in result.stdout, result.stdout
-            assert item["kind"] == "program" and item["status"] == "experimental"
+            assert item["kind"] == "program" and item["status"] in ("experimental", "ready")
+            if item["status"] == "ready":
+                evidence = item["compatibility"]["readiness"]
+                assert evidence["covered_inputs_sha256"] and evidence["evidenced_api_revisions"] == item["compatibility"]["rex_api_revisions"]
             if key == "observe":
                 assert "teerex spawn" not in result.stdout and "teerex run" not in result.stdout
             (root / "data" / key / "user-notes").write_text("retain this")

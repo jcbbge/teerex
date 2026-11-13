@@ -10,7 +10,7 @@ import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import execute
 from fail_fixture import ASSERTION, expected
-from records import ROWS, RUBRIC, readiness, sha, validate, verdict
+from records import ROWS, RUBRIC, readiness, sha, validate, verdict, input_snapshot, inputs_hash, contract
 from baseline import summarize
 
 
@@ -23,6 +23,7 @@ def record(commit="a" * 40):
             server_instance_sha256=str(n) * 64, rex=dict(api_revision=13, sha256="d" * 64, version="fixture", commit="fixture"),
             os="fixture", arch="fixture", started_at="fixture", finished_at="fixture",
             rows={key: {"pass": True, "detail": "fixture"} for key in ROWS}))
+    value.update(covered_files_sha256={"input.zig": "e" * 64}, covered_inputs_sha256=inputs_hash({"input.zig": "e" * 64}))
     value.update(verdict(value))
     return value
 
@@ -109,14 +110,32 @@ class EvidenceTest(unittest.TestCase):
                 readiness("observe", "x86_64-linux", commit, root)
             value = record(commit)
             value["rubric_sha256"] = sha(root / RUBRIC)
+            value["covered_paths"] = contract("observe", root)["covered_paths"]
+            value.update(input_snapshot(value["covered_paths"], root))
+            legacy = {k: v for k, v in value.items() if k not in ("covered_files_sha256", "covered_inputs_sha256")}
+            path.write_text(json.dumps(legacy))
+            self.assertEqual(readiness("observe", "x86_64-linux", commit, root)[0], "stale:missing_content_hash")
             path.write_text(json.dumps(value))
             state, evidence = readiness("observe", "x86_64-linux", commit, root, "c" * 64)
             self.assertEqual((state, evidence["evidenced_api_revisions"]), ("ready", [13]))
-            self.assertEqual(readiness("observe", "x86_64-linux", commit, root, "e" * 64)[0], "stale:payload_sha256")
-            (root / "input.zig").write_text("changed\n")
+            self.assertEqual(readiness("observe", "x86_64-linux", commit, root, "e" * 64)[0], "ready")
+            # Later unrelated commits, checkout timestamps and absent provenance
+            # objects do not invalidate identical covered content.
+            (root / "unrelated.md").write_text("later commit\n")
+            git("add", "unrelated.md")
+            git("commit", "-qm", "unrelated")
+            value["source_commit"] = "f" * 40
+            path.write_text(json.dumps(value))
+            (root / "input.zig").touch()
+            self.assertEqual(readiness("observe", "x86_64-linux", git("rev-parse", "HEAD"), root)[0], "ready")
+            (root / "input.zig").write_text("fixture\n\n")
             git("add", "input.zig")
             git("commit", "-qm", "change covered input")
             self.assertEqual(readiness("observe", "x86_64-linux", git("rev-parse", "HEAD"), root)[0], "stale:input.zig")
+            (root / "tools/cartridges/cartridges.py").write_text("manager change\n")
+            self.assertEqual(readiness("observe", "x86_64-linux", git("rev-parse", "HEAD"), root)[0], "stale:input.zig,tools/cartridges/cartridges.py")
+            (root / "input.zig").unlink()
+            self.assertIn("input.zig", readiness("observe", "x86_64-linux", "0" * 40, root)[0])
 
 
 if __name__ == "__main__":
