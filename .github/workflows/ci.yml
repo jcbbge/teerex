@@ -295,6 +295,12 @@ jobs:
           REX_BIN: ${{ runner.temp }}/rex-bin/rex
         run: python3 tools/cartridges/test_payloads.py --catalog "$RUNNER_TEMP/cartridge-catalog" --with-rex
 
+      - name: Probe API13 replay data wire on a private server
+        if: matrix.rex-api == 13
+        env:
+          REX_BIN: ${{ runner.temp }}/rex-bin/rex
+        run: python3 items/replay/test_wire.py -v
+
       - name: Run API13 visible foreground execution and cleanup contracts
         if: matrix.rex-api == 13
         env:
