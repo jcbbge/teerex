@@ -215,3 +215,23 @@ pub fn collect(allocator: std.mem.Allocator, argv: []const []const u8, env: *con
         .group_kill = group_kill,
     };
 }
+
+// Only the combined root sets this after resolving an omitted socket. Explicit
+// and standalone invocations retain their original serializer and exact bytes.
+pub var socket_source: ?[]const u8 = null;
+
+pub fn receiptJson(allocator: std.mem.Allocator, value: anytype, options: std.json.Stringify.Options) ![]u8 {
+    const source = socket_source orelse return std.json.Stringify.valueAlloc(allocator, value, options);
+    var output: std.Io.Writer.Allocating = .init(allocator);
+    errdefer output.deinit();
+    var stream: std.json.Stringify = .{ .writer = &output.writer, .options = options };
+    try stream.beginObject();
+    try stream.objectField("socket_source");
+    try stream.write(source);
+    inline for (@typeInfo(@TypeOf(value)).@"struct".fields) |field| {
+        try stream.objectField(field.name);
+        try stream.write(@field(value, field.name));
+    }
+    try stream.endObject();
+    return output.toOwnedSlice();
+}

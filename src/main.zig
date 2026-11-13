@@ -29,6 +29,8 @@ const usage =
     \\  clutch take|release|status|palette  Cooperative human takeover and hand-back
     \\Existing tools: observe, compare, watch, run, offstage, doctor, send, spawn,
     \\                jobs, adapters, maneuver-check, filter
+    \\Socket verbs default --socket from percent-decoded REX_SERVER (unix://), then platform home/runtime path.
+    \\Defaulted observe/watch/doctor and boards probe receipts report socket_source. Explicit and named-host calls retain their contracts.
     \\Use COMMAND --help for exact flags, effects, evidence and limits.
     \\Who: operators and agents. What: inspectable programs, not a Rex fork/plugin daemon.
     \\When: explicit invocation; every managed agent/board remains visible and controllable.
@@ -98,7 +100,7 @@ fn send(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
 
 fn run(allocator: std.mem.Allocator) !void {
     const all = try std.process.argsAlloc(allocator);
-    const args = all[1..];
+    var args: []const []const u8 = all[1..];
     if (args.len == 1 and std.mem.eql(u8, args[0], "--version")) {
         try std.fs.File.stdout().writeAll("teerex " ++ version ++ "\n");
         return;
@@ -142,6 +144,7 @@ fn run(allocator: std.mem.Allocator) !void {
         std.debug.print("teerex: explicit Rex executable {s}; selected by --rex, not authenticated\n", .{args[1]});
         return std.process.execve(allocator, forwarded.items, &env);
     }
+    args = try withDefaultSocket(allocator, args);
     const command = args[0];
     const rest = args[1..];
     if (std.mem.eql(u8, command, "replay")) finish(allocator, try @import("rex_replay").run(allocator, rest));
@@ -193,4 +196,90 @@ fn run(allocator: std.mem.Allocator) !void {
     if (std.mem.eql(u8, command, "maneuver-check")) finish(allocator, try @import("rex_maneuvers").run(allocator, rest, @import("rex_observe")));
     if (std.mem.eql(u8, command, "filter")) finish(allocator, try @import("rex_filter").run(allocator, rest, @import("rex_observe")));
     finish(allocator, try @import("rex_observe").runObservations(allocator, args));
+}
+
+fn eq(a: []const u8, b: []const u8) bool {
+    return std.mem.eql(u8, a, b);
+}
+
+// Match leaves, not command families: offline inspection/planning gets no target.
+fn takesSocket(args: []const []const u8) bool {
+    if (args.len == 0) return false;
+    for (args) |arg| {
+        if (eq(arg, "--")) break;
+        if (eq(arg, "--help")) return false;
+    }
+    const command = args[0];
+    for ([_][]const u8{ "observe", "watch", "run", "run-visible", "offstage", "doctor", "send", "spawn", "adapters" }) |name| {
+        if (eq(command, name)) return true;
+    }
+    if (eq(command, "jobs")) return args.len > 1 and !eq(args[1], "list");
+    if (eq(command, "surfaces")) return args.len > 1 and (!eq(args[1], "palette") or (args.len > 2 and eq(args[2], "install")));
+    if (eq(command, "maneuver-check")) {
+        for (args) |arg| if (eq(arg, "--list")) return false;
+        return true;
+    }
+    if (eq(command, "recovery")) return args.len > 1 and !eq(args[1], "inspect");
+    if (eq(command, "snapshot") or eq(command, "restore") or eq(command, "update")) return true;
+    if (eq(command, "boards")) return args.len > 1 and eq(args[1], "probe");
+    if (eq(command, "agents")) return args.len > 1 and (eq(args[1], "launch") or eq(args[1], "human"));
+    return false;
+}
+
+const SocketSelection = struct { path: []const u8, source: []const u8 };
+
+fn defaultSocket(allocator: std.mem.Allocator, env: *const std.process.EnvMap) !SocketSelection {
+    if (env.get("REX_SERVER")) |server| {
+        if (!std.mem.startsWith(u8, server, "unix://")) return error.RexServerMustBeUnix;
+        const encoded = server[7..];
+        var path: std.ArrayList(u8) = .empty;
+        var i: usize = 0;
+        while (i < encoded.len) : (i += 1) {
+            const byte = if (encoded[i] == '%') blk: {
+                if (i + 2 >= encoded.len or !std.ascii.isHex(encoded[i + 1]) or !std.ascii.isHex(encoded[i + 2])) return error.InvalidRexServerEscape;
+                const decoded = std.fmt.parseUnsigned(u8, encoded[i + 1 .. i + 3], 16) catch return error.InvalidRexServerEscape;
+                i += 2;
+                break :blk decoded;
+            } else encoded[i];
+            if (byte == 0) return error.InvalidRexServerPath;
+            try path.append(allocator, byte);
+        }
+        if (!std.fs.path.isAbsolute(path.items)) return error.InvalidRexServerPath;
+        return .{ .path = path.items, .source = "REX_SERVER" };
+    }
+    const builtin = @import("builtin");
+    const path = switch (builtin.os.tag) {
+        .linux => try std.fmt.allocPrint(allocator, "/run/user/{d}/rex/server.sock", .{std.os.linux.getuid()}),
+        .macos => try std.fs.path.join(allocator, &.{ env.get("HOME") orelse return error.HomeRequired, "Library/Application Support/rex/server.sock" }),
+        else => return error.UnsupportedSocketPlatform,
+    };
+    return .{ .path = path, .source = "platform_default" };
+}
+
+// A borrowed argv remains untouched for explicit sockets and offline leaves.
+fn withDefaultSocket(allocator: std.mem.Allocator, args: []const []const u8) ![]const []const u8 {
+    for (args) |arg| {
+        if (eq(arg, "--")) break;
+        if (eq(arg, "--socket")) return args;
+    }
+    if (!takesSocket(args)) return args;
+    var env = try std.process.getEnvMap(allocator);
+    const selected = try defaultSocket(allocator, &env);
+    try env.put("TEEREX_SOCKET_SOURCE", selected.source);
+    // The invocation owns this arena for its lifetime. Publish one complete,
+    // null-terminated environment for both native leaf snapshots and execv.
+    const environ = try std.process.createNullDelimitedEnvMap(allocator, &env);
+    if (@import("builtin").link_libc) {
+        std.c.environ = environ.ptr;
+    } else {
+        std.os.environ = @as([*][*:0]u8, @ptrCast(environ.ptr))[0..environ.len];
+    }
+    @import("supervised_child").socket_source = selected.source;
+    var resolved: std.ArrayList([]const u8) = .empty;
+    var at: usize = 1;
+    while (at < args.len and !std.mem.startsWith(u8, args[at], "--")) : (at += 1) {}
+    try resolved.appendSlice(allocator, args[0..at]);
+    try resolved.appendSlice(allocator, &.{ "--socket", selected.path });
+    try resolved.appendSlice(allocator, args[at..]);
+    return resolved.items;
 }

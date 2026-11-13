@@ -299,6 +299,11 @@ def validate_state(s):
         seen.append(r["target"])
 
 
+def socket_receipt(fields):
+    source = os.environ.get("TEEREX_SOCKET_SOURCE")
+    return dict(socket_source=source, **fields) if source in ("REX_SERVER", "platform_default") else fields
+
+
 def result(**fields):
     print(json.dumps(dict(schema_version=1, **fields), ensure_ascii=False), flush=True)
 
@@ -1033,7 +1038,7 @@ def main(argv=None):
         a.input_deadline = time.monotonic() + a.timeout_ms / 1000
     if a.command == "probe":
         check(options.count("--jobs-registry") <= 1, "duplicate_option")
-        print(json.dumps(probe(a.socket, a.jobs_registry, a.teerex)), flush=True)
+        print(json.dumps(socket_receipt(probe(a.socket, a.jobs_registry, a.teerex))), flush=True)
         return 0
     if a.command == "ask":
         return deliver_ask(a)

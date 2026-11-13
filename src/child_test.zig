@@ -81,3 +81,20 @@ test "signals preserve cancellation outcome and can be consumed for bounded clea
     try std.testing.expectEqual(@as(u8, std.posix.SIG.INT), supervised.takeRequestedSignal());
     try std.testing.expectEqual(@as(u8, 0), supervised.requestedSignal());
 }
+
+test "socket receipt helper leaves explicit serialization byte-identical" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const value = .{ .text = "quote \" α", .nothing = @as(?u8, null), .nested = .{ .number = 3 } };
+    supervised.socket_source = null;
+    const ordinary = try std.json.Stringify.valueAlloc(a, value, .{ .whitespace = .indent_2 });
+    const explicit = try supervised.receiptJson(a, value, .{ .whitespace = .indent_2 });
+    try std.testing.expectEqualStrings(ordinary, explicit);
+    supervised.socket_source = "REX_SERVER";
+    defer supervised.socket_source = null;
+    const defaulted = try supervised.receiptJson(a, value, .{});
+    const parsed = try std.json.parseFromSlice(std.json.Value, a, defaulted, .{});
+    try std.testing.expectEqualStrings("REX_SERVER", parsed.value.object.get("socket_source").?.string);
+    try std.testing.expect(parsed.value.object.get("nothing").? == .null);
+}

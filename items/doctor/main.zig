@@ -6,6 +6,7 @@ const usage =
     \\Usage: teerex doctor --socket /absolute/path [--timeout-ms N] [--baseline FILE]
     \\Read-only, narrow API-10..13 diagnosis for observe/watch/run. Requires macOS/Linux and Rex on PATH (or global --rex ABS / TEEREX_REX).
     \\Uses only the explicit existing socket; never autostarts, upgrades, configures, reads terminal text or executes argv.
+    \\Combined root defaults omitted socket; defaulted JSON includes socket_source. Explicit/standalone packets stay unchanged.
     \\Reports rex_executable, client/server mismatch and platform applicability (Linux run: not_applicable).
     \\Checks CLI/server versions, five selected method descriptions and Lua binding shapes, not program behavior.
     \\Discovery is not permission. Advertised requirements do not prove execution, cleanup or input safety.
@@ -314,7 +315,7 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
         d.cli.?.api_min_revision == d.server.?.api_min_revision and std.mem.eql(u8, d.cli.?.platform, d.server.?.platform) and
         std.mem.eql(u8, d.cli.?.rex_version, d.server.?.rex_version) and optionalEqual(d.cli.?.commit, d.server.?.commit) and
         optionalEqual(d.cli.?.built_at, d.server.?.built_at) and d.cli.?.dirty == d.server.?.dirty else @as(?bool, null);
-    const output = try std.json.Stringify.valueAlloc(allocator, .{
+    const output = try supervised.receiptJson(allocator, .{
         .schema_version = 1,
         .kind = "rex_compatibility_doctor",
         .server = endpoint,

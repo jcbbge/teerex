@@ -8,7 +8,7 @@ API10–13 acceptance without server restart/update first shipped in the compati
 
 ## Contract and limits
 
-- Select an absolute Unix socket path and full `session:UUID` / `block:UUID` explicitly. No current-focus, label, ID-suffix, or `REX_*` environment fallback selects the target.
+- Select full `session:UUID` / `block:UUID` explicitly. The combined root defaults a missing `--socket` from percent-decoded `REX_SERVER` (`unix://` only), then the platform path. `--socket ABS` overrides both. No current-focus, label or ID-suffix fallback selects session/block.
 - One explicitly attached `rex do --session FULL --block FULL` runs fixed embedded Lua and five serial supported reads, using `--autostart=false`, an explicit endpoint and a three-second Rex connection/request timeout. Values arrive as JSON arguments, never interpolated source; no configuration is installed. Each response is re-encoded and checked against 128 KiB at the Lua boundary, not before Rex allocates/decodes it. A bounded aggregate buffer independently caps collector output; stderr retention is 4096 bytes. Required RPC/decode/size-limit failures produce no success packet, not fabricated empty evidence.
 - Live `observe` and `watch` support Apple-silicon macOS and Linux x86_64. Standalone `observe --timeout-ms N` defaults to **5000 ms**, range **100–60000**. Its supervisor bounds collection, including a stalled executable, then applies the same TERM/KILL/drain limits as `watch`. Deadline exits **124**, SIGINT/SIGTERM **130/143**, with no success JSON from an interrupted sample. Preflight, final serialization/stdout backpressure and kernel stalls are outside a hard real-time promise. Offline `compare` still needs neither Rex nor macOS.
 - Output includes an observation ID, client observation time, exact requested target, actual server version/platform/API revision, and bounded capture. Integer API revisions10–13 are accepted; an out-of-range refusal names the found revision. Missing bindings/invalid evidence still fail. Revision acceptance does not authenticate the server or certify every old-build behavior. Exact source identity, including revision, is still required for comparison/waiting; no baseline crosses a server revision change silently.
@@ -280,8 +280,17 @@ Views exclude `--status-state` and `--no-deadline` (usage error). Exit 124 remai
 
 Invalid rules exit 2 before Rex contact, without JSON: `teerex: view refused: REASON`. Reasons are `view_flags_exclusive`, `builtin_unknown`, `rules_unreadable`, `rules_too_large`, `rules_schema`, `rule_id_duplicate`, `rule_pattern_invalid`, `rule_unanchored`, `rule_token_limit`, `view_not_applicable_to_status_wait` and `print_view_requires_builtin`. Other verb exits are unchanged.
 
-## Latest capture
+## Socket defaults and latest capture
+
+```sh
+# REX_SERVER supplies the endpoint; session/block still require full IDs.
+teerex observe --session session:FULL-UUID --block block:FULL-UUID --tail --max-bytes 4096
+```
+
+The combined root selects a socket once for socket-taking leaves. It exports `TEEREX_SOCKET_SOURCE=REX_SERVER|platform_default` only when it supplies a default. Observe/watch/doctor and boards probe include that default source as `socket_source` in their JSON. Explicit-socket invocations keep their original output, without an added source field. Other leaves currently omit the field. The environment URI is percent-decoded, rejects NUL/relative paths and non-Unix schemes, and does not silently fall back when invalid. Without that variable, defaults are `~/Library/Application Support/rex/server.sock` on macOS and `/run/user/<uid>/rex/server.sock` on Linux. Explicit sockets override even an invalid environment URI. Offline leaves get no socket, and named-host routing retains its configured endpoint. Root help and each item's own explicit-socket entrypoint remain available; standalone cartridges do not inherit combined-root defaults.
 
 `--tail` requires observed API13; prefix remains the default on API10–13. Initial `format` reports a stable blob ID and raw byte total for incomplete captures. Tail reads once near that blob's end, with four bytes of overlap and a JSON-encoded response allowance bounded by six times the requested raw window. The overlap excludes replacement artifacts from an unaligned UTF-8 start; final trimming preserves whole characters and counts JSON encoding, including escaped control/HTML bytes. The blob ID, total, byte count and EOF must agree. No recapture, newest-blob implicit ID, unbounded continuation loop or full-scrollback retention is used. Process, directory and status queries remain serial and non-atomic.
 
 Watch inherits the baseline's prefix/tail mode. Comparisons of incomplete captures with different portions or budgets report captured-text change as unknown; complete captures remain comparable. Full-text change remains unknown whenever either capture is partial. Tests for these additions run in the existing observe suite on all CI lanes; actual continuation tests select API13 explicitly.
+
+Socket defaulting changes argv in the running process. It does not re-execute teerex, create a supervisor, pipe stdout or rewrite output. Existing `finish()` call-log handling remains in place. The native receipt helper uses the original serializer unchanged unless this root invocation supplied a default; Python probe receipts use the exported source. Standalone cartridge entrypoints still require their original explicit arguments.

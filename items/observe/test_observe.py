@@ -443,6 +443,42 @@ class ObserveTest(unittest.TestCase):
             env=env, capture_output=True, text=True, timeout=15,
         )
 
+    def test_default_socket_decoding_and_explicit_override(self):
+        command = [str(BIN), "observe", "--session", self.a[0], "--block", self.a[1]]
+        encoded = "unix://" + str(self.socket).replace("/", "%2F").replace(" ", "%20")
+        result = subprocess.run(command, env=dict(os.environ, REX_SERVER=encoded),
+                                capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        packet = json.loads(result.stdout)
+        self.assertEqual(packet["socket_source"], "REX_SERVER")
+        self.assertEqual(packet["target"]["server"], self.endpoint)
+        explicit = self.observe(self.a)
+        self.assertNotIn("socket_source", json.loads(explicit.stdout))
+        if self.rex_json("api", "call", "server.version")["api_revision"] == 13:
+            probe = subprocess.run([str(BIN), "boards", "probe"], env=dict(os.environ, REX_SERVER=encoded),
+                                   capture_output=True, text=True, timeout=10)
+            self.assertEqual(probe.returncode, 0, probe.stderr)
+            self.assertEqual(json.loads(probe.stdout)["socket_source"], "REX_SERVER")
+        for endpoint in ("tcp://localhost:123", "unix://relative", "unix:///tmp/%QQ", "unix:///tmp/%+1", "unix:///tmp/%00"):
+            result = subprocess.run(command, env=dict(os.environ, REX_SERVER=endpoint),
+                                    capture_output=True, text=True, timeout=5)
+            self.assertEqual(result.returncode, 1)
+            self.assertEqual(result.stdout, "")
+
+    def test_platform_socket_default_is_reported_without_contact(self):
+        shim = self.root / "socket-default-rex"
+        shim.write_text(f"#!{sys.executable}\nimport sys\nsys.exit(7)\n")
+        shim.chmod(0o700)
+        env = dict(os.environ, TEEREX_REX=str(shim), TEEREX_INTERNAL_REX=str(shim))
+        env.pop("REX_SERVER", None)
+        result = subprocess.run([str(BIN), "doctor"], env=env, capture_output=True, text=True, timeout=5)
+        self.assertEqual(result.returncode, 1, result.stderr)
+        packet = json.loads(result.stdout)
+        self.assertEqual(packet["socket_source"], "platform_default")
+        expected = (str(Path.home() / "Library/Application Support/rex/server.sock") if sys.platform == "darwin"
+                    else f"/run/user/{os.getuid()}/rex/server.sock")
+        self.assertEqual(packet["server"], "unix://" + expected)
+
     def test_tail_exact_unicode_and_same_blob_continuation(self):
         if self.rex_json("api", "call", "server.version")["api_revision"] != 13:
             self.skipTest("tail continuation currently requires actual API13")

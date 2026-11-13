@@ -410,7 +410,7 @@ pub fn runObservations(allocator: std.mem.Allocator, args: []const []const u8) !
     }
     const parsed = try std.json.parseFromSlice(std.json.Value, allocator, capture.bytes.items, .{});
     const packet = try observation(allocator, endpoint, session_id, block_id, max_bytes, parsed.value, result.started_at_unix_ms);
-    const output = try std.json.Stringify.valueAlloc(allocator, packet, .{ .whitespace = .indent_2 });
+    const output = try supervised.receiptJson(allocator, packet, .{ .whitespace = .indent_2 });
     try std.fs.File.stdout().writeAll(output);
     try std.fs.File.stdout().writeAll("\n");
     return 0;
@@ -746,7 +746,7 @@ fn watch(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
     var random: [16]u8 = undefined;
     std.crypto.random.bytes(&random);
     const id = std.fmt.bytesToHex(random, .lower);
-    const output = try std.json.Stringify.valueAlloc(allocator, .{
+    const output = try supervised.receiptJson(allocator, .{
         .schema_version = 1,
         .kind = "observation_wait",
         .wait_id = id[0..],

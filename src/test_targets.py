@@ -5,6 +5,8 @@ import json
 import os
 from pathlib import Path
 import platform
+import pty
+import tty
 import subprocess
 import tarfile
 import tempfile
@@ -258,6 +260,53 @@ class TargetsTest(unittest.TestCase):
         # Executed away from source, this re-plans using only its embedded support bytes.
         self.assertTrue(invoke(installed)["ok"])
         self.assertFalse((self.root / "MUST_NOT_RUN").exists())
+
+    def test_socket_defaults_preserve_exec_pid_tty_and_explicit_output_bytes(self):
+        observed = self.root / "exec-observed.json"
+        runtime = self.root / "python3"
+        raw = b'RAW {"socket_source":"unaltered"}\x00\xff\n'
+        runtime.write_text(f"#!{os.sys.executable}\nimport json,os,sys\nfrom pathlib import Path\n"
+                           + f"Path({str(observed)!r}).write_text(json.dumps(dict(pid=os.getpid(),tty=os.isatty(1),argv=sys.argv[1:],source=os.getenv('TEEREX_SOCKET_SOURCE'))))\n"
+                           + f"os.write(1,{raw!r})\n")
+        runtime.chmod(0o700)
+        socket = str(self.root / "no server socket")
+        env = dict(os.environ, PATH=str(self.root), HOME=str(self.root),
+                   TEEREX_CALL_LOG_DIR=str(self.root / "calls"))
+        env.pop("TEEREX_SOCKET_SOURCE", None)
+        for explicit in (False, True):
+            for terminal in (False, True):
+                with self.subTest(explicit=explicit, terminal=terminal):
+                    command = [str(BIN), "boards", "probe"]
+                    if explicit: command += ["--socket", socket]
+                    env["REX_SERVER"] = "invalid:ignored" if explicit else "unix://" + socket.replace(" ", "%20")
+                    if terminal:
+                        master, slave = pty.openpty()
+                        tty.setraw(slave)
+                        try:
+                            proc = subprocess.Popen(command, env=env, stdout=slave, stderr=subprocess.PIPE)
+                            os.close(slave)
+                            slave = None
+                            _, error = proc.communicate(timeout=5)
+                            self.assertEqual(proc.returncode, 0, error)
+                            output = b""
+                            while True:
+                                try: chunk = os.read(master, 8192)
+                                except OSError: break
+                                if not chunk: break
+                                output += chunk
+                        finally:
+                            os.close(master)
+                            if slave is not None: os.close(slave)
+                    else:
+                        proc = subprocess.Popen(command, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                        output, error = proc.communicate(timeout=5)
+                        self.assertEqual(proc.returncode, 0, error)
+                    actual = json.loads(observed.read_text())
+                    self.assertEqual(actual["pid"], proc.pid)
+                    self.assertEqual(actual["tty"], terminal)
+                    self.assertEqual(actual["source"], None if explicit else "REX_SERVER")
+                    self.assertEqual(actual["argv"][-5:], ["probe", "--socket", socket, "--teerex", str(BIN)])
+                    self.assertEqual(output, raw)
 
     def test_explicit_rex_pin_ignores_poisoned_path_without_retry(self):
         poison = self.root / "rex"
