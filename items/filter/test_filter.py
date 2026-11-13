@@ -55,10 +55,10 @@ class FilterTest(unittest.TestCase):
             paths.append(path)
         return paths
 
-    def filtered(self, packets):
+    def filtered(self, packets, extra=()):
         paths = self.paths(packets)
         original = [path.read_bytes() for path in paths]
-        result = self.invoke([argument for path in paths for argument in ["--sample", str(path)]])
+        result = self.invoke([argument for path in paths for argument in ["--sample", str(path)]] + list(extra))
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual([path.read_bytes() for path in paths], original)
         events = [json.loads(line) for line in result.stdout.splitlines()]
@@ -234,6 +234,62 @@ class FilterTest(unittest.TestCase):
             self.assertIsNone(event["comparison"]["capture"]["full_text_changed"])
         self.assertLess(len(result.stdout.encode()), events[-1]["input_bytes"] // 20)
         self.assertEqual(events[-2]["observation"]["capture"]["content"], "x" * 60000)
+
+    def test_view_V_F1_lossless_reference_reconstruction(self):
+        packets = [observation() for _ in range(128)]
+        for index, packet in enumerate(packets):
+            packet['observation_id'] = 'tick-' + str(index)
+            packet['capture']['content'] = '⠋ Thinking (' + str(index) + 's · ' + str(index) + ' tokens)\n'
+        events, _ = self.filtered(packets, ['--view', 'progress-v1'])
+        self.assertEqual(events[0]['reason'], 'baseline')
+        self.assertEqual(events[-2]['reason'], 'latest_checkpoint')
+        self.assertEqual(sum(e['kind'] == 'rex_evidence_filter_cosmetic_repeat' for e in events), 126)
+        def rebuild(reference, spans):
+            lines = reference.encode().split(b'\n')
+            shifts = {}
+            for span in spans:
+                line = span['line']
+                offset = span['byte_offset'] + shifts.get(line, 0)
+                old, new = span['before'].encode(), span['after'].encode()
+                self.assertEqual(lines[line][offset:offset + len(old)], old)
+                lines[line] = lines[line][:offset] + new + lines[line][offset + len(old):]
+                shifts[line] = shifts.get(line, 0) + len(new) - len(old)
+            return b'\n'.join(lines)
+        for index in range(1, 127):
+            event = events[index]
+            reference = events[event['reconstruction']['from_sample_index'] - 1]['observation']['capture']['content']
+            self.assertEqual(rebuild(reference, event['reconstruction']['spans']), packets[index]['capture']['content'].encode())
+        corrupt = copy.deepcopy(events[1]['reconstruction']['spans'])
+        corrupt[0]['after'] = 'CORRUPTED'
+        self.assertNotEqual(rebuild(packets[0]['capture']['content'], corrupt), packets[1]['capture']['content'].encode())
+        summary = events[-1]
+        self.assertEqual(summary['observation_payloads_emitted'] + summary['observation_payloads_omitted'], 128)
+        self.assertEqual(summary['observation_payloads_omitted'], summary['repeats'] + summary['cosmetic_repeats'])
+        self.assertEqual(summary['payload_bytes_emitted'], sum(len(json.dumps(e['observation'], separators=(',', ':'), ensure_ascii=False).encode()) for e in events if 'observation' in e))
+
+    def test_view_V_F2_error_keeps_full_payload_and_reference(self):
+        packets = [observation() for _ in range(128)]
+        for index, packet in enumerate(packets):
+            packet['capture']['content'] = 'Thinking (' + str(index) + 's' + ('\nError: boom' if index >= 64 else '')
+        events, _ = self.filtered(packets, ['--view', 'progress-v1'])
+        self.assertEqual(events[64]['kind'], 'rex_evidence_filter_sample')
+        self.assertEqual(events[64]['reason'], 'evidence_changed')
+        self.assertIn('Error: boom', events[64]['observation']['capture']['content'])
+        self.assertEqual(events[65]['reconstruction']['from_sample_index'], 65)
+
+    def test_view_V_F3_unknown_and_typed_metadata_never_reconstructed(self):
+        packets = [observation() for _ in range(4)]
+        for index, packet in enumerate(packets):
+            packet['capture'].update(content='Thinking (' + str(index) + 's', complete=False, max_bytes=256 + index)
+        events, _ = self.filtered(packets, ['--view', 'progress-v1'])
+        self.assertTrue(all(e['kind'] == 'rex_evidence_filter_sample' for e in events[:-1]))
+        packets = [observation() for _ in range(4)]
+        for index, packet in enumerate(packets):
+            packet['capture']['content'] = 'Thinking (' + str(index) + 's'
+            packet['reported_directory']['reported_at'] = 'time-' + str(index)
+        events, _ = self.filtered(packets, ['--view', 'progress-v1'])
+        self.assertEqual(events[-1]['cosmetic_repeats'], 0)
+
 
 
 if __name__ == "__main__":

@@ -1,6 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const supervised = @import("supervised_child");
+pub const presentation = @import("view.zig");
 
 const observation_usage =
     \\Usage: teerex observe --socket /absolute/path --session session:UUID --block block:UUID [--max-bytes N] [--timeout-ms N]
@@ -8,6 +9,11 @@ const observation_usage =
     \\       teerex watch --socket /absolute/path --session session:UUID --block block:UUID --baseline FILE (--timeout-ms N | --no-deadline) [--interval-ms N]
     \\                    [--status-state idle|working|done|blocked|error [--status-id RECORD_ID]]
     \\
+    \\Compare/watch accept --view progress-v1 or --view-rules FILE (exclusive, opt-in).
+    \\Audit the built-in: compare --view progress-v1 --print-view.
+    \\Views label declared cosmetic spans; raw text and non-text deltas remain evidence.
+    \\Views exclude --status-state and --no-deadline. A deadline is not idle;
+    \\cosmetic_only_comparisons is evidence, not busy/working/done state.
     \\Read bounded terminal text and process/directory/status evidence from an explicit Rex target.
     \\N defaults to 4096; allowed range: 256..65536 JSON-encoded content bytes.
     \\Output is JSON. Capture includes screen and scrollback; a partial capture is a prefix.
@@ -111,7 +117,8 @@ const Change = struct {
     changed: ?bool,
 };
 
-const Comparison = struct {
+pub const Comparison = struct {
+    view: ?presentation.Result = null,
     schema_version: u32 = 1,
     kind: []const u8 = "observation_changes",
     before_observation_id: []const u8,
@@ -150,6 +157,12 @@ const WatchCollector = struct {
     timeout_ms: ?u64,
     status_states: []const []const u8,
     status_id: ?[]const u8,
+    view_rules: ?presentation.Rules = null,
+    view_arena: *std.heap.ArenaAllocator,
+    cosmetic_arena: *std.heap.ArenaAllocator,
+    last_view: ?presentation.Result = null,
+    cosmetic_only_comparisons: usize = 0,
+    last_cosmetic_spans: ?[]const presentation.Span = null,
     pending: std.ArrayList(u8) = .empty,
     attempts: usize = 1,
     compared: usize = 0,
@@ -169,6 +182,7 @@ const WatchCollector = struct {
     }
 
     fn satisfied(self: *const WatchCollector) bool {
+        if (self.view_rules != null) return if (self.last_view) |v| v.wake else false;
         return if (self.status_states.len != 0) self.matched_status != null else self.changed_fields.items.len != 0 or self.availability_fields.items.len != 0;
     }
 
@@ -221,6 +235,16 @@ const WatchCollector = struct {
         if (self.last_after_id) |id| std.heap.page_allocator.free(id);
         self.last_after_id = after_id;
         comparison.after_observation_id = after_id;
+        if (self.view_rules) |rules| {
+            _ = self.view_arena.reset(.free_all);
+            self.last_view = try presentation.computeView(self.view_arena.allocator(), rules, self.baseline, after, comparison);
+            if (!self.last_view.?.wake) {
+                self.cosmetic_only_comparisons += 1;
+                _ = self.cosmetic_arena.reset(.free_all);
+                const v = try presentation.computeView(self.cosmetic_arena.allocator(), rules, self.baseline, after, comparison);
+                self.last_cosmetic_spans = v.spans;
+            }
+        }
         self.last_comparison = comparison;
         self.last_compared_at = compared_at;
         self.compared += 1;
@@ -539,20 +563,37 @@ fn change(before: anytype, after: @TypeOf(before)) Change {
 fn compare(allocator: std.mem.Allocator, args: []const []const u8) !void {
     var before_path: ?[]const u8 = null;
     var after_path: ?[]const u8 = null;
+    var options: presentation.Options = .{};
+    var print_view = false;
     var i: usize = 0;
-    while (i < args.len) : (i += 2) {
+    while (i < args.len) : (i += 1) {
+        if (std.mem.eql(u8, args[i], "--print-view") and !print_view) {
+            print_view = true;
+            continue;
+        }
         if (i + 1 == args.len) usageError("every comparison option needs a value");
-        if (std.mem.eql(u8, args[i], "--before") and before_path == null) {
-            before_path = args[i + 1];
-        } else if (std.mem.eql(u8, args[i], "--after") and after_path == null) {
-            after_path = args[i + 1];
+        const flag = args[i];
+        i += 1;
+        if (options.set(flag, args[i])) continue;
+        if (std.mem.eql(u8, flag, "--before") and before_path == null) {
+            before_path = args[i];
+        } else if (std.mem.eql(u8, flag, "--after") and after_path == null) {
+            after_path = args[i];
         } else usageError("unknown or repeated comparison option");
+    }
+    if (print_view and options.name == null) presentation.refused("print_view_requires_builtin");
+    const rules = try options.load(allocator);
+    if (print_view) {
+        try std.fs.File.stdout().writeAll(presentation.builtin_json ++ "\n");
+        return;
     }
     const before_file = before_path orelse usageError("--before is required");
     const after_file = after_path orelse usageError("--after is required");
     const before = try readObservation(allocator, before_file);
     const after = try readObservation(allocator, after_file);
-    const output = try std.json.Stringify.valueAlloc(allocator, try compareObservations(before, after), .{ .whitespace = .indent_2 });
+    var comparison = try compareObservations(before, after);
+    if (rules) |r| comparison.view = try presentation.computeView(allocator, r, before, after, comparison);
+    const output = try std.json.Stringify.valueAlloc(allocator, comparison, .{ .whitespace = .indent_2 });
     try std.fs.File.stdout().writeAll(output);
     try std.fs.File.stdout().writeAll("\n");
 }
@@ -592,6 +633,7 @@ pub fn compareObservations(before: Observation, after: Observation) !Comparison 
 }
 
 fn watch(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
+    var options: presentation.Options = .{};
     var socket: ?[]const u8 = null;
     var session: ?[]const u8 = null;
     var block: ?[]const u8 = null;
@@ -611,6 +653,7 @@ fn watch(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
         const name = args[i];
         i += 1;
         const value = args[i];
+        if (options.set(name, value)) continue;
         if (std.mem.eql(u8, name, "--socket") and socket == null) {
             socket = value;
         } else if (std.mem.eql(u8, name, "--session") and session == null) {
@@ -632,6 +675,8 @@ fn watch(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
             status_id = value;
         } else usageError("unknown or repeated watch option");
     }
+    if (options.enabled() and (status_states.items.len != 0 or no_deadline)) presentation.refused("view_not_applicable_to_status_wait");
+    const view_rules = try options.load(allocator);
     const socket_path = socket orelse usageError("--socket is required");
     const session_id = session orelse usageError("--session is required");
     const block_id = block orelse usageError("--block is required");
@@ -667,7 +712,11 @@ fn watch(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
     defer signals.deinit();
     var timer = try std.time.Timer.start();
     const started_at = std.time.milliTimestamp();
-    var collector: WatchCollector = .{ .allocator = allocator, .baseline = baseline, .timer = &timer, .timeout_ms = timeout_ms, .status_states = status_states.items, .status_id = status_id };
+    var view_arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer view_arena.deinit();
+    var cosmetic_arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer cosmetic_arena.deinit();
+    var collector: WatchCollector = .{ .view_rules = view_rules, .view_arena = &view_arena, .cosmetic_arena = &cosmetic_arena, .allocator = allocator, .baseline = baseline, .timer = &timer, .timeout_ms = timeout_ms, .status_states = status_states.items, .status_id = status_id };
     defer if (collector.last_after_id) |id| std.heap.page_allocator.free(id);
     const result: ?supervised.Result = supervised.collect(allocator, argv, &env, timeout_ms, &collector) catch |err| blk: {
         collector.failure = if (err == error.FileNotFound) "ObservationCommandFailed" else @errorName(err);
@@ -717,6 +766,10 @@ fn watch(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
         .availability_changed_fields = if (collector.last_comparison == null) @as(?[]const []const u8, null) else collector.availability_fields.items,
         .unknown_fields = if (collector.last_comparison == null) @as(?[]const []const u8, null) else collector.unknown_fields.items,
         .last_comparison = collector.last_comparison,
+        .view = collector.last_view,
+        .cosmetic_only_comparisons = collector.cosmetic_only_comparisons,
+        .last_cosmetic_spans = collector.last_cosmetic_spans,
+        .view_rules_sha256 = if (view_rules) |r| r.sha256 else null,
         .last_collection_cleanup = if (result) |r| @as(?struct { group_sigterm: ?supervised.GroupSignal, group_sigkill: ?supervised.GroupSignal }, .{ .group_sigterm = r.group_term, .group_sigkill = r.group_kill }) else null,
         .cleanup_scope = "collection_process_group_not_observed_terminal",
         .detached_descendants = "not_covered",

@@ -17,12 +17,12 @@ import unittest
 BIN = Path(os.environ.get("TEEREX_BIN", Path(__file__).resolve().parents[2] / "zig-out/bin/teerex"))
 
 
-def compare_packets(root, before, after):
+def compare_packets(root, before, after, extra=()):
     first, second = root / "before.json", root / "after.json"
     first.write_text(json.dumps(before), encoding="utf-8")
     second.write_text(json.dumps(after, sort_keys=True), encoding="utf-8")
     return subprocess.run(
-        [str(BIN), "compare", "--before", str(first), "--after", str(second)],
+        [str(BIN), "compare", "--before", str(first), "--after", str(second), *extra],
         env=dict(os.environ, PATH="/no-rex-or-other-executables"),
         capture_output=True, text=True, timeout=5,
     )
@@ -213,6 +213,111 @@ class CompareTest(unittest.TestCase):
                 result = subprocess.run([str(BIN), "compare", *args], capture_output=True, text=True, timeout=5)
                 self.assertEqual(result.returncode, 2, result.stderr)
                 self.assertEqual(result.stdout, "")
+
+
+    def viewed(self, before_text='⠋ Thinking (12s', after_text='⠙ Thinking (13s', **changes):
+        self.before['capture'].update(content=before_text, max_bytes=65536)
+        self.after['capture'].update(content=after_text, max_bytes=65536)
+        for key, value in changes.items():
+            self.after[key] = value
+        result = compare_packets(self.root, self.before, self.after, ['--view', 'progress-v1'])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return json.loads(result.stdout)
+
+    def test_view_V_A1_raw_kept_exact_spans_and_prompt(self):
+        packet = self.viewed()
+        self.assertTrue(packet['capture']['captured_text_changed'])
+        view = packet['view']
+        self.assertEqual(view['captured_text'], 'cosmetic_only')
+        self.assertEqual(view['full_text'], 'cosmetic_only')
+        self.assertFalse(view['wake'])
+        self.assertEqual([(s['before'], s['after']) for s in view['spans']], [('⠋', '⠙'), ('(12s', '(13s')])
+        self.assertEqual(len(view['rules_sha256']), 64)
+        view = self.viewed(after_text='⠙ Thinking (13s\nContinue? [y/n]')['view']
+        self.assertEqual(view['captured_text'], 'changed')
+        self.assertTrue(view['wake'])
+
+    def test_view_V_A2_protected_and_calibrated_shapes(self):
+        for word in ('error', 'FAIL', 'fatal', 'password', 'allow', 'Proceed?', 'prompt:', 'shell>'):
+            with self.subTest(word=word):
+                v = self.viewed(word + ' (12s' if word[-1] not in '?:>' else '(12s ' + word, word + ' (13s' if word[-1] not in '?:>' else '(13s ' + word)['view']
+                self.assertEqual(v['captured_text'], 'changed')
+                self.assertGreaterEqual(v['protected_lines'], 1)
+        for a, b in (('✻ Thinking (1m 12s · 12.5k tokens)', '✽ Thinking (1m 13s · 13k tokens)'), ('⠋ Thinking (12s', '⠙ Thinking (13s')):
+            self.assertEqual(self.viewed(a, b)['view']['captured_text'], 'cosmetic_only')
+
+    def test_view_V_A3_A4_non_text_and_missing_whole_method(self):
+        self.after['process']['data']['last_exit'] = {'exit_code': 3}
+        v = self.viewed()['view']
+        self.assertIs(v['non_text_evidence_changed'], True)
+        self.assertTrue(v['wake'])
+        self.after['process']['data']['last_exit'] = None
+        for state in ('done', 'blocked'):
+            self.after['program_status']['data']['records'][0]['state'] = state
+            self.assertTrue(self.viewed()['view']['wake'])
+        self.after['program_status'] = None
+        self.before['program_status'] = None
+        v = self.viewed()['view']
+        self.assertIsNone(v['non_text_evidence_changed'])
+        self.assertTrue(v['wake'])
+
+    def test_view_V_A5_A6_A7_hidden_tail_counts_and_span_limit(self):
+        self.before['capture']['complete'] = self.after['capture']['complete'] = False
+        v = self.viewed('same prefix', 'same prefix')['view']
+        self.assertEqual(v['captured_text'], 'unchanged')
+        self.assertEqual(v['full_text'], 'unknown')
+        self.before['capture']['complete'] = self.after['capture']['complete'] = True
+        self.assertEqual(self.viewed('⠋ one', '⠙ one\n⠋ two')['view']['captured_text'], 'changed')
+        v = self.viewed(' '.join(['(12s'] * 65), ' '.join(['(13s'] * 65))['view']
+        self.assertTrue(v['spans_truncated'])
+        self.assertEqual(len(v['spans']), 64)
+        self.assertEqual(v['captured_text'], 'changed')
+        self.assertTrue(v['wake'])
+
+    def test_view_V_A8_rules_refusals_without_rex(self):
+        def rule(pattern):
+            return {'id': 'synthetic', 'position': 'anywhere', 'pattern': pattern}
+        def source(rules):
+            return {'schema_version': 1, 'kind': 'rex_presentation_view', 'id': 'synthetic', 'rules': rules}
+        path = self.root / 'rules.json'
+        cases = [(source([rule('{one_of:|/-\\}')]), 'rule_unanchored'), (source([rule('{digits}{digits}')]), 'rule_pattern_invalid'), (source([rule('elapsed\n{digits}')]), 'rule_pattern_invalid'), (source([rule('elapsed {digits}')] * 33), 'rules_schema'), (source([rule('elapsed {digits}')] * 2), 'rule_id_duplicate'), (source([dict(rule('elapsed {digits}'), typo=True)]), 'rules_schema')]
+        for value, reason in cases:
+            path.write_text(json.dumps(value))
+            r = compare_packets(self.root, self.before, self.after, ['--view-rules', str(path)])
+            self.assertEqual((r.returncode, r.stdout, r.stderr), (2, '', 'teerex: view refused: ' + reason + '\n'))
+        path.write_text(json.dumps(source([rule('[{one_of:|/-\\}]')])))
+        self.assertEqual(compare_packets(self.root, self.before, self.after, ['--view-rules', str(path)]).returncode, 0)
+        for raw, reason in ((' ' * 16385, 'rules_too_large'), ('{"schema_version":1,"schema_version":1}', 'rules_schema')):
+            path.write_text(raw)
+            r = compare_packets(self.root, self.before, self.after, ['--view-rules', str(path)])
+            self.assertEqual(r.stderr, 'teerex: view refused: ' + reason + '\n')
+            self.assertEqual(r.returncode, 2)
+        fifo = self.root / 'fifo'
+        os.mkfifo(fifo)
+        r = compare_packets(self.root, self.before, self.after, ['--view-rules', str(fifo)])
+        self.assertEqual(r.stderr, 'teerex: view refused: rules_unreadable\n')
+        for flags, reason in ((['--view', 'other'], 'builtin_unknown'), (['--view', 'progress-v1', '--view-rules', str(path)], 'view_flags_exclusive'), (['--print-view'], 'print_view_requires_builtin')):
+            r = compare_packets(self.root, self.before, self.after, flags)
+            self.assertEqual(r.returncode, 2)
+            self.assertEqual(r.stdout, '')
+            self.assertEqual(r.stderr, 'teerex: view refused: ' + reason + '\n')
+        for pattern_value, expected in (('ab{digits}cd{digits}ef{digits}gh{digits}ij', 'rule_token_limit'), ('ab{one_of:aa}', 'rule_pattern_invalid')):
+            path.write_text(json.dumps(source([rule(pattern_value)])))
+            result = compare_packets(self.root, self.before, self.after, ['--view-rules', str(path)])
+            self.assertEqual(result.returncode, 2)
+            self.assertEqual(result.stderr, 'teerex: view refused: ' + expected + '\n')
+        r = subprocess.run([str(BIN), 'compare', '--view', 'progress-v1', '--print-view'], capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0)
+        self.assertEqual(json.loads(r.stdout)['id'], 'progress-v1')
+
+
+    def test_view_V_C24_documentation_makes_no_state_claim(self):
+        root = Path(__file__).resolve().parents[2]
+        for name, marker in (('items/observe/README.md', '## Declared presentation views'), ('items/filter/README.md', '## Opt-in presentation view')):
+            additions = (root / name).read_text().split(marker, 1)[1]
+            for line in additions.splitlines():
+                if re.search(r'\b(stable|idle|done|complete|finished|waiting|ready|busy|working)\b', line, re.I):
+                    self.assertRegex(line, r'(?i)\b(not|never|no|cannot|exclude)\b')
 
 
 class ObserveTest(unittest.TestCase):
@@ -1107,6 +1212,56 @@ class ObserveTest(unittest.TestCase):
                     if process.poll() is None:
                         process.terminate()
                         process.communicate(timeout=3)
+
+    def progress_fixture(self, event=None, hidden=False):
+        initial = ('PREFIX ' + 'x' * 4000 + '\n') if hidden else ''
+        initial += '⠋ Thinking (0s'
+        code = "\nstart=time.monotonic()\ni=0\nwhile time.monotonic()-start<8:\n sys.stdout.write('\\r\\x1b[K'+('⠋' if i%2 else '⠙')+' Thinking ('+str(i)+'s'); sys.stdout.flush(); i+=1; time.sleep(.1)\n"
+        if event:
+            code = code.replace('time.monotonic()-start<8', 'time.monotonic()-start<1.5')
+            code += event + "\nsys.stdout.flush()\ntime.sleep(120)"
+        return self.fixture(initial, after_output=code, marker='PREFIX' if hidden else 'Thinking')
+
+    def test_view_V_W1_cosmetic_deadline_optional_absent_does_not_wake(self):
+        target = self.progress_fixture()
+        baseline, before = self.baseline(target, '--max-bytes', '65536')
+        self.assertIsNone(before['process']['data']['last_exit'])
+        command = self.watch_command(target, baseline, timeout=1800, interval=100)
+        raw = subprocess.run(command, capture_output=True, text=True, timeout=5)
+        self.assertEqual(raw.returncode, 0, raw.stderr)
+        result = subprocess.run(command + ['--view', 'progress-v1'], capture_output=True, text=True, timeout=5)
+        self.assertEqual(result.returncode, 124, result.stderr + result.stdout)
+        packet = json.loads(result.stdout)
+        self.assertGreaterEqual(packet['cosmetic_only_comparisons'], 5)
+        self.assertFalse(packet['view']['wake'])
+        self.assertEqual(packet['interpretation'], 'none')
+        for flag in (['--status-state', 'done'], ['--no-deadline']):
+            result = subprocess.run(command + ['--view', 'progress-v1'] + flag, capture_output=True, text=True, timeout=3)
+            self.assertEqual(result.returncode, 2)
+            self.assertEqual(result.stderr, 'teerex: view refused: view_not_applicable_to_status_wait\n')
+            self.assertEqual(result.stdout, '')
+
+    def test_view_V_W2_real_events_are_not_suppressed(self):
+        events = ["print('\\nError: boom')", "print('\\nProceed? [y/n]')", 'sys.exit(3)', "sys.stdout.write(" + repr('\x1b]7501;state=done:app=teerex-view\x1b\\') + ")", "print('\\nNew output line')"]
+        for index, event in enumerate(events):
+            with self.subTest(event=index):
+                target = self.progress_fixture(event)
+                baseline, _ = self.baseline(target, '--max-bytes', '65536')
+                result = subprocess.run(self.watch_command(target, baseline, timeout=3000, interval=100) + ['--view', 'progress-v1'], capture_output=True, text=True, timeout=6)
+                self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+                packet = json.loads(result.stdout)
+                self.assertTrue(packet['view']['wake'])
+                self.assertLess(packet['elapsed_ms'], 2500)
+
+    def test_view_V_W3_hidden_tail_remains_unknown(self):
+        target = self.progress_fixture("print('\\nError: hidden')", hidden=True)
+        baseline, _ = self.baseline(target, '--max-bytes', '256')
+        result = subprocess.run(self.watch_command(target, baseline, timeout=2000, interval=100) + ['--view', 'progress-v1'], capture_output=True, text=True, timeout=5)
+        self.assertEqual(result.returncode, 124, result.stderr + result.stdout)
+        packet = json.loads(result.stdout)
+        self.assertEqual(packet['view']['full_text'], 'unknown')
+        self.assertFalse(packet['last_comparison']['capture']['after_complete'])
+
 
 
 if __name__ == "__main__":
