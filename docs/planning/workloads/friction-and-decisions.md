@@ -217,7 +217,7 @@ A concluded decision whose `because` claims are all `provisional` is **not** a v
 
 - **Store:** hive `~/.local/state/teerex-records` (created by H01's live check). Record ids `dec-<workload>-<slug>`, for example `dec-h02-on-13`.
 - **Canonical docs:** roadmap and workload specs keep their "Chosen decisions" tables as the reader's view and add a `Record` column with the id. The record holds the evidence, the rejected options and when to revisit them. The table never copies them.
-- **Decision cards:** when a decision came from a typed card ([boards ask](../../../items/boards/README.md#complete-typed-decisions)), `card_id` holds the card id, and the resolution answer is attached as evidence `type: board_card`, `supplied_by: operator`. A card answer is `supplied`, not `observed`.
+- **Decision cards:** when a decision came from a typed card ([boards ask](../../../items/boards/README.md#decisions-typed-into-the-pane)), `card_id` holds the card id, and the resolution answer is attached as evidence `type: board_card`, `supplied_by: operator`. A card answer is `supplied`, not `observed`.
 - **Circadian** (Josh's private memory repo on hive): unchanged and read-only. Its beliefs are weighted, decaying atoms with supersede edges (its private MIND-SPEC). That memory shape must not become the decision of record. A session may remember "decision X is record dec-…", the pointer only, under the existing memory rule "store decisions and why".
 - **agent-core report contract:** a decision settled during work is reported in the delta with its record id. See the agent-core lines below.
 
