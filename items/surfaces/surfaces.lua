@@ -14,6 +14,10 @@ local function surface(a, emit)
     local function select_target(rows, key, text, exact_label)
         if not exact_label then
             for _,v in ipairs(rows) do if v[key]==text then return v end end
+            local prefix=key=="session_id" and "session:" or key=="window_id" and "window:" or "block:"
+            if text:sub(1,#prefix)==prefix then
+                result.candidates=rows; result.failure_reason="target_not_found"; return nil
+            end
         end
         local matches={}
         for _,v in ipairs(rows) do

@@ -14,6 +14,7 @@ const usage =
     \\       teerex surfaces ensure --socket ABS --session TEXT --label TEXT [--focus yes|no]
     \\         [open options; layout defaults tab] -- ARGV...
     \\Resolve accepts canonical IDs, unique ID suffixes, exact labels; refuses ambiguity with candidates.
+    \\Canonical IDs never fall back to another pane/session/window with that ID as its label.
     \\All surfaces target options accept these selectors; requested preserves input, resolved carries IDs.
     \\Session ensure returns existing/created (fresh label/ID readback); creates an empty session, no focus.
     \\Pane ensure reuses a uniquely labelled pane/tab or opens once, focus defaults no. No automatic retry.

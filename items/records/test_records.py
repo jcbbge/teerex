@@ -535,6 +535,7 @@ class LiveRecordsTest(RecordsFixture):
     def test_C03_absent_target_never_recreated(self):
         self.park()
         self.raw("surfaces", "close", "--socket", self.socket, "--session", self.session, "--pane", self.anchor)
+        self.raw("surfaces", "rename", "--socket", self.socket, "--session", self.session, "--pane", self.neighbour, "--label", self.anchor)
         before = self.view()
         value = self.resume()
         self.assertEqual(value["target"]["now"]["status"], "absent")

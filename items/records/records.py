@@ -724,6 +724,9 @@ def target_status(target, baseline, host, timeout, enabled=True):
         code, inspect = invoke(["surfaces", "inspect", "--socket", socket, "--session", target["session_id"], "--pane", target["block_id"], "--timeout-ms", str(int(timeout * 1000))], timeout + 1)
         actual = inspect.get("actual")
         if code == 0 and inspect.get("outcome") == "inspected" and isinstance(actual, dict) and actual.get("attached"):
+            if actual.get("session_id") != target["session_id"] or actual.get("block_id") != target["block_id"]:
+                result["status"] = "unknown"
+                return result
             pane = {k: actual.get(k) for k in ("label", "window_label", "host_id")}
             result["pane"] = pane
             if ((baseline or {}).get("pane") or {}).get("host_id") and baseline["pane"]["host_id"] != pane["host_id"]:
