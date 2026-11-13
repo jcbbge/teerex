@@ -73,7 +73,7 @@ def teerex_task(args, server, session, anchor, root, mode, keep=True, controller
     server.command = measured_command
     envfile = root / "env.json"
     gate = root / "release"
-    save(envfile, dict(PATH=os.defpath, FIXTURE_DIR=str(root), FIXTURE_GATE=str(gate)))
+    save(envfile, dict(PATH=os.defpath, HOME=str(server.home), PYTHONDONTWRITEBYTECODE="1", FIXTURE_DIR=str(root), FIXTURE_GATE=str(gate)))
     before = invoke(observations(args.teerex, server, session, anchor), stats, server.env, 1)
     save(root / "sentinel-before.json", before.stdout)
     output = root / "output"
