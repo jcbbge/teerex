@@ -247,6 +247,32 @@ class SendTest(unittest.TestCase):
         self.assertIn("Ask Codex to do anything", self.prompt_text(typed))
         self.assertEqual([json.loads(line) for line in typed_log.read_text().splitlines()], ["FROM worker: typed draft regression"])
 
+    def test_detached_terminal_keeps_draft_guard_and_process(self):
+        target, log = self.prompt(mode='busy')
+        self.type_draft(target, 'PRIVATE_DETACHED_DRAFT')
+        child = self.rpc('com.superlogical.terminal.process', dict(session_id=target[0], block_id=target[1], args={}))['child']
+        self.rpc('session.detach_block', dict(session_id=target[0], block_id=target[1]))
+        clutch = [BIN, 'clutch', 'take', '--socket', str(self.socket), '--session', target[0], '--pane', target[1], '--reason', 'human reviewing detached agent']
+        held = subprocess.run(clutch, env=self.env, capture_output=True, text=True)
+        self.assertEqual(held.returncode, 0, held.stdout + held.stderr)
+        blocked = subprocess.run(self.command(target) + ['--draft-wait-ms', '0'], env=self.env, capture_output=True, text=True)
+        self.assertNotEqual(blocked.returncode, 0)
+        self.assertEqual(json.loads(blocked.stdout)['failure_reason'], 'pane_held_by_human')
+        self.assertEqual(log.read_text(), '')
+        clutch[2] = 'release'
+        released = subprocess.run(clutch, env=self.env, capture_output=True, text=True)
+        self.assertEqual(released.returncode, 0, released.stdout + released.stderr)
+        result, packet = self.send(target)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue(packet['draft']['detected'])
+        self.assertTrue(packet['draft']['restored'] and packet['draft']['restore_verified'])
+        self.assertEqual([json.loads(line) for line in log.read_text().splitlines()], ['FROM worker: hello'])
+        self.assertIn('PRIVATE_DETACHED_DRAFT', self.prompt_text(target))
+        self.assertNotIn('PRIVATE_DETACHED_DRAFT', result.stdout + result.stderr)
+        self.assertEqual(self.rpc('com.superlogical.terminal.process', dict(session_id=target[0], block_id=target[1], args={}))['child'], child)
+        blocks = self.rpc('session.list_blocks', dict(session_id=target[0]))['blocks']
+        self.assertEqual(next(b for b in blocks if b['block_id'] == target[1])['placement'], 'detached')
+
     def test_guard_restores_existing_unicode_draft_without_submitting_it(self):
         for text in ("OPERATOR_PRIVATE_DRAFT", "α😀 private café"):
             target, log = self.prompt()

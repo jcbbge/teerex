@@ -280,6 +280,79 @@ class AgentsTest(unittest.TestCase):
     def record(self, launch_id):
         return json.loads((self.registry / ("agents-" + launch_id + ".json")).read_text())
 
+    def test_detached_launch_tracking_prune_present_and_come_forward(self):
+        profile = self.settings['profiles']['probe']
+        profile.update(layout='detached', come_forward=True)
+        self.config.write_text(json.dumps(self.settings))
+        process, launched = self.run_cli('launch', '--config', str(self.config), '--profile', 'probe', '--brief-file', str(self.brief), '--ack-timeout-ms', '5000')
+        self.assertEqual(process.returncode, 0, process.stdout + process.stderr)
+        launch_id = launched['launch_id']
+        block = launched['target']['block_id']
+        self.assertEqual(launched['placement'], 'detached')
+        self.assertTrue(Path(launched['scratchpad']).exists())
+        def inspect():
+            process, packet = self.run_cli('inspect', '--registry', str(self.registry), '--launch-id', launch_id)
+            self.assertEqual(process.returncode, 0, process.stdout + process.stderr)
+            return packet
+        self.assertEqual(inspect()['placement'], 'detached')
+        def jobs():
+            packet = subprocess.run([BIN, 'jobs', 'list', '--registry', str(self.registry)], env=self.env, capture_output=True, text=True)
+            self.assertEqual(packet.returncode, 0, packet.stdout + packet.stderr)
+            return json.loads(packet.stdout)['entries'][0]
+        entry = jobs()
+        self.assertEqual(entry['placement'], 'detached')
+        self.backdate(launch_id)
+        process, plan = self.run_cli('prune', '--registry', str(self.registry))
+        self.assertEqual(process.returncode, 0, process.stdout + process.stderr)
+        self.assertFalse(plan['retired'])
+        target = dict(session_id=self.session, block_id=block, args={})
+        child = self.rpc('com.superlogical.terminal.process', target)['child']
+        before = self.rpc('session.view', dict(session_id=self.session))
+        event = self.work / 'stop.json'
+        event.write_text(json.dumps(dict(hook_event_name='Stop', last_assistant_message='Detached work finished')))
+        process, packet = self.run_cli('stop', '--registry', str(self.registry), '--launch-id', launch_id, '--event-file', str(event))
+        self.assertEqual(process.returncode, 0, process.stdout + process.stderr)
+        wait_for(lambda: inspect()['placement'] == 'placed')
+        after = self.rpc('session.view', dict(session_id=self.session))
+        self.assertEqual(after['active_window_id'], before['active_window_id'])
+        for old in before['windows']:
+            new = next(w for w in after['windows'] if w['window_id'] == old['window_id'])
+            self.assertEqual(new['focused_block_id'], old['focused_block_id'])
+        self.assertEqual(self.rpc('com.superlogical.terminal.process', target)['child'], child)
+        self.rpc('session.detach_block', dict(session_id=self.session, block_id=block))
+        self.assertEqual(jobs()['placement'], 'detached')
+        event.write_text(json.dumps(dict(hook_event_name='StopFailure', error='synthetic detached failure')))
+        process, packet = self.run_cli('stop', '--registry', str(self.registry), '--launch-id', launch_id, '--event-file', str(event))
+        self.assertEqual(process.returncode, 0, process.stdout + process.stderr)
+        wait_for(lambda: inspect()['placement'] == 'placed')
+        self.rpc('session.detach_block', dict(session_id=self.session, block_id=block))
+        process = subprocess.run([BIN, 'jobs', 'present', '--registry', str(self.registry), '--socket', str(self.socket),
+            '--session', self.session, '--block', block, '--owner', entry['owner'], '--generation', str(entry['generation']),
+            '--reason', 'bring detached work forward', '--anchor', self.starter, '--focus', 'no'], env=self.env, capture_output=True, text=True)
+        self.assertEqual(process.returncode, 0, process.stdout + process.stderr)
+        self.assertEqual(inspect()['placement'], 'placed')
+        self.assertEqual(self.rpc('com.superlogical.terminal.process', target)['child'], child)
+        # CLI override wins over the profile, with come-forward disabled by default.
+        profile.update(layout='tab', come_forward=False)
+        self.config.write_text(json.dumps(self.settings))
+        process, packet = self.run_cli('launch', '--config', str(self.config), '--profile', 'probe', '--layout', 'detached',
+            '--ack-timeout-ms', '5000')
+        self.assertEqual(process.returncode, 0, process.stdout + process.stderr)
+        self.assertEqual(packet['placement'], 'detached')
+
+    def test_detached_exit_comes_forward_without_focus(self):
+        self.settings['profiles']['probe'].update(layout='detached', come_forward=True)
+        before = self.rpc('session.view', dict(session_id=self.session))
+        process, packet = self.launch('exit7', ack_timeout=5000)
+        self.assertEqual(process.returncode, 0, process.stdout + process.stderr)
+        launch_id, block = packet['launch_id'], packet['target']['block_id']
+        wait_for(lambda: self.record(launch_id).get('come_forward_last', {}).get('event') == 'exit')
+        self.assertEqual(self.record(launch_id)['immediate_child_term'], dict(Exited=7))
+        after = self.rpc('session.view', dict(session_id=self.session))
+        self.assertEqual(after['active_window_id'], before['active_window_id'])
+        self.assertEqual(after['windows'][0]['focused_block_id'], self.starter)
+        self.assertEqual(self.rpc('session.describe_block', dict(session_id=self.session, block_id=block))['block']['placement'], 'placed')
+
     def test_stop_notification_waits_for_and_restores_operator_draft(self):
         prompt_log = self.work / "prompt.jsonl"
         fixture = Path(__file__).parents[1] / "send" / "prompt_fixture.py"

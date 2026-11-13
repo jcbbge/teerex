@@ -20,6 +20,7 @@ import stat
 import subprocess
 import sys
 import time
+import tempfile
 
 LIMIT = 262144
 RUNTIME = sys.argv[1] if __name__ == "__main__" else None
@@ -221,19 +222,82 @@ AUTO_PRUNE_AT = 24
 SETTLE_MS = 120000  # A launch still inside its queue/spawn/track window is never judged.
 
 
+DETACHED_LUA = r'''local a=rex.args
+local function call(method,args)
+ local v,e=rex.call(method,args); if not v then error(e) end
+ if #rex.json.encode(v)>262144 then error("response_exceeds_bound") end
+ return v
+end
+local version=call("server.version")
+if version.api_revision~=13 then error("detached_requires_API13") end
+call("session.attach",{session_id=a.session_id})
+if a.operation=="create" then
+ local command={"/bin/sh","-c",'cd -- "$1" || exit 125\nshift\nexec "$@"',"teerex-agent",a.cwd}
+ for _,v in ipairs(a.argv) do command[#command+1]=v end
+ local made=call("session.new_block",{session_id=a.session_id,flavor="com.superlogical.terminal.shell",label=a.name,
+  options={shell="none",login=false,interactive=false,cwd=a.cwd,command=command,exit={on_completion=false}}})
+ a.block_id=made.block_id
+end
+local blocks=call("session.list_blocks",{session_id=a.session_id}).blocks or {}
+local target
+for _,b in ipairs(blocks) do if b.block_id==a.block_id then target=b end end
+local result={placement=target and target.placement or "absent",block_id=a.block_id,focus_requested=false}
+if a.operation=="forward" and target and target.placement=="detached" then
+ local view=call("session.view",{session_id=a.session_id})
+ local anchor
+ for _,w in ipairs(view.windows or {}) do
+  if w.window_id==view.active_window_id and not w.zoomed_block_id then anchor=w.focused_block_id end
+ end
+ if not anchor then error("no_focused_anchor") end
+ call("session.move_block",{session_id=a.session_id,block_id=a.block_id,anchor_block_id=anchor,
+  direction="horizontal",side="after",ratio=2/3})
+ local after=call("session.view",{session_id=a.session_id})
+ if after.active_window_id~=view.active_window_id then error("focus_changed") end
+ for _,old in ipairs(view.windows) do for _,new in ipairs(after.windows or {}) do
+  if old.window_id==new.window_id and old.focused_block_id~=new.focused_block_id then error("focus_changed") end
+ end end
+ result.placement="placed"
+end
+io.write(rex.json.encode(result),"\n")
+'''
+
+
+def detached_operation(state, operation, argv=None):
+    """One bounded read/create/move on this launch's own exact pane; never retry."""
+    target = state['target']
+    request = dict(operation=operation, session_id=target['session_id'], block_id=target.get('block_id'),
+                   cwd=state.get('cwd'), name=state.get('name'), argv=argv)
+    command = [state.get('rex_executable') or 'rex', '--autostart=false', '--server', 'unix://' + state['socket'],
+               '--timeout', '3s', '--color', 'never', 'do', '-e', DETACHED_LUA, '--args', json.dumps(request)]
+    env = dict(os.environ, PATH=state.get('client_path') or os.defpath)
+    with tempfile.TemporaryFile() as output, tempfile.TemporaryFile() as errors:
+        result = subprocess.run(command, env=env, stdin=subprocess.DEVNULL, stdout=output, stderr=errors, timeout=5)
+        output.seek(0)
+        raw = output.read(262145)
+    require(result.returncode == 0 and len(raw) <= 262144, 'detached_operation_unavailable_or_uncertain')
+    return json.loads(raw)
+
+
+def come_forward(state, event):
+    if not state.get('come_forward'):
+        return
+    try:
+        packet = detached_operation(state, 'forward')
+        update(state['registry'], state['launch_id'], lambda s: s.update(come_forward_last=dict(event=event, at=now(), **packet)))
+    except (OSError, ValueError, Refusal, subprocess.TimeoutExpired) as error:
+        update(state['registry'], state['launch_id'], lambda s: s.update(come_forward_last=dict(event=event, at=now(), outcome='unknown', reason=str(error)[:160])))
+
+
 def pane_absent(state):
-    """True only on the surfaces verb's explicit absence from the session view; anything else is unknown."""
+    """True only on explicit absence from the complete block inventory; unavailable reads remain unknown."""
     t = state.get("target") or {}
     if not t.get("block_id"):
         return None
-    code, packet = invoke(["surfaces", "inspect", "--socket", state["socket"], "--session", t["session_id"],
-                           "--pane", t["block_id"], "--timeout-ms", "3000"], client_path=state.get("client_path"),
-                          rex_executable=state.get("rex_executable"))
-    if isinstance(packet, dict) and packet.get("outcome") == "refused" and packet.get("failure_reason") == "pane_not_attached_terminal":
-        return True
-    if code == 0 and isinstance(packet, dict) and packet.get("outcome") == "inspected":
-        return False
-    return None
+    try:
+        packet = detached_operation(state, 'inspect')
+        return packet['placement'] == 'absent'
+    except (OSError, ValueError, Refusal, subprocess.TimeoutExpired):
+        return None
 
 
 def retirement(state, check_panes=True):
@@ -248,7 +312,7 @@ def retirement(state, check_panes=True):
     if check_panes:
         absent = pane_absent(state)
         if absent:
-            return "pane_gone", dict(pane=state["target"]["block_id"], basis="surfaces_inspect_pane_not_attached_terminal")
+            return "pane_gone", dict(pane=state["target"]["block_id"], basis="session_list_blocks_absent")
     return None, None
 
 
@@ -382,7 +446,7 @@ def receipt(state, outcome, **extra):
     result = {k: state.get(k) for k in ("launch_id", "name", "owner", "purpose", "review_at", "profile", "target",
                                         "starter", "report_to", "phase", "tracked", "protocol_acknowledged",
                                         "brief_attempted", "brief_outcome", "immediate_child_term", "remote_child_term", "notifications",
-                                        "auto_prune", "scratchpad", "scratch_pane_opened", "scratch_pane_receipt")}
+                                        "auto_prune", "layout", "placement", "come_forward", "come_forward_last", "scratchpad", "scratch_pane_opened", "scratch_pane_receipt")}
     result["execution_host"] = state.get("execution", {}).get("host") if state.get("execution") else None
     result["immediate_child_role"] = "ssh_transport" if state.get("execution") else "agent_program"
     result.update(schema_version=1, kind="agents_result", outcome=outcome, agent_readiness="not_assessed",
@@ -889,6 +953,8 @@ def launch(o):
         # Reuse the named-host transport, including pinned executables, strict SSH and literal argv.
         command = [RUNTIME, "targets", "exec", "--config", absolute(route["config"]), "--host", host, "--tty", "--",
                    "agents", "human", "--config", absolute(route["profiles"]), "--profile", o.profile, "--routed"]
+        if o.layout:
+            command += ['--layout', o.layout]
         return subprocess.call(command), None
     profile = cfg["profiles"].get(o.profile)
     require(isinstance(profile, dict), "unknown_profile")
@@ -907,6 +973,9 @@ def launch(o):
     if profile.get("hook_events"):
         validate_adapter(profile.get("harness", o.profile), argv)
     require(type(profile.get("scratch_pane", True)) is bool, "invalid_scratch_pane")
+    layout = o.layout or profile.get('layout', 'tab')
+    require(layout in ('tab', 'detached'), 'invalid_agent_layout')
+    require(type(profile.get('come_forward', False)) is bool, 'invalid_come_forward')
     execution, callbacks = execution_config(profile)
     tint = tint_config(profile.get("tint"))
     delivery = delivery_config(profile.get("delivery"))
@@ -955,7 +1024,7 @@ def launch(o):
                      immediate_child_term=None, notifications={}, brief_file=None, protocol_file=None,
                      hook_events=profile.get("hook_events", False), client_path=os.environ.get("PATH", os.defpath),
                      rex_executable=os.environ.get("TEEREX_INTERNAL_REX"), delivery=delivery, execution=execution,
-                     callbacks=callbacks, remote_child_term=None, human=human, scratch_pane=profile.get("scratch_pane", True), tint=tint)
+                     callbacks=callbacks, remote_child_term=None, human=human, scratch_pane=profile.get("scratch_pane", True), tint=tint, layout=layout, come_forward=profile.get("come_forward", False))
         # Retire exited/never-started/pane-gone records before the cap can refuse a launch; history is archived.
         pruned = prune_records(root, apply=True, at_least=AUTO_PRUNE_AT)
         state["auto_prune"] = dict(retired=len(pruned["retired"]), live_before=pruned["live_before"])
@@ -964,7 +1033,13 @@ def launch(o):
                 state["brief_file"] = registry.write_message(launch_id, "brief", brief)
             registry.save(state, new=True)
         command = [RUNTIME, "agents", "supervise", "--registry", root, "--launch-id", launch_id]
-        if human:
+        if layout == 'detached':
+            try:
+                made = detached_operation(state, 'create', command)
+                code, packet = 0, dict(outcome='created_and_verified', created=dict(block_id=made['block_id']), placement=made['placement'])
+            except (OSError, ValueError, Refusal, subprocess.TimeoutExpired):
+                code, packet = 1, dict(outcome='creation_uncertain')
+        elif human:
             code, packet = invoke(["surfaces", "open", "--socket", socket, "--session", session, "--layout", "tab",
                                    "--label", name, "--cwd", cwd, "--", *command])
         else:
@@ -972,15 +1047,16 @@ def launch(o):
                                    "--report-to-session", rs, "--report-to-block", rb, "--", *command])
         def created(s):
             s["spawn_receipt"] = packet
+            s["placement"] = packet.get("placement", "placed") if isinstance(packet, dict) and code == 0 else "unknown"
             if isinstance(packet, dict) and packet.get("created"):
                 s["target"]["block_id"] = address_id(packet["created"]["block_id"], "block")
         state = update(root, launch_id, created)
-        if not succeeded(code, packet, "created_and_verified" if human else "created_and_attached"):
+        if not succeeded(code, packet, "created_and_verified" if human or layout == "detached" else "created_and_attached"):
             return 1, receipt(state, "creation_uncertain", client_exit=code)
         block = state["target"]["block_id"]
         scratchpad = scratch_init(session, block, name, purpose, scratch_line(intent))
         state = update(root, launch_id, lambda s: s.update(scratchpad=scratchpad))
-        if state["scratch_pane"]:
+        if state["scratch_pane"] and layout != "detached":
             side_code, side_packet = invoke(["surfaces", "open", "--socket", socket, "--session", session,
                                             "--layout", "tiled", "--anchor", block, "--label", name + " scratchpad",
                                             "--", RUNTIME, "scratch", "watch", "--session", session, "--block", block])
@@ -1294,6 +1370,8 @@ def supervise(o):
             current = load(o.registry, o.launch_id).get("last_hook")
             if current is not None and current != last_hook:
                 program_status(state, {"Stop": "idle", "StopFailure": "error", "UserPromptSubmit": "working"}[current["kind"]], current["text"])
+                if current["kind"] in ("Stop", "StopFailure"):
+                    come_forward(state, current["kind"])
                 last_hook = current
         code = child.returncode
         term = {"Exited": code} if code >= 0 else {"Signal": -code}
@@ -1307,6 +1385,7 @@ def supervise(o):
         if term is not None:
             update(o.registry, o.launch_id, lambda s: s.update(immediate_child_term=term, immediate_child_ended_at=now()))
     program_status(state, "done" if term == {"Exited": 0} else "error", "immediate child terminated; descendants not verified")
+    come_forward(state, "exit")
     state = load(o.registry, o.launch_id)
     last = state.get("last_hook", {}).get("text", "(no harness last words supplied)")
     role = "SSH transport" if state.get("execution") else "Immediate child"
@@ -1442,10 +1521,11 @@ def bounded_int(minimum, maximum):
 
 def parser():
     p = argparse.ArgumentParser(prog="teerex agents", description=(
-        "Visible profiles, protocol ACK-before-one-brief, optional named SSH compute and opt-in bounded local fence channel. "
+        "Tracked tab/detached profiles, protocol ACK-before-one-brief, optional named SSH compute and opt-in bounded local fence channel. "
         "Python3.9+. API13 jobs. Profiles accept tint: false or {idle,error,done: #RRGGBB}; supervisor uses child status. "
         "Creation, transport ACK, agent ACK, idle and child exit are distinct. "
-        "No readiness claim, input lease, hidden agent, daemon, automatic retry/close or whole-tree death guarantee."))
+        "Profiles accept layout: tab|detached and opt-in come_forward: true (place on Stop/StopFailure/exit without focus). "
+        "No readiness claim, input lease, untracked agent, daemon, automatic retry/close or whole-tree death guarantee."))
     sub = p.add_subparsers(dest="operation", required=True)
     for op in ("profiles", "shell"):
         q = sub.add_parser(op, help="inspect profiles" if op == "profiles" else "print replacement human-launch functions; no starter/brief needed; never edits shell files")
@@ -1468,9 +1548,10 @@ def parser():
     source = q.add_mutually_exclusive_group(required=True)
     source.add_argument("--payload", help="Codex notify appends one JSON argv payload")
     source.add_argument("--event-file", help="normalized bounded Stop JSON file or stdin")
-    q = sub.add_parser("launch", help="create visible agent and scratchpad; profiles: intent, scratch_pane (default true); await ACK before brief")
+    q = sub.add_parser("launch", help="create tracked tab/detached agent and scratchpad; profiles: intent, scratch_pane (default true); await ACK before brief")
     q.add_argument("--config", required=True)
     q.add_argument("--profile", required=True)
+    q.add_argument("--layout", choices=("tab", "detached"), help="override profile layout; detached stays tracked without a window")
     for key in ("registry", "socket", "session", "name", "cwd", "starter-session", "starter-block", "report-to-session",
                 "report-to-block", "host", "owner", "purpose", "store", "brief-file"):
         q.add_argument("--" + key)
@@ -1494,7 +1575,7 @@ def parser():
     for op in ("ack", "deliver", "inspect", "present", "stop", "supervise", "exited"):
         q = sub.add_parser(op, help={"ack": "record agent protocol ACK; token plus exact pane required",
                                     "deliver": "explicitly attempt a not-yet-attempted brief after ACK",
-                                    "inspect": "offline lifecycle metadata; not live liveness",
+                                    "inspect": "lifecycle metadata and freshly read placement; unavailable placement is unknown",
                                     "present": "explicit relocation beside anchor through jobs owner/generation checks",
                                     "stop": "submit a harness Stop/StopFailure report, never death proof",
                                     "supervise": "internal retained visible in-pane program; waits immediate child",
@@ -1527,7 +1608,12 @@ def main():
         if o.operation == "deliver":
             code, result = deliver(o.registry, o.launch_id)
         elif o.operation == "inspect":
-            code, result = 0, receipt(load(o.registry, o.launch_id), "saved_metadata_not_live_evidence")
+            state = load(o.registry, o.launch_id)
+            try:
+                state['placement'] = detached_operation(state, 'inspect')['placement']
+            except (OSError, ValueError, Refusal, subprocess.TimeoutExpired):
+                state['placement'] = 'unknown'
+            code, result = 0, receipt(state, "metadata_with_fresh_placement")
         elif o.operation == "exec":
             code, result = remote_exec(o)
         elif o.operation == "human":

@@ -875,6 +875,31 @@ class RexBoardsTest(unittest.TestCase):
         saved[3] &= ~pending
         self.assertEqual(restored, saved)
 
+    def test_detached_fleet_marks_placement_and_presents_from_its_session(self):
+        root, env, args, session, anchor, alpha, beta, view = self.dashboard_fixture()
+        args.remove('--detail')
+        env['HOME'] = str(root)
+        pad = root / '.local/state/teerex/scratch' / session / (beta + '.md')
+        pad.parent.mkdir(parents=True)
+        pad.write_text('# beta\nPurpose: detached work\nIntent: verify\nUpdated: 2026-11-13T00:00:00Z\n## Now\n- [ ] Check detached scratchpad\n## Done\n- [x] Launch\n')
+        target = dict(session_id=session, block_id=beta)
+        self.api_detach = subprocess.check_output(self.base + ['api', 'call', 'session.detach_block', json.dumps(target)])
+        before = view()
+        child = json.loads(subprocess.check_output(self.base + ['block', 'call', '-s', session, '-b', beta, 'process', '{}']))['child']
+        process, master, slave, saved, output, wait_for = self.keyboard_dashboard(args, env, 60)
+        wait_for('[detached]')
+        wait_for('Check detached scratchpad')
+        wait_for('1/2')
+        os.write(master, b'/dash-agent-beta\rp')
+        wait_for('Action finished')
+        described = json.loads(subprocess.check_output(self.base + ['api', 'call', 'session.describe_block', json.dumps(target)]))['block']
+        self.assertEqual(described['placement'], 'placed')
+        current = json.loads(subprocess.check_output(self.base + ['block', 'call', '-s', session, '-b', beta, 'process', '{}']))['child']
+        self.assertEqual(current, child)
+        self.assertEqual(len(view()['windows']), len(before['windows']))
+        os.write(master, b'q')
+        self.finish_dashboard(process, master, slave, saved, output)
+
     def test_compact_fleet_busy_claude_without_scratchpad_is_working(self):
         root, env, args, session, anchor, alpha, beta, view = self.dashboard_fixture(busy=True)
         args.remove('--detail')

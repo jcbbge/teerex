@@ -372,3 +372,8 @@ The interactive fleet probe also reads `observe --state` for each present pane.
 Working screen evidence overrides an idle saved or terminal status; unavailable
 screen evidence leaves activity unknown rather than asserting idle. Each read
 has a one-second collection budget and a two-second outer bound.
+
+Detached live agents remain in the compact fleet with a `[detached]` marker.
+`p` presents the selected detached agent beside its own session's currently focused
+pane, in the right third, through jobs owner/generation checks. Enter still requests
+focus; the presentation key is the path that first places a detached pane.

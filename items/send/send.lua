@@ -23,6 +23,16 @@ for _, w in ipairs(view.windows or {}) do
         end
     end
 end
+-- Detached terminals remain explicit tracked destinations. Keep the same draft
+-- and clutch paths below; only presence is read from the complete inventory.
+if not terminal and v.api_revision==13 then
+    local listed=rex.call("session.list_blocks", {session_id=a.session_id})
+    for _,b in ipairs(type(listed)=="table" and listed.blocks or {}) do
+        if b.block_id==a.block_id and b.creator_name=="com.superlogical.terminal" and b.placement=="detached" then
+            terminal=true; seat=b.label=="seat"
+        end
+    end
+end
 if not terminal then refuse("target_not_visible_terminal"); return end
 local paste = {session_id=a.session_id, block_id=a.block_id, event={type="paste", payload={text=a.text}}}
 -- Rex preview.16 caps control messages at 65536 bytes. Use Rex's own encoder,

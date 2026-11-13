@@ -5,7 +5,7 @@
 ## Who / What / When / Where / Why / How
 
 - **Who:** the operator or an authorized starter, explicitly responsible for a profile's program and selected pane. A recorded owner label is responsibility, not authenticated authority or an input lease.
-- **What:** create one retained visible tab, register its jobs responsibility before starting the harness, supply only the messaging protocol as its initial prompt argument, await an explicit token-and-pane-bound agent ACK, then attempt the task brief once. A visible in-pane supervisor waits for its immediate child and attempts notifications automatically; optional harness callbacks report idle/error turns separately.
+- **What:** create one retained tracked tab (or an explicitly selected detached terminal), register its jobs responsibility before starting the harness, supply only the messaging protocol as its initial prompt argument, await an explicit token-and-pane-bound agent ACK, then attempt the task brief once. A visible in-pane supervisor waits for its immediate child and attempts notifications automatically; optional harness callbacks report idle/error turns separately.
 - **When:** use managed launch for a new agent, `inspect` for saved evidence, explicit `deliver` after a late ACK if no brief was attempted, and `present` when deliberately bringing a pane beside the seat. Never re-run launch because an ACK was lost: creation or input might already have happened.
 - **Where:** Linux x86_64 and Apple-silicon macOS, Python **3.9+**, an installed teerex and trusted Rex client, existing API13 server/session, command-host-local private registry and absolute executable/cwd paths. The supervisor and registry must be accessible on the pane's execution host. The [source-only extensions below](#source-only-compute-routing-and-scoped-delivery-issues14-and21) add explicit unfenced SSH compute and separately tested local fenced delivery; alpha.5 assets do not include them. CLI host, server and attached terminal host are not interchangeable. Root named-host routing executes the leaf on the selected command host; it does not make these addresses arbitrary cross-host reply routes.
 - **Why:** a visible creation ACK is not readiness; terminal input immediately after creation races shell/harness startup. The initial protocol is therefore an explicitly supported **final prompt argv argument**, never a startup-delay guess or a screen-scraped readiness heuristic. Only the agent's explicit ACK opens the brief gate.
@@ -142,7 +142,7 @@ The protocol contains the exact `agents ack --registry ABS --launch-id HEX --tok
 
 The brief's irreversible **attempt flag is saved before** one send invocation. `brief_submitted` means only send's paste+Enter events were acknowledged; it is not application consumption or completion. No draft clearing/restoration, input lease or screen-based ACK exists. Use a dedicated agent terminal; other clients/human typing can still race the submission. `agents deliver --registry ABS --launch-id HEX` is an explicit late-ACK continuation only while the gate is satisfied and the brief has never been attempted. Once attempted, even a missing/failed receipt refuses a second attempt.
 
-`protocol_ack_timeout` exits124 and leaves the visible pane and saved intent intact; it neither silently retries nor kills/closes a possibly running agent. `inspect` is offline metadata, not liveness. Creation/refused/uncertain receipt details stay in private state; a lost creation ACK may leave one visible supervisor pane, but no unverified hidden harness is started or automatically adopted.
+`protocol_ack_timeout` exits124 and leaves the visible pane and saved intent intact; it neither silently retries nor kills/closes a possibly running agent. `inspect` combines saved metadata with a fresh placement read, not task liveness. Creation/refused/uncertain receipt details stay in private state; a lost creation ACK may leave one visible supervisor pane, but no unverified hidden harness is started or automatically adopted.
 
 ## Stops, exits and deliberate presentation
 
@@ -341,3 +341,23 @@ Claude UserPromptSubmit and Pi before_agent_start report turn start through the 
 `teerex agents timeline --registry DIR [--name NAME] [--since ISO|ms] [--json]` reads live lifecycle files and `archive/<launch id>/` without creating registry locks or modifying records. Events are oldest first: launch intent (`launched`, not creation proof), protocol ACK, brief attempt, every Stop/StopFailure with at most 180 characters from its first line, immediate child exit term, and prune. Plain output gives UTC time, name, launch ID, event, session, block and detail; JSON gives `events`, timestamps in milliseconds, and `legacy_partial_launches`. Name matching is exact; since is inclusive and accepts ISO timestamps with timezone or Unix milliseconds.
 
 New saves retain event history in the existing atomic lifecycle record. Older records expose only timestamps and the final hook still present; overwritten hooks and untimestamped brief attempts cannot be recovered. JSON names those partial launches and plain output warns on stderr. The timeline is a snapshot of reported evidence, not live liveness, readiness, consumption or whole-tree death proof. No watcher or daemon runs.
+
+## Tracked detached agents
+
+`agents launch --layout detached` overrides profile `layout: tab|detached` (default
+`tab`). Detached launches use API13 `session.new_block` in the selected session;
+protocol ACK, one guarded brief, jobs registration, scratchpad and turn reports
+remain required. Their scratchpad is created, but its optional side pane waits
+until an operator opens it: a detached block has no visible anchor.
+
+`agents inspect` now reads fresh placement (`placed`, `detached`, `absent`, or
+`unknown` on unavailable evidence), alongside lifecycle metadata. Launch receipts
+include initial `placement` and the selected `layout`. Prune reads the complete
+block list: a live detached pane is present, not gone.
+
+Profile `come_forward: true` opts the existing supervisor into placing its own
+block on Stop, StopFailure or immediate-child exit. It acts only while detached,
+uses the right third beside that session's current focused pane, and never requests
+focus or moves an already placed block. No extra watcher is started. An unavailable
+anchor or uncertain operation is recorded in `come_forward_last`, without retry.
+This is placement, not approval or proof of task completion.

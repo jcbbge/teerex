@@ -5,13 +5,14 @@ const supervised = @import("supervised_child");
 const usage =
     \\Usage: teerex jobs OP --registry ABS [OPTIONS]
     \\OP: list | doctor | track | inspect | adopt | present | forget
+    \\list: fresh per-entry placement (placed/detached/absent/unknown), one-second live read per entry.
     \\doctor: [--socket ABS] [--timeout-ms N] read-only per-record live/identity/deadline/intent and orphan findings.
     \\Doctor uses recorded sockets unless explicitly overridden; identity checks still apply; no mutation or retries.
     \\Every operation except list/doctor selects --socket ABS --session session:UUID --block block:UUID.
     \\track: --owner LABEL --kind agent|command --purpose TEXT --deadline-unix-ms N --cleanup manual [--receipt-file ABS]
     \\adopt: --from-owner LABEL --owner LABEL --generation N --reason TEXT --deadline-unix-ms N
     \\present: --owner LABEL --generation N --reason TEXT --anchor block:UUID --focus yes|no [--label TEXT] [--relocate yes|no]
-    \\Relocation defaults no (placed panes stay in place); yes explicitly moves beside anchor at half width.
+    \\Detached agents present in the right third; detached commands and explicit placed relocation use half width.
     \\A focused source requires --focus yes for relocation; no silent focus transfer, retry or recreation.
     \\forget: --owner LABEL --generation N --reason TEXT (local record only; never closes a block)
     \\Live operations optionally take --timeout-ms N (100..60000, default 5000).
@@ -51,6 +52,7 @@ const Entry = struct {
     registered_at_unix_ms: i64,
     last_action: ?Action = null,
     receipt_path: ?[]const u8 = null,
+    placement: ?[]const u8 = null,
 };
 const State = struct { schema_version: u8, next_generation: u64, entries: []Entry };
 const Options = struct {
@@ -478,7 +480,15 @@ fn execute(allocator: std.mem.Allocator, o: Options) !u8 {
     if (eq(o.operation, "doctor")) return doctor(allocator, &registry, o);
     const now = std.time.milliTimestamp();
     if (eq(o.operation, "list")) {
-        try output(allocator, .{ .schema_version = 1, .kind = "jobs_list", .entries = registry.state.entries, .evaluated_at_unix_ms = now, .live_state = "not_checked", .owner_liveness = "not_checked", .deadline_enforced = false, .automatic_cleanup = false });
+        for (registry.state.entries) |*entry| {
+            const probe: Options = .{ .operation = "inspect", .registry = o.registry, .socket = entry.socket, .session = entry.session_id, .block = entry.block_id, .timeout_ms = 1000 };
+            const live = query(allocator, probe, entry.*) catch {
+                entry.placement = "unknown";
+                continue;
+            };
+            entry.placement = if (live.collector.observation) |observation| observation.placement else if (live.failure != null and eq(live.failure.?, "target_absent_at_observation")) "absent" else "unknown";
+        }
+        try output(allocator, .{ .schema_version = 1, .kind = "jobs_list", .entries = registry.state.entries, .evaluated_at_unix_ms = now, .live_state = "placement_observed_or_unknown", .owner_liveness = "not_checked", .deadline_enforced = false, .automatic_cleanup = false });
         return 0;
     }
     var index: ?usize = null;

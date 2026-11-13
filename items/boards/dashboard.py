@@ -231,7 +231,7 @@ def fleet_lines(snapshot, rows, now, width, selected=None, flash=(), color=False
             lines += textwrap.wrap((source.get('configured_name') or source.get('host') or 'Host') + ' · unavailable', width)
     for row, value in zip(rows, values):
         glyph = {'blocked': '●', 'error': '✗', 'working': '▶', 'done': '✓'}.get(value['state'], ' ')
-        prefix = ('›' if key_for(row) == selected else ' ') + ' ' + glyph + ' ' + value['name']
+        prefix = ('›' if key_for(row) == selected else ' ') + ' ' + glyph + ' ' + value['name'] + (' [detached]' if row['observation'].get('placement') == 'detached' else '')
         suffix = '  ' + value['progress'] + '  ' + value['age']
         # Work text always wraps in full, including long individual words.
         wrapped = textwrap.wrap(prefix + '  ' + value['message'] + suffix, width, subsequent_indent='    ') or ['']
@@ -341,7 +341,7 @@ class Dashboard:
                     lines += textwrap.wrap(glyph + ' ' + clean(item), width, subsequent_indent='  ')
             if not any(pad.get(k) for k in ('now', 'todo', 'done')):
                 lines += ['No scratchpad yet.']
-        lines += ['', '⏎ jump   ␣ scratchpad   a all history   i inspect   q quit']
+        lines += ['', '⏎ jump  p present  ␣ scratchpad  a history  i inspect  q quit']
         if self.status != 'Ready. Actions only run on a keypress; reports do not prove completion.':
             lines += [self.status if self.inspect else 'Action finished' if 'exit=0' in self.status else 'Action unavailable' ]
         sys.stdout.write('\x1b[2J\x1b[H' + '\n'.join(lines) + '\x1b[J')
@@ -380,6 +380,10 @@ class Dashboard:
         sys.stdout.flush()
 
     def anchor(self, row):
+        if row['observation'].get('placement') == 'detached':
+            anchor = row.get('dashboard', {}).get('focus_anchor')
+            self.api['check'](anchor and anchor != row['target']['block_id'], 'detached_session_has_no_focused_anchor')
+            return anchor
         match = next((r for r in self.snapshot['rows'] if r['target']['session_id'] == self.session
                       and r['target']['block_id'] == self.block and r['observation'].get('present') is True
                       and (not self.a.dashboard_host or self.a.dashboard_host in

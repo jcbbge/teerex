@@ -212,7 +212,7 @@ class JobsTest(unittest.TestCase):
         self.assertFalse(report["live_checks_complete"])
         self.assertEqual((self.registry / "state.json").read_bytes(), before)
 
-    def test_tracking_persists_without_owning_process_and_offline_list_is_stale(self):
+    def test_tracking_persists_and_unavailable_placement_stays_unknown(self):
         before = self.view()
         p = self.track(kind="agent", purpose="visible agent accounting only")
         self.assertEqual(p["entry"]["generation"], 1)
@@ -228,8 +228,8 @@ class JobsTest(unittest.TestCase):
         self.env["PATH"] = "/no-rex-here"
         r, listing = self.invoke("list")
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(listing["entries"][0], p["entry"])
-        self.assertEqual(listing["live_state"], "not_checked")
+        self.assertEqual(listing["entries"][0], dict(p["entry"], placement="unknown"))
+        self.assertEqual(listing["live_state"], "placement_observed_or_unknown")
         self.assertFalse(listing["deadline_enforced"])
         r, duplicate = self.invoke("track", owner="someone else", kind="command", purpose="no takeover", deadline_unix_ms=int(time.time()*1000)+60000, cleanup="manual")
         self.assertEqual(r.returncode, 1)
@@ -297,14 +297,12 @@ class JobsTest(unittest.TestCase):
         self.assertEqual(self.view()["windows"][0]["focused_block_id"], self.block)
         self.assertEqual(self.view()["windows"][0]["layers"], after["windows"][0]["layers"])
 
-    def test_agent_detached_or_minimized_refuses_and_placed_panes_never_move(self):
+    def test_detached_agents_track_and_placed_panes_never_move(self):
         self.detached()
         args = dict(owner="operator α", kind="agent", purpose="must not hide workers", deadline_unix_ms=int(time.time()*1000)+60000, cleanup="manual")
         r, p = self.invoke("track", **args)
-        self.assertEqual(r.returncode, 1, r.stderr + r.stdout)
-        self.assertEqual(p["failure_reason"], "agent_not_visible_in_view")
-        self.assertEqual(self.invoke("list")[1]["entries"], [])
-        self.track()
+        self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
+        self.assertEqual(self.invoke("list")[1]["entries"][0]["placement"], "detached")
         other = self.rpc("session.new_window", session_id=self.session, focus=False, layout=dict(block=dict(flavor="com.superlogical.terminal.shell", options=dict(command=["/bin/sleep", "120"]))))
         other_anchor = other["block_ids"][0]
         self.rpc("session.move_block", session_id=self.session, block_id=self.block, anchor_block_id=self.anchor)
@@ -378,10 +376,11 @@ class JobsTest(unittest.TestCase):
         self.track(kind="agent")
         self.rpc("session.detach_block", session_id=self.session, block_id=other)
         hidden_view = self.view()
-        r, p = self.invoke("present", owner="operator α", generation=2, reason="must not rescue a hidden agent implicitly", anchor=self.anchor, focus="no")
-        self.assertEqual(p["failure_reason"], "agent_not_visible_in_view")
-        self.assertFalse(p["mutation_attempt_frame_seen"])
-        self.assertEqual(self.view(), hidden_view)
+        r, p = self.invoke("present", owner="operator α", generation=2, reason="explicitly present tracked detached agent", anchor=self.anchor, focus="no")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertTrue(p["mutation_attempt_frame_seen"])
+        self.assertNotEqual(self.view(), hidden_view)
+        self.assertAlmostEqual(self.view()['windows'][0]['layers'][0]['layout']['split']['ratio'], 2/3)
         # A minimized floating layer is attached, but is not visible agent presentation.
         self.rpc("session.move_block", session_id=self.session, block_id=other, anchor_block_id=self.anchor)
         self.rpc("session.float_block", session_id=self.session, block_id=other, bounds=[.1,.1,.5,.5])

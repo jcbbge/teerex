@@ -612,6 +612,9 @@ local sessions=call("session.list").sessions or {}
 if #sessions>32 then error("session_limit_32") end
 for _,s in ipairs(sessions) do
   call("session.attach",{session_id=s.session_id})
+  local view=include_status and call("session.view",{session_id=s.session_id}) or {}
+  local anchor=nil
+  for _,w in ipairs(view.windows or {}) do if w.window_id==view.active_window_id and not w.zoomed_block_id then anchor=w.focused_block_id end end
   local blocks=call("session.list_blocks",{session_id=s.session_id}).blocks or {}
   for _,b in ipairs(blocks) do
     if b.creator_name=="com.superlogical.terminal" then
@@ -621,7 +624,7 @@ for _,s in ipairs(sessions) do
         status=call("com.superlogical.terminal.program_status",{session_id=s.session_id,block_id=b.block_id,args={}})
         if type(status.records)~="table" then error("invalid_status_records") end
       end
-      table.insert(rows,{program_status=status,session=s.session_id,block=b.block_id,label=b.label or "",host_id=b.host_id,
+      table.insert(rows,{focus_anchor=anchor,program_status=status,session=s.session_id,block=b.block_id,label=b.label or "",host_id=b.host_id,
         placement=b.placement,window_id=b.window_id})
     end
   end
@@ -818,7 +821,7 @@ def fleet_snapshot(a, state):
                     name = next((r['name'] for r in metadata.get('lifecycles', []) if r['target'] == row['target']), row['observation'].get('label'))
                     questions = [r for seat in state['seats'] for r in folded(seat)[0] if r['from'] == name]
                     row['question'] = max(questions, key=lambda r: r['at'])['body']['ask'] if questions else None
-                    row["dashboard"] = dict(configured_name=item.get("name"), jobs_registry=registry,
+                    row["dashboard"] = dict(focus_anchor=raw_row.get("focus_anchor"), configured_name=item.get("name"), jobs_registry=registry,
                         lifecycle=next((r for r in metadata.get("lifecycles", []) if r["target"] == row["target"]), None),
                         last_call=next((c["at"] for c in metadata.get("calls", []) if row["target"]["block_id"] in c.get("ids", [])), None),
                         errors=metadata.get("errors", []))

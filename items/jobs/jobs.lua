@@ -55,7 +55,7 @@ if type(process) == "table" and type(process.last_exit) == "table" then exit_cod
 emit({event="observed", observation={placement=target.placement, window_id=target.window_id,
     block_host_id=target.host_id, native_owner=target.owner, visible_in_view=window ~= nil,
     last_exit_code_reported=exit_code, process_available=process ~= nil, revision=before.revision}})
-if a.kind == "agent" and (target.placement ~= "placed" or not window) then
+if a.kind == "agent" and target.placement ~= "detached" and (target.placement ~= "placed" or not window) then
     refuse("agent_not_visible_in_view"); return
 end
 if a.operation ~= "present" then
@@ -81,7 +81,7 @@ elseif target.placement ~= "detached" then refuse("unknown_placement"); return e
 emit({event="attempt"})
 if target.placement == "detached" or a.relocate then
     call("session.move_block", {session_id=a.session_id, block_id=a.block_id, anchor_block_id=a.anchor,
-        direction="horizontal", side="after", ratio=0.5})
+        direction="horizontal", side="after", ratio=target.placement=="detached" and a.kind=="agent" and 2/3 or 0.5})
 end
 if a.label then call("session.set_block_label", {session_id=a.session_id, block_id=a.block_id, label=a.label}) end
 if a.focus then call("session.focus_block", {session_id=a.session_id, block_id=a.block_id}) end
