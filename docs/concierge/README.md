@@ -17,7 +17,7 @@ Install and verify the **published [v0.1.0-alpha.5](https://github.com/jcbbge/te
 2. **Install or upgrade locally:** [setup](setup.md) supplies exact tag/commit, platform matrix, selected-archive checksum, inspect-first branching, fixed binary hashes and retained rollback commands.
 3. **Hand to a local agent:** [installation and read-only validation prompts](agent-prompts.md) separate code installation from live access, mutation and source cutover.
 4. **Use the operating layer:** [shared targets and milestone gates](../alpha5.md), [surfaces/palette](../../items/surfaces/README.md), [boards/seat/decisions](../../items/boards/README.md), [managed agents](../../items/agents/README.md), [recovery/manual update](../../items/recovery/README.md), and [fleet installation](../fleet-install.md) contain each command's WWWWW+H and evidence contract.
-5. **Existing utilities:** the [historical alpha.3 feature recipes](features.md) and [alpha.4 follow-ons](follow-ons.md) explain inherited behavior. Their named releases remain historical; use the current setup/matrix for alpha.5 rather than installing an older tag by accident.
+5. **Choose a feature:** the [current WWWWW+H field guide](features.md) covers 17 routes, including six alpha.5 operating-layer areas. The [five shipped follow-ons](follow-ons.md) retain alpha.4 provenance with current alpha.5 use. Original recipes and dated evidence remain attributed; use current setup rather than an older release by accident.
 
 ## Before touching a machine
 

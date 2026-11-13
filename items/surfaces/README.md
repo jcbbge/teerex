@@ -1,5 +1,7 @@
 # Terminal surfaces
 
+**Shipped experimentally in current alpha.5's combined CLI**, not as an independent cartridge. Use [current setup](../../docs/concierge/setup.md) and the [alpha.5 release support guide](../../docs/releases/v0.1.0-alpha.5.md). Mac arm64 API10/12/13 and Linux x86_64/API13 were tested; actual API11/every build and Rex.app graphical painting remain uncertified. Dated leaf-only validation below is preserved separately from released-byte acceptance.
+
 ## Who
 
 Operators and agents placing an actual terminal program in an explicitly selected Rex session. Boards and restart recovery compose this command instead of maintaining their own placement code. This is native Rex terminal layout, not a new widget toolkit, plugin service, daemon, or Rex fork.
@@ -135,7 +137,7 @@ All used Zig 0.15.2 and checksum-pinned Rex archives already named in repository
 
 Actual terminal HTML returned by Rex was rendered in Chromium and inspected for tiled, float and tab programs with their independent API geometry receipts. These are terminal-content readbacks, **not Rex.app placement screenshots**. The disposable Mac has the CLI/server, not the separately distributed tester GUI app. No claim is made about GUI paint/palette click interaction, API11, every old/new Rex build, Joshua's personal Mac/hive/m1, or live named-host integration in this leaf-only test. See [migration](MIGRATION.md) before deleting any working agent-core code.
 
-Standalone test build (shared root/build wiring is owned by integration):
+Optional standalone development test build (current combined root/build wiring is already shipped):
 
 ```sh
 zig build-exe --dep rex_surfaces -Mroot=items/surfaces/test_cli.zig \

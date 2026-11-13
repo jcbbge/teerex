@@ -1,4 +1,6 @@
-# Boards, decisions, and the operator seat (alpha.5 source)
+# Boards, decisions, and the operator seat (current alpha.5)
+
+**Shipped experimental combined-CLI commands.** Use [current setup](../../docs/concierge/setup.md) and the [alpha.5 release support guide](../../docs/releases/v0.1.0-alpha.5.md). Boards is not an independent cartridge; full agent-core cutover remains gated. Dated leaf-only receipts below do not replace released-byte acceptance or certify personal machines.
 
 ## Who / What / When / Where / Why / How
 
@@ -12,7 +14,7 @@
 
 **Why:** the operator needs visible questions, ownership, purpose, source, uncertainty, and a place to type without agent messages overwriting a draft. Every unknown remains visible. No hidden watcher, daemon, restart, focus takeover, or pane input clearing is installed.
 
-**How:** use the commands below, inspect their JSON and exit status, and compose placement with the public `surfaces` command. Root aliases (`seat`, `inbox`, `ask`, `fleet`) may be wired by the integrator; the explicit `boards` forms below are the leaf's full public contract. These are new source capabilities, not a retrospective alpha.4 claim or proof of a published alpha.5 asset.
+**How:** use the commands below, inspect their JSON and exit status, and compose placement with the public `surfaces` command. Root aliases (`seat`, `inbox`, `ask`, `fleet`) are wired in alpha.5; explicit `boards` forms below retain the module's public contract. Root `fleet install/rollback` is the separate installation bridge, not board enumeration. Alpha.4 did not contain these commands.
 
 ## Register and open a visible inbox
 
@@ -143,7 +145,7 @@ Preview changes nothing. Apply changes seat and fleet addresses together in this
 
 `rex_boards.run(allocator,args)!u8`: args omit root `boards`; inbox/fleet render modes and seat/inbox/fleet operations, ask, try-route, probe, state are supported. `rex_boards.tryRoute(allocator,args)!?u8`: args omit try-route; null means only verified not_registered, receipt suppressed, stdin untouched. A returned code is final; a thrown error refuses, never calls native send. Runtime uses embedded Python3.9+ stdlib in the foreground (no extra installed script or Python packages). Normal commands exec into Python, preserving pane/PID; tryRoute supervises its bounded child to capture/suppress only the absence receipt. Help exists for every operation. Exit0 requested record/read, 1 refusal/error/unknown, 2 argparse usage, 3 try-route not_registered only, 124 stdin deadline, 130/143 INT/TERM.
 
-Build the standalone bridge with Zig0.15.2 before root integration:
+For optional standalone ABI development checks, build this bridge with Zig0.15.2; current root integration is already shipped:
 
 ```sh
 zig fmt --check items/boards

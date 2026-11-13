@@ -2,7 +2,7 @@
 
 Capability 10 is a foreground, opt-in core installer orchestrator. Its source entry is `python3 tools/fleet-install/fleet_install.py`; the alpha.5 console bridge is `teerex fleet install|rollback`. It imports the shared `src/targets.py` resolver rather than discovering machines, interpreting Rex host labels as SSH aliases, or keeping a second host registry. `m5`, `hive`, and `m1` are examples of operator-configured names, not built-in endpoints.
 
-This source requires the alpha.5 installer `inspect`/`verify` JSON interface and a selected executable supporting `--version`. It does not make unpublished alpha.5 assets available. An old teerex executable cannot bootstrap a subcommand it does not contain: use the reviewed source/onboarding tools for the first deployment, then the installed console on later deployments. The controller must retain access to `fleet_install.py`, `worker.py`, the shared resolver and `tools/install/teerex-install`; a standalone three-file core archive does not contain these Python sources. Packaging the bridge's support files belongs to the release integrator.
+**Shipped in current alpha.5.** Use [current inspect-first setup](concierge/setup.md) and the [alpha.5 release guide](releases/v0.1.0-alpha.5.md) before selecting published bytes. The alpha.5 native executable embeds the controller, worker, resolver and installer support sources, so its fleet bridge works outside the source checkout; it still requires Python3.9+ and installer tools. The separate source-script entry requires those full source files (including `src/targets.py`); the onboarding archive is not a complete developer checkout. An older executable cannot bootstrap a subcommand it lacks: first install verified alpha.5 using current setup, or use reviewed full source. Three-file archives contain no separate Python source files; newer docs do not rebuild their frozen README.
 
 ## Who, what, when, where, why, how
 
@@ -50,7 +50,7 @@ Configured `host_id` is a declaration, **not an independently measured machine i
 
 ## Plans, apply, and PATH consent
 
-Choose an actual reviewed published tag. `TAG` below is a placeholder, not a release resolver; there is no `latest`.
+Current reviewed public tag is `v0.1.0-alpha.5`. Replace `TAG` below with that exact tag after setup verification, not a branch or release resolver; there is no `latest`.
 
 ```sh
 # Read-only per-host plans; no download, binary execution, root or launcher creation.
@@ -122,7 +122,7 @@ python3 tools/fleet-install/test_ssh.py
 
 On 12 November 2026, all **11 fleet tests** passed on Debian 13/Linux x86_64 with Python 3.13.5, Linux with the declared minimum Python **3.9.25**, and disposable macOS **26.3.1/arm64** with Python 3.14.3/system Bash 3.2. The combined core suite passed 20 tests on each native platform, with its opt-in historical public-download control explicitly skipped in these combined runs (the installer owner's separate `--public` evidence is in the core guide). The real loopback OpenSSH test passed on **both Linux and Mac**: pinned-key native install/upgrade/retained rollback, exact SHA/version receipts, known-hosts filename containing spaces, observed hostname refusal, and actual SSH exit255/host-key diagnostics for unknown and changed keys. An initial stale-plan test over-specified an error message despite a correct earlier refusal; the corrected test asserts the unchanged user file and absent managed install. The first Mac SSH harness accidentally selected the inherited `USER=root`; the product refused root, and the corrected harness selects the actual OS-account username. These are disclosed harness corrections, not hidden product-success claims.
 
-Final alpha.5 source-binary/bridge packaging and published-asset acceptance remain the integrator's work. The versioned native fixtures are not final teerex binaries, and same-OS loopback transport is not real m5↔hive mixed-host acceptance. None of this authorizes or claims a personal m5/hive/m1 install.
+Those versioned native fixtures are not final teerex binaries. Alpha.5 now ships the embedded bridge; [released-byte identity and combined acceptance](releases/v0.1.0-alpha.5.md#verification) are recorded separately, not inferred from these fixtures. Same-OS loopback transport is not real m5↔hive mixed-host acceptance. None of this authorizes or claims a personal m5/hive/m1 install.
 
 ## agent-core migration
 

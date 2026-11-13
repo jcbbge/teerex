@@ -1,6 +1,6 @@
-# Independent cartridges — local source contract
+# Independent cartridges — current alpha.5 contract
 
-This follow-on adds a **separate local cartridge manager and real standalone payload builds**. It does not change alpha.3's shared executable, its three-file release archive, or `tools/install/teerex-install`. Do not put cartridge files in the core installer's managed tree. No personal Mac/hive installation, Rex server change, PATH/profile edit, release publication, or permission grant follows from this source work.
+**Current alpha.5 ships a separate local cartridge manager and real standalone payload catalogs**, first delivered in alpha.4. Use [current setup](concierge/setup.md) for the core and the [alpha.5 release guide](releases/v0.1.0-alpha.5.md) for exact separate catalog/onboarding assets. Alpha.3 had no independent packages; its tag/archive remains unchanged. New surfaces/boards/agents/recovery commands are combined-CLI composition, not additional independent cartridges. Do not put cartridge files in the core installer's managed tree. No personal installation, Rex change, PATH/profile edit or feature-use permission follows from packaging; source-only doc corrections do not rebuild frozen assets.
 
 The manager is `python3 tools/cartridges/cartridges.py`. It requires Python **3.9+**, a non-root user, a canonical user-owned HOME, and Apple-silicon macOS or Linux x86_64. Python is an explicit prerequisite, not silently installed. It uses only the Python standard library. The separate native payloads require no Python themselves; bypassing the manager also bypasses its cooperative in-use protection.
 
@@ -23,14 +23,14 @@ The manager is `python3 tools/cartridges/cartridges.py`. It requires Python **3.
 
 Every current item stays **experimental**. Default `--all` therefore selects zero current items; explicit `--allow-experimental` admits experiments, including experimental dependencies. This does not mark them ready or supersede the historical ready-only collection policy. A future catalog changes membership only when explicitly selected; existing installations do not update themselves. `source.json` is a build recipe, not a claim that all listed APIs/builds are behavior-certified. Item READMEs and rights are copied into each payload. The narrower Mac-only run/doctor/offstage and API13-only offstage/maneuver domains remain intact. No Rex executable is bundled.
 
-The observation standalone build needs the integration owner's `pub fn runObservations(allocator, args) !u8` boundary in `items/observe/main.zig`; `args` starts with `observe`, `compare`, or `watch`, not an executable name. That boundary contains no other cartridge dispatch. It is a follow-on to frozen alpha.3, not present in the alpha.3 tag. Filter/maneuvers statically include the observation evidence validator/comparator; other shared code is also statically linked. There is **no runtime dependency on the combined core executable**. Static source reuse does not make payload installation/removal inseparable.
+The observation standalone build uses the integrated `pub fn runObservations(allocator, args) !u8` boundary in `items/observe/main.zig`; `args` starts with `observe`, `compare`, or `watch`, not an executable name. That boundary contains no other cartridge dispatch. It is a follow-on to frozen alpha.3, not present in the alpha.3 tag. Filter/maneuvers statically include the observation evidence validator/comparator; other shared code is also statically linked. There is **no runtime dependency on the combined core executable**. Static source reuse does not make payload installation/removal inseparable.
 
 ## Build, review, install
 
-Build into a new output directory. Choose an explicit package version appropriate to the source revision; `0.1.0-alpha.4` below is a local validation label, not an announced release. Linux builds target `x86_64-linux-musl`; Mac builds target `aarch64-macos`.
+For development, build reviewed source into a new output directory. The example labels a local alpha.5-source catalog; it does not reproduce the published asset identity. Never reuse an installed version with changed bytes; use published catalogs for release installation. Linux builds target `x86_64-linux-musl`; Mac builds target `aarch64-macos`.
 
 ```sh
-python3 tools/cartridges/package.py --platform x86_64-linux --version 0.1.0-alpha.4 --output /canonical/new/catalog-directory
+python3 tools/cartridges/package.py --platform x86_64-linux --version 0.1.0-alpha.5 --output /canonical/new/catalog-directory
 # Or --platform aarch64-macos. Add --zig /path/to/zig if needed.
 ```
 
@@ -87,9 +87,10 @@ ROOT/.lock                     short lifecycle transaction mutex
 Installing an explicit new version activates it and retains older versions; the same catalog/version/hash is repeatable. Reusing a version with different bytes fails. `activate` is explicit rollback/selection, not a migration. `remove` retires exactly one verified payload out of the install/run namespace; active removal needs `--deactivate`, leaves that ID inactive, and never chooses a fallback. `restore` verifies the recorded retired hash, restores that version **inactive**, and does not start it. There is no purge, force-remove, automatic data migration, or code/data garbage collection.
 
 ```sh
-python3 tools/cartridges/cartridges.py activate filter --version 0.1.0-alpha.4 --apply
-python3 tools/cartridges/cartridges.py remove filter --version 0.1.0-alpha.4 --deactivate --apply
-python3 tools/cartridges/cartridges.py restore filter --version 0.1.0-alpha.4 --apply
+# Set PACKAGE_VERSION to the exact installed/retired version shown by list.
+python3 tools/cartridges/cartridges.py activate filter --version "$PACKAGE_VERSION" --apply
+python3 tools/cartridges/cartridges.py remove filter --version "$PACKAGE_VERSION" --deactivate --apply
+python3 tools/cartridges/cartridges.py restore filter --version "$PACKAGE_VERSION" --apply
 # Reactivation is a separate explicit activate command after restore.
 ```
 
@@ -119,4 +120,4 @@ On 12 November 2026, all **14 lifecycle tests** passed on Linux x86_64/Python 3.
 
 Integrated alpha.4 catalogs expand that initial leaf to **seven Linux/ten Mac** native payloads by adding jobs/adapters. On disposable Linux/API13 and arm64 macOS27.2/API13, managed installed acceptance passed51 offline checks each; direct installed payload runtime acceptance passed109 Linux/136 Mac checks, plus one inapplicable Mac doctor guard skipped. Each catalog also passed native help, cross-dispatch refusal, retirement, byte-preserved user data and inactive restore for every payload. Initial managed runtime harness failures were preserved: concurrent senders hit the short nonblocking registry mutex, and an intentionally changed HOME invalidated its selected root. Corrected runtime validation uses direct installed paths, not a weakened product check or a claim those manager constraints disappeared.
 
-The original definitive planning/scoring, source history and research are unchanged. Existing collection/direction texts describe earlier milestones; this dedicated document records only the implemented follow-on contract. Publication, root console CLI wiring, hosted-CI/release packaging and later ready-status decisions belong to the integration/shipping owner, not to an implicit upgrade of alpha.3 assets.
+The original definitive planning/scoring, source history and research are unchanged. These dated acceptance results record earlier milestones; current alpha.5 includes root CLI wiring, hosted CI and published native catalogs. See the [current release evidence](releases/v0.1.0-alpha.5.md#verification), not this earlier leaf checkpoint, for release-byte acceptance. No item is marked ready, and no publication silently upgrades alpha.3 assets.

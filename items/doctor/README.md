@@ -1,6 +1,6 @@
 # doctor
 
-[Operator/agent addendum: Who, What, When, Where, Why, How](../../docs/concierge/features.md#6-doctor-narrow-advertised-compatibility-and-drift) covers current alpha.3 use, platform/API support, verification, privacy, update/rollback/remove and troubleshooting. Discovery remains distinct from permission and behavior certification.
+[Operator/agent addendum: Who, What, When, Where, Why, How](../../docs/concierge/features.md#6-doctor-narrow-advertised-compatibility-and-drift) covers current alpha.5 use, platform/API support, verification, privacy and lifecycle. [Install/upgrade current alpha.5](../../docs/concierge/setup.md); runtime remains Mac/API10–13 only. A separate [experimental doctor cartridge](../../docs/cartridges.md) ships on Mac. Discovery remains distinct from permission and behavior certification.
 
 **Experimental, read-only compatibility diagnosis for observe/watch/run with numeric API acceptance 10–13 and concrete selected-shape checks.** Numeric acceptance is not certification of every build in that range. This is the narrow Phase 3 #8, C25–C28 slice, not a generated client, a generic schema validator, a ready independently packaged cartridge or permission to use discovered methods. Historical review and non-Rex material are unchanged.
 
@@ -60,9 +60,9 @@ Doctor reads at most 128 KiB, validates the doctor packet kind/schema and comple
 
 ## Integration and lifecycle
 
-`items/doctor/main.zig` exports `pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8`; args excludes executable/subcommand. The shared CLI/build owner adds a `rex_doctor` module/import, adds that module's `supervised_child` import pointing at existing `src/child.zig`, and dispatches `doctor` to `run`. No other module imports, generated assets, embedded vendor material or external library dependency is required. The caller provides an invocation-lifetime allocator, as for `run`; leaf allocations remain valid until that invocation ends. Shared sources/build wiring are not owned or edited here.
+`items/doctor/main.zig` exports `pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8`; args excludes executable/subcommand. The shared CLI already imports `rex_doctor`, connects its `supervised_child` import to `src/child.zig`, and dispatches `doctor` to `run`. No other module imports, generated assets, embedded vendor material or external library dependency is required. The caller provides an invocation-lifetime allocator, as for `run`; leaf allocations remain valid until that invocation ends. Shared sources/build wiring are not owned or edited here.
 
-This source follows the repository's development build/review workflow, not a global installation or Rex plugin hook. To upgrade, review/build the new teerex source and rerun the tests; never upgrade Rex automatically to make a check pass. To stop using doctor, stop invoking it; it creates no service, cache, file or config entry to uninstall. Individual cartridge packaging/install/removal is not implemented. Rex remains a separately acquired proprietary dependency, not bundled. Project licensing remains [unselected](../../RIGHTS.md).
+This source follows the repository's development build/review workflow, not a global installation or Rex plugin hook. To upgrade, review/build the new teerex source and rerun the tests; never upgrade Rex automatically to make a check pass. To stop using doctor, stop invoking it; it creates no service, cache, file or config entry to uninstall. Individual experimental cartridge installation/removal uses the separate cartridge manager; it changes code selection, not diagnosis scope or permission. Rex remains a separately acquired proprietary dependency, not bundled. Project licensing remains [unselected](../../RIGHTS.md).
 
 ## Tests and validation — 12 November 2026
 

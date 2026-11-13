@@ -1,8 +1,8 @@
 # Recovery: inspect first, preserve omissions
 
-**This is a tested structural-recovery slice, not complete agent-session or draft recovery.** `recovery snapshot` saves inspectable private evidence; `restore` previews by default and requires a separate exact confirmation to create visible panes. `update` inventories running versus installed Rex and hands off the actual update/restart to the operator. It never invokes an installer, closes a pane or restarts a server.
+**Current alpha.5 ships this experimental combined-CLI structural-recovery slice, not complete agent-session or draft recovery or an independent cartridge.** Use [current setup](../../docs/concierge/setup.md) and the [alpha.5 release support guide](../../docs/releases/v0.1.0-alpha.5.md). Dated leaf-only validation below remains distinct from released-byte acceptance. `recovery snapshot` saves inspectable private evidence; `restore` previews by default and requires a separate exact confirmation to create visible panes. `update` inventories running versus installed Rex and hands off the actual update/restart to the operator. It never invokes an installer, closes a pane or restarts a server.
 
-Python 3.9+ stdlib and Rex are explicit prerequisites. Snapshot/restore support API13. Read-only update inventory accepts API10–13; requesting a snapshot on an older API returns the inventory plus an explicit unsupported result, exit 1, without a snapshot or restart. API11 is not certified. Root CLI aliases may expose `snapshot`, `restore` and `update`; the canonical module form below is `teerex recovery OP`.
+Python 3.9+ stdlib and Rex are explicit prerequisites. Snapshot/restore support API13. Read-only update inventory accepts API10–13; requesting a snapshot on an older API returns the inventory plus an explicit unsupported result, exit 1, without a snapshot or restart. API11 is not certified. Root CLI aliases expose `snapshot`, `restore` and `update`; the canonical module form below is `teerex recovery OP`.
 
 ## Who
 

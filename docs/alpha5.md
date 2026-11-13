@@ -1,6 +1,6 @@
 # Alpha.5 operating layer
 
-Alpha.5 is the selected next milestone, not a claim that alpha.4 already supplies a complete Rex operating layer. Its release gate is an operator-visible, inspectable set of commands across explicitly named hosts. The [alpha.4 tag and assets](https://github.com/jcbbge/teerex/releases/tag/v0.1.0-alpha.4) remain frozen. The [versioned release guide](releases/v0.1.0-alpha.5.md) describes the tested experimental slices and unfinished brief requirements. Confirm the exact release page/assets before installation; this branch document alone is not a publication receipt.
+**Current public release: [v0.1.0-alpha.5](https://github.com/jcbbge/teerex/releases/tag/v0.1.0-alpha.5), source `682489d66dfdb39992b1b2e9f05054bcc009e6d7`.** It ships bounded operator-visible commands across explicitly named hosts, not the entire alpha.5 product brief. Use [current setup](concierge/setup.md) and the [versioned release/setup handoff](releases/v0.1.0-alpha.5.md#quick-changelog-and-current-setup-handoff) for installation and support. Alpha.1–4 history and all published assets remain frozen; newer source-only docs do not rebuild their packaged README/onboarding.
 
 Joshua's 12 November 2026 [product brief](https://github.com/jcbbge/teerex/issues/11) supersedes the old exclusion of agent-core migration as product work. The historical Phase 1–3 inventory and host safety blockers are retained in the [roadmap](roadmap.md), not silently checked off or erased.
 
@@ -20,9 +20,9 @@ Independent owners transfer source to one integrator; central CLI/build/config c
 
 ## Current source contract
 
-- `teerex --version` prints `teerex 0.1.0-alpha.5` and exits 0 without contacting Rex. This identifies source builds; it does not establish a published release.
+- `teerex --version` prints `teerex 0.1.0-alpha.5` and exits 0 without contacting Rex. Match the selected public archive and installed executable hashes as well; a version string alone is not release-byte verification.
 - `teerex --rex ABS COMMAND ...` selects an exact executable for native Rex calls. Selection is not authentication of that executable or its server.
-- `teerex targets resolve --config ABS --host NAME` returns one bounded JSON object with `schema_version`, validated `host`, and `identity_basis`. Unknown names fail before any Rex/SSH call.
+- `teerex targets resolve --config ABS --host NAME` returns one bounded JSON object with `schema_version`, validated `host`, and `identity_basis`. Unknown names fail before any Rex/SSH call. It resolves configured command-host names, not issue #2 resource labels or UUID suffixes.
 - `teerex --config ABS --host NAME COMMAND ...` executes on the configured command host and injects its exact socket. Config, message-file, cwd, snapshot and store paths in the resulting invocation belong to that command host; no silent upload, host fallback, or retry occurs.
 - Existing `teerex COMMAND --socket ABS ...` invocations remain supported. Named-host targeting conflicts with a second explicit socket/server selector.
 - Python3.9+ is an explicit prerequisite for named-host and embedded Python operating-layer commands; legacy direct-socket native commands do not acquire that dependency.

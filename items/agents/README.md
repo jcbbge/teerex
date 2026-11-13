@@ -1,6 +1,6 @@
 # agents — visible profiles, protocol gate and responsibility
 
-**Experimental alpha.5 source, not a claim of a published release or full agent-core migration.** This leaf supplies a built-in managed launch operation, not a recipe requiring users to assemble spawn/send/jobs. The root spelling is `teerex spawn --profile NAME --profiles ABS ...`; it maps to `teerex agents launch --config ABS --profile NAME ...`. Legacy `spawn ... -- ARGV` remains a low-level visible-terminal operation: it does **not** perform protocol ACK gating, automatic jobs tracking or these alerts.
+**Experimental managed launch ships in current alpha.5; full agent-core migration remains incomplete.** Use [current setup](../../docs/concierge/setup.md) and the [alpha.5 release support guide](../../docs/releases/v0.1.0-alpha.5.md). This module is built into the combined CLI, not an independently packaged cartridge or a recipe requiring users to assemble spawn/send/jobs. Dated leaf validation below remains distinct from released-byte evidence. The root spelling is `teerex spawn --profile NAME --profiles ABS ...`; it maps to `teerex agents launch --config ABS --profile NAME ...`. Legacy `spawn ... -- ARGV` remains a low-level visible-terminal operation: it does **not** perform protocol ACK gating, automatic jobs tracking or these alerts.
 
 ## Who / What / When / Where / Why / How
 

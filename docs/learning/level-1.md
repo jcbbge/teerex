@@ -1,5 +1,7 @@
 # Level one: meet your installed Rex
 
+This read-only lesson concerns the separately installed **Rex**, not a teerex installation. For teerex, use [current alpha.5 setup](../concierge/setup.md), [feature selection](../concierge/features.md) and the [release/support guide](../releases/v0.1.0-alpha.5.md). No server upgrade/restart is required to make a historical research version match.
+
 **Goal:** learn which Rex binary and running server you actually have, and which APIs that server advertises. No scripts to install, no config edits, no Rivet connection, and no VPS work. You can stop after any step.
 
 This is a guided observation, not a test already completed on your machine. The research inspected Linux `0.1.0-preview.15`, API revision 13; your app/server may differ. There is no requirement to upgrade or make the numbers match.

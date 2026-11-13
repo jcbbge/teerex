@@ -1,12 +1,12 @@
 # send
 
-[Operator/agent addendum: Who, What, When, Where, Why, How](../../docs/concierge/features.md#8-send-one-whole-message-paste-then-enter) covers current alpha.3 use, platform/API support, verification, privacy and recovery. Separate paste/Enter ACKs are not atomic delivery or consumption; no blind resend is safe.
+[Operator/agent addendum: Who, What, When, Where, Why, How](../../docs/concierge/features.md#8-send-one-whole-message-paste-then-enter) covers current alpha.5 use, platform/API support, verification, privacy and recovery. [Current setup](../../docs/concierge/setup.md) installs alpha.5; the [standalone send cartridge](../../docs/cartridges.md) keeps native message transport, while combined-CLI [registered-seat routing](../boards/README.md) adds explicit inbox append before paste. Separate paste/Enter ACKs are not atomic delivery or consumption; no blind resend is safe.
 
-**Experimental terminal-input leaf, not a global messaging authority or independently packaged cartridge.** `rex_send.run(allocator, args) !u8` uses the shared `supervised_child` ABI. It owns only `items/send/**`; shared CLI/build integration and release delivery belong to the integrator. No Rex configuration, agent-core files, personal machines, or running personal servers are changed. This leaf is not part of the immediate compatibility-only Mac release.
+**Experimental terminal-input module, not a global messaging authority.** `rex_send.run(allocator, args) !u8` uses the shared `supervised_child` ABI and is integrated into the combined CLI and native cartridge builds. Combined root routing is a separate boards-store operation; the standalone payload does not acquire that Python-backed routing surface. Installation does not change Rex configuration, agent-core files or running personal servers. Historical compatibility-only alpha.2 did not include send.
 
 ## Invoke and select deliberately
 
-After shared CLI integration, build with Zig **0.15.2** using `zig build -Doptimize=ReleaseSmall`, then:
+For a development build, use Zig **0.15.2** and `zig build -Doptimize=ReleaseSmall`; released installation needs no compiler. Native invocation:
 
 ```sh
 teerex send --socket /absolute/path/to/existing/rex.sock \
@@ -16,7 +16,7 @@ teerex send --socket /absolute/path/to/existing/rex.sock \
   --timeout-ms 10000
 ```
 
-An absolute Unix socket, canonical lowercase full session/block IDs, a label, and an absolute regular message file are required. The file is read once, without trimming or shell joining. Its 1–65536 bytes must be valid UTF-8; ASCII controls other than LF/tab, including CR, ESC, NUL and DEL, are refused. The label is 1–128 UTF-8 bytes with no ASCII controls. Those checks are **not** a proof that the text is safe for the recipient. The exact paste text is `FROM <label>: <file bytes>`. One Enter key event follows on the same attached Rex connection.
+An absolute Unix socket, canonical lowercase full session/block IDs, a label, and either an absolute regular message file or `--message-file -` are required. The file/stdin is read once, without trimming or shell joining. Stdin must reach EOF within the overall deadline; interrupted/deadline input sends nothing. Its 1–65536 bytes must be valid UTF-8; ASCII controls other than LF/tab, including CR, ESC, NUL and DEL, are refused. The label is 1–128 UTF-8 bytes with no ASCII controls. Those checks are **not** a proof that the text is safe for the recipient. The exact paste text is `FROM <label>: <file bytes>`. One Enter key event follows on the same attached Rex connection.
 
 **Choose a dedicated agent terminal that you are authorized to type into.** The selected session must contain the block as a visible terminal at validation time; detached and nonterminal blocks are refused. No active-pane/focus resolution, new terminal, server autostart, shell execution, Ctrl-U, draft detection, draft restoration, chunk fallback, or retry is performed. Existing pending input is not cleared: a following Enter can submit that input together with the message. A caller-selected agent terminal does not prove prompt/input safety. A terminal without bracketed-paste handling may treat embedded newlines as input submissions. Even a bracketed-paste-aware application may interpret or execute the message. Target validation is a prior read, not a conditional write or lease.
 

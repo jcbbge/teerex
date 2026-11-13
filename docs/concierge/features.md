@@ -1,12 +1,14 @@
-# Alpha.3 feature field guide: Who / What / When / Where / Why / How
+# Current feature field guide: Who / What / When / Where / Why / How
 
-This is the preserved **v0.1.0-alpha.3** recipe baseline, not the current installation target. For published alpha.5 use the [current setup/support matrix](setup.md), [alpha.5 changes and operating-layer guides](../releases/v0.1.0-alpha.5.md#commands-and-tested-support), and [alpha.4 inherited follow-ons](follow-ons.md). Historical alpha.3 identities remain in its [release guide](../releases/v0.1.0-alpha.3.md); do not combine those hashes with the current setup's alpha.5 installer examples. Every feature below uses that shared binary lifecycle: none is independently removable in alpha.3. Stop invoking a command to remove its runtime effect; software removal never undoes input, program side effects or worker lifetimes. No automatic capture history, telemetry or service is installed.
+**Use verified v0.1.0-alpha.5 for current installation.** Start with [setup](setup.md) for inspect-first installation or upgrade, checksums, retained rollback and the non-restarting read-only smoke. The [alpha.5 release and setup handoff](../releases/v0.1.0-alpha.5.md#quick-changelog-and-current-setup-handoff) and [support matrix](setup.md#supported-platforms-and-api-boundaries) define current delivery. These source-documentation corrections do not replace the README/onboarding already frozen in published archives.
+
+Sections 1–11 retain the useful alpha.3-origin recipes, with current support corrections; they are not a recommendation to install alpha.3. The [five alpha.4-origin follow-ons](follow-ons.md) also ship in alpha.5. Sections 12–17 route to the alpha.5 operating-layer guides. The combined CLI has one shared binary lifecycle; the separate [cartridge manager](../cartridges.md) provides ten Mac/seven Linux independently removable experimental payloads, not independent surfaces/boards/agents/recovery packages. Stop invoking a command to end its foreground controller; removing code never undoes input, program side effects, retained private state or worker lifetimes. No automatic capture history, telemetry or background service is installed.
 
 ## Recipe inputs and common checks
 
-`TEEREX` is the absolute installed binary. The local operator supplies private `SOCKET` (absolute), `SESSION`, `BLOCK` (canonical lowercase full `session:UUID` / `block:UUID`) and any parent/worker addresses. `CHECK_DIR` is a private directory created with `umask 077; CHECK_DIR=$(mktemp -d)`. File examples require independently reviewed existing files, not guessed paths. `WORKSPACE` is an authorized absolute directory on the appropriate execution host. Do not put real endpoint values or captures in public documentation. A trusted separate `rex` is on PATH for live commands; none autostarts the server.
+`TEEREX` is the absolute installed binary. The local operator supplies private `SOCKET` (absolute), `SESSION`, `BLOCK` (canonical lowercase full `session:UUID` / `block:UUID`) and any parent/worker addresses. `CHECK_DIR` is a private directory created with `umask 077; CHECK_DIR=$(mktemp -d)`. File examples require independently reviewed existing files, not guessed paths. `WORKSPACE` is an authorized absolute directory on the appropriate execution host. Do not put real endpoint values or captures in public documentation. A trusted separate `rex` is on PATH for direct live commands, or selected by combined-root `--rex ABS`; none autostarts the server. Named-host configuration pins the command-host executable/socket explicitly. Selection is not authentication.
 
-Each command requires its own scope. A prior read, successful diagnosis, status report or saved match does not authorize input/execution. Check exit status **and complete structured output**; redirection can create a file even when a command fails. Usage is normally exit2; operational errors can exit1 without complete JSON. See [troubleshooting](setup.md#troubleshooting-and-safe-next-actions) for source/target mismatch, unknown evidence and lost mutation ACKs.
+Each command requires its own scope. A prior read, successful diagnosis, status report or saved match does not authorize input/execution. Check exit status **and complete structured output**; redirection can create a file even when a command fails. Native spawn/send diagnostics use `failure_reason`, not an assumed `error` field. Missing source/attempt/ACK frames do not prove no remote effect; `backend_error` is not retry-safe. Core installation and cartridge-manager execution are different launch paths: a held manager lock reports a lifecycle error on stderr, not a native spawn/send receipt, and is not an established cause of issue #12. Usage is normally exit2; operational errors can exit1 without complete JSON. See [troubleshooting](setup.md#troubleshooting-and-safe-next-actions) for source/target mismatch, unknown evidence and lost mutation ACKs.
 
 ## 1. Source-tree shared installer
 
@@ -35,7 +37,7 @@ Verification: invoke `current/teerex --help`, check exact release hash and insta
 
 Expected exit0 / schema1 observation with exact target/source, `atomic_snapshot=false`, bounded `capture` and attributed `process`, `reported_directory`, `program_status`. Check actual API matches the independently queried server and preserve null/unknown evidence. Default capture4096, range256–65536 **JSON-encoded content bytes including quotes**; whole packet/metadata can be larger. Collection deadline default5000ms,100–60000 plus bounded cleanup. Missing consumed bindings, failed RPC or invalid evidence is failure, not empty success. Exits124/130/143 mean deadline/cancellation, no successful interrupted sample. Captures may omit the latest prompt and contain secrets; storage/export must be deliberate.
 
-Update/rollback: shared binary only; preserve existing evidence without relabeling its source. Remove: stop invoking and deliberately remove only selected private capture files if desired. [Detailed observation contract](../../items/observe/README.md); alpha.3 supports Linux despite older Mac-only increment prose there.
+Update/rollback: shared binary only; preserve existing evidence without relabeling its source. Remove: stop invoking and deliberately remove only selected private capture files if desired. [Detailed observation contract](../../items/observe/README.md). Numeric API acceptance is not certification of attached mixed-host topology; [issue #10 remains unresolved](../../items/observe/README.md#target-routing-diagnostics).
 
 ## 3. `compare`: offline evidence differences
 
@@ -93,7 +95,7 @@ Expected exit0 / `kind=run_result`, `success=true`, actual `exit_report.code=0`,
 
 No implicit shell, stdin/TTY interaction or sandbox: argv can change files, credentials/network are inherited, process listings/diagnostics may expose argv. Owned-process-group cleanup is not whole-tree termination; detached descendants and SIGKILL/crash escape it. Do not use run for agents/workers/sidecars or arbitrary fire-and-forget work.
 
-Update/rollback/remove: finish your own invocation before changing binary. It has no hook/history; program-created files/processes need their own authorized cleanup. [Execution contract](../../items/run/README.md); release API10–13 supersedes older API13-only table wording.
+Update/rollback/remove: finish your own invocation before changing binary. It has no hook/history; program-created files/processes need their own authorized cleanup. [Execution contract](../../items/run/README.md). API11 and every build in the accepted range are not certified.
 
 ## 6. `doctor`: narrow advertised compatibility and drift
 
@@ -117,7 +119,7 @@ On drift, review changed identity and rerun relevant scoped tests before deliber
 ## 7. `spawn`: one visible agent terminal
 
 - **Who:** an operator/local setup agent authorized for the exact agent argv, workspace, destination session and existing visible report-to terminal.
-- **What:** create one window-attached terminal with agent-core AGENT/LC address/name/report-to metadata; request no focus switch and verify acknowledged attachment.
+- **What:** low-level argv-only spawn creates one window-attached terminal with agent-core AGENT/LC address/name/report-to metadata; requests no focus switch and verifies acknowledged attachment. For alpha.5's managed ACK-before-brief/jobs path, use [section 15](#15-managed-agents-profiles-protocol-and-responsibility).
 - **When:** deliberately launch a visible worker, not a hidden fallback or automatic migration.
 - **Where:** Mac/Linux, integer API10–13. Cwd/program live on the **terminal creator's host**, not necessarily CLI host; report-to can be a different session on the same selected server.
 - **Why:** retain visible work and exact parent routing rather than guessing active panes.
@@ -140,7 +142,7 @@ Update/rollback/remove: changing teerex does not stop workers. Finish/close only
 - **Who:** an operator/agent explicitly authorized to type into a dedicated agent terminal, not any observed pane.
 - **What:** exact `FROM worker: <file bytes>` paste then Enter on one connection; separate attempts/ACKs.
 - **When:** a reviewed private UTF-8 message is intended for that exact agent and preexisting drafts/prompt context have been considered locally.
-- **Where:** Mac/Linux integer API10–13, existing visible terminal, absolute regular message file. Cooperating locks are CLI-host/TMPDIR-local, not shared across forwarded hosts.
+- **Where:** Mac/Linux integer API10–13, existing visible terminal, absolute regular message file or alpha.5's bounded EOF-terminated `--message-file -` stdin. Cooperating locks are CLI-host/TMPDIR-local, not shared across forwarded hosts. Explicit `--store` and leaf `--host` enable exact registered-seat inbox append before native paste; store failures never fall back. [Seat routing contract](../../items/boards/README.md#append-without-typing-route-send-fail-closed).
 - **Why:** avoid shell joining, truncation, guessed draft clearing and unsafe retries while preserving transport evidence.
 - **How:** after creating/reviewing the private regular file at `MESSAGE_FILE`, and obtaining the dedicated `AGENT_BLOCK` and `AGENT_SESSION`:
 
@@ -172,7 +174,7 @@ Default budget10000ms,100–60000 including lock wait. Messages may appear in pr
 
 Expected NDJSON `offstage_started` **then** `offstage_result`; exit0 requires real reported code0 **and** matched cleanup identity/verified block absence. Parse all records and check capture/cleanup. A started record alone is not success. No other pane/window/focus is changed. PTY output merges streams and terminal formatting differs from raw run output; capture is not atomic final drain/latest viewport. Timeout/cancel returns null capture rather than inventing final output.
 
-Deadline100–60000ms required; capture256–65536 JSON-encoded bytes, default4096; cleanup can add up to5500ms plus scheduling/output. Exit1 includes unknown cleanup/nonzero program;124 deadline;130/143 cancellation. Lost creation ACK may leave a block with no known ID; do not retry/adopt/close by a guessed label. SIGKILL/crash can leave the terminal; closing a block does **not** verify descendant termination. No sandbox, daemon or durable registry is in alpha.3.
+Deadline100–60000ms required; capture256–65536 JSON-encoded bytes, default4096; cleanup can add up to5500ms plus scheduling/output. Exit1 includes unknown cleanup/nonzero program;124 deadline;130/143 cancellation. Lost creation ACK may leave a block with no known ID; do not retry/adopt/close by a guessed label. SIGKILL/crash can leave the terminal; closing a block does **not** verify descendant termination. Offstage has no sandbox, daemon or durable registry of its own; separate `jobs` records do not inherit this invocation's cleanup authority.
 
 Update/rollback/remove: stop your own foreground command cleanly first, inspect its exact cleanup evidence; binaries do not clean orphan processes/resources. Escalate uncertain resources for separately authorized inspection, not arbitrary process killing. [Offstage contract](../../items/offstage/README.md).
 
@@ -197,7 +199,7 @@ Update/rollback: definitions remain API13-specific and source-exact; review chan
 ## 11. `filter`: explicit offline payload reduction
 
 - **Who:** an authorized reader of selected private observation files.
-- **What:** suppress only identical intermediate typed evidence payloads; retain all adjacent comparisons and a final full checkpoint. No cosmetic/semantic classifier or persistent cache in alpha.3.
+- **What:** suppress only identical intermediate typed evidence payloads; retain all adjacent comparisons and a final full checkpoint. No cosmetic/semantic classifier; ordinary filtering writes no cache. The separate opt-in [historical cache](follow-ons.md#4-explicit-bounded-historical-cache) ships in alpha.5.
 - **When:** review2–128 caller-ordered successful packets with identical exact target/source; not a background watcher or way to reduce live reads.
 - **Where:** offline Mac/Linux schema1/API10–13, regular files≤1MiB each/16MiB combined, no stdin/devices/FIFOs.
 - **Why:** reduce repeated output without losing changed prompts/errors/status fields or laundering partial prefixes into stability.
@@ -211,3 +213,105 @@ Update/rollback: definitions remain API13-specific and source-exact; review chan
 Expected exit0 **and final** `rex_evidence_filter_summary` / `outcome=processed`. Prior sample/repeat lines alone are incomplete after a late failure. Every input has a sample/repeat event; final checkpoint always has full payload. Emitted+omitted counts must equal samples read; every adjacent comparison remains and `interpretation=none`. IDs/client times are excluded from payload equality, not treated as chronology/freshness. All typed evidence changes remain visible. Equal partial prefixes still have unknown full-text comparison.
 
 Output can contain the full private terminal content. Typed re-encoding is not a byte-for-byte archive; retain original files if exact bytes matter. Do not use repeat counts/status `done` as completion. Failure1/source mismatch is not a processed summary; usage2 is not unknown evidence. Update/rollback/remove: shared binary only; ordinary filter writes no files except caller redirection. Retain/delete selected NDJSON with the same capture privacy controls. [Filter contract](../../items/filter/README.md).
+
+## 12. Named command hosts and executable selection
+
+- **Who:** an operator/agent authorized for the selected configured account and operation.
+- **What:** `targets resolve` validates one configured command host; root `--config/--host` executes there with explicit Rex/socket selection. `--rex ABS` pins a local executable, not its authenticity.
+- **When:** choose a command host deliberately before a feature invocation; never guess from focus or fall back after a failed route.
+- **Where:** Mac/Linux with Python3.9+; SSH also needs a reviewed key and pinned known-hosts file. Paths in a dispatched command belong to that command host, not the caller.
+- **Why:** separate declared host selection, actual server evidence and attached block-host identity.
+- **How:** inspect configuration without contacting Rex/SSH:
+
+```sh
+"$TEEREX" targets resolve --config "$TARGETS" --host "$HOST_NAME"
+```
+
+`TARGETS` is the absolute reviewed private host-config file; `HOST_NAME` is an exact configured key. Expect exit0 and bounded schema1 JSON containing `host` and `identity_basis`; failure1/usage2 is not a selected host. Resolution selects **command-host names**, not resource labels or UUID suffixes from issue #2. Dispatch additionally emits a selection receipt on stderr, not proof that leaf work succeeded. Unknown names refuse before network; no silent file upload or implicit host defaults. [Complete configuration, transport and limits](../alpha5.md#current-source-contract).
+
+Update/rollback/remove: review explicit config/binary changes; removing teerex does not remove config, keys or trust files. Preserve those privately until deliberately retired. Named-host success does not resolve issue #10 or intermittent issue #12.
+
+## 13. Visible surfaces and native palette
+
+- **Who:** an operator/agent separately authorized to create, move, focus, close a pane or change the selected Rex config.
+- **What:** `surfaces open/inspect/move/focus/close` and `palette` prepare/install; attached tiled/float/tab programs with requested versus measured geometry.
+- **When:** place a visible tool or inspect a known pane; config registration requires its own reviewed plan/apply.
+- **Where:** Mac arm64 API10/12/13 and Linux x86_64/API13 tested; numeric API10–13 acceptance is not every-build certification. Palette install also needs Python3.9+.
+- **Why:** one explicit placement with no fallback/retry, not an invented graphical plugin API.
+- **How:** inspect the exact owned/authorized pane first:
+
+```sh
+"$TEEREX" surfaces inspect --socket "$SOCKET" --session "$SESSION" --pane "$BLOCK"
+```
+
+Require exit0, complete JSON and actual geometry/identity readback. Use [complete layout, palette plan/apply and exit recipes](../../items/surfaces/README.md#how) for mutation. Native readback is not Rex.app pixel/palette-click acceptance. Open requests no focus, but a first window can activate; moving a focused source requires explicit focus consent. Lost ACK can leave effects: inspect exact known IDs, never recreate/close automatically. Close proves block absence, not descendant death.
+
+Update/rollback/remove: shared code lifecycle; prepared fragments, appended includes and running panes survive code removal. Review the [migration/config retention gates](../../items/surfaces/MIGRATION.md) before deliberate config cleanup; never reload/restart or delete unrelated actions as an installation side effect.
+
+## 14. Boards, seat, inbox and typed decisions
+
+- **Who:** authorized operators and reporters; sender/owner labels and recorded answers are claims, not authenticated consent.
+- **What:** visible foreground inbox/fleet boards, exact tuple seat registration, retained messages, complete decision cards/resolutions and explicit state inspection/remap.
+- **When:** register a seat before routing messages; inspect retained cards before clearing. Boards refresh only while deliberately running visibly.
+- **Where:** Mac/Linux, Python3.9+, explicit existing0700 private store. Local seat/inbox/ask operations are offline; live fleet/probe requires API13. API10/12 probe refusal remains visible unknown.
+- **Why:** append to a registered seat's inbox instead of typing over operator input; keep reported activity separate from observations/unknowns.
+- **How:** inspect local state without sending input:
+
+```sh
+"$TEEREX" boards state inspect --store "$STORE"
+```
+
+Expect exit0/schema1 complete state receipt, not liveness. `STORE` is the reviewed command-host-local board directory. [Full registration, visible board, typed-card, routing and clear/remap recipes](../../items/boards/README.md) include default2s foreground refresh, TTY/`--once` rules,32 seats/128 records per seat/1MiB store bounds, exits and crash recovery. Every failed named host stays visible; one-shot partial fleet failure exits1. No automatic decision execution or reply, log import, eviction, hidden watcher or draft clearing. Store errors refuse, never fall back to paste.
+
+Update/rollback/remove: private state and messages survive binary changes; older releases may not read them. Export/review privately before exact generation/reason-confirmed clears. Clearing registration/reporting never closes panes or stops work; preserve working stopgaps until [paired source-cutover gates](../../items/boards/MIGRATION.md) pass.
+
+## 15. Managed agents: profiles, protocol and responsibility
+
+- **Who:** the operator/authorized starter for one reviewed profile, target, starter and report-to tuple.
+- **What:** `spawn --profile/--profiles` or `agents launch` creates a visible supervisor, tracks jobs, supplies protocol-only initial prompt argv, waits for exact token/pane ACK, then attempts one brief.
+- **When:** use instead of low-level spawn for managed protocol/responsibility; inspect late/uncertain launches instead of retrying.
+- **Where:** Mac/Linux/API13, Python3.9+, exact command-host-local private registry and paths accessible to the pane host. Actual paid Claude/Codex/pi hooks, generic resume and arbitrary cross-host replies are not certified.
+- **Why:** attachment is not readiness; explicit cooperative ACK avoids a guessed startup delay without claiming authentication or safe input.
+- **How:** inspect reviewed profiles first:
+
+```sh
+"$TEEREX" agents profiles --config "$PROFILES"
+```
+
+`PROFILES` is the absolute private reviewed profile file. Require exit0/full JSON; profile inspection does not launch. [Full launch, ACK/deliver, reports, present and lifecycle recipes](../../items/agents/README.md) specify32 launch records/256KiB files, bounded messages, ACK100–60000ms/default10000, refusal1/usage2/ACK timeout124/cancellation130/143. `brief_submitted` means paste/Enter ACKs, not consumption. Stop hooks report idle/error; immediate-child exit is not whole-tree death. Supervisor loss can leave alerts unknown. Generated shell functions are opt-in and preserve existing functions by skipping, not saved-function call-through.
+
+Update/rollback/remove: code changes do not stop agents, expire tokens or remove jobs/private records. Finish only separately authorized owned work, inspect exact receipts and preserve unresolved state; no automatic pane close or retry. Real harness/guard/caller parity and [agent-core migration](../../items/agents/agent-core-migration.md) remain incomplete.
+
+## 16. Structural recovery and manual Rex update inventory
+
+- **Who:** an authorized operator preserving one selected server's structure before a separately approved restart, then reviewing a restore.
+- **What:** `recovery snapshot/inspect/restore/update` (root aliases also exist), per-field omissions and exact old/new maps; update itself is read-only.
+- **When:** inventory first; snapshot before an authorized restart; restore previews against an empty selected target and applies once only with exact confirmation.
+- **Where:** Mac/Linux/Python3.9+; snapshot/restore API13 and same observed server host, update inventory numeric API10–13. Foreign-host execution, authoritative drafts and generic harness resume are unsupported.
+- **Why:** preserve what can actually be reconstructed without inventing argv, replaying secrets, resuming ungated agents or overwriting live sessions.
+- **How:** inventory without updating or restarting:
+
+```sh
+"$TEEREX" recovery update --socket "$SOCKET"
+```
+
+Require exit0/complete inventory and review running versus installed CLI plus every pane-at-risk/unknown. [Complete per-field table, private snapshot/preview/apply/remap and exit contracts](../../items/recovery/README.md) give32 sessions/128 panes/1MiB bounds. Snapshot success is not full recoverability. Restore failure1/timeout124/cancellation may leave panes; accepted partial restore3 uses holding shells, not resumed agents. Journal interlocks repeats; no automatic cleanup. A real server update/restart remains manual and separately authorized.
+
+Update/rollback/remove: never overwrite snapshots/journals/maps; old binaries may not understand them. Retain private metadata until deliberate deletion. Do not delete private restart scripts or claim full recovery/agent-core parity without source and acceptance.
+
+## 17. Named-host fleet installation and rollback
+
+- **Who:** an operator/agent explicitly authorized to install selected exact bytes on each named account; never implied by reading this guide.
+- **What:** `fleet install/rollback` plans or applies managed-core lifecycle with verified per-host bytes/version and separately consented launcher changes.
+- **When:** after current [inspect-first setup](setup.md#how-inspect-first-then-choose-exactly-one-activation); named hosts are explicit, never implicit all.
+- **Where:** Mac arm64/Linux x86_64 with Python3.9+, Bash/installer tools, reviewed HOME/paths and SSH trust where needed. The alpha.5 executable embeds support sources; source-script entry requires the full reviewed source tree.
+- **Why:** retain existing manual trees and older versions while making partial/unknown results inspectable.
+- **How:** after supplying reviewed `TARGETS` and `HOST_NAME`, plan one exact current version without applying:
+
+```sh
+"$TEEREX" fleet install --config "$TARGETS" --host "$HOST_NAME" --version v0.1.0-alpha.5
+```
+
+Require exit0/full per-host plan; planning neither downloads nor installs/executes candidate binaries. [Full apply, launcher consent, partial failure and rollback guide](../fleet-install.md) specifies64MiB asset/1MiB checksum caps, exit1 refusal/partial/unknown and usage2. All-host preflight precedes sequential apply; earlier successes remain after a later failure. Lost SSH leaves unknown, not safe retry or fleet-wide rollback. `--path` verifies transport PATH only; it never edits shell profiles or certifies existing panes.
+
+Update/rollback/remove: exact retained-version rollback uses the same integrity/version checks; legacy pre-`--version` releases require core lifecycle plus byte verification instead. Preserve manual folders/backups/state; launcher restoration is explicit and does not remove managed releases. No Rex install/restart, cartridge bulk install, agent migration or personal-host certification follows.

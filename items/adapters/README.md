@@ -1,6 +1,6 @@
 # adapters
 
-[Operator/agent addendum: Who, What, When, Where, Why, How](../../docs/concierge/follow-ons.md#3-selected-read-only-adapters-local-policy-and-receipts) covers source-candidate prerequisites, identity/policy, use/verification, privacy, drift recovery and lifecycle. This is not an alpha.3 command, host permission system or authenticated audit history.
+[Operator/agent addendum: Who, What, When, Where, Why, How](../../docs/concierge/follow-ons.md#3-selected-read-only-adapters-local-policy-and-receipts) covers current alpha.5 prerequisites, identity/policy, use/verification, privacy and lifecycle. [Current setup](../../docs/concierge/setup.md) and [separate experimental cartridge packaging](../../docs/cartridges.md) are shipped, not pending integration. Mac/Linux integer API10–13 acceptance is not every-build certification. Adapters was absent in alpha.3 and is not a host permission system or authenticated audit history.
 
 **Experimental Rex-specific read-only descriptor generation, local allowlisting and action receipts.** This is a follow-on to frozen/public alpha.3, not part of that release. It extends original Phase 3 #8/C25–C28 for five selected methods; it is not an unrestricted generated client, MCP server, generic agent runtime, credential broker, host permission system or ready independently packaged cartridge. The historical inventory, non-Rex handoff and doctor are unchanged.
 
@@ -20,9 +20,9 @@ A generated capture always sends `format="text"`; `max_bytes` includes the conte
 
 ## Build and invoke individually
 
-Zig **0.15.2**, macOS or Linux, a deliberately chosen trusted `rex` on `PATH`, and an explicitly selected already-running Unix endpoint are required. Accepted integer CLI/server API revisions are **10–13** with overlapping reported support. Numeric acceptance is not behavior certification, including for other builds reporting the same revision. No install/download/restart/update/configuration operation is performed by this item. A forwarded Unix socket is not proof of locality. Malicious Rex code or its own runtime/configuration is outside this wrapper's protection.
+Source builds require Zig **0.15.2**; released installation does not. Runtime requires supported macOS or Linux, a deliberately chosen trusted `rex` on `PATH` (or combined root `--rex ABS`), and an explicitly selected already-running Unix endpoint. Accepted integer CLI/server API revisions are **10–13** with overlapping reported support. Numeric acceptance is not behavior certification, including for other builds reporting the same revision. No install/download/restart/update/configuration operation is performed by this item. A forwarded Unix socket is not proof of locality. Malicious Rex code or its own runtime/configuration is outside this wrapper's protection.
 
-The leaf exports `pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8`, excluding executable and `adapters` prefix. The integrator owns the shared CLI/build wiring: add `rex_adapters` with its existing `supervised_child` import, then dispatch `adapters` to `run`. It also provides a standalone entrypoint so it can be built/tested before that integration:
+The leaf exports `pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8`, excluding executable and `adapters` prefix. The combined CLI already imports `rex_adapters` with `supervised_child` and dispatches `adapters` to `run`. This optional standalone development build uses the same source; current released core/cartridge installation needs no compiler:
 
 ```sh copy Copy Leaf Build
 # Linux; replace with -target aarch64-macos on Apple silicon (also for cross-build).
@@ -32,7 +32,7 @@ uv run --with ziglang==0.15.2 python -m ziglang build-exe -O ReleaseSmall \
 ./teerex-adapters --help
 ```
 
-Standalone invocation omits `adapters`. The remaining examples show the shared CLI contract **after integration**, not a claim that alpha.3 dispatches it. Deliberately replace the socket and file paths, save only successful complete JSON, and protect private files before creating them:
+Standalone invocation omits `adapters`. The remaining examples use the integrated current shared CLI; alpha.3 did not dispatch this command. Deliberately replace the socket and file paths, save only successful complete JSON, and protect private files before creating them:
 
 ```sh copy Copy Generate Command
 umask 077
@@ -100,7 +100,7 @@ No receipt is automatically written, appended, retained or authenticated. Caller
 | Action/audit surface | Reviewable per-invocation local receipts with policy/argument hashes and actual result/error. No signed authoritative history, actor authentication, proof of consent, export approval or no-bypass guarantee. |
 | C07/C17/clutch | No server input lease/conditional write/human-input revocation contract was established. **Blocked for strong enforcement**; this read-only leaf neither invents one nor substitutes a cooperative lock. |
 | Non-Rex H01/H04 and broader runtime | Preserved/unassigned handoff; no generic evidence service, credential/isolation platform or task/agent runtime implemented. |
-| Shipping/lifecycle | Leaf source and dedicated tests only; root wiring/release owned by integrator. No alpha.3 changes, independent release, M5/hive/config actions or runtime installation. |
+| Shipping/lifecycle | Integrated combined CLI and experimental native cartridges shipped in alpha.4 and retained in alpha.5. Frozen alpha.3 is unchanged; no personal M5/hive/config action or runtime installation follows. |
 
 Upgrade by reviewing/rebuilding this leaf and deliberately regenerating changed bundles/policies after revalidation. Stop using it by no longer invoking it; remove only the executable/local files you deliberately created. No services/hooks/configuration need removal. Independent cartridge packaging remains separate. Rex is a separate proprietary dependency, not bundled; teerex licensing remains [unselected](../../RIGHTS.md).
 
@@ -138,4 +138,4 @@ Exact descriptor fingerprints below are raw CLI stdout bytes, not doctor hashes 
 | `com.superlogical.terminal.pwd` | `cec5757672d56edbe34cf86309bc65a198baf9233da6b7aa1d8343d73921280c` |
 | `com.superlogical.terminal.program_status` | `99c3619f2e69371dde2524a73d5f24636bcd9aa69507d14904e5fc39e57c2f8a` |
 
-Formatting, Linux native and explicit Apple-silicon target leaf builds, and unchanged baseline root build pass. A scratch shared-CLI-shaped driver imports `rex_adapters.run` and passes the same 11 public tests in 26.804 s on Linux; this validates the integration signature/command prefix without editing root dispatch. The existing four native child-supervisor tests pass unchanged. An implicit native macOS27 target with this Zig package failed system-symbol linking; explicit `-target aarch64-macos` builds and runs. These results are not personal-M5/hive, OS26, mixed-version pairs, future-build or whole-process-tree certification. Root dispatch/integration tests remain the integrator's next step. Source scope is only `items/adapters/**` against public alpha.3 commit `8b2827860029e30a3ad5724d357655de155520d5`.
+Formatting, Linux native and explicit Apple-silicon target leaf builds, and unchanged baseline root build pass. A scratch shared-CLI-shaped driver imports `rex_adapters.run` and passes the same 11 public tests in 26.804 s on Linux; this validates the integration signature/command prefix without editing root dispatch. The existing four native child-supervisor tests pass unchanged. An implicit native macOS27 target with this Zig package failed system-symbol linking; explicit `-target aarch64-macos` builds and runs. These results are not personal-M5/hive, OS26, mixed-version pairs, future-build or whole-process-tree certification. At this leaf checkpoint, root dispatch/integration tests remained the integrator's next step; its source scope was only `items/adapters/**` against public alpha.3 commit `8b2827860029e30a3ad5724d357655de155520d5`. Integration subsequently shipped in alpha.4 and remains in alpha.5; see the [current release evidence](../../docs/releases/v0.1.0-alpha.5.md#verification) rather than treating this dated checkpoint as release-byte acceptance.
