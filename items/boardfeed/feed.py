@@ -515,12 +515,15 @@ def open_held(a):
     identifier=held_id(a.held_id)
     if a.held_open_json is not None:
         argv=held_argv(json.loads(a.held_open_json),template=True)
+        # The transport's stderr is suppressed; restore command errors to pane output.
+        os.dup2(sys.stdout.fileno(),sys.stderr.fileno())
         return os.execvp(argv[0],[v.replace('{id}',identifier) for v in argv])
     host=selected_host(a)
     template=held_argv(host.get('held_open'),template=True)
     if a.held_pane:
-        subprocess.run([a.executable,'targets','exec','--config',a.config,'--host',a.host,'--',
-                        'board','feed','--held-open-json',json.dumps(template),'--held-id',identifier],check=False)
+        result=subprocess.run([a.executable,'targets','exec','--config',a.config,'--host',a.host,'--',
+                        'board','feed','--held-open-json',json.dumps(template),'--held-id',identifier],stderr=subprocess.DEVNULL,check=False)
+        if result.returncode:print('Held work unavailable')
         # Keep even short output on screen; no shell or environment pager command.
         input('\nPress Enter to close')
     else:

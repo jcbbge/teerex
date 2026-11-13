@@ -316,7 +316,7 @@ class BoardTest(unittest.TestCase):
         held_rows=[dict(id='held-old',project='fixture',title='Archive',waits='ship',text='ship? Archive',on='',since=1,broken=True,broken_why='fixture')]
         held_source=self.root/'held-source.json';held_source.write_text(json.dumps(dict(schema=1,generated_at=1,items=held_rows)))
         hosts['hive']['held_command']=['/bin/cat',str(held_source)]
-        hosts['hive']['held_open']=['/bin/echo','opened','{id}']
+        hosts['hive']['held_open']=['/usr/bin/python3','-c','import sys;print("opened "+sys.argv[1]);print("held command error",file=sys.stderr)','{id}']
         config=self.root/'hosts.json';config.write_text(json.dumps(dict(schema_version=1,hosts=hosts)))
         events.append(dict(v=1,t=200000000,host='hive',kind='held',available=True,items=held_rows))
         path=self.root/'jump.jsonl';path.write_text('\n'.join(map(json.dumps,events)))
@@ -353,6 +353,9 @@ class BoardTest(unittest.TestCase):
                 if time.monotonic()>end:self.fail(content)
                 time.sleep(.05)
             self.assertIn('opened held-old',content)
+            self.assertIn('held command error',content)
+            self.assertNotIn('target_selection',content)
+            self.assertNotIn('explicit Rex executable',content)
         finally:
             subprocess.run([BIN,'--rex',rex,'surfaces','close','--socket',hosts['hive']['socket'],'--session',board_sid,'--pane',held_block],capture_output=True,timeout=5,check=True)
         # Finite live JSON and the independent kept check use these disposable

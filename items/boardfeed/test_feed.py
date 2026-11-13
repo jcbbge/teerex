@@ -72,7 +72,7 @@ class FeedTests(unittest.TestCase):
             with self.subTest(field=field),self.assertRaises(ValueError):feed.held_items(bad)
         with self.assertRaises(ValueError):feed.held_items(dict(packet,items=packet['items']*2))
         a=SimpleNamespace(held_id='safe:123',held_open_json=json.dumps(['/bin/show','--id={id}']))
-        with mock.patch.object(feed.os,'execvp') as execute:
+        with mock.patch.object(feed.os,'dup2'),mock.patch.object(feed.os,'execvp') as execute:
             feed.open_held(a)
             execute.assert_called_once_with('/bin/show',['/bin/show','--id=safe:123'])
         a.held_id='-bad'
@@ -92,11 +92,15 @@ class FeedTests(unittest.TestCase):
             self.assertIn('--held-pane',argv)
             self.assertEqual(argv[argv.index('--host-name')+1],'remote')
         a.held_pane=True
-        with mock.patch.object(feed,'selected_host',return_value=source),mock.patch('builtins.input'),mock.patch.object(feed.subprocess,'run') as run:
+        with mock.patch.object(feed,'selected_host',return_value=source),mock.patch('builtins.input'),mock.patch.object(feed.subprocess,'run',return_value=SimpleNamespace(returncode=0)) as run:
             feed.open_held(a)
             argv=run.call_args.args[0]
             self.assertEqual(argv[:8],['/teerex','targets','exec','--config','/hosts.json','--host','remote','--'])
             self.assertEqual(argv[-2:],['--held-id','item-1'])
+            self.assertEqual(run.call_args.kwargs['stderr'],subprocess.DEVNULL)
+        with mock.patch.object(feed,'selected_host',return_value=source),mock.patch('builtins.input'),mock.patch.object(feed.subprocess,'run',return_value=SimpleNamespace(returncode=1)),contextlib.redirect_stdout(io.StringIO()) as output:
+            feed.open_held(a)
+        self.assertIn('Held work unavailable',output.getvalue())
 
     def test_held_enter_resolves_board_host_separately_from_source(self):
         with tempfile.TemporaryDirectory() as tmp:
