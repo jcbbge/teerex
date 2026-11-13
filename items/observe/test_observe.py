@@ -681,18 +681,68 @@ class ObserveTest(unittest.TestCase):
 
     def test_watch_new_exit_evidence_is_an_availability_change(self):
         target, gate = self.gated_fixture("", "sys.exit(7)")
-        baseline, _ = self.baseline(target)
-        result = self.triggered_watch(target, baseline, gate)
+        baseline, before = self.baseline(target)
+        self.assertIsNotNone(before["process"]["data"]["child"])
+        self.assertIsNotNone(before["process"]["data"]["foreground"])
+        self.assertIsNone(before["process"]["data"]["last_exit"])
+        # Rex can lose process records before publishing last_exit. Establish the
+        # exit fixture first: watch must still return on any first change.
+        gate.touch()
+        self.wait_for(target, "process", lambda v: (v.get("last_exit") or {}).get("exit_code") == 7
+                      and v.get("child") is None and v.get("foreground") is None)
+        result = subprocess.run(self.watch_command(target, baseline),
+                                capture_output=True, text=True, timeout=5)
         self.assertEqual(result.returncode, 0, result.stderr)
         packet = json.loads(result.stdout)
+        self.assertEqual(packet["outcome"], "change_observed")
         self.assertEqual(packet["changed_fields"], [])
         self.assertEqual(set(packet["availability_changed_fields"]),
                          {"process.foreground", "process.child", "process.last_exit"})
         self.assertEqual(packet["last_comparison"]["process"]["last_exit"], {
             "before_available": False, "after_available": True, "availability_changed": True, "changed": None})
+        self.assertIn("process.last_exit", packet["unknown_fields"])
         self.assertEqual(packet["interpretation"], "none")
+        self.assertNotIn("completion", packet)
         after = json.loads(self.observe(target).stdout)
         self.assertEqual(after["process"]["data"]["last_exit"], {"exit_code": 7})
+
+    def test_watch_process_disappearance_and_exit_evidence_can_arrive_separately(self):
+        baseline, before = self.baseline(self.a)
+        raw = {"version": before["source"], "capture": {"content": before["capture"]["content"], "eof": True},
+               "process": {"child": None, "foreground": None, "last_exit": None},
+               "directory": before["reported_directory"]["data"], "status": before["program_status"]["data"]}
+        first = json.dumps({"event": "sample", "data": raw}) + "\n"
+        raw["process"]["last_exit"] = {"exit_code": 7}
+        frames = first + '{"event":"collecting"}\n' + json.dumps({"event": "sample", "data": raw}) + "\n"
+        directory = self.root / "split-exit-transport"
+        directory.mkdir()
+        shim = directory / "rex"
+        shim.write_text(f"#!{sys.executable}\nimport sys\nsys.stdout.write({frames!r})\n", encoding="utf-8")
+        shim.chmod(0o700)
+        env = dict(os.environ, PATH=str(directory) + os.pathsep + os.environ["PATH"])
+        # Both frames are ready together. The first watch must stop at process
+        # disappearance, not coalesce it with the later exit report. Starting
+        # from that unavailable baseline must then wake on exit evidence alone.
+        for exit_available in [False, True]:
+            with self.subTest(exit_available=exit_available):
+                if exit_available:
+                    before["process"]["data"] = {"child": None, "foreground": None, "last_exit": None}
+                    baseline.write_text(json.dumps(before), encoding="utf-8")
+                result = subprocess.run(self.watch_command(self.a, baseline), env=env,
+                                        capture_output=True, text=True, timeout=5)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                packet = json.loads(result.stdout)
+                self.assertEqual(packet["outcome"], "change_observed")
+                self.assertEqual(packet["observations_compared"], 2 if exit_available else 1)
+                self.assertEqual(packet["changed_fields"], [])
+                self.assertEqual(set(packet["availability_changed_fields"]),
+                                 {"process.last_exit"} if exit_available else {"process.child", "process.foreground"})
+                self.assertEqual(packet["last_comparison"]["process"]["last_exit"], {
+                    "before_available": False, "after_available": exit_available,
+                    "availability_changed": exit_available, "changed": None})
+                self.assertIn("process.last_exit", packet["unknown_fields"])
+                self.assertEqual(packet["interpretation"], "none")
+                self.assertNotIn("completion", packet)
 
     def test_watch_changed_tail_outside_prefix_stays_unknown(self):
         target, gate = self.gated_fixture("stable prefix α\n" * 100,
