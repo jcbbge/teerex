@@ -1025,15 +1025,30 @@ print(json.dumps(dict(outside_signal=outside_signal)))
             for path in Path('/proc').glob('[0-9]*/cmdline'):
                 try:
                     if tag.encode() in path.read_bytes().split(b'\0'):found.append(int(path.parent.name))
-                except OSError:pass
+                except (FileNotFoundError, ProcessLookupError):pass
             return found
-        self.assertEqual(tagged(), [], "PID namespace teardown must remove even setsid descendants")
-        remaining = []
-        for path in Path('/proc').glob('[0-9]*/ns/pid'):
-            try:
-                if os.readlink(path) == namespace:remaining.append(str(path))
-            except OSError:pass
-        self.assertEqual(remaining, [])
+        # bwrap can return while the kernel is still tearing down its PID namespace.
+        # A process disappearing between /proc reads is gone, not an escaped child.
+        # Live tagged children in any other namespace must fail immediately.
+        deadline = time.monotonic() + 3
+        while True:
+            descendants = tagged()
+            for pid in descendants:
+                try:
+                    actual = os.readlink(f'/proc/{pid}/ns/pid')
+                except (FileNotFoundError, ProcessLookupError):
+                    continue
+                self.assertEqual(actual, namespace, f"tagged descendant PID {pid} escaped its PID namespace")
+            remaining = []
+            for path in Path('/proc').glob('[0-9]*/ns/pid'):
+                try:
+                    if os.readlink(path) == namespace:remaining.append(str(path))
+                except (FileNotFoundError, ProcessLookupError):pass
+            if not descendants and not remaining:
+                break
+            self.assertLess(time.monotonic(), deadline,
+                            f"PID namespace teardown timed out: tagged={descendants}, members={remaining}")
+            time.sleep(.02)
         # A6/A11 counterexample: without PID isolation the probe blocks the harness.
         refused = subprocess.run(self.probe_fence(scratch, pid=False) + ["--", *args], capture_output=True, text=True, timeout=10)
         self.assertEqual(refused.returncode, 1, refused.stdout + refused.stderr)
