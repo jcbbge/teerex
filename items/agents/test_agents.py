@@ -1043,7 +1043,7 @@ print(json.dumps(dict(outside_signal=outside_signal)))
             for path in Path('/proc').glob('[0-9]*/ns/pid'):
                 try:
                     if os.readlink(path) == namespace:remaining.append(str(path))
-                except (FileNotFoundError, ProcessLookupError):pass
+                except (FileNotFoundError, ProcessLookupError, PermissionError):pass  # another user's process is not in our namespace
             if not descendants and not remaining:
                 break
             self.assertLess(time.monotonic(), deadline,
