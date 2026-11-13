@@ -43,7 +43,7 @@ class BoardsTest(unittest.TestCase):
         self.store = self.root / "store"
         self.store.mkdir(mode=0o700)
         self.target = dict(host="hive", socket=str(self.root / "rex.sock"), session="session:" + ZERO, block="block:" + ZERO)
-        self.env = dict(os.environ)
+        self.env = dict(os.environ, TEEREX_CLUTCH_DIR=str(self.root / "clutch"))
         self.message = self.root / "message"
         self.message.write_text("first line\noperator input stays untouched · α")
         self.card = self.root / "card.json"
@@ -461,7 +461,7 @@ class CallsTest(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
         self.log = self.root / "calls"
-        self.env = dict(os.environ, TEEREX_CALL_LOG_DIR=str(self.log))
+        self.env = dict(os.environ, TEEREX_CLUTCH_DIR=str(self.root / "clutch"), TEEREX_CALL_LOG_DIR=str(self.log))
 
     def call(self, *args, **kw):
         return subprocess.run([BIN, *args], env=self.env, capture_output=True, text=True, timeout=15, **kw)
@@ -641,6 +641,13 @@ class StatusTest(unittest.TestCase):
 
 
 class RexBoardsTest(unittest.TestCase):
+    def setUp(self):
+        from unittest.mock import patch
+        private = self.root / ("clutch-" + str(time.monotonic_ns()))
+        override = patch.dict(os.environ, TEEREX_CLUTCH_DIR=str(private))
+        override.start()
+        self.addCleanup(override.stop)
+
     @classmethod
     def setUpClass(cls):
         cls.rex = os.environ.get("REX_BIN") or shutil.which("rex")
@@ -660,7 +667,7 @@ class RexBoardsTest(unittest.TestCase):
         cls.server = subprocess.Popen([cls.rex, "server", "run", "--listen", "unix://" + str(cls.socket),
                                        "--restore=false", "--config", "/dev/null", "--state-dir", str(cls.root / "rex-state")],
                                       stdout=cls.log, stderr=cls.log,
-                                      env=dict(os.environ, PATH=str(cls.bin) + os.pathsep + os.environ["PATH"]))
+                                      env=dict(os.environ, TEEREX_CLUTCH_DIR=str(cls.root / "server-clutch"), PATH=str(cls.bin) + os.pathsep + os.environ["PATH"]))
         def stop():
             cls.server.terminate()
             try:
@@ -743,7 +750,7 @@ class RexBoardsTest(unittest.TestCase):
         root.mkdir()
         for directory in ("store", "jobs", "agents", "bin"):
             (root / directory).mkdir(mode=0o700)
-        env = dict(os.environ, PATH=str(root / "bin") + os.pathsep + str(Path(self.rex).parent) + os.pathsep + os.environ["PATH"],
+        env = dict(os.environ, TEEREX_CLUTCH_DIR=str(root / "clutch"), PATH=str(root / "bin") + os.pathsep + str(Path(self.rex).parent) + os.pathsep + os.environ["PATH"],
                    TEEREX_CALL_LOG_DIR=str(root / "calls"), REX_SERVER="unix:///poison.sock", REX_SESSION="session:poison", REX_BLOCK="block:poison")
         def invoke(*args):
             result = subprocess.run([BIN, *args], env=env, capture_output=True, text=True, timeout=20)

@@ -82,7 +82,7 @@ class ProtocolTest(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.home = Path(temporary.name).resolve()
         self.env = dict(os.environ, HOME=str(self.home), REX_SERVER="", REX_SESSION="",
-                        TEEREX_CALL_LOG_DIR=str(self.home / "calls"))
+                        TEEREX_CLUTCH_DIR=str(self.home / "clutch"), TEEREX_CALL_LOG_DIR=str(self.home / "calls"))
         self.client = Client(self.env)
         self.addCleanup(self.client.close)
 
@@ -277,7 +277,7 @@ class RexTest(unittest.TestCase):
         self.block = made["initial_windows"][0]["block_ids"][0]
         self.env = dict(os.environ, HOME=str(home), REX_SERVER="unix://" + str(self.socket), REX_SESSION=self.session,
                         PATH=str(Path(self.rex).parent) + os.pathsep + os.environ.get("PATH", ""),
-                        TEEREX_INTERNAL_REX=self.rex, TEEREX_CALL_LOG_DIR=str(home / "calls"), XDG_STATE_HOME=str(home / "state"))
+                        TEEREX_INTERNAL_REX=self.rex, TEEREX_CALL_LOG_DIR=str(home / "calls"), TEEREX_CLUTCH_DIR=str(home / "clutch"), XDG_STATE_HOME=str(home / "state"))
         self.client = Client(self.env)
         self.addCleanup(self.client.close)
         self.client.initialize()

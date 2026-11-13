@@ -18,7 +18,7 @@ pub fn privateStat(fd: std.posix.fd_t, directory: bool) !void {
 }
 
 pub const Store = struct {
-    dir: std.fs.Dir,
+    dir: ?std.fs.Dir,
     path: []const u8,
     name: []const u8,
     socket: []const u8,
@@ -26,14 +26,27 @@ pub const Store = struct {
     pane: []const u8,
 
     pub fn open(allocator: std.mem.Allocator, env: *const std.process.EnvMap, socket: []const u8, session: []const u8, pane: []const u8) !Store {
+        return openMode(allocator, env, socket, session, pane, true);
+    }
+
+    pub fn openRead(allocator: std.mem.Allocator, env: *const std.process.EnvMap, socket: []const u8, session: []const u8, pane: []const u8) !Store {
+        return openMode(allocator, env, socket, session, pane, false);
+    }
+
+    fn openMode(allocator: std.mem.Allocator, env: *const std.process.EnvMap, socket: []const u8, session: []const u8, pane: []const u8, create: bool) !Store {
         const root = env.get("TEEREX_CLUTCH_DIR") orelse try std.fs.path.join(allocator, &.{ env.get("HOME") orelse return error.HomeRequiredForClutch, ".local/state/teerex/clutch" });
         if (!std.fs.path.isAbsolute(root)) return error.AbsoluteClutchDirectoryRequired;
         // Parents are trusted operator filesystem context; the leaf never follows a symlink.
-        if (std.fs.path.dirname(root)) |parent| try std.fs.cwd().makePath(parent);
-        std.posix.mkdir(root, 0o700) catch |err| if (err != error.PathAlreadyExists) return err;
-        var dir = try std.fs.openDirAbsolute(root, .{ .no_follow = true, .iterate = true });
-        errdefer dir.close();
-        try privateStat(dir.fd, true);
+        if (create) {
+            if (std.fs.path.dirname(root)) |parent| try std.fs.cwd().makePath(parent);
+            std.posix.mkdir(root, 0o700) catch |err| if (err != error.PathAlreadyExists) return err;
+        }
+        var dir: ?std.fs.Dir = std.fs.openDirAbsolute(root, .{ .no_follow = true, .iterate = true }) catch |err| switch (err) {
+            error.FileNotFound => if (!create) null else return err,
+            else => return err,
+        };
+        errdefer if (dir) |*d| d.close();
+        if (dir) |d| try privateStat(d.fd, true);
         // Darwin cannot open Unix sockets as regular files. Resolve paths through POSIX realpath.
         var canonical_buffer: [std.fs.max_path_bytes]u8 = undefined;
         const resolved = std.posix.realpath(socket, &canonical_buffer) catch |err| switch (err) {
@@ -54,11 +67,12 @@ pub const Store = struct {
     }
 
     pub fn close(self: *Store) void {
-        self.dir.close();
+        if (self.dir) |*dir| dir.close();
     }
 
     pub fn read(self: *Store, allocator: std.mem.Allocator) !?State {
-        const fd = std.posix.openat(self.dir.fd, self.name, .{ .ACCMODE = .RDONLY, .NOFOLLOW = true, .NONBLOCK = true, .CLOEXEC = true }, 0) catch |err| switch (err) {
+        const dir = self.dir orelse return null;
+        const fd = std.posix.openat(dir.fd, self.name, .{ .ACCMODE = .RDONLY, .NOFOLLOW = true, .NONBLOCK = true, .CLOEXEC = true }, 0) catch |err| switch (err) {
             error.FileNotFound => return null,
             else => return err,
         };
@@ -73,12 +87,13 @@ pub const Store = struct {
         return state;
     }
 
-    pub fn set(self: *Store, allocator: std.mem.Allocator, desired: ?bool, reason: []const u8) !struct { changed: bool, state: State } {
+    pub fn set(self: *Store, allocator: std.mem.Allocator, desired: bool, reason: []const u8) !struct { changed: bool, state: ?State } {
+        const dir = self.dir orelse return error.ClutchStateUnavailable;
         // Darwin can transiently return ENOENT while cooperating creators open the same lock.
         var attempts: usize = 0;
         const fd = while (true) : (attempts += 1) {
-            break std.posix.openat(self.dir.fd, "clutch.lock", .{ .ACCMODE = .RDWR, .CREAT = true, .NOFOLLOW = true, .NONBLOCK = true, .CLOEXEC = true }, 0o600) catch |err| switch (err) {
-                error.FileNotFound => if (desired != null and attempts < 200) {
+            break std.posix.openat(dir.fd, "clutch.lock", .{ .ACCMODE = .RDWR, .CREAT = true, .NOFOLLOW = true, .NONBLOCK = true, .CLOEXEC = true }, 0o600) catch |err| switch (err) {
+                error.FileNotFound => if (attempts < 200) {
                     std.Thread.sleep(5 * std.time.ns_per_ms);
                     continue;
                 } else return error.ClutchLockCreationUnavailable,
@@ -92,25 +107,32 @@ pub const Store = struct {
         var timer = try std.time.Timer.start();
         while (true) {
             std.posix.flock(fd, std.posix.LOCK.EX | std.posix.LOCK.NB) catch |err| {
-                if (err != error.WouldBlock or desired == null or timer.read() / std.time.ns_per_ms >= 1000) return err;
+                if (err != error.WouldBlock or timer.read() / std.time.ns_per_ms >= 1000) return err;
                 std.Thread.sleep(5 * std.time.ns_per_ms);
                 continue;
             };
             break;
         }
         const previous = try self.read(allocator);
-        if (previous) |state| if (desired == null or state.held == desired.?) return .{ .changed = false, .state = state };
-        const held = desired orelse false;
+        if (!desired) {
+            if (previous != null) {
+                try dir.deleteFile(self.name);
+                try std.posix.fsync(dir.fd);
+            }
+            return .{ .changed = if (previous) |p| p.held else false, .state = null };
+        }
+        if (previous) |state| if (state.held) return .{ .changed = false, .state = state };
+        const held = true;
         const state: State = .{ .socket = self.socket, .session = self.session, .pane = self.pane, .held = held, .reason = reason, .at_unix_ms = std.time.milliTimestamp() };
         const stage = try std.fmt.allocPrint(allocator, "{s}.next", .{self.name});
-        const out_fd = try std.posix.openat(self.dir.fd, stage, .{ .ACCMODE = .WRONLY, .CREAT = true, .EXCL = true, .NOFOLLOW = true, .CLOEXEC = true }, 0o600);
+        const out_fd = try std.posix.openat(dir.fd, stage, .{ .ACCMODE = .WRONLY, .CREAT = true, .EXCL = true, .NOFOLLOW = true, .CLOEXEC = true }, 0o600);
         const out: std.fs.File = .{ .handle = out_fd };
         defer out.close();
-        defer self.dir.deleteFile(stage) catch {};
+        defer dir.deleteFile(stage) catch {};
         try out.writeAll(try std.json.Stringify.valueAlloc(allocator, state, .{}));
         try out.sync();
-        try self.dir.rename(stage, self.name);
-        try std.posix.fsync(self.dir.fd);
+        try dir.rename(stage, self.name);
+        try std.posix.fsync(dir.fd);
         return .{ .changed = previous != null or held, .state = state };
     }
 };

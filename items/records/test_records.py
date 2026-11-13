@@ -22,7 +22,7 @@ class RecordsFixture(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         self.store = self.root / "store"
-        self.env = dict(os.environ, HOME=str(self.root), TEEREX_CALL_LOG_DIR=str(self.root / "calls"),
+        self.env = dict(os.environ, HOME=str(self.root), TEEREX_CALL_LOG_DIR=str(self.root / "calls"), TEEREX_CLUTCH_DIR=str(self.root / "clutch"),
                         REX_SERVER="unix:///poison", REX_SESSION="session:poison", REX_BLOCK="block:poison")
         self.fields = dict(question=QUESTION, next_action=dict(actor="worker", step="run the asymmetric cache check", stop_when="twenty iterations complete"), notes=NOTES)
         self.call("init")

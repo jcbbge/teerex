@@ -72,7 +72,7 @@ class Replay(unittest.TestCase):
         if argv:
             command += ["--", *map(str, argv)]
         result = subprocess.run(command, capture_output=True, text=True, timeout=15,
-             env=dict(os.environ, TEEREX_INTERNAL_REX=self.rex, PATH=str(Path(self.rex).parent) + os.pathsep + os.environ.get("PATH", "")))
+             env=dict(os.environ, TEEREX_CLUTCH_DIR=str(self.work / "clutch"), TEEREX_INTERNAL_REX=self.rex, PATH=str(Path(self.rex).parent) + os.pathsep + os.environ.get("PATH", "")))
         self.assertEqual(result.returncode, code, result.stdout + result.stderr)
         value = json.loads(result.stdout)
         self.assertEqual(value["mode"], mode)

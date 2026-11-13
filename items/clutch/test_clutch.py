@@ -48,7 +48,8 @@ class ClutchTest(fixtures.SendTest):
         self.assertFalse(released["held"])
         _, repeated = self.clutch("release", target)
         self.assertFalse(repeated["changed"])
-        self.assertEqual(repeated["record"], released["record"])
+        self.assertIsNone(repeated["record"])
+        self.assertFalse(state.exists())
 
     def test_held_refuses_with_no_input_even_when_draft_is_ignored_then_release_delivers(self):
         target, raw = self.fixture()
@@ -160,7 +161,7 @@ class ClutchTest(fixtures.SendTest):
         self.assertTrue(packet["clutch"]["failure_reason"])
         self.received(raw, self.pasted(b"hello") * 2)
 
-    def test_busy_optional_initializer_does_not_exhaust_send_deadline(self):
+    def test_send_ignores_mutation_lock_and_does_not_initialize_state(self):
         target, raw = self.fixture()
         root = Path(self.env["TEEREX_CLUTCH_DIR"])
         root.mkdir(mode=0o700)
@@ -170,8 +171,8 @@ class ClutchTest(fixtures.SendTest):
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
             result, packet = self.send(target, timeout=1000)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            self.assertEqual(packet["clutch"]["state"], "unknown")
-            self.assertTrue(packet["clutch"]["failure_reason"])
+            self.assertEqual(packet["clutch"]["state"], "released")
+            self.assertEqual(list(root.glob("*.json")), [])
             self.received(raw, self.pasted(b"hello"))
         finally:
             os.close(fd)
@@ -193,6 +194,90 @@ class ClutchTest(fixtures.SendTest):
         self.assertEqual(packet["clutch"]["failure_reason"], "clutch_state_invalid")
         self.assertTrue(packet["draft"]["restore_verified"])
         self.assertIn("keep this draft", self.prompt_text(target))
+
+    def prune(self, *extra):
+        result = subprocess.run([fixtures.BIN, "clutch", "prune", *extra], env=self.env,
+                                capture_output=True, text=True, timeout=15)
+        return result, json.loads(result.stdout)
+
+    def test_send_and_status_create_no_store_and_release_deletes_record(self):
+        target, raw = self.fixture()
+        root = Path(self.env["TEEREX_CLUTCH_DIR"])
+        self.clutch("status", target)
+        result, packet = self.bounded_send(target, 0)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(packet["clutch"]["state"], "released")
+        self.assertFalse(root.exists())
+        _, taken = self.clutch("take", target)
+        self.assertTrue(Path(taken["state_file"]).exists())
+        self.clutch("release", target)
+        self.assertFalse(Path(taken["state_file"]).exists())
+        self.assertEqual(list(root.iterdir()), [root / "clutch.lock"])
+
+    def test_prune_plans_then_removes_only_released_gone_records(self):
+        live, _ = self.fixture()
+        dead, _ = self.fixture()
+        held, _ = self.fixture()
+        files = []
+        for target in (live, dead, held):
+            _, value = self.clutch("take", target)
+            file = Path(value["state_file"])
+            if target != held:
+                record = json.loads(file.read_text()); record["held"] = False
+                file.write_text(json.dumps(record))
+            files.append(file)
+        self.rpc("block.close", {"session_id": dead[0], "block_id": dead[1]})
+        self.rpc("block.close", {"session_id": held[0], "block_id": held[1]})
+        missing = self.work / "gone.sock"
+        result = subprocess.run([fixtures.BIN, "clutch", "take", "--socket", str(missing),
+                                 "--session", live[0], "--pane", live[1]], env=self.env, capture_output=True, text=True)
+        orphan = Path(json.loads(result.stdout)["state_file"])
+        record = json.loads(orphan.read_text()); record["held"] = False
+        orphan.write_text(json.dumps(record))
+        before = {p.name: p.read_bytes() for p in orphan.parent.iterdir()}
+        result, plan = self.prune()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual({p["file"] for p in plan["selected"]}, {files[1].name, orphan.name})
+        self.assertEqual(plan["removed"], [])
+        self.assertEqual(before, {p.name: p.read_bytes() for p in orphan.parent.iterdir()})
+        result, applied = self.prune("--apply")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(set(applied["removed"]), {files[1].name, orphan.name})
+        self.assertTrue(files[0].exists() and files[2].exists())
+
+    def test_prune_preserves_corrupt_linked_unknown_and_concurrently_taken_records(self):
+        target, _ = self.fixture()
+        _, taken = self.clutch("take", target)
+        file = Path(taken["state_file"])
+        # A take between plan and apply must win, even after a prior released plan.
+        record = json.loads(file.read_text()); record["held"] = False
+        file.write_text(json.dumps(record))
+        self.rpc("block.close", {"session_id": target[0], "block_id": target[1]})
+        _, plan = self.prune()
+        self.assertEqual(len(plan["selected"]), 1)
+        self.clutch("take", target)
+        _, applied = self.prune("--apply")
+        self.assertEqual(applied["removed"], [])
+        original = file.read_bytes()
+        outside = self.work / "outside"; outside.write_bytes(original)
+        file.unlink(); file.symlink_to(outside)
+        _, applied = self.prune("--apply")
+        self.assertEqual(applied["removed"], [])
+        self.assertEqual(outside.read_bytes(), original)
+        file.unlink(); file.write_text("invalid JSON"); file.chmod(0o600)
+        _, applied = self.prune("--apply")
+        self.assertEqual(applied["removed"], [])
+        file.unlink()
+        # An existing non-socket endpoint is uncertain, never proof of disappearance.
+        socket = self.work / "uncertain.sock"; socket.write_text("not a socket")
+        result = subprocess.run([fixtures.BIN, "clutch", "take", "--socket", str(socket),
+                                 "--session", target[0], "--pane", target[1]], env=self.env, capture_output=True, text=True)
+        file = Path(json.loads(result.stdout)["state_file"])
+        record = json.loads(file.read_text()); record["held"] = False
+        file.write_text(json.dumps(record))
+        _, applied = self.prune("--apply")
+        self.assertEqual(applied["removed"], [])
+        self.assertTrue(file.exists())
 
     def test_palette_fragment_is_exclusive_and_uses_invoking_pane(self):
         fragment = self.work / "clutch.lua"

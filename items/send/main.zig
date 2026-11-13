@@ -11,6 +11,7 @@ const usage =
     \\--draft guard|ignore defaults guard: wait for quiet/empty draft, clear, send, restore without Enter.
     \\Cooperative clutch always applies, including --draft ignore; held panes wait then refuse pane_held_by_human.
     \\Unavailable clutch state is reported unknown with a named failure_reason and does not block send.
+    \\Send only reads clutch state; missing is released. take/release write; release deletes records.
     \\State: TEEREX_CLUTCH_DIR or ~/.local/state/teerex/clutch; same command/Rex host required.
     \\--draft-wait-ms N defaults 30000 (0..55000); quiet window1500ms, restore delay400ms.
     \\Ignore preserves prior paste/Enter behavior. No chunking, retry, inbox forwarding, or autostart.
@@ -231,7 +232,7 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
     var env = try std.process.getEnvMap(allocator);
     for ([_][]const u8{ "REX_SERVER", "REX_SESSION", "REX_BLOCK", "REX_CLIENT" }) |key| env.remove(key);
     var clutch_failure: ?[]const u8 = null;
-    var clutch = clutch_state.Store.open(allocator, &env, path, sid, bid) catch |err| blk: {
+    var clutch = clutch_state.Store.openRead(allocator, &env, path, sid, bid) catch |err| blk: {
         clutch_failure = clutch_state.failureReason(err);
         break :blk @as(?clutch_state.Store, null);
     };
@@ -239,21 +240,13 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
     var clutch_file: ?[]const u8 = null;
     var clutch_initial: []const u8 = "unknown";
     if (clutch) |*store| prepare: {
-        // Read an existing hold without needing the mutation lock. Only initialize absent state.
+        // Send only reads. An absent record is released; Lua rechecks this path before input.
         const previous = store.read(allocator) catch |err| {
             clutch_failure = clutch_state.failureReason(err);
             break :prepare;
         };
-        const current = previous orelse blk: {
-            const result = store.set(allocator, null, "") catch |err| {
-                clutch_failure = clutch_state.failureReason(err);
-                clutch_file = store.path; // A concurrently created positive hold can still be observed by Lua.
-                break :prepare;
-            };
-            break :blk result.state;
-        };
         clutch_file = store.path;
-        clutch_initial = if (current.held) "held" else "released";
+        clutch_initial = if (previous != null and previous.?.held) "held" else "released";
     }
     var input_failure: ?[]const u8 = null;
     const message = readMessage(allocator, file_path, &timer, timeout_ms) catch |err| blk: {

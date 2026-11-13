@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import shutil
 import signal
+import select
 import subprocess
 import sys
 import tempfile
@@ -456,15 +457,17 @@ class SendTest(unittest.TestCase):
         lock = self.lock(target)
         for sig in [signal.SIGINT, signal.SIGTERM]:
             lock.mkdir()
-            # A fixed 100ms sleep can signal Darwin before the binary installs handlers.
-            # Initial clutch state is published after Signals.init, before the bridge-lock wait.
-            clutch_root = self.work / ("cancel-clutch-" + str(sig))
-            self.env["TEEREX_CLUTCH_DIR"] = str(clutch_root)
-            proc = subprocess.Popen(self.command(target), env=self.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-            end = time.monotonic() + 5
-            while not list(clutch_root.glob("*.json")) and proc.poll() is None and time.monotonic() < end:
-                time.sleep(.01)
-            self.assertTrue(list(clutch_root.glob("*.json")), "sender did not initialize before cancellation")
+            # A full pipe write requires the sender to consume stdin, after Signals.init.
+            # This proves readiness without creating a clutch record as a side effect.
+            command = self.command(target)
+            command[command.index("--message-file") + 1] = "-"
+            proc = subprocess.Popen(command, env=self.env, stdin=subprocess.PIPE,
+                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            proc.stdin.write("x" * 65536)
+            proc.stdin.flush()
+            self.assertTrue(select.select([], [proc.stdin], [], 5)[1], "sender did not consume stdin")
+            proc.stdin.close()
+            proc.stdin = None
             proc.send_signal(sig)
             out, err = proc.communicate(timeout=3)
             self.assertEqual(proc.returncode, 128 + sig, out + err)

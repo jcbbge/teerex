@@ -166,7 +166,7 @@ class AgentsTest(unittest.TestCase):
         cls.server = subprocess.Popen([REX, "server", "run", "--listen", "unix://" + str(cls.socket),
                                        "--restore=false", "--config", "/dev/null", "--state-dir", str(cls.root / "state")],
                                       stdout=cls.log, stderr=cls.log,
-                                      env=dict(os.environ, PATH=str(Path(REX).parent) + os.pathsep + os.environ.get("PATH", "")))
+                                      env=dict(os.environ, TEEREX_CLUTCH_DIR=str(cls.root / "server-clutch"), PATH=str(Path(REX).parent) + os.pathsep + os.environ.get("PATH", "")))
         cls.addClassCleanup(cls.stop_server)
         wait_for(lambda: cls.socket.exists())
         cls.version = cls.rpc("server.version", {})
@@ -199,7 +199,7 @@ class AgentsTest(unittest.TestCase):
         self.session = target["session_id"]
         self.starter = target["initial_windows"][0]["block_ids"][0]
         wait_for(lambda: events(self.starter_log))
-        self.env = dict(os.environ, PATH=str(Path(REX).parent) + os.pathsep + os.environ.get("PATH", ""),
+        self.env = dict(os.environ, TEEREX_CLUTCH_DIR=str(self.work / "clutch"), PATH=str(Path(REX).parent) + os.pathsep + os.environ.get("PATH", ""),
                         REX_SERVER="unix:///tmp/poison.sock", REX_SESSION="session:poison", REX_BLOCK="block:poison")
         self.config = self.work / "profiles.json"
         self.settings = dict(schema_version=1, defaults=dict(registry=str(self.registry), socket=str(self.socket),

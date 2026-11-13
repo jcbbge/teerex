@@ -61,7 +61,7 @@ class SpawnTest(unittest.TestCase):
     def setUp(self):
         self.work = self.root / str(time.monotonic_ns())
         self.work.mkdir()
-        self.env = dict(os.environ, PATH=str(Path(self.rex).parent) + os.pathsep + os.environ.get("PATH", ""),
+        self.env = dict(os.environ, TEEREX_CLUTCH_DIR=str(self.work / "clutch"), PATH=str(Path(self.rex).parent) + os.pathsep + os.environ.get("PATH", ""),
                         REX_SERVER="unix:///tmp/poison.sock", REX_SESSION="session:poison",
                         REX_BLOCK="block:poison", REX_CLIENT="client:poison")
         value = json.loads(subprocess.check_output(self.base + ["new", "--json", "--keep-open", "--shell=none", "--",

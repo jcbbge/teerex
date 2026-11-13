@@ -57,7 +57,7 @@ local function gate()
         return unknown(type(a.clutch_failure) == "string" and a.clutch_failure or "clutch_state_unavailable")
     end
     while true do
-        local f = io.open(a.clutch_file, "r")
+        local f, open_error, errno = io.open(a.clutch_file, "r")
         local held = false
         if f then
             local raw = f:read(8193); f:close()
@@ -66,7 +66,8 @@ local function gate()
                 return unknown("clutch_state_invalid")
             end
             held = state.held
-        else
+        -- Rex's Go-backed Lua reports generic code1 for ENOENT; accept its exact Unix suffix too.
+        elseif errno ~= 2 and not (type(open_error) == "string" and open_error:match(": no such file or directory$")) then
             return unknown("clutch_state_unreadable")
         end
         clutch.state, clutch.failure_reason = held and "held" or "released", nil

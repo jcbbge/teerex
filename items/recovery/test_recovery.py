@@ -29,7 +29,7 @@ class RecoveryTest(unittest.TestCase):
         self.store.mkdir(mode=0o700)
         self.socket = self.root / "rex.sock"
         self.base = [self.rex, "--autostart=false", "--server", "unix://" + str(self.socket), "--timeout", "3s"]
-        self.env = dict(os.environ, PATH=str(Path(self.rex).parent) + os.pathsep + os.environ.get("PATH", ""),
+        self.env = dict(os.environ, TEEREX_CLUTCH_DIR=str(self.root / "clutch"), PATH=str(Path(self.rex).parent) + os.pathsep + os.environ.get("PATH", ""),
                         REX_SERVER="unix:///tmp/poison.sock", REX_SESSION="poison", REX_BLOCK="poison", REX_CLIENT="poison")
         self.server = None
         self.log = (self.root / "server.log").open("w")
