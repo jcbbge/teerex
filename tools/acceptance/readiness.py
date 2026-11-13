@@ -240,7 +240,7 @@ def run_one(args, payload, version, index):
                     if watcher.returncode != 124 or len(samples) < 50:
                         raise ValueError("long_watch_exit_or_samples_failed")
                     first = next(rss for elapsed, rss in samples if elapsed >= 10)
-                    growth = max(0, samples[-1][1] - first)
+                    growth = max(0, max(rss for elapsed, rss in samples if elapsed >= 10) - first)
                     if growth > 256:
                         raise ValueError("rss_growth_kib=" + str(growth))
                     return "quiet_wait=60000ms;rss_growth_kib=" + str(growth)

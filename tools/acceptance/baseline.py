@@ -46,7 +46,7 @@ def invoke(argv, stats, env, rex=0, **kwargs):
     return result
 
 
-def teerex_task(args, server, session, anchor, root, mode, keep=True, controller_signal=None):
+def teerex_task(args, server, session, anchor, root, mode, keep=True, controller_signal=None, close_owned=True):
     root.mkdir(mode=0o700)
     began = time.monotonic_ns()
     # Count actual Rex execs, including nested surface/collector calls. The
@@ -133,8 +133,9 @@ def teerex_task(args, server, session, anchor, root, mode, keep=True, controller
                         if not compared.returncode:
                             comparison = json.loads(compared.stdout)
                             save(root / "comparison.json", comparison)
-                server.rpc("block.close", dict(session_id=session, block_id=block))
-                stats["rex_client_launches"] += 1
+                if close_owned:
+                    server.rpc("block.close", dict(session_id=session, block_id=block))
+                    stats["rex_client_launches"] += 1
         try:
             pid = json.loads((output / "started.json").read_text())["pid"]
             if sys.platform == "darwin":
@@ -209,6 +210,7 @@ def check_rows(args, server, session, anchor, evidence):
     row("B1", f1 and f1["code"] == 1 and f1["direct_child_exit"]["exit_code"] == 3 and f1["direct_child_exit"]["signal"] is None and not f1["receipt"]["success"] and ASSERTION in Path(f1["receipt"]["stderr"]["full_path"]).read_bytes(), "F1 real exit3 and full assertion stderr")
     row("B2", f4 and f4["code"] == 0 and f4["receipt"]["success"] and f4["direct_child_exit"]["exit_code"] == 0, "F4 real exit0 differs from F1")
     row("B3", f5 and f5["direct_child_exit"]["exit_code"] == 1 and (f5["reported_status"] or {}).get("outcome") == "status_report_matched", "F5 status claim and child exit stored separately")
+    row("X2", retained_done(args, server, session, anchor, evidence), "retained F4 done does not rematch; fresh F5 done is not its exit1")
     row("B4", f1 and f1["direct_child_exit"]["exit_code"] == 3 and f1["fixture_exit_not_substituted"], "terminal_program_exit is separate; never substituted")
     exact = True
     for mode in ("F1", "F4"):
@@ -232,7 +234,7 @@ def check_rows(args, server, session, anchor, evidence):
     row("B7", f2 and f2["code"] == 124 and f2["direct_child_exit"]["signal"] == 9 and f2["receipt"]["cleanup"]["block_absence_verified"] and raw(f2["receipt"]["stdout"]).startswith(b"starting") and quiet, "F2 deadline/KILL/partial output/absence; quiet sentinel watch deadline")
     f3 = results.get("F3")
     interrupted = teerex_task(args, server, session, anchor, evidence / "F3-int", "F3", controller_signal=signal.SIGINT)
-    row("B8", f3 and f3["code"] == 143 and interrupted["code"] == 130 and all(v["receipt"]["cleanup"]["block_absence_verified"] for v in (f3, interrupted)), "INT130 and TERM143 override keep-open and close owned panes")
+    row("B8", f3 and f3["code"] == 143 and interrupted["code"] == 130 and all(v["receipt"]["cleanup"]["block_absence_verified"] and v["direct_child_exit"]["signal"] == 15 for v in (f3, interrupted)), "INT130 and TERM143 override keep-open and close owned panes")
     row("B9", refusals(args, server, session, anchor, evidence), "cwd/executable/env/FIFO/mismatched baseline refused")
     row("B10", unknown_tests(args, server), "existing run-visible lost-ack and controller-SIGKILL tests executed")
     f6 = results.get("F6")
@@ -250,6 +252,25 @@ def check_rows(args, server, session, anchor, evidence):
     results["F1-default-close"] = default
     row("default_close", default["receipt"]["cleanup"]["block_absence_verified"], "default close independently verified")
     return rows, results
+
+
+def retained_done(args, server, session, anchor, evidence):
+    kept = teerex_task(args, server, session, anchor, evidence / "X2-F4", "F4", close_owned=False)
+    block = kept["receipt"]["created"]["block_id"]
+    try:
+        observed, _ = execute(observations(args.teerex, server, session, block), server.env)
+        baseline = evidence / "X2-retained.json"
+        save(baseline, observed.stdout)
+        waited, _ = execute([args.teerex, "watch", "--socket", server.socket, "--session", session, "--block", block,
+            "--baseline", baseline, "--timeout-ms", "1000", "--status-state", "done"], server.env)
+        fresh = teerex_task(args, server, session, anchor, evidence / "X2-F5", "F5")
+        again, _ = execute(observations(args.teerex, server, session, block), server.env)
+        save(evidence / "X2-retained-after.json", again.stdout)
+        return (waited.returncode == 124 and json.loads(waited.stdout)["outcome"] == "deadline_exceeded"
+            and json.loads(observed.stdout)["program_status"] == json.loads(again.stdout)["program_status"]
+            and fresh["direct_child_exit"]["exit_code"] == 1 and fresh["reported_status"]["outcome"] == "status_report_matched")
+    finally:
+        server.rpc("block.close", dict(session_id=session, block_id=block))
 
 
 def quiet_watch(args, server, session, anchor, evidence):
