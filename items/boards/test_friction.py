@@ -111,7 +111,7 @@ class FrictionTest(unittest.TestCase):
     def test_F4_caller_validation_and_scope(self):
         self.enable()
         result=self.invoke('--version',env=dict(self.env,TEEREX_CALLER='agent-send; rm -rf /'))
-        self.assertEqual(result.stdout,'teerex 0.1.0-alpha.5\n')
+        self.assertEqual(result.stdout,'teerex 0.1.0-alpha.6\n')
         row=self.records()[0]
         self.assertIsNone(row['caller']['via']);self.assertTrue(row['caller']['via_invalid'])
         start=[r for r in self.records('calls.jsonl') if r['phase']=='start'][0]

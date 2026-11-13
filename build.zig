@@ -12,7 +12,7 @@ pub fn build(b: *std.Build) void {
         }),
     });
     const build_version = b.addOptions();
-    build_version.addOption([]const u8, "version", "0.1.0-alpha.5");
+    build_version.addOption([]const u8, "version", "0.1.0-alpha.6");
     exe.root_module.addOptions("build_version", build_version);
     const cartridge_sources = b.addOptions();
     const manager = b.build_root.handle.readFileAlloc(b.allocator, "tools/cartridges/cartridges.py", 1024 * 1024) catch @panic("cartridge manager source unavailable");

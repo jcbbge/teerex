@@ -161,7 +161,7 @@ jobs:
           platform=x86_64-linux
           if [[ "$RUNNER_OS" == macOS ]]; then platform=aarch64-macos; fi
           python3 tools/cartridges/package.py --platform "$platform" \
-            --version 0.1.0-alpha.5 --output "$RUNNER_TEMP/cartridge-catalog"
+            --version 0.1.0-alpha.6 --output "$RUNNER_TEMP/cartridge-catalog"
           TEEREX_BIN="$PWD/zig-out/bin/teerex" python3 tools/cartridges/test_payloads.py --catalog "$RUNNER_TEMP/cartridge-catalog"
 
       - name: Run installer lifecycle and public release controls
@@ -208,7 +208,7 @@ jobs:
         if: runner.os == 'macOS' && matrix.rex-api != 13
         run: |
           python3 tools/cartridges/package.py --platform aarch64-macos \
-            --version 0.1.0-alpha.5 --output "$RUNNER_TEMP/cartridge-catalog"
+            --version 0.1.0-alpha.6 --output "$RUNNER_TEMP/cartridge-catalog"
 
       - name: Execute installed-payload readiness on three fresh servers
         run: |
