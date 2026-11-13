@@ -342,6 +342,36 @@ sys.exit(replay.main(sys.argv[3:],sys.argv[2],''))
                 result = self.invoke("live", ["--script", path, "--observations-out", self.path("bad-observations")], ["/bin/echo"], code=1)
                 self.assertIsNone(result["target"]["block_id"])
 
+    def test_forced_loss_wrong_resume_publishes_incomplete_fixture(self):
+        directory = str(Path(__file__).parent.resolve())
+        output = self.path("stream-lost")
+        script = """import sys,socket
+sys.path.insert(0,sys.argv[1])
+import replay,wire
+replay.Control=wire.Control
+replay.data_connect=wire.data_connect
+replay.data_resume=wire.data_resume
+original=replay.Stream.pump
+def fault(self,wait=.1):
+    original(self,wait)
+    if self.data and not self.end and not getattr(self,'injected',False):
+        self.injected=True
+        self.received_bytes+=1
+        self.ws.sock.shutdown(socket.SHUT_RDWR)
+replay.Stream.pump=fault
+sys.exit(replay.main(sys.argv[3:],sys.argv[2],''))
+"""
+        command = [sys.executable, "-c", script, directory, BIN, "record", "--socket", str(self.sock),
+                   "--session", self.session, "--layout", "offstage", "--out", str(output), "--id", "loss", "--allow-sensitive-capture", "--",
+                   sys.executable, "-c", "import time;print('before loss',flush=True);time.sleep(10)"]
+        result = subprocess.run(command, capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        value = json.loads(result.stdout)
+        self.assertEqual(value["stream"]["end"], "stream_lost")
+        self.assertFalse(value["stream"]["complete"])
+        self.assertTrue(value["cleanup"]["block_absence_verified"])
+        self.assertEqual(self.play(output, {}, 1)["outcome"], "fixture_incomplete")
+
     def test_model_guard_before_creation(self):
         path = self.path("unsafe.json")
         path.write_text(json.dumps(dict(schema_version=1, kind="teerex_live_script", id="unsafe", model_turns=0, steps=[dict(write="hi\r")])))
