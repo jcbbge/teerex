@@ -110,6 +110,37 @@ class VisibleTest(unittest.TestCase):
         self.anchor = json.loads(r.stdout)["created"]["block_id"]
         return self.anchor
 
+    def test_no_deadline_exit_cancellation_and_conflicting_timeout(self):
+        r, v = self.invoke("import time;time.sleep(10.2);print('past default')", extra=["--no-deadline"])
+        self.assert_good(r, v)
+        self.assertIsNone(v["limits"]["execution_ms"])
+        self.assertGreater(v["exit_report"]["elapsed_ms"], 10000)
+        marker = self.work / "started"
+        script = f"import pathlib,time;pathlib.Path({str(marker)!r}).touch();time.sleep(60)"
+        process = subprocess.Popen(self.command(script, extra=["--no-deadline"]), env=self.runtime_env,
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            for _ in range(200):
+                if marker.exists() or process.poll() is not None:
+                    break
+                time.sleep(.02)
+            self.assertTrue(marker.exists())
+            process.terminate()
+            stdout, stderr = process.communicate(timeout=10)
+            self.assertEqual(process.returncode, 143, stderr + stdout)
+            receipt = json.loads(stdout)
+            self.assertIsNone(receipt["limits"]["execution_ms"])
+            self.assertEqual(receipt["outcome"], "cancel_requested")
+            self.assertTrue(receipt["cleanup"]["block_absence_verified"])
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.communicate()
+        result = subprocess.run(self.command(extra=["--no-deadline", "--timeout-ms", "1000"]),
+                                env=self.runtime_env, capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(self.blocks(), set())
+
     def test_exact_argv_cwd_env_binary_stdin_and_owned_close(self):
         anchor = self.anchor_pane()
         before = self.rpc("session.view", {"session_id": self.session})
@@ -117,6 +148,9 @@ class VisibleTest(unittest.TestCase):
         script = "import os,sys,json;print(json.dumps([sys.argv[1:],os.getcwd(),os.environ['TEEREX_LITERAL'],os.environ['EMPTY'],sys.stdin.buffer.read().hex(),os.environ['REX_SESSION'],os.environ['REX_BLOCK'],os.getenv('REX_SERVER')]))"
         r, v = self.invoke(argv=[sys.executable, "-c", script, *arguments])
         self.assert_good(r, v)
+        self.assertEqual(v["limits"]["execution_ms"], 10000)
+        self.assertNotIn("jobs", v)
+        self.assertNotIn("channel", v)
         self.assertEqual(json.loads(raw(v["stdout"])), [arguments, str(self.work.resolve()), "a\n'α😀", "", self.stdin.read_bytes().hex(), self.session, v["created"]["block_id"], None])
         self.assertFalse((self.work / "SHOULD_NOT_EXIST").exists())
         self.assertTrue(v["cleanup"]["block_absence_verified"])

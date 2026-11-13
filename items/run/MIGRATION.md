@@ -50,3 +50,7 @@ git apply --check --unidiff-zero /absolute/teerex/items/run/rivet-run-visible.pa
 ```
 
 Combined teerex source now wires the root verb/host injection and passes the new runner's combined Mac/Linux acceptance; check the exact pushed-head CI separately before selecting its source commit. The Rivet owner then opts in on a disposable node with the exact reviewed teerex/Rex pins, real fence and harness commands, verifies cancellation and retention from its actual service supervisor, and reconciles all unknown outcomes. Only after that parity and an explicit approved fleet cutover should it remove the old shell script/exit-file polling, fallback, or guards. No such removal, deploy or personal-host access occurred here.
+
+## Rivet LONG steps (source follow-on)
+
+The native runner now accepts `--no-deadline` instead of `--timeout-ms` for LONG steps. Pass one or the other; the default remains 10000 ms. Execution ends on actual child exit or SIGINT/SIGTERM, with startup/cleanup budgets unchanged and `limits.execution_ms:null`. The earlier candidate patch above still supplies a finite budget; the Rivet owner must explicitly choose the new flag when updating its adapter. This source change neither applies that patch nor changes a service.

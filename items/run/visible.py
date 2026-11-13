@@ -142,7 +142,7 @@ def supervise(root):
             now = time.monotonic()
             cancel = load(root / "cancel.json")
             reason = ("cancel_requested" if STOP or cancel else
-                      "deadline_exceeded" if now - start >= config["timeout_ms"] / 1000 else None)
+                      "deadline_exceeded" if config["timeout_ms"] is not None and now - start >= config["timeout_ms"] / 1000 else None)
             if reason and stop_at is None:
                 result["stop_reason"] = reason
                 stop_at = now
@@ -269,13 +269,16 @@ def controller(runtime, source, args):
     parser.add_argument("--anchor")
     parser.add_argument("--direction", choices=("left", "right", "up", "down"))
     parser.add_argument("--ratio", type=float)
-    parser.add_argument("--timeout-ms", type=int, default=10000, help="execution deadline100..86400000ms, starts after verified placement")
+    deadline = parser.add_mutually_exclusive_group()
+    deadline.add_argument("--timeout-ms", type=int, default=None, help="execution deadline100..86400000ms, default10000; starts after verified placement")
+    deadline.add_argument("--no-deadline", action="store_true", help="wait until actual child exit or INT/TERM; startup budget unchanged")
     parser.add_argument("--startup-ms", type=int, default=10000, help="placement/identity gate1000..60000ms; separate from execution")
     parser.add_argument("--max-bytes", type=int, default=4096, help="combined raw prefix retention1..65536 bytes")
     parser.add_argument("--output-dir", help="NEW absolute private directory; retains full separate raw files up to64MiB combined, caller deletes")
     parser.add_argument("--keep-open", action="store_true", help="retain exited pane; cancellation/deadline still requests owned-pane close")
     parser.add_argument("argv", nargs=argparse.REMAINDER)
     o = parser.parse_args(args)
+    o.timeout_ms = None if o.no_deadline else (o.timeout_ms if o.timeout_ms is not None else 10000)
     if not o.argv or o.argv[0] != "--" or len(o.argv) < 2 or not o.argv[1]:
         parser.error("-- and nonempty argv required")
     for name in ("socket", "cwd", "env_file", "stdin_file", "output_dir"):
@@ -286,7 +289,7 @@ def controller(runtime, source, args):
         parser.error("full lowercase session ID required")
     if (o.layout == "tiled") != bool(o.anchor) or (o.layout == "tab" and (o.direction or o.ratio is not None)):
         parser.error("tiled requires anchor; tab forbids anchor/direction/ratio")
-    if not (100 <= o.timeout_ms <= 86400000 and 1000 <= o.startup_ms <= 60000 and 1 <= o.max_bytes <= 65536):
+    if not ((o.timeout_ms is None or 100 <= o.timeout_ms <= 86400000) and 1000 <= o.startup_ms <= 60000 and 1 <= o.max_bytes <= 65536):
         parser.error("limit out of range")
     if not re.fullmatch(r"[a-zA-Z0-9_.+-]{1,32}", o.app) or not (1 <= len(o.title.encode()) <= 128) or any(ord(c) < 32 or 127 <= ord(c) <= 159 for c in o.title):
         parser.error("invalid app or title")
@@ -340,6 +343,8 @@ def controller(runtime, source, args):
                   exit_report=None, outcome="uncertain", success=False, created=None, placement=None,
                   cleanup=dict(scope="identified_owned_pane", attempted=False, block_absence_verified=False),
                   limits=dict(startup_ms=o.startup_ms, execution_ms=o.timeout_ms, max_bytes=o.max_bytes, full_output_bytes=FILE_LIMIT))
+    if o.no_deadline:
+        packet["timeout_ms"] = None
     RECEIPT = packet
     started = time.monotonic()
     end = started + o.startup_ms / 1000
@@ -372,8 +377,8 @@ def controller(runtime, source, args):
     else:
         reason = "creation_or_placement_uncertain"
     if permitted:
-        end = time.monotonic() + o.timeout_ms / 1000 + 1
-        while time.monotonic() < end and not STOP:
+        end = None if o.timeout_ms is None else time.monotonic() + o.timeout_ms / 1000 + 1
+        while (end is None or time.monotonic() < end) and not STOP:
             result = load(root / "result.json")
             if result:
                 break
