@@ -1,0 +1,212 @@
+{
+  "covered_paths": [
+    "items/observe",
+    "src/child.zig",
+    "src/child_linux.zig",
+    "tools/cartridges/entry.zig",
+    "tools/cartridges/build.zig",
+    "tools/acceptance/contracts/observe.json",
+    "items/send/draft.lua"
+  ],
+  "evidenced_api_revisions": [
+    13
+  ],
+  "failed_rows": [
+    "R12"
+  ],
+  "id": "observe",
+  "kind": "cartridge_readiness",
+  "payload_sha256": "af9369915b1aec11bbcaa1e4fae87f6f8a5eed73c949bab19a4bafb3a24cee99",
+  "platform": "aarch64-macos",
+  "rubric": "docs/planning/workloads/readiness-acceptance.md",
+  "rubric_sha256": "5b33e17c9b5298ab81e6916efb210811b571f3d835dae36be348fa316506f338",
+  "runs": [
+    {
+      "arch": "arm64",
+      "executor": "local:m5:codex-replay",
+      "finished_at": "2026-11-13T12:48:38.573387+00:00",
+      "independent_executor": false,
+      "os": "Darwin 25.6.0",
+      "rex": {
+        "api_revision": 13,
+        "commit": "aa2db1b21261b479a550559fb70e2c3a66c07ba2",
+        "sha256": "c7b025c436ff28034589a81a4e697fa325dff8eb19a7f8c0582a18a55fa4dac0",
+        "version": "0.1.0-preview.16"
+      },
+      "rows": {
+        "R1": {
+          "detail": "help_exact;root_only_control_methods=3;public_tests=59;all_claim_tests_passed",
+          "pass": true
+        },
+        "R10": {
+          "detail": "non_atomic;unknown_freshness;interpretation_none;descendants_not_verified",
+          "pass": true
+        },
+        "R11": {
+          "detail": "no_canary_in_lifecycle_logs;packets0600;directory0700",
+          "pass": true
+        },
+        "R2": {
+          "detail": "observed_api=13",
+          "pass": true
+        },
+        "R3": {
+          "detail": "fresh_private_server_and_HOME;no_retry",
+          "pass": true
+        },
+        "R4": {
+          "detail": "schema1_old_packet_compare_watch_pass;api9_refused",
+          "pass": true
+        },
+        "R5": {
+          "detail": "managed_observe_compare_watch_cancel;in_use_refused;remove_restore_activate",
+          "pass": true
+        },
+        "R6": {
+          "detail": "N1_N6_unchanged;surface_geometry_unchanged",
+          "pass": true
+        },
+        "R7": {
+          "detail": "unknown_verb=2;missing_server=1;no_success_stdout",
+          "pass": true
+        },
+        "R8": {
+          "detail": "named_unknown_refusal_tests=4",
+          "pass": true
+        },
+        "R9": {
+          "detail": "quiet_wait=60000ms;rss_growth_kib=0",
+          "pass": true
+        }
+      },
+      "server_instance_sha256": "61b7059b16b2d99c5992ccb73764f3690de4d9d4c01d6f3bfc5327a92fa02bca",
+      "started_at": "2026-11-13T12:46:59.902130+00:00"
+    },
+    {
+      "arch": "arm64",
+      "executor": "local:m5:codex-replay",
+      "finished_at": "2026-11-13T12:49:16.178036+00:00",
+      "independent_executor": false,
+      "os": "Darwin 25.6.0",
+      "rex": {
+        "api_revision": 13,
+        "commit": "aa2db1b21261b479a550559fb70e2c3a66c07ba2",
+        "sha256": "c7b025c436ff28034589a81a4e697fa325dff8eb19a7f8c0582a18a55fa4dac0",
+        "version": "0.1.0-preview.16"
+      },
+      "rows": {
+        "R1": {
+          "detail": "help_exact;root_only_control_methods=3;public_tests=59;all_claim_tests_passed",
+          "pass": true
+        },
+        "R10": {
+          "detail": "non_atomic;unknown_freshness;interpretation_none;descendants_not_verified",
+          "pass": true
+        },
+        "R11": {
+          "detail": "no_canary_in_lifecycle_logs;packets0600;directory0700",
+          "pass": true
+        },
+        "R2": {
+          "detail": "observed_api=13",
+          "pass": true
+        },
+        "R3": {
+          "detail": "fresh_private_server_and_HOME;no_retry",
+          "pass": true
+        },
+        "R4": {
+          "detail": "schema1_old_packet_compare_watch_pass;api9_refused",
+          "pass": true
+        },
+        "R5": {
+          "detail": "managed_observe_compare_watch_cancel;in_use_refused;remove_restore_activate",
+          "pass": true
+        },
+        "R6": {
+          "detail": "N1_N6_unchanged;surface_geometry_unchanged",
+          "pass": true
+        },
+        "R7": {
+          "detail": "unknown_verb=2;missing_server=1;no_success_stdout",
+          "pass": true
+        },
+        "R8": {
+          "detail": "named_unknown_refusal_tests=4",
+          "pass": true
+        },
+        "R9": {
+          "detail": "capture_limit_tests_passed;long_wait=once_in_invocation",
+          "pass": true
+        }
+      },
+      "server_instance_sha256": "88dbfb8ea7e70e996ab141a132ce3f92b8177e4e813c222495d981dfb536d6d3",
+      "started_at": "2026-11-13T12:48:38.584168+00:00"
+    },
+    {
+      "arch": "arm64",
+      "executor": "local:m5:codex-replay",
+      "finished_at": "2026-11-13T12:49:54.323081+00:00",
+      "independent_executor": false,
+      "os": "Darwin 25.6.0",
+      "rex": {
+        "api_revision": 13,
+        "commit": "aa2db1b21261b479a550559fb70e2c3a66c07ba2",
+        "sha256": "c7b025c436ff28034589a81a4e697fa325dff8eb19a7f8c0582a18a55fa4dac0",
+        "version": "0.1.0-preview.16"
+      },
+      "rows": {
+        "R1": {
+          "detail": "help_exact;root_only_control_methods=3;public_tests=59;all_claim_tests_passed",
+          "pass": true
+        },
+        "R10": {
+          "detail": "non_atomic;unknown_freshness;interpretation_none;descendants_not_verified",
+          "pass": true
+        },
+        "R11": {
+          "detail": "no_canary_in_lifecycle_logs;packets0600;directory0700",
+          "pass": true
+        },
+        "R2": {
+          "detail": "observed_api=13",
+          "pass": true
+        },
+        "R3": {
+          "detail": "fresh_private_server_and_HOME;no_retry",
+          "pass": true
+        },
+        "R4": {
+          "detail": "schema1_old_packet_compare_watch_pass;api9_refused",
+          "pass": true
+        },
+        "R5": {
+          "detail": "managed_observe_compare_watch_cancel;in_use_refused;remove_restore_activate",
+          "pass": true
+        },
+        "R6": {
+          "detail": "N1_N6_unchanged;surface_geometry_unchanged",
+          "pass": true
+        },
+        "R7": {
+          "detail": "unknown_verb=2;missing_server=1;no_success_stdout",
+          "pass": true
+        },
+        "R8": {
+          "detail": "named_unknown_refusal_tests=4",
+          "pass": true
+        },
+        "R9": {
+          "detail": "capture_limit_tests_passed;long_wait=once_in_invocation",
+          "pass": true
+        }
+      },
+      "server_instance_sha256": "861960d3b7251c4602a35af221f4a4bf4fc738ab453ab26a26a78e58a59121d3",
+      "started_at": "2026-11-13T12:49:16.188716+00:00"
+    }
+  ],
+  "schema_version": 1,
+  "source_commit": "2b6801374a71798b94a65fcfa2b98f1e98d980fb",
+  "source_tree_dirty": false,
+  "verdict": "not_ready"
+}

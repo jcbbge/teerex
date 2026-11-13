@@ -1,5 +1,7 @@
 # Safe-subset failing-CLI baseline
 
+Measured binaries (SHA-256): teerex `1bc44d0e27b4f82d6a26cce8ca97849217f62220873645165dd3dbbf4eea5860`; Rex `d09d824f5cadc348c156d3d7579fda5889747c69100c72b607cfd94dfb2e3679`. These identify the measured pre-U05 workload, independently of current readiness.
+
 Readiness and task completion are separate. Hidden full text remains unknown.
 
 | Row | Pass | Detail |

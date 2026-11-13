@@ -8,6 +8,10 @@ Observe remains experimental on both platforms. The committed author-run records
 - [Mac baseline](readiness-m5-summary.md): 14/14 controls, same sampling.
 - [Actual-agent baseline](readiness-agent-summary.md): Codex and Claude, one run per condition; four correct reports, zero recorded interruptions/misdirected inputs, all owned panes and the inert sink closed. This is the minimum acceptance, not the default five-run sample.
 
+The records were regenerated after rebasing U05: `--state`, its complete public suite and the embedded `items/send/draft.lua` input are included. Historical dated live observations are provenance, not fixture-certified behavior.
+
+The baseline summaries identify their measured pre-U05 binary hashes; the new state contract is proven separately by the regenerated records.
+
 The synthetic results establish explicit output, direct-child exit, cancellation, unknown-state and cleanup boundaries. They do not establish a performance or productivity improvement: the corrected F1/F4 arms count nine teerex-arm CLI/Rex execs versus six reference-arm execs, including diagnostic and cleanup calls. Both arms use the same counting wrapper. Server, GUI, neighbouring panes and whole-machine energy are excluded.
 
 Verification on the reviewed source:
@@ -18,7 +22,7 @@ Verification on the reviewed source:
 - `python3 -m unittest discover -s tools/cartridges -p test_cartridges.py -v`: 25/25 on both machines.
 - `python3 src/test_targets.py -v`: 15/15 on hive.
 - Fresh-catalog `test_payloads.py --with-rex`: Linux 171 tests, 2 explicit skips; Mac 182 tests, 3 explicit skips. All applicable tests passed. Select the test Rex through PATH/REX_BIN; the first Mac invocation without that selection failed setup and was corrected.
-- Three fresh `readiness.py --runs 3 --long` runs per platform: all 47 public tests pass per run (two explicitly root-only controls use the combined CLI), exact N1–N6 equality, and zero peak sampled RSS growth after warmup in the 60-second wait. Both commands exit 1 with `failed_rows=["R12"]`, as required for author-run evidence.
+- Three fresh `readiness.py --runs 3 --long` runs per platform: all 59 observation/state public tests pass per run (three explicitly root-only control methods use the combined CLI), exact N1–N6 equality, and zero peak sampled RSS growth after warmup in the 60-second wait. Both commands exit 1 with `failed_rows=["R12"]`, as required for author-run evidence.
 
 Resolutions for planning:
 
