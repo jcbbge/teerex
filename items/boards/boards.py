@@ -57,8 +57,9 @@ def text(value, limit=4096, multiline=True):
     return value
 
 
-def exact(value, keys):
-    check(isinstance(value, dict) and set(value) == set(keys), "unexpected_schema_fields")
+def exact(value, keys, optional=()):
+    check(isinstance(value, dict) and set(keys) <= set(value) <= set(keys) | set(optional),
+          "unexpected_schema_fields")
 
 
 def target(value):
@@ -74,17 +75,33 @@ def target(value):
 
 
 def card(value):
-    exact(value, ("id", "title", "ask", "context", "options", "recommend"))
+    exact(value, ("id", "title", "ask", "context", "options", "recommend"), ("prepared",))
     for k in ("id", "title", "ask", "context", "recommend"):
         text(value[k], 128 if k == "id" else 4096)
     check(isinstance(value["options"], list) and 2 <= len(value["options"]) <= 8, "two_to_eight_options_required")
     labels = []
     for option in value["options"]:
-        exact(option, ("label", "gain", "lose"))
+        exact(option, ("label", "gain", "lose"), ("irreversible",))
+        if "irreversible" in option:
+            check(type(option["irreversible"]) is bool, "invalid_irreversible_flag")
         for k in ("label", "gain", "lose"):
             text(option[k], 4096)
         check(option["label"] not in labels, "duplicate_option_label")
         labels.append(option["label"])
+    if "prepared" in value:
+        prepared = value["prepared"]
+        exact(prepared, ("checked", "if_no_answer", "default", "continuing"), ("evidence",))
+        for key in ("checked", "if_no_answer", "continuing"):
+            text(prepared[key])
+        default = prepared["default"]
+        check(default is None or isinstance(default, str) and default in labels, "unknown_default_option")
+        check(not any(option["label"] == default and option.get("irreversible", False)
+                      for option in value["options"]), "silent_default_irreversible")
+        evidence = prepared.get("evidence", [])
+        check(isinstance(evidence, list) and len(evidence) <= 16, "evidence_must_be_reference")
+        for reference in evidence:
+            check(isinstance(reference, str) and bool(reference.strip()) and len(reference.encode("utf-8")) <= 1024
+                  and all(ord(c) >= 32 and ord(c) != 127 for c in reference), "evidence_must_be_reference")
     return value
 
 
@@ -406,10 +423,25 @@ def mutate(a):
         return 0
 
 
+def prepared_sections(body):
+    prepared = body.get("prepared")
+    if prepared is None:
+        return []
+    sections = [("Checked", prepared["checked"]),
+                ("If no answer", prepared["if_no_answer"] + " (default: " +
+                 ("hold" if prepared["default"] is None else prepared["default"]) + ")"),
+                ("Continuing", prepared["continuing"])]
+    if prepared.get("evidence"):
+        sections.append(("Evidence", "; ".join(prepared["evidence"])))
+    return sections
+
+
 def decision_text(body):
     lines = [f"DECISION [{body['id']}]: {body['title']}", f"Ask: {body['ask']}", f"Context: {body['context']}"]
+    lines += [heading + ": " + value for heading, value in prepared_sections(body)]
     for i, option in enumerate(body["options"], 1):
-        lines += [f"{i}. {option['label']}", f"   Gain: {option['gain']}", f"   Lose: {option['lose']}"]
+        marker = " [irreversible]" if option.get("irreversible", False) else ""
+        lines += [f"{i}. {option['label']}{marker}", f"   Gain: {option['gain']}", f"   Lose: {option['lose']}"]
     return "\n".join(lines + ["Recommendation: " + body["recommend"]])
 
 
@@ -450,11 +482,13 @@ def _deliver_ask(a):
                 options.append(dict(zip(("label", "gain", "lose"), parts)))
             value = card(dict(id=a.id or secrets.token_hex(3), title=a.title, ask=a.ask, context=a.context,
                               options=options, recommend=a.recommend))
+        check(a.deliver != "paste" or "prepared" in value, "prepared_fields_required")
         body = decision_text(value)
         if reply is not None:
             body += "\nReply: " + reply
         # mutate must not read stdin twice when history was requested.
         a.card_file = None
+    check(len(body.encode("utf-8")) <= 65536, "rendered_card_too_large")
     # Validate optional history before delivery, but never hold its lock while typing.
     if a.store:
         with contextlib.closing(Store(a.store)) as store:
@@ -761,9 +795,13 @@ def render_inbox(seat, width):
     for r in opened:
         d = r["body"]
         lines += ["━" * min(width, 76), "DECISION · " + d["title"], "REPORT from " + r["from"] + " · " + age(r["at"]) + " · id " + d["id"]]
-        lines += wrap(d["ask"], width) + ["CONTEXT"] + wrap(d["context"], width) + ["OPTIONS"]
+        lines += wrap(d["ask"], width) + ["CONTEXT"] + wrap(d["context"], width)
+        for heading, value in prepared_sections(d):
+            lines += [heading.upper()] + wrap(value, width)
+        lines += ["OPTIONS"]
         for i, op in enumerate(d["options"], 1):
-            lines += wrap(str(i) + ". " + op["label"], width)
+            marker = " [irreversible]" if op.get("irreversible", False) else ""
+            lines += wrap(str(i) + ". " + op["label"] + marker, width)
             lines += wrap("+ Gain: " + op["gain"], width, "    ") + wrap("− Loss: " + op["lose"], width, "    ")
         lines += ["RECOMMENDATION"] + wrap(d["recommend"], width)
         lines += wrap("Resolve explicitly: teerex ask [same target/store] --resolve " + d["id"] + " --answer 'operator words' --from operator", width)
@@ -984,12 +1022,13 @@ def parser():
     for k in ("host", "socket", "session", "block"):
         q.add_argument("--" + k, required=True)
     q.add_argument("--teerex", help="absolute native CLI; supplied by compiled bridge")
+    q.add_argument("--deliver", choices=("paste",), help="explicit prepared-card delivery; requires prepared fields on new cards")
     q.add_argument("--draft", choices=("guard", "ignore"), default="guard")
     q.add_argument("--draft-wait-ms", type=bounded_int(0, 55000), default=30000, metavar="0..55000")
     q.set_defaults(operation="ask")
     q.add_argument("--from", dest="sender", required=True)
     group = q.add_mutually_exclusive_group(required=True)
-    group.add_argument("--card-file", help="absolute JSON file or -; id/title/ask/context/options/recommend required")
+    group.add_argument("--card-file", help="absolute JSON file or -; id/title/ask/context/options/recommend required; prepared required with --deliver paste")
     group.add_argument("--resolve")
     group.add_argument("--title", help="inline card title; requires --ask, --context, two --option entries and --recommend")
     q.add_argument("--ask")

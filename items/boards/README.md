@@ -89,7 +89,7 @@ teerex ask --host "$HOST_ID" --socket "$SOCKET" --session "$SESSION" --block "$S
 
 ### JSON cards and optional history
 
-The card file is strict JSON with exactly these fields. Supply **2–8 options**, each with nonempty `label`, `gain`, and `lose`. Labels must differ. `id` is 1–128 bytes; other strings 1–4096 bytes. JSON input is capped at 49152 bytes; unknown/duplicate JSON keys, blank fields, controls, and duplicate active decision IDs refuse.
+The card file is strict JSON with the six required fields below and optional `prepared`. Supply **2–8 options**, each with nonempty `label`, `gain`, and `lose`. Labels must differ. `id` is 1–128 bytes; other strings 1–4096 bytes. JSON input is capped at 49152 bytes; unknown/duplicate JSON keys, blank fields, controls, and duplicate active decision IDs refuse.
 
 ```json
 {
@@ -115,6 +115,28 @@ teerex boards ask --store "$STORE" --host "$HOST_ID" \
 ```
 
 When `--store` is supplied, a decision pins in the historical board until its exact ID is resolved. Unknown/already-resolved IDs refuse; a resolution retains the reported answer and clears only that card. The resolution is typed into the selected pane; it does not execute an option. Select the original agent pane explicitly to send an answer there without history. Timestamp and sender are reports supplied by this command, not verified human identity. Seat clear refuses while any records remain; inbox clear refuses while a decision remains open.
+
+### Prepared questions (`ask --deliver paste`)
+
+Use `teerex ask --deliver paste --card-file /absolute/private/card.json` with the same explicit target and sender flags above. This explicit delivery mode requires a `prepared` block on a new card. Existing calls without `--deliver paste`, retained six-field cards and resolutions remain compatible. Delivery still uses native guarded send, with no automatic retry or execution of the no-answer default.
+
+```json
+"prepared": {
+  "checked": "Reviewed the diff and checked the current owner.",
+  "if_no_answer": "Leave the branch in place.",
+  "default": null,
+  "continuing": "Writing release notes independently.",
+  "evidence": ["main@abc1234", "~/work/notes.md#branches"]
+}
+```
+
+The four required keys are `checked`, `if_no_answer`, `default` and `continuing`; only `evidence` is optional. Text fields use the existing nonblank 1–4096 UTF-8 byte and control rules. `default` is `null` (hold), or an exact option label. Each option optionally accepts a JSON boolean `irreversible`; a default naming an option declared `true` refuses with `silent_default_irreversible`. The declaration is a supplied claim, not a check of the real action's reversibility.
+
+Evidence is a list of 0–16 nonblank single-line references, each at most 1024 UTF-8 bytes, with no C0/DEL controls (including tabs/newlines). Use paths, commits, URLs or record references, never pasted private content. The tool checks this shape; it cannot determine whether a reference contains private material.
+
+Delivered text adds `Checked:`, `If no answer: ... (default: hold|LABEL)`, `Continuing:` and, when nonempty, `Evidence:` after context, before options. Declared irreversible options gain ` [irreversible]`. The inbox uses the same content with upper-case section headings after `CONTEXT`. JSON remains capped at 49152 bytes and rendered delivery at 65536 bytes; native send's existing encoded transport bounds also apply.
+
+Malformed keys refuse with `unexpected_schema_fields`; invalid flags with `invalid_irreversible_flag`; unknown defaults with `unknown_default_option`; invalid evidence with `evidence_must_be_reference`; missing prepared fields in explicit paste mode with `prepared_fields_required`; oversized rendered text with `rendered_card_too_large`. These refusals exit 1 before send and add only the refusal reason, not card content. Usage errors remain 2, deadlines 124 and native delivery uncertainty remains unchanged.
 
 ## Fleet: observations, reports, unknown
 

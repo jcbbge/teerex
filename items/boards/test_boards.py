@@ -17,6 +17,19 @@ ZERO = "00000000-0000-0000-0000-000000000000"
 OTHER = "11111111-1111-1111-1111-111111111111"
 
 
+def prepared_decision():
+    return dict(id="cleanup-1", title="Remove superseded staging branch",
+                ask="Delete the old staging branch now that its content has landed on main?",
+                context="Branch was created by another owner; no open review references it.",
+                options=[dict(label="Delete now", gain="Tidy branch list", lose="Unrecoverable if the owner still needs it", irreversible=True),
+                         dict(label="Leave and notify owner", gain="Owner decides", lose="Stale branch stays a while")],
+                recommend="Leave and notify owner; it is not ours to remove.",
+                prepared=dict(checked="Content present on main by diff; no review or worktree uses the branch.",
+                              if_no_answer="Branch stays; nothing is deleted.", default=None,
+                              continuing="Writing the release notes, which do not depend on this.",
+                              evidence=["main@abc1234 diff vs staging: empty", "~/rivet/work/<item>/notes.md#branches"]))
+
+
 class BoardsTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(prefix="tboards-", dir="/tmp")
@@ -193,6 +206,133 @@ class BoardsTest(unittest.TestCase):
         self.assertEqual(json.loads(result.stdout)["decision_id"], "inline-7")
         self.assertIn("1. Go\n   Gain: available\n   Lose: interruption", self.sent.read_text())
         self.assertNotEqual(subprocess.run(command[:-2], env=self.env, capture_output=True).returncode, 0)
+
+    def prepared_ask(self, value, code=0, history=False):
+        self.card.write_text(json.dumps(value, ensure_ascii=False))
+        result = self.invoke("ask", code=code, store=self.store if history else None,
+                             deliver="paste", **{"from": "worker", "card_file": self.card})
+        if code:
+            self.assertFalse(result["terminal_input_attempted"])
+            self.assertFalse(self.sent.exists(), "refusal must not invoke native send")
+        return result
+
+    def test_prepared_hold_card_exact_paste_and_inbox_sections(self):
+        self.register()
+        value = prepared_decision()
+        self.prepared_ask(value, history=True)
+        self.assertEqual(self.sent.read_text(), """DECISION [cleanup-1]: Remove superseded staging branch
+Ask: Delete the old staging branch now that its content has landed on main?
+Context: Branch was created by another owner; no open review references it.
+Checked: Content present on main by diff; no review or worktree uses the branch.
+If no answer: Branch stays; nothing is deleted. (default: hold)
+Continuing: Writing the release notes, which do not depend on this.
+Evidence: main@abc1234 diff vs staging: empty; ~/rivet/work/<item>/notes.md#branches
+1. Delete now [irreversible]
+   Gain: Tidy branch list
+   Lose: Unrecoverable if the owner still needs it
+2. Leave and notify owner
+   Gain: Owner decides
+   Lose: Stale branch stays a while
+Recommendation: Leave and notify owner; it is not ours to remove.""")
+        board = self.invoke("inbox", once=True, width=160)
+        sections = ("CONTEXT", "CHECKED", "IF NO ANSWER", "CONTINUING", "EVIDENCE", "OPTIONS")
+        self.assertEqual([board.index(k) for k in sections], sorted(board.index(k) for k in sections))
+        for expected in (value["prepared"]["checked"], "(default: hold)", "1. Delete now [irreversible]",
+                         "; ".join(value["prepared"]["evidence"])):
+            self.assertIn(expected, board)
+        self.assertEqual(self.inspect()["seats"][0]["records"][0]["body"], value)
+
+    def test_prepared_irreversible_default_refused_before_delivery(self):
+        value = prepared_decision()
+        value["prepared"]["default"] = "Delete now"
+        self.assertEqual(self.prepared_ask(value, 1)["reason"], "silent_default_irreversible")
+
+    def test_prepared_reversible_default_and_empty_evidence(self):
+        value = prepared_decision()
+        value["prepared"]["default"] = "Leave and notify owner"
+        value["prepared"]["evidence"] = []
+        self.prepared_ask(value)
+        self.assertIn("(default: Leave and notify owner)", self.sent.read_text())
+        self.assertNotIn("Evidence:", self.sent.read_text())
+        del value["prepared"]["evidence"]
+        self.prepared_ask(value)
+        self.assertNotIn("Evidence:", self.sent.read_text())
+
+    def test_prepared_unknown_default_refused(self):
+        for default in ("Wait", False, [], {}):
+            with self.subTest(default=default):
+                value = prepared_decision()
+                value["prepared"]["default"] = default
+                self.assertEqual(self.prepared_ask(value, 1)["reason"], "unknown_default_option")
+
+    def test_prepared_irreversible_requires_json_boolean(self):
+        for flag in ("yes", 1, 0, None, []):
+            with self.subTest(flag=flag):
+                value = prepared_decision()
+                value["options"][0]["irreversible"] = flag
+                self.assertEqual(self.prepared_ask(value, 1)["reason"], "invalid_irreversible_flag")
+        value = prepared_decision()
+        value["options"][0]["irreversible"] = False
+        value["prepared"]["default"] = "Delete now"
+        self.prepared_ask(value)
+        self.assertNotIn("[irreversible]", self.sent.read_text())
+
+    def test_prepared_evidence_must_be_bounded_single_line_references(self):
+        for evidence in (["line\nbreak"], ["tab\tcharacter"], ["control\x7f"], ["é" * 513],
+                         ["ref"] * 17, [""], [False], "ref"):
+            with self.subTest(evidence=evidence):
+                value = prepared_decision()
+                value["prepared"]["evidence"] = evidence
+                self.assertEqual(self.prepared_ask(value, 1)["reason"], "evidence_must_be_reference")
+        value = prepared_decision()
+        value["prepared"]["evidence"] = ["é" * 512] * 16
+        self.prepared_ask(value)
+
+    def test_prepared_optional_on_legacy_ask(self):
+        self.register()
+        self.ask()
+        self.assertEqual(self.inspect()["seats"][0]["records"][0]["body"], self.decision)
+        self.assertNotIn("Checked:", self.sent.read_text())
+
+    def test_prepared_required_for_explicit_paste(self):
+        self.assertEqual(self.prepared_ask(self.decision, 1)["reason"], "prepared_fields_required")
+
+    def test_prepared_schema_and_text_refused(self):
+        for field in ("checked", "if_no_answer", "default", "continuing"):
+            value = prepared_decision()
+            del value["prepared"][field]
+            self.assertEqual(self.prepared_ask(value, 1)["reason"], "unexpected_schema_fields")
+        for location, key in (("prepared", "urgency"), (None, "extra"), ("option", "extra")):
+            value = prepared_decision()
+            node = value["options"][0] if location == "option" else value[location] if location else value
+            node[key] = "unexpected"
+            self.assertEqual(self.prepared_ask(value, 1)["reason"], "unexpected_schema_fields")
+        for field in ("checked", "if_no_answer", "continuing"):
+            for invalid in (" ", "é" * 2049, "escape\x1b"):
+                value = prepared_decision()
+                value["prepared"][field] = invalid
+                self.prepared_ask(value, 1)
+
+    def test_prepared_retained_six_field_card_loads_renders_and_resolves(self):
+        self.register()
+        self.ask()
+        retained = self.inspect()["seats"][0]["records"][0]["body"]
+        self.assertEqual(set(retained), {"id", "title", "ask", "context", "options", "recommend"})
+        board = self.invoke("inbox", once=True)
+        self.assertIn("DECISION · Choose deployment timing", board)
+        self.assertNotIn("CHECKED", board)
+        self.invoke("ask", deliver="paste", **{"from": "operator", "resolve": "deploy-7", "answer": "Wait"})
+        self.assertIn("No open decisions recorded", self.invoke("inbox", once=True))
+
+    def test_prepared_rendered_card_bound_before_native_send(self):
+        command = self.argv("ask", store=None, **{"from": "worker", "title": "title", "ask": "ask",
+                                                "context": "context", "recommend": "recommend"})
+        for number in range(8):
+            command += ["--option", f"{number}" + "a" * 4095 + " :: " + "b" * 4096 + " :: " + "c" * 4096]
+        result = subprocess.run(command, env=self.env, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertEqual(json.loads(result.stdout)["reason"], "rendered_card_too_large")
+        self.assertFalse(self.sent.exists())
 
     def test_remap_preview_generation_collision_and_record_preservation(self):
         self.register()
@@ -505,6 +645,55 @@ class RexBoardsTest(unittest.TestCase):
         cls.base = [cls.rex, "--autostart=false", "--server", "unix://" + str(cls.socket), "--timeout", "3s"]
         cls.version = json.loads(subprocess.check_output(cls.base + ["api", "call", "server.version"]))
         print("Disposable live Rex:", json.dumps(cls.version), flush=True)
+
+    def test_prepared_paste_live_acks_and_refusal_leaves_cat_unchanged(self):
+        root = self.root / ("prepared-" + str(time.monotonic_ns()))
+        root.mkdir()
+        env = dict(os.environ, PATH=str(Path(self.rex).parent) + os.pathsep + os.environ["PATH"])
+        sid = json.loads(subprocess.check_output(self.base + ["api", "call", "session.create", "{}"]))["session_id"]
+        self.addCleanup(subprocess.run, self.base + ["api", "call", "session.destroy", json.dumps(dict(session_id=sid))],
+                        capture_output=True)
+        def cli(*args, code=0):
+            result = subprocess.run([BIN, *args], env=env, capture_output=True, text=True, timeout=20)
+            self.assertEqual(result.returncode, code, result.stdout + result.stderr)
+            return json.loads(result.stdout)
+        made = cli("surfaces", "open", "--socket", str(self.socket), "--session", sid,
+                   "--layout", "tab", "--label", "prepared decision cat", "--", "/bin/cat")
+        bid = made["actual"]["block_id"]
+        decision = root / "card.json"
+        value = prepared_decision()
+        decision.write_text(json.dumps(value))
+        command = ["ask", "--host", "hive", "--socket", str(self.socket), "--session", sid,
+                   "--block", bid, "--from", "worker", "--card-file", str(decision), "--deliver", "paste"]
+        receipt = cli(*command)
+        self.assertEqual(receipt["outcome"], "events_acknowledged")
+        self.assertTrue(receipt["paste"]["acknowledged"])
+        self.assertTrue(receipt["enter"]["acknowledged"])
+        def capture():
+            observed = cli("observe", "--socket", str(self.socket), "--session", sid, "--block", bid,
+                           "--max-bytes", "65536")
+            return observed
+        # Read through the public observe path; allow the disposable cat to echo first.
+        for _ in range(100):
+            before = capture()
+            rendered = json.dumps(before, ensure_ascii=False)
+            if "Recommendation:" in rendered and "[irreversible]" in rendered:
+                break
+            time.sleep(.02)
+        else:
+            self.fail(rendered)
+        for expected in ("Checked:", "If no answer:", "(default: hold)", "Continuing:", "Evidence:"):
+            self.assertIn(expected, rendered)
+        value["prepared"]["default"] = "Delete now"
+        decision.write_text(json.dumps(value))
+        refused = cli(*command, code=1)
+        self.assertEqual(refused["reason"], "silent_default_irreversible")
+        self.assertFalse(refused["terminal_input_attempted"])
+        # Terminal text is stable even though observe includes fresh collection metadata.
+        after = capture()
+        self.assertEqual(after["capture"]["content"], before["capture"]["content"])
+        closed = cli("surfaces", "close", "--socket", str(self.socket), "--session", sid, "--pane", bid)
+        self.assertEqual(closed["outcome"], "closed_and_absent")
 
     def test_jobs_registration_live_status_and_vanished_pane(self):
         root = self.root / ("jobs-" + str(time.monotonic_ns()))
