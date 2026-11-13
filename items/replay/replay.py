@@ -91,7 +91,9 @@ class Stream:
         try:
             message = self.ws.receive()
         except (OSError, EOFError) as error:
-            if "1013" in str(error) or "4000" in str(error):
+            if "4000" in str(error):
+                raise Refused("block_closed")
+            if "1013" in str(error):
                 raise Refused("stream_lost")
             old = self.ws
             old.sock.close()
@@ -369,7 +371,7 @@ class Runner:
         try:
             self.wait(lambda: self.stream.end == "child_exited")
         except (Refused, EOFError) as error:
-            end = str(error) if str(error) in {"deadline", "cancelled", "byte_limit"} else "stream_lost"
+            end = str(error) if str(error) in {"deadline", "cancelled", "byte_limit", "block_closed"} else "stream_lost"
         fixture = fixture_write(self.args.out, self.args, self.stream, self.version, end)
         self.packet.update(fixture_path=self.args.out, stream=fixture["stream"])
         if STOP:
