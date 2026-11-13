@@ -55,7 +55,10 @@ def read_bounded(path, limit):
 
 
 def load(path, limit):
-    return json.loads(read_bounded(path, limit))
+    value = json.loads(read_bounded(path, limit))
+    if not isinstance(value, dict):
+        raise Refused("input_object_required")
+    return value
 
 
 class Stream:
@@ -182,6 +185,13 @@ def fixture_load(root):
     value = load(root / "fixture.json", 4194304)
     if value.get("kind") != "teerex_tty_fixture" or value.get("schema_version") != 1:
         raise Refused("fixture_schema_invalid")
+    if not isinstance(value.get("stream"), dict) or not isinstance(value.get("terminal"), dict):
+        raise Refused("fixture_schema_invalid")
+    initial = value["terminal"].get("initial")
+    if not isinstance(initial, dict) or set(initial) != {"columns", "rows"} or any(type(x) is not int or not 1 <= x <= 65535 for x in initial.values()):
+        raise Refused("fixture_terminal_invalid")
+    if not isinstance(value.get("events"), list) or not isinstance(value.get("checkpoints"), list):
+        raise Refused("fixture_schema_invalid")
     if value.get("stream", {}).get("complete") is not True:
         raise Refused("fixture_incomplete")
     data = read_bounded(root / "stream.bin", 16777216)
@@ -200,6 +210,8 @@ def fixture_load(root):
         raise Refused("fixture_chunks_invalid")
     previous = 0
     for event in value["events"]:
+        if not isinstance(event, dict):
+            raise Refused("fixture_event_invalid")
         if type(event.get("offset")) is not int or not previous <= event["offset"] <= len(data) or type(event.get("t_ms")) is not int or event["t_ms"] < 0:
             raise Refused("fixture_event_invalid")
         previous = event["offset"]
@@ -226,8 +238,12 @@ def script_validate(value):
     for step in value["steps"]:
         if not isinstance(step, dict) or len(set(step) & verbs) != 1 or set(step) - verbs - {"within_ms", "local_only", "basis", "needs_authoring"}:
             raise Refused("script_step_invalid")
+        if "local_only" in step and (not isinstance(step["local_only"], str) or not step["local_only"].strip()):
+            raise Refused("script_local_only_reason_invalid")
         if step.get("needs_authoring"):
             continue
+        if "key" in step and (not isinstance(step["key"], dict) or not isinstance(step["key"].get("key"), str)):
+            raise Refused("script_key_invalid")
         if "expect" in step:
             validate(step["expect"])
             if type(step.get("within_ms")) is not int or not 100 <= step["within_ms"] <= 60000:
@@ -245,15 +261,17 @@ def script_validate(value):
             key = json.dumps(step["key"]).lower()
             if any(x in key for x in ("enter", "return", "\\r", "\\n", "\\u000d", "\\u000a")):
                 raise Refused("script_submits_without_local_only")
-        if "checkpoint" in step and not SLUG.fullmatch(step["checkpoint"].get("id", "")):
+        if "checkpoint" in step and (not isinstance(step["checkpoint"], dict) or not isinstance(step["checkpoint"].get("id"), str) or not SLUG.fullmatch(step["checkpoint"]["id"])):
             raise Refused("script_checkpoint_invalid")
-        if "resize" in step and (set(step["resize"]) != {"columns", "rows"} or any(type(x) is not int or not 1 <= x <= 65535 for x in step["resize"].values())):
+        if "resize" in step and (not isinstance(step["resize"], dict) or set(step["resize"]) != {"columns", "rows"} or any(type(x) is not int or not 1 <= x <= 65535 for x in step["resize"].values())):
             raise Refused("script_resize_invalid")
         if "effect" in step:
             effect = step["effect"]
-            if effect.get("relative_to") != "cwd" or len(set(effect) & {"path_exists", "path_absent", "file_sha256"}) != 1:
+            if not isinstance(effect, dict) or effect.get("relative_to") != "cwd" or len(set(effect) & {"path_exists", "path_absent", "file_sha256"}) != 1:
                 raise Refused("script_effect_invalid")
             entry = next(effect[x] for x in ("path_exists", "path_absent", "file_sha256") if x in effect)
+            if "file_sha256" in effect and (not isinstance(entry, dict) or set(entry) != {"path", "sha256"} or not isinstance(entry["sha256"], str) or not re.fullmatch("[0-9a-f]{64}", entry["sha256"])):
+                raise Refused("script_effect_hash_invalid")
             path = entry["path"] if isinstance(entry, dict) else entry
             if not isinstance(path, str) or Path(path).is_absolute() or ".." in Path(path).parts:
                 raise Refused("script_effect_path_invalid")
@@ -586,7 +604,7 @@ def main(argv, binary, player):
                 manifest = fixture_write(args.record_out, args, runner.stream, runner.version, runner.stream.end or "cancelled")
                 packet["fixture_path"] = args.record_out
                 packet["stream"] = manifest["stream"]
-    except (Refused, ValueError, OSError, EOFError, KeyError, TypeError, subprocess.SubprocessError) as error:
+    except (Refused, ValueError, OSError, EOFError, KeyError, TypeError, AttributeError, subprocess.SubprocessError) as error:
         reason = str(error) if isinstance(error, Refused) else "wire_or_input_failure"
         packet["outcome"] = reason
         code = 128 + STOP if STOP else 124 if reason == "deadline" else 1

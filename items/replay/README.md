@@ -99,3 +99,12 @@ The only executed commands are literal argv supplied to record/live and the
 embedded gate/player. SIGINT/SIGTERM stop the controller and verify block absence;
 block closure alone does not prove every descendant died. No public server or
 browser administration/metrics service is added to this foreground CLI.
+
+Observed hive real-TUI limits: Codex and pi passed startup, unsent marker, resize
+100×30→60×20 and Ctrl-U clear checks. Claude's fresh cwd shows workspace trust
+before its input box, so its generic marker script reports `live_divergence`.
+The separate `claude-trust-decline.json` pins the observed selected `No, exit`
+choice and its actual child exit **1**, rather than equating a correct decline
+with exit zero. The 500 ms scripted settling delay remains explicit. Codex/pi
+confirmation steps remain `not_run:needs_authoring`; no absence of a trust prompt
+is inferred beyond these observed starts. Real captures are not committed.

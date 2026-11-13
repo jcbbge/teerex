@@ -331,6 +331,17 @@ sys.exit(replay.main(sys.argv[3:],sys.argv[2],''))
         self.assertEqual(value["outcome"], "input_size_or_type_limit")
         self.assertIsNone(value["target"]["block_id"])
 
+    def test_malformed_scripts_refuse_before_creation(self):
+        bad_steps = [dict(checkpoint="../escape"), dict(resize=[]), dict(key=5),
+                     dict(write="x", local_only=True), dict(effect=dict(file_sha256="file", relative_to="cwd"))]
+        documents = [[], *[dict(schema_version=1, kind="teerex_live_script", id="bad", model_turns=0, steps=[step]) for step in bad_steps]]
+        for document in documents:
+            with self.subTest(document=document):
+                path = self.path("malformed.json")
+                path.write_text(json.dumps(document))
+                result = self.invoke("live", ["--script", path, "--observations-out", self.path("bad-observations")], ["/bin/echo"], code=1)
+                self.assertIsNone(result["target"]["block_id"])
+
     def test_model_guard_before_creation(self):
         path = self.path("unsafe.json")
         path.write_text(json.dumps(dict(schema_version=1, kind="teerex_live_script", id="unsafe", model_turns=0, steps=[dict(write="hi\r")])))

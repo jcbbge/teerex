@@ -37,7 +37,7 @@
       "expect": [
         {
           "id": "declined-exit",
-          "child_exit_code": 0
+          "child_exit_code": 1
         }
       ],
       "within_ms": 10000
