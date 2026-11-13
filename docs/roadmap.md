@@ -1,5 +1,36 @@
 # teerex product roadmap
 
+## Status after the 13 November 2026 overnight run
+
+Josh's overnight ruling selected every roadmap item. This table records where each one stands at main `47cbfe9`; the sections below are kept as the planning record. **Built** means on main and covered by the four CI lanes. **Host-blocked** means it needs a Rex API that does not exist; each has one upstream request (R1–R7, kept with the teerex lead's records).
+
+| Item | Status | Where |
+| --- | --- | --- |
+| U01/U02 park/resume/navigate/attach, H01 records | Built | `teerex records` ([spec](planning/workloads/evidence-records.md)) |
+| Q03 cartridge discovery | Built | `teerex cartridges` ([docs](cartridges.md)) |
+| C03/C21/C22 presentation filtering | Built | `--view progress-v1` on compare/watch/filter |
+| Q02/C31/C32 readiness + baseline | Built; `observe` evidenced ready on API13, both machines | `tools/acceptance/` |
+| Q11 managed runtime, Q12 performance | Built and measured on hive and the M5 | `tools/acceptance/results/` |
+| N06 doctor on Linux, N07 latest view, N08 recovery inspection | Built | `doctor`, `observe --tail`, `jobs doctor`, `cartridges doctor/repair` |
+| U05 perception (agent state) | Built | `observe --state` |
+| U06 Linux run/offstage | Built | `run`, `offstage` |
+| U07 MCP surface | Built | `teerex mcp` |
+| U11 richer presentation | Built: keyboard fleet dashboard | `boards fleet` |
+| H02 friction, H03 replay, H06 decisions, H07 section T, H08 terms | Built | `boards friction`, `replay`, `records` decisions, `ask --deliver paste`, [observation terms](observation-terms.md) |
+| H04 fence probe | Built (teerex half) | `agents fence-probe`; Rivet owns the fence |
+| H05 pause/redirect/takeover | Rivet's half | [spec](planning/workloads/authority-task-runtime.md) |
+| U03, C04, C05, C07, C16, C17, Q13 (guarded input, human clutch) | Host-blocked; cooperative `clutch` built | upstream R1, R4, R6 |
+| C18/U04 learned maneuver execution | Host-blocked | upstream R5 |
+| U08 signed distribution, Q09 notarization | Needs Josh's decision: requires signing credentials | — |
+| Q05 first-use observation | Needs Josh's decision: a human participant, or approved paid model runs | — |
+| Q06 actual API11 | Untestable: no legitimate pinned API11 build is available | — |
+| Q07 extra API/build pairs, Q08 OS/arch floor | Not pursued: hive and the M5 are both API13; CI covers Mac API10/12/13 and Linux API13 | — |
+| Q10 painted UI acceptance | Not pursued unattended: it would capture Josh's live screen | — |
+| Q14 lifetime/crash recovery | Partly built (N08 doctors, prune, detach receipts) | — |
+| Q15 encryption, redaction, secure erase | Partly built: env values are never retained (run-visible), call log and friction keep no values; encryption at rest not chosen | — |
+| U10 Rex–Rivet integration | Rivet's half; teerex side (run-visible, channel, detach, session ensure) built | — |
+| Issues | #1 #2 #3 #4 #5 #6 #7 #9 #10 #12 #13 #15 #16 #17 #18 #19 #20 #22 #23 closed | GitHub |
+
 ## Current phased plan — 13 November 2026
 
 **Direction ruling (Joshua, 13 November 2026):** teerex is Joshua's personal software for his opinionated SDLC on his own machines (hive and the M5). It is not being reset into a generic product: Josh-specific material (his hosts, agent-core, Rivet, the seat) stays. Original material is now [Apache-2.0](../LICENSE). Every roadmap item below is selected for building, landing and installing, including those this plan previously marked proposed, deferred or "no user", because Joshua is the user. Only items that need a Rex API that does not exist are host-blocked; each gets one upstream request instead. Earlier "proposal, not approval" wording in this document is superseded by this ruling.
