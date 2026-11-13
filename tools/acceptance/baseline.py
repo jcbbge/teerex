@@ -304,7 +304,8 @@ def refusals(args, server, session, anchor, evidence):
         valid &= result.returncode == 1 and bool(packet.get("failure_reason") or result.stderr) and not (output / "started.json").exists()
     save(env, dict(PATH=os.defpath, REX_SESSION="forbidden"))
     result, _ = execute([*base, "--", "/bin/true"], server.env)
-    valid &= result.returncode == 1 and bool((json.loads(result.stdout) if result.stdout else {}).get("failure_reason") or result.stderr)
+    save(root / "env-refusal.json", dict(exit=result.returncode, stdout=result.stdout.decode(errors="replace"), stderr=result.stderr.decode(errors="replace")))
+    valid &= result.returncode == 2 and not result.stdout and bool(result.stderr)
     observed, _ = execute(observations(args.teerex, server, session, anchor), server.env)
     save(root / "baseline.json", observed.stdout)
     result, _ = execute([args.teerex, "watch", "--socket", server.socket, "--session", session,
@@ -390,6 +391,7 @@ def main(argv=None):
                 session, anchor = server.fixture()
                 report["rex"] = server.version
                 server.command("api", "list")
+                execute(observations(args.teerex, server, session, anchor), server.env)
                 before = controls(server, session, anchor, sentinel)
                 save(evidence / "controls-before.json", before)
                 rows, results = check_rows(args, server, session, anchor, evidence)
