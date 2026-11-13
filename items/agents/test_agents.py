@@ -338,7 +338,7 @@ class AgentsTest(unittest.TestCase):
         self.assertEqual(process.returncode, 0, process.stdout + process.stderr)
         self.assertFalse(plan['retired'])
         target = dict(session_id=self.session, block_id=block, args={})
-        child = self.rpc('com.superlogical.terminal.process', target)['child']
+        child = wait_for(lambda: self.rpc('com.superlogical.terminal.process', target).get('child'))
         before = self.rpc('session.view', dict(session_id=self.session))
         event = self.work / 'stop.json'
         event.write_text(json.dumps(dict(hook_event_name='Stop', last_assistant_message='Detached work finished')))
@@ -350,7 +350,7 @@ class AgentsTest(unittest.TestCase):
         for old in before['windows']:
             new = next(w for w in after['windows'] if w['window_id'] == old['window_id'])
             self.assertEqual(new['focused_block_id'], old['focused_block_id'])
-        self.assertEqual(self.rpc('com.superlogical.terminal.process', target)['child'], child)
+        self.assertEqual(wait_for(lambda: self.rpc('com.superlogical.terminal.process', target).get('child')), child)
         self.rpc('session.detach_block', dict(session_id=self.session, block_id=block))
         self.assertEqual(jobs()['placement'], 'detached')
         event.write_text(json.dumps(dict(hook_event_name='StopFailure', error='synthetic detached failure')))
@@ -363,7 +363,7 @@ class AgentsTest(unittest.TestCase):
             '--reason', 'bring detached work forward', '--anchor', self.starter, '--focus', 'no'], env=self.env, capture_output=True, text=True)
         self.assertEqual(process.returncode, 0, process.stdout + process.stderr)
         self.assertEqual(inspect()['placement'], 'placed')
-        self.assertEqual(self.rpc('com.superlogical.terminal.process', target)['child'], child)
+        self.assertEqual(wait_for(lambda: self.rpc('com.superlogical.terminal.process', target).get('child')), child)
         # CLI override wins over the profile, with come-forward disabled by default.
         profile.update(layout='tab', come_forward=False)
         self.config.write_text(json.dumps(self.settings))
