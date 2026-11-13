@@ -87,7 +87,11 @@ local function draft_from_vt(text)
                 end
                 pos = last + 1
             end
-            draft = prompt(table.concat(out)) or ""
+            -- A busy Claude Code greys its own prompt marker (captured: 38;2;153;153;153 "❯" + NBSP, reset,
+            -- then the human's text). Grey filtering removes that marker, so what stays visible on a line
+            -- already identified as the prompt is the draft itself.
+            local visible = table.concat(out)
+            draft = prompt(visible) or prompt("❯" .. visible) or ""
         end
     end
     return draft

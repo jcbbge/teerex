@@ -166,6 +166,10 @@ class SendTest(unittest.TestCase):
             ("› \x1b[48;5;2mAsk Codex to do anything\x1b[0m", "Ask Codex to do anything"),
             ("> \x1b[7m\x1b[2mT\x1b[22m\x1b[27m\x1b[2mype a message\x1b[22m", ""),
             ("> \x1b[48;2;2;2;2mtyped\x1b[0m", "typed"),
+            # Busy Claude Code greys the marker itself; the human's text after the reset is the draft.
+            ("\x1b[0m\x1b[38;2;153;153;153m❯\xa0\x1b[0mqqbusy\r", "qqbusy"),
+            ("\x1b[0m\x1b[38;2;153;153;153m❯\xa0\x1b[0mseat\x1b[1Ctyping\r", "seat typing"),
+            ("\x1b[0m\x1b[38;2;153;153;153m❯\xa0\x1b[0m\x1b[38;2;153;153;153mPress up to edit queued messages\x1b[0m", ""),
         ]
         lua = Path(__file__).with_name("draft.lua").read_text() + "\nlocal out={} for _,v in ipairs(rex.args.cases) do table.insert(out,draft_from_vt(v)) end io.write(rex.json.encode(out))"
         target, _ = self.fixture()
@@ -243,6 +247,26 @@ class SendTest(unittest.TestCase):
         self.assertEqual([json.loads(line) for line in log.read_text().splitlines()], ["FROM worker: hello"])
         self.assertIn("❯\xa0" + text, self.prompt_text(target))
         self.assertNotIn(text, r.stdout + r.stderr)
+
+    def test_busy_grey_marker_draft_is_cleared_sent_alone_and_restored(self):
+        # Josh's interruption: a busy Claude greys its marker, the guard saw no draft and pasted onto it.
+        target, log = self.prompt(mode="busy")
+        text = "seat typing"
+        self.type_draft(target, text[0])
+        def type_more():
+            for char in text[1:]:
+                time.sleep(.2)
+                self.type_draft(target, char)
+        writer = threading.Thread(target=type_more)
+        writer.start()
+        try:
+            r, packet = self.send(target)
+        finally:
+            writer.join()
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertTrue(packet["draft"]["detected"])
+        self.assertEqual([json.loads(line) for line in log.read_text().splitlines()], ["FROM worker: hello"])
+        self.assertIn(text, self.prompt_text(target).splitlines()[-1])
 
     def test_restore_late_redraw_and_dropped_paste_preserve_send_ack(self):
         for mode, verified in (("late-redraw", True), ("drop-restore", False)):

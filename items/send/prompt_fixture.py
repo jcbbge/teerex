@@ -29,6 +29,12 @@ def draw():
         content = re.sub(rb" +", lambda m: b"\x1b[" + str(len(m[0])).encode() + b"C", content)
         prefix = b"\r\x1b[2K\x1b[0m\x1b[1m" + background + "›".encode() + b"\x1b[0m" + background + b" \x1b[0m"
         os.write(1, prefix + content + b"\x1b[0m" + background + b"\x1b[54X\x1b[54C\x1b[0m")
+    elif mode == "busy":
+        # Captured busy Claude Code prompt: greyed marker + NBSP, reset, then the human's text or a grey hint.
+        marker = b"\x1b[0m\x1b[38;2;153;153;153m" + "❯\xa0".encode() + b"\x1b[0m"
+        hint = b"\x1b[38;2;153;153;153m" + suggestion.encode() + b"\x1b[0m"
+        body = re.sub(rb" +", lambda m: b"\x1b[" + str(len(m[0])).encode() + b"C", draft) if draft else hint
+        os.write(1, b"\r\x1b[2K" + marker + body)
     else:
         os.write(1, "\r\x1b[2K❯\xa0".encode() + content)
 
