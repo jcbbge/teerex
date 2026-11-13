@@ -74,8 +74,9 @@ def resolve_host(config_path, name):
         raise ValueError("host_id must be an explicit identifier")
     for field in PATH_FIELDS:
         absolute(host.get(field), field)
-    if "records_store" in host:
-        absolute(host["records_store"], "records_store")
+    for field in ("records_store", "recovery_store"):
+        if field in host:
+            absolute(host[field], field)
     if host.get("platform") not in ("macos-arm64", "linux-x86_64"):
         raise ValueError("platform must be macos-arm64 or linux-x86_64")
     if host.get("transport") not in ("local", "ssh"):
@@ -122,6 +123,8 @@ def command_argv(host, command):
         if leaf == ("spawn",) and "--profile" in flags:
             selectors = ("socket", "host", "store")
         supplied = []
+        if leaf in (("snapshot",), ("restore",), ("recovery", "snapshot"), ("recovery", "restore"), ("recovery", "inspect")) and not flags.intersection(("--directory", "--root")):
+            supplied += ["--root", host.get("recovery_store", host["home"] + "/.local/state/teerex-recovery")]
         for field in selectors:
             if field in ("store", "records_store") and "--store" in flags:
                 continue  # Existing explicit command-host store override remains supported.

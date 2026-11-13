@@ -728,6 +728,48 @@ class SurfacesTest(unittest.TestCase):
         self.assertEqual(v["failure_reason"], "anchor_layer_not_normal")
         self.assertEqual(self.inspect(self.anchor)["layer_state"], "minimized")
 
+    def test_focus_palette_resolves_server_wide_and_refuses_missing_or_ambiguous(self):
+        fragment = self.work / "focus.lua"
+        cmd = [BIN, "surfaces", "palette", "focus", "--file", str(fragment), "--name", "jump_existing",
+               "--title", "Jump existing", "--label", "focus destination", "--teerex", BIN]
+        r, v = self.run_json(cmd)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.config.write_text("dofile(" + json.dumps(str(fragment)) + ")\n")
+        self.rpc("server.config_reload", {})
+        invoke = self.base + ["do", "--session", self.session, "--block", self.anchor, "jump_existing"]
+        absent = subprocess.run(invoke, capture_output=True, text=True)
+        self.assertNotEqual(absent.returncode, 0)
+        block = {"block": {"flavor": "com.superlogical.terminal.shell", "label": "focus destination",
+                           "options": {"command": ["/bin/sh", "-c", "sleep 60"]}}}
+        made = self.rpc("session.create", {"label": "focus other", "initial_windows": [{"layout": block}]})
+        result = subprocess.run(invoke, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(json.loads(result.stdout)["outcome"], "focused_and_verified")
+        self.rpc("session.new_window", {"session_id": made["session_id"], "layout": block})
+        ambiguous = subprocess.run(invoke, capture_output=True, text=True)
+        self.assertNotEqual(ambiguous.returncode, 0)
+
+    def test_registered_seat_focus_palette_requires_live_registration(self):
+        fragment = self.work / "seat-focus.lua"
+        store = self.work / "seat-boards"
+        store.mkdir(mode=0o700)
+        cmd = [BIN, "surfaces", "palette", "focus", "--file", str(fragment), "--name", "jump_registered",
+               "--title", "Jump registered seat", "--seat", "--board-store", str(store),
+               "--socket", str(self.socket), "--teerex", BIN]
+        r, _ = self.run_json(cmd)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.config.write_text("dofile(" + json.dumps(str(fragment)) + ")\n")
+        self.rpc("server.config_reload", {})
+        invoke = self.base + ["do", "--session", self.session, "--block", self.anchor, "jump_registered"]
+        self.assertNotEqual(subprocess.run(invoke, capture_output=True).returncode, 0)
+        register = [BIN, "boards", "seat", "register", "--store", str(store), "--host", "fixture",
+                    "--socket", str(self.socket), "--session", self.session, "--block", self.anchor, "--owner", "fixture"]
+        r = subprocess.run(register, capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        r = subprocess.run(invoke, capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(json.loads(r.stdout)["outcome"], "focused_and_verified")
+
     def test_palette_fragment_loaded_as_real_rex_action_no_overwrite(self):
         fragment = self.work / "palette.lua"
         marker = self.work / "palette-result"

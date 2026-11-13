@@ -70,6 +70,17 @@ class TargetsTest(unittest.TestCase):
         return subprocess.run([str(BIN), *args], capture_output=True, text=True, timeout=10,
                               env=dict(os.environ, REX_SERVER="unix:///poisoned", REX_SESSION="wrong"))
 
+    def test_recovery_store_default_and_explicit_directory(self):
+        self.host["recovery_store"] = str(self.root / "snapshots")
+        self.save()
+        for command in (("snapshot",), ("restore",), ("recovery", "inspect")):
+            r = self.call("--config", str(self.config), "--host", "hive", *command)
+            self.assertEqual(r.returncode, 7, r.stderr)
+            argv = json.loads(self.output.read_text())
+            self.assertEqual(argv[argv.index("--root") + 1], self.host["recovery_store"])
+        self.call("--config", str(self.config), "--host", "hive", "snapshot", "--directory", "/explicit")
+        self.assertNotIn("--root", json.loads(self.output.read_text()))
+
     def test_version_and_explicit_resolution(self):
         version = self.call("--version")
         self.assertEqual((version.returncode, version.stdout, version.stderr), (0, "teerex 0.1.0-alpha.6\n", ""))
@@ -169,9 +180,9 @@ class TargetsTest(unittest.TestCase):
         cases += [(["surfaces", "palette"], []), (["surfaces", "palette", "install"], socket)]
         cases += [(["jobs", op], [] if op == "list" else socket)
                   for op in ("list", "track", "inspect", "adopt", "present", "forget")]
-        cases += [(["recovery", op], [] if op == "inspect" else socket)
+        cases += [(["recovery", op], (["--root", self.host["home"] + "/.local/state/teerex-recovery"] if op != "update" else []) + ([] if op == "inspect" else socket))
                   for op in ("inspect", "snapshot", "restore", "update")]
-        cases += [([op], socket) for op in ("snapshot", "restore", "update")]
+        cases += [([op], (["--root", self.host["home"] + "/.local/state/teerex-recovery"] if op != "update" else []) + socket) for op in ("snapshot", "restore", "update")]
         cases += [(["clutch", op], socket) for op in ("take", "release", "status", "palette")]
         cases += [(["run-visible", "receipt"], [])]
         cases += [(["adapters", op], socket) for op in ("generate", "call")]

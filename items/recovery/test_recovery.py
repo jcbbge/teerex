@@ -328,7 +328,7 @@ class RecoveryTest(unittest.TestCase):
         self.assertEqual(after["seats"][0]["target"], mapping[0]["new"])
         self.assertEqual(after["seats"][0]["records"], before["seats"][0]["records"])
 
-    def test_stale_board_reference_is_inspectable_but_blocks_restore(self):
+    def test_stale_board_reference_is_an_explicit_omission(self):
         self.fixture()
         board_store = self.root / "boards"
         board_store.mkdir(mode=0o700)
@@ -341,14 +341,55 @@ class RecoveryTest(unittest.TestCase):
         self.invoke("snapshot", "--metadata", str(self.metadata()), "--board-store", str(board_store))
         self.assertEqual(self.invoke("inspect")["panes"], 1)
         saved = json.loads((self.store / "snapshot.json").read_text())
-        self.assertEqual(saved["boards"]["targets"][0]["block_id"], missing)
+        self.assertEqual(saved["boards"]["targets"], [])
+        self.assertEqual(saved["omissions"]["absent_references"][0]["target"]["block_id"], missing)
         self.restart()
         plan = self.invoke("restore", "--accept-omissions")
-        self.assertFalse(plan["can_apply"])
-        self.assertIn("unmapped_board_reference:" + missing, plan["hard_blockers"])
-        self.invoke("restore", "--accept-omissions", "--apply", "--confirm", plan["confirmation"], code=1)
-        self.assertFalse(self.rpc("session.list").get("sessions"))
-        self.assertFalse((self.store / "restore.jsonl").exists())
+        self.assertTrue(plan["can_apply"])
+        self.assertEqual(plan["hard_blockers"], [])
+        self.assertEqual(plan["omissions"][0]["reason"], "board_target_absent_at_snapshot")
+        # Older snapshots retained stale references in boards.targets.
+        target = saved["omissions"]["absent_references"][0]["target"]
+        saved["boards"]["targets"] = [target]
+        saved["boards"]["seats"] = [target]
+        saved["omissions"].pop("absent_references")
+        (self.store / "snapshot.json").write_text(json.dumps(saved))
+        plan = self.invoke("restore", "--accept-omissions")
+        self.assertTrue(plan["can_apply"])
+        self.invoke("restore", "--accept-omissions", "--board-store", str(board_store),
+                    "--apply", "--confirm", plan["confirmation"], code=3)
+
+
+    def test_root_creates_private_snapshots_and_selects_newest(self):
+        self.fixture()
+        root = self.root / "snapshots"
+        first = self.invoke("snapshot", "--root", str(root), directory=False)
+        second = self.invoke("snapshot", "--root", str(root), directory=False)
+        self.assertNotEqual(first["path"], second["path"])
+        self.assertEqual(Path(second["path"]).parent.stat().st_mode & 0o777, 0o700)
+        inspected = self.invoke("inspect", "--root", str(root), directory=False)
+        self.assertEqual(inspected["snapshot_sha256"], second["snapshot_sha256"])
+        self.restart()
+        self.assertTrue(self.invoke("restore", "--root", str(root), "--accept-omissions", directory=False)["can_apply"])
+
+    def test_absent_registry_launch_is_omitted_but_identity_contradiction_refuses(self):
+        self.fixture()
+        metadata = self.metadata()
+        value = json.loads(metadata.read_text())
+        stale = json.loads(json.dumps(value["entries"][0]))
+        stale["target"]["block_id"] = "block:00000000-0000-0000-0000-000000000002"
+        value["entries"].append(stale)
+        metadata.write_text(json.dumps(value))
+        result = self.invoke("snapshot", "--metadata", str(metadata))
+        self.assertEqual(result["omissions"]["absent_references"][0]["reason"], "launch_target_absent_at_snapshot")
+        other = self.root / "other"
+        other.mkdir(mode=0o700)
+        stale["target"]["block_id"] = value["entries"][0]["target"]["block_id"]
+        stale["target"]["session_id"] = "session:00000000-0000-0000-0000-000000000002"
+        metadata.write_text(json.dumps(value))
+        self.store = other
+        result = self.invoke("snapshot", "--metadata", str(metadata), code=1)
+        self.assertIn("contradiction", result["reason"])
 
     def test_agents_registry_sanitized_under_nonblocking_shared_lock(self):
         import fcntl

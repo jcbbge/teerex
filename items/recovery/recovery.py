@@ -8,6 +8,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import selectors
 import shutil
 import signal
@@ -307,7 +308,7 @@ def snapshot(rex, args):
     sessions = rex.call("session.list").get("sessions") or []
     require(isinstance(sessions, list) and len(sessions) <= MAX_SESSIONS, "snapshot_exceeds_32_sessions")
     result = {"schema_version": 1, "kind": "recovery_snapshot", "captured_at_unix_ms": int(time.time() * 1000),
-              "source": source, "sessions": [], "boards": None, "omissions": OMISSIONS, "metadata_provenance": "explicit_private_caller_records_not_harness_verified",
+              "source": source, "sessions": [], "boards": None, "omissions": dict(OMISSIONS), "metadata_provenance": "explicit_private_caller_records_not_harness_verified",
               "consistency": "per_session_layout_double_checked; process_and_cross_session_state_not_atomic"}
     if args.board_store:
         executable = os.environ.get("TEEREX_RECOVERY_EXECUTABLE")
@@ -370,7 +371,23 @@ def snapshot(rex, args):
         after = rex.call("session.view", {"session_id": sid})
         require(after == view, "layout_changed_during_snapshot_no_retry")
         result["sessions"].append({"view": view, "panes": panes})
-    require(used == set(launches), "metadata_contains_targets_absent_from_inventory")
+    inventory = {(rex.server, s["view"]["session_id"], p["block"]["block_id"])
+                 for s in result["sessions"] for p in s["panes"]}
+    blocks = {k[2]: k for k in inventory}
+    omitted = []
+    for ident in sorted(set(launches) - used):
+        require(ident[2] not in blocks, "metadata_pane_identity_contradiction")
+        omitted.append({"reason": "launch_target_absent_at_snapshot", "target": launches[ident]["target"]})
+    boards = result.get("boards")
+    if boards:
+        for target in boards["targets"]:
+            if key(target) not in inventory:
+                require(target["block_id"] not in blocks, "board_pane_identity_contradiction")
+                omitted.append({"reason": "board_target_absent_at_snapshot", "target": target})
+        boards["targets"] = [t for t in boards["targets"] if key(t) in inventory]
+        boards["seats"] = [t for t in boards["seats"] if key(t) in inventory]
+    result["omissions"]["absent_references"] = omitted
+    declared_addresses(result)
     require((rex.call("session.list").get("sessions") or []) == sessions, "session_inventory_changed_no_retry")
     require(rex.identity() == source, "server_identity_changed_no_retry")
     require(len(encoded(result)) < LIMIT, "snapshot_exceeds_1MiB")
@@ -447,7 +464,7 @@ def restore_plan(rex, saved, accept):
     current = rex.identity()
     require(current["host_id"] == saved["source"]["host_id"], "restore_host_mismatch_no_cross_host_execution")
     target_sessions = rex.call("session.list").get("sessions") or []
-    issues = []
+    issues = list(saved["omissions"].get("absent_references", []))
     hard = []
     pane_count = 0
     placed_keys = set()
@@ -497,7 +514,13 @@ def restore_plan(rex, saved, accept):
                 issues.append({"block_id": bid, "reason": reason})
     for target in (saved.get("boards") or {}).get("targets", []):
         if key(target) not in placed_keys:
-            hard.append("unmapped_board_reference:" + target["block_id"])
+            inventory = {(saved["source"]["server"], s["view"]["session_id"], p["block"]["block_id"])
+                         for s in saved["sessions"] for p in s["panes"]}
+            require(not any(k[2] == target["block_id"] and k != key(target) for k in inventory), "board_pane_identity_contradiction")
+            if key(target) in inventory:
+                hard.append("unmapped_board_reference:" + target["block_id"])
+            else:
+                issues.append({"reason": "board_target_absent_at_snapshot", "target": target})
     context = {"snapshot_sha256": digest(saved), "target": current, "existing_sessions": target_sessions, "accept_omissions": accept}
     return {"schema_version": 1, "kind": "restore_plan", "confirmation": digest(context), "context": context,
             "panes_in_snapshot": pane_count, "omissions": issues, "hard_blockers": hard,
@@ -632,16 +655,18 @@ def restore_apply(rex, saved, plan, store, args):
             store.journal({"event": "final_geometry_verified", "mapping": mapping})
         board_handoff = None
         if (saved.get("boards") or {}).get("targets"):
-            board_targets = {key(t) for t in saved["boards"]["targets"]}
-            board_map = [{"old": m["old"], "new": m["new"]} for m in mappings if key(m["old"]) in board_targets]
-            require(len(board_map) == len(board_targets), "boards_target_not_restored")
-            store.create("board-map.json", board_map)
-            board_handoff = {"map_file": os.path.join(store.path, "board-map.json"), "applied": False,
-                             "next": "boards state remap-preview --store ABS --map-file ABS; then explicit remap-apply with preview generation and reason"}
-            if args.board_store:
-                board_handoff["preview"] = run_process([executable, "boards", "state", "remap-preview", "--store", args.board_store,
-                                                        "--map-file", board_handoff["map_file"]], rex.timeout)
-                require(board_handoff["preview"].get("outcome") == "preview_only", "boards_remap_preview_not_confirmed")
+            inventory = {(saved["source"]["server"], s["view"]["session_id"], p["block"]["block_id"]) for s in saved["sessions"] for p in s["panes"]}
+            board_targets = {key(t) for t in saved["boards"]["targets"] if key(t) in inventory}
+            if board_targets:
+                board_map = [{"old": m["old"], "new": m["new"]} for m in mappings if key(m["old"]) in board_targets]
+                require(len(board_map) == len(board_targets), "boards_target_not_restored")
+                store.create("board-map.json", board_map)
+                board_handoff = {"map_file": os.path.join(store.path, "board-map.json"), "applied": False,
+                                 "next": "boards state remap-preview --store ABS --map-file ABS; then explicit remap-apply with preview generation and reason"}
+                if args.board_store:
+                    board_handoff["preview"] = run_process([executable, "boards", "state", "remap-preview", "--store", args.board_store,
+                                                            "--map-file", board_handoff["map_file"]], rex.timeout)
+                    require(board_handoff["preview"].get("outcome") == "preview_only", "boards_remap_preview_not_confirmed")
         remapped_launches = []
         for pane, new in created_panes:
             launch = copy.deepcopy(pane.get("launch") or {})
@@ -695,7 +720,9 @@ def main(argv=None):
                     "inspect": "Read the private snapshot inventory and per-field support without contacting Rex or exposing full argv/resume IDs on stdout."}
     for name in ("snapshot", "restore", "update", "inspect"):
         p = sub.add_parser(name, help=descriptions[name], description=descriptions[name])
-        p.add_argument("--directory", help="existing private owned 0700 directory; files 0600, never overwritten", required=name != "update")
+        location = p.add_mutually_exclusive_group(required=name != "update")
+        location.add_argument("--directory", help="existing private owned 0700 directory; files 0600, never overwritten")
+        location.add_argument("--root", help="private snapshot root; snapshot creates a timestamped child, inspect/restore select newest complete snapshot")
         if name != "inspect":
             p.add_argument("--socket", required=True, help="explicit absolute socket on command host")
             p.add_argument("--timeout-ms", type=int, default=5000, help="per child/request bound 100..60000 ms")
@@ -714,6 +741,26 @@ def main(argv=None):
     signal.signal(signal.SIGTERM, cancelled)
     signal.signal(signal.SIGINT, cancelled)
     try:
+        if args.root:
+            require(os.path.isabs(args.root), "root_must_be_absolute")
+            if args.operation == "snapshot" or args.operation == "update" and args.snapshot:
+                os.makedirs(args.root, mode=0o700, exist_ok=True)
+            with contextlib.closing(Store(args.root)) as root:
+                if args.operation == "snapshot" or args.operation == "update" and args.snapshot:
+                    name = time.strftime("%Y%m%dT%H%M%S", time.gmtime()) + "-%020d" % time.time_ns()
+                    os.mkdir(name, mode=0o700, dir_fd=root.fd)
+                    args.directory = os.path.join(args.root, name)
+                else:
+                    candidates = []
+                    for name in os.listdir(root.fd):
+                        if not re.fullmatch(r"[0-9]{8}T[0-9]{6}(?:-[0-9]{20})?", name):
+                            continue
+                        with contextlib.closing(Store(os.path.join(args.root, name))) as child:
+                            if "snapshot.json" in os.listdir(child.fd):
+                                load_snapshot(child)
+                                candidates.append(name)
+                    require(candidates, "no_complete_snapshot_under_root")
+                    args.directory = os.path.join(args.root, max(candidates))
         if args.operation == "inspect":
             with contextlib.closing(Store(args.directory)) as store:
                 saved = load_snapshot(store)

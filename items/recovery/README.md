@@ -4,6 +4,14 @@
 
 Python 3.9+ stdlib and Rex are explicit prerequisites. Snapshot/restore support API13. Read-only update inventory accepts API10–13; requesting a snapshot on an older API returns the inventory plus an explicit unsupported result, exit 1, without a snapshot or restart. API11 is not certified. Root CLI aliases expose `snapshot`, `restore` and `update`; the canonical module form below is `teerex recovery OP`.
 
+## Snapshot roots and stale references
+
+`teerex snapshot --socket ABS --root ABS` creates a new private timestamped child under the selected root (creating the root when absent). `teerex recovery inspect --root ABS` and `teerex restore --socket ABS --root ABS` select its newest complete timestamped snapshot. An explicit `--directory ABS` retains the existing contract and cannot be combined with `--root`. No snapshot or restore file is overwritten. Root and child directories must be owned by the caller and mode 0700; symlinks are refused.
+
+Named-host records may set `recovery_store` to an absolute command-host root; otherwise it defaults to `HOME/.local/state/teerex-recovery`. Thus `teerex --config ABS --host m5 snapshot` needs no snapshot path. Explicit `--directory` or `--root` overrides that default.
+
+Registry launches and board references whose panes are absent from the snapshot inventory are listed under `omissions.absent_references`, with their target and reason, and are excluded from replay/remapping. A live block ID with a conflicting session identity still refuses. Restore also recognizes absent board references in older snapshots as omissions; `--accept-omissions` is required to apply a partial plan. Detached panes present in inventory still retain the existing unmapped-reference blocker.
+
 ## Who
 
 The operator or an authorized setup agent selects one command host and explicit Rex socket. The shared root's named-host transport may invoke this leaf on another machine; all directories, registry paths, board stores, binaries and cwd values then belong to **that command host**. This module does not invent SSH routes, discover personal machines or interpret a label as an execution address.

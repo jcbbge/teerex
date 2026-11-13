@@ -149,6 +149,12 @@ Geometry is in **window fractions**, not pixels or terminal rows/columns. Inacti
 
 Open/inspect/focus/close default to a 5000ms local budget (`--timeout-ms 100..60000`) with bounded transport cleanup. At most 32KiB of one pending receipt and 4KiB of raw diagnostics are retained (`backend_stderr_base64` keeps arbitrary bytes JSON-safe); overly deep geometry or malformed/partial evidence refuses success. There is one supervised Rex connection, no automatic retry or close. Exit 0 means the command's stated postcondition; 1 is refusal/mismatch/uncertainty; 2 is usage; 124 deadline; 130/143 cancellation. Cancellation can leave a real created or changed pane behind. Inspect before another mutation.
 
+### Focus an existing pane from the palette
+
+Generate a fragment with `teerex surfaces palette focus --file ABS --teerex ABS --name jump_seat --title "Jump to seat" --label seat`. The action resolves the label (or unique pane ID) server-wide through native `surfaces resolve --session any` semantics, then focuses and verifies that pane. It refuses absent or ambiguous matches and never opens a replacement.
+
+For the registered seat, replace `--label seat` with `--seat --board-store ABS --socket ABS`. The explicit socket selects the board references for the palette's server; exactly one seat registration must match, and its canonical pane must still exist. Install either fragment with the normal palette install plan/apply workflow. Generation alone does not register it.
+
 ### Prepare and register a palette action
 
 Generate complete native menus with:

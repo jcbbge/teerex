@@ -34,6 +34,8 @@ const usage =
     \\close --publish-receipt-file ABS atomically completes a private prepared run-visible receipt.json.
     \\Target must match; one close attempt; hard exit after timeout+2000ms includes publication.
     \\If killed, prepared exit/output evidence remains, with block_absence unknown.
+    \\       teerex surfaces palette focus --file ABS --teerex ABS --name ACTION --title TEXT
+    \\           (--label TEXT | --seat --board-store ABS --socket ABS)
     \\       teerex surfaces palette agents --file ABS --teerex ABS --rex ABS [--profiles ABS]
     \\       teerex surfaces palette hosts --file ABS --teerex ABS [--config ABS]
     \\Generates native profile/workspace menus, frozen until regenerated; never changes personal config.
@@ -334,6 +336,10 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
         return 0;
     }
     if (args.len >= 2 and std.mem.eql(u8, args[0], "palette") and std.mem.eql(u8, args[1], "install")) return paletteController(allocator, args[2..], @embedFile("palette.py"));
+    if (args.len >= 2 and std.mem.eql(u8, args[0], "palette") and std.mem.eql(u8, args[1], "focus")) {
+        const source = try std.fmt.allocPrint(allocator, "SURFACE_SOURCE = {s}\n{s}", .{ try std.json.Stringify.valueAlloc(allocator, @embedFile("surfaces.lua"), .{}), @embedFile("menu.py") });
+        return paletteController(allocator, args[1..], source);
+    }
     if (args.len >= 2 and std.mem.eql(u8, args[0], "palette") and (std.mem.eql(u8, args[1], "agents") or std.mem.eql(u8, args[1], "hosts"))) return paletteController(allocator, args[1..], @embedFile("menu.py"));
     if (args.len == 0) return usageError("resolve, session ensure, ensure, open, inspect, rename, focus, close, move or palette is required");
     if (args.len >= 2 and std.mem.eql(u8, args[0], "session") and std.mem.eql(u8, args[1], "ensure")) {
