@@ -109,3 +109,5 @@ best effort and never causes a delivered message to be resent. The helper has a
 On Linux, status output finds a tty through child fds **0, 1, 2**, then through
 `/proc/<pid>/stat`'s controlling-tty device. macOS uses the process's controlling
 tty from `ps`. A redirected stdout therefore does not prevent status output.
+
+For a managed agent (`app=teerex-agent`, with or without tint), acknowledged paste and Enter also record a turn-start event. The destination's in-pane supervisor publishes `working` in Rex; a refused or unacknowledged send creates no start event. The acknowledgement timestamp is captured before draft restoration, so delayed bookkeeping cannot turn a later completed turn back into working. This also covers `ask` and queued deliveries routed through `send`. Status bookkeeping remains best effort and is reported in `status_record`; it does not change the meaning of transport acknowledgement or establish model consumption.

@@ -399,3 +399,9 @@ Managed `agents stop` records every completed turn in the registry and timeline.
 The in-pane supervisor archives its scratchpad on exit or hangup and closes only the viewer block recorded in `scratch_pane_receipt`. Manual tab/pane close and `surfaces close` trigger the same cleanup. `agents prune --apply` also closes recorded viewers for retired launches, including prior archives; it never searches by label. The plan reports candidates without closing or archiving anything.
 
 A managed Stop/StopFailure/process-exit notification queries `scratch waiters --on NAME --json`. Each waiter receives guarded `FROM teerex: NAME finished its turn: FIRST REPORT LINE`; `scratch_wake(path, event="done")` wakes quiet progress-turn waits; delivered reports use `event="report"`, which wakes both report and turn-end waits. Attempts and wake receipts are retained under the notification's `waiters` field; failures are never retried. Progress suppression applies to starter/report-to reports, while explicitly waiting agents still receive their notification.
+
+### Turn state is the pane's state
+
+The in-pane supervisor publishes `app=teerex-agent` program status for every managed harness: turn start is `working`, a progress turn end is `idle`, a scratchpad-finished turn is `done`, and StopFailure is `error`. `agents stop` receipts include `turn_state`; the registry's `last_hook.state` records the same transition.
+
+Codex needs no per-launch start hook. After `send` acknowledges paste and Enter (including brief, ask and queue delivery), it records a private input event keyed by canonical socket/session/block under `~/.local/state/teerex/agent-input`. The supervisor consumes that event and emits its own OSC 7501 status. Nanosecond event ordering prevents delayed input bookkeeping or an older stop callback from overwriting a newer state. Input events contain no message text and are removed when the supervisor exits. No watcher process or daemon is added.
