@@ -70,6 +70,8 @@ All pane ensure calls, including ordinary session-scoped ones, hold one advisory
 
 `--timeout-ms` (default 5000, range 100–60000) bounds lock wait plus the remaining transport budget. Contention that exhausts the pre-mutation budget returns nonzero, `failure_reason: ensure_busy`, `retry_safe: true`, and both attempt flags false. Cancellation while waiting releases resources and returns the signal status without a Rex mutation. The OS releases held locks on exit; lock files intentionally remain and must **not** be unlinked while any ensure command can be running, since that would split coordination across two inodes. Lock setup failures refuse; no fallback to an unlocked lookup. There is no pointer file, daemon or automatic retry.
 
+Socket canonicalization uses POSIX path resolution so it can resolve the socket itself and final-component symlinks on macOS without trying to open a Unix socket as a regular file. The original descriptor-based canonicalization returned `Unexpected` before lock acquisition on Apple silicon; the existing busy-wait and socket-alias concurrency cases cover that regression in the surfaces suite.
+
 The lock coordinates find-or-create calls, not an exclusive lease on Rex or a proof of program liveness. A noncooperating client can create the same label; fresh ambiguity refuses and callers must inspect uncertainty before retrying. Session ensure retains its separate inventory/readback contract. Neither operation destroys duplicates or restores another client's focus. These commands do not certify that a reused program is still running or ready.
 
 ### Place a terminal and read it back

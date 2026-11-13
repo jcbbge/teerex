@@ -136,7 +136,10 @@ const EnsureLock = struct {
 };
 fn ensureLock(allocator: std.mem.Allocator, socket: []const u8, budget: u64) !EnsureLock {
     var timer = try std.time.Timer.start();
-    const canonical = try std.fs.cwd().realpathAlloc(allocator, socket);
+    // Dir.realpathAlloc opens the final path; Darwin cannot open a Unix socket as a file.
+    // POSIX realpath uses libc path resolution on Darwin and preserves socket symlink identity.
+    var canonical_buffer: [std.fs.max_path_bytes]u8 = undefined;
+    const canonical = try std.posix.realpath(socket, &canonical_buffer);
     var digest: [32]u8 = undefined;
     std.crypto.hash.sha2.Sha256.hash(canonical, &digest, .{});
     const hex = std.fmt.bytesToHex(digest, .lower);
