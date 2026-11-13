@@ -216,8 +216,10 @@ def run_one(args, payload, version, index):
                 names = ["ObserveTest.test_bounded_utf8_capture_marks_partial_prefix", "ObserveTest.test_exact_encoded_string_boundary"]
                 if not all(outcomes.get(name) == "pass" for name in names):
                     raise ValueError("capture_limit_tests_failed")
-                if not args.long or index:
-                    return "capture_limit_tests_passed;long_wait=" + ("once_in_invocation" if args.long else "not_requested")
+                if not args.long:
+                    raise ValueError("long_wait_not_requested")
+                if index:
+                    return "capture_limit_tests_passed;long_wait=once_in_invocation"
                 baseline, _ = execute(observations(installed, server, session, block, 65535), server.env)
                 save(new_packet, baseline.stdout)
                 watcher = subprocess.Popen([str(installed), "watch", "--socket", str(server.socket), "--session", session, "--block", block,
