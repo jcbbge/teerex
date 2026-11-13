@@ -295,11 +295,19 @@ jobs:
           REX_BIN: ${{ runner.temp }}/rex-bin/rex
         run: python3 tools/cartridges/test_payloads.py --catalog "$RUNNER_TEMP/cartridge-catalog" --with-rex
 
+      - name: Check shared observation terms offline
+        env:
+          TEEREX_BIN: ${{ github.workspace }}/zig-out/bin/teerex
+        run: python3 items/replay/test_terms.py OfflineTerms -v
+
       - name: Probe API13 replay data wire on a private server
         if: matrix.rex-api == 13
         env:
           REX_BIN: ${{ runner.temp }}/rex-bin/rex
-        run: python3 items/replay/test_wire.py -v
+        run: |
+          python3 items/replay/test_wire.py -v
+          python3 items/replay/test_replay.py FactContract Replay -v
+          python3 items/replay/test_terms.py -v
 
       - name: Run API13 visible foreground execution and cleanup contracts
         if: matrix.rex-api == 13

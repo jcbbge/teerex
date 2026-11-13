@@ -13,6 +13,7 @@ import struct
 
 class WebSocket:
     def __init__(self, path, endpoint, protocol, timeout=5):
+        self.path = str(path)
         self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self.sock.settimeout(timeout)
         try:
@@ -28,8 +29,8 @@ class WebSocket:
                 if len(header) > 16384:
                     raise ValueError("oversized_websocket_header")
             lines = header.decode("ascii").split("\r\n")
-            fields = dict(line.lower().split(": ", 1) for line in lines[1:] if ": " in line)
-            accept = base64.b64encode(hashlib.sha1((key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").encode()).digest()).decode().lower()
+            fields = {line.split(":", 1)[0].lower(): line.split(":", 1)[1].strip() for line in lines[1:] if ":" in line}
+            accept = base64.b64encode(hashlib.sha1((key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").encode()).digest()).decode()
             if " 101 " not in lines[0] or fields.get("sec-websocket-accept") != accept or fields.get("sec-websocket-protocol") != protocol:
                 raise ValueError("websocket_upgrade_refused")
         except BaseException:
@@ -84,7 +85,15 @@ class WebSocket:
                 return bytes(result)
 
     def close(self):
-        self.sock.close()
+        try:
+            try:
+                self.send(struct.pack("!H", 1000), 8)
+                self.sock.settimeout(1)
+                self.receive()
+            except (EOFError, OSError):
+                pass
+        finally:
+            self.sock.close()
 
 
 class Control:
@@ -121,11 +130,27 @@ def data_connect(control, path, session, block):
         ws.send(b"\x01" + base64.urlsafe_b64decode(ticket + "=="))
         welcome = ws.receive()
         if len(welcome) != 32 or welcome[0] != 0x81:
-            raise ValueError("data_welcome_invalid:" + welcome.hex())
+            raise ValueError("data_handshake_rejected" + (":" + str(welcome[1]) if len(welcome) == 2 and welcome[0] == 0x82 else ""))
         nonce = struct.unpack("<Q", welcome[24:32])[0]
         if not nonce:
             raise ValueError("zero_channel_nonce")
+        ws.reconnect_token = welcome[1:17]
         return ws, nonce
     except BaseException:
         ws.close()
+        raise
+
+
+def data_resume(path, token, received_bytes):
+    """One explicit exact-count resume; rejection is final, never filled in."""
+    ws = WebSocket(path, "/api/data", "rex.data.terminal.v1")
+    try:
+        ws.send(b"\x02" + token + struct.pack("<Q", received_bytes))
+        welcome = ws.receive()
+        if len(welcome) != 32 or welcome[0] != 0x81:
+            raise ValueError("data_resume_rejected" + (":" + str(welcome[1]) if len(welcome) == 2 and welcome[0] == 0x82 else ""))
+        ws.reconnect_token = welcome[1:17]
+        return ws, struct.unpack("<Q", welcome[24:32])[0]
+    except BaseException:
+        ws.sock.close()
         raise

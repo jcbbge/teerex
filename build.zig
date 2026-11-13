@@ -129,6 +129,11 @@ pub fn build(b: *std.Build) void {
     agents.addImport("scoped_channel", channel);
     rex_run.addImport("scoped_channel", channel);
     agents.addImport("rex_boards", boards);
+    exe.root_module.addImport("rex_replay", b.createModule(.{
+        .root_source_file = b.path("items/replay/main.zig"),
+        .target = target,
+        .optimize = optimize,
+    }));
     b.installArtifact(exe);
 
     const run = b.addRunArtifact(exe);

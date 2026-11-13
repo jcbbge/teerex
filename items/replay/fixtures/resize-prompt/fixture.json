@@ -1,0 +1,88 @@
+{
+  "schema_version": 1,
+  "kind": "teerex_tty_fixture",
+  "id": "synthetic-resize-prompt",
+  "provenance": {
+    "basis": "synthetic",
+    "captured_by": "authored synthetic generator",
+    "generator": "items/replay/gen_fixtures.py",
+    "rex": {
+      "version": "not_acquired",
+      "platform": "not_acquired",
+      "api_revision": null
+    }
+  },
+  "application": {
+    "name": "fake_tui.py",
+    "version": "v1",
+    "version_basis": "declared"
+  },
+  "terminal": {
+    "start": "blank_verified",
+    "initial": {
+      "columns": 80,
+      "rows": 24
+    }
+  },
+  "stream": {
+    "bytes": 176,
+    "sha256": "e8b0d5cd4b8414bb1cbd587a97c44f54510c2356716795cc8dcab9921002b7e8",
+    "snapshot_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "complete": true,
+    "end": "child_exited"
+  },
+  "chunks": [
+    [
+      0,
+      98,
+      0
+    ],
+    [
+      98,
+      78,
+      100
+    ]
+  ],
+  "events": [
+    {
+      "type": "resize",
+      "columns": 80,
+      "rows": 24,
+      "offset": 0,
+      "t_ms": 0
+    },
+    {
+      "type": "resize",
+      "columns": 60,
+      "rows": 20,
+      "offset": 98,
+      "t_ms": 100
+    },
+    {
+      "type": "child_exited",
+      "exit_code": 0,
+      "offset": 176,
+      "t_ms": 100
+    }
+  ],
+  "checkpoints": [
+    {
+      "id": "part-0",
+      "offset": 98
+    },
+    {
+      "id": "part-1",
+      "offset": 176
+    },
+    {
+      "id": "end",
+      "offset": 176
+    }
+  ],
+  "omissions": [
+    {
+      "what": "snapshot",
+      "why": "authored bytes, not a capture"
+    }
+  ]
+}

@@ -1,0 +1,106 @@
+{
+  "schema_version": 1,
+  "kind": "teerex_live_script",
+  "id": "claude-local-only",
+  "application": "claude",
+  "model_turns": 0,
+  "steps": [
+    {
+      "expect": [
+        {
+          "id": "running",
+          "process_running": true
+        },
+        {
+          "id": "paste-mode",
+          "mode_enabled": "bracketed_paste"
+        }
+      ],
+      "within_ms": 10000
+    },
+    {
+      "paste": "teerex-live-marker-7f3a",
+      "basis": "inferred"
+    },
+    {
+      "expect": [
+        {
+          "id": "unsent-marker",
+          "capture_contains": "teerex-live-marker-7f3a"
+        }
+      ],
+      "within_ms": 3000
+    },
+    {
+      "resize": {
+        "columns": 100,
+        "rows": 30
+      }
+    },
+    {
+      "expect": [
+        {
+          "id": "wide",
+          "size": {
+            "columns": 100,
+            "rows": 30
+          }
+        },
+        {
+          "id": "marker",
+          "capture_contains": "teerex-live-marker-7f3a"
+        }
+      ],
+      "within_ms": 3000
+    },
+    {
+      "resize": {
+        "columns": 60,
+        "rows": 20
+      }
+    },
+    {
+      "expect": [
+        {
+          "id": "narrow",
+          "size": {
+            "columns": 60,
+            "rows": 20
+          }
+        },
+        {
+          "id": "marker",
+          "capture_contains": "teerex-live-marker-7f3a"
+        },
+        {
+          "id": "running",
+          "process_running": true
+        }
+      ],
+      "within_ms": 3000
+    },
+    {
+      "write": "\u0015",
+      "basis": "inferred"
+    },
+    {
+      "expect": [
+        {
+          "id": "cleared",
+          "capture_not_contains": "teerex-live-marker-7f3a"
+        },
+        {
+          "id": "running",
+          "process_running": true
+        }
+      ],
+      "within_ms": 3000
+    },
+    {
+      "expect": [],
+      "within_ms": 100,
+      "needs_authoring": true,
+      "basis": "fresh-cwd trust decline prompt requires observed startup screen"
+    }
+  ]
+}

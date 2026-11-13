@@ -24,6 +24,7 @@ const usage =
     \\  cartridges install|list|run|activate|remove|restore  Independent native payloads
     \\  targets resolve|exec                         Named-host lookup and explicit transport
     \\  run-visible                                  Visible noninteractive argv, output and actual exit
+    \\  replay record|play|live                       Capture bytes, faithful replay and independent live checks
     \\Existing tools: observe, compare, watch, run, offstage, doctor, send, spawn,
     \\                jobs, adapters, maneuver-check, filter
     \\Use COMMAND --help for exact flags, effects, evidence and limits.
@@ -32,7 +33,8 @@ const usage =
     \\Where: configured command host; paths belong there, never silently uploaded.
     \\Why: report actual activity/results and unknowns, not infer readiness or completion.
     \\How: explicit config/host or socket/full IDs; no retries, fallback or autostart.
-    \\Python3.9+ is required for targets, boards, agents, recovery, fleet, cartridges and palette install.
+    \\Python3.9+ is required for targets, boards, agents, recovery, fleet, cartridges, replay and palette install.
+    \\Legacy direct-socket native tools do not require Python. SSH trust/key are explicit.
     \\Native call history adds no runtime dependency; missing end records stay unknown.
     \\Personal install/restart/close/config actions need their own authorization.
     \\Guides: docs/alpha5.md and items/{surfaces,boards,agents,recovery}/README.md.
@@ -140,6 +142,7 @@ fn run(allocator: std.mem.Allocator) !void {
     }
     const command = args[0];
     const rest = args[1..];
+    if (std.mem.eql(u8, command, "replay")) finish(allocator, try @import("rex_replay").run(allocator, rest));
     if (std.mem.eql(u8, command, "fleet") and rest.len > 0 and (std.mem.eql(u8, rest[0], "install") or std.mem.eql(u8, rest[0], "rollback"))) {
         const sources = @import("fleet_sources");
         var forwarded: std.ArrayList([]const u8) = .empty;

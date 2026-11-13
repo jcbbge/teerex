@@ -10,7 +10,7 @@ import tempfile
 import time
 import unittest
 
-from wire import Control, data_connect
+from wire import Control, data_connect, data_resume
 
 
 class WireProbe(unittest.TestCase):
@@ -55,12 +55,22 @@ class WireProbe(unittest.TestCase):
                             self.assertGreater(first.start(), 0, "snapshot absent before first APC")
                             self.assertEqual(json.loads(first[1])["type"], "resize")
                             print("P0 snapshot bytes:", first.start(), "first marker: resize", flush=True)
+                            # A dropped transport resumes only with the exact count.
+                            received = len(buffer)
+                            token = stream.reconnect_token
+                            stream.sock.close()
+                            stream, resumed_nonce = data_resume(path, token, received)
+                            self.assertEqual(resumed_nonce, nonce)
                             gate.touch()
                             while not any(json.loads(m[1]).get("type") == "child_exited" for m in pattern.finditer(buffer)):
                                 buffer.extend(stream.receive())
                             events = [json.loads(m[1]) for m in pattern.finditer(buffer)]
                             self.assertIn(b"teerex-p0\r\n", buffer)
                             self.assertEqual(next(e for e in events if e["type"] == "child_exited")["exit_code"], 0)
+                            token = stream.reconnect_token
+                            stream.sock.close()
+                            with self.assertRaisesRegex(ValueError, "data_resume_rejected:5"):
+                                data_resume(path, token, len(buffer) + 1)
                         finally:
                             stream.close()
                         control.call("session.destroy", {"session_id": session})

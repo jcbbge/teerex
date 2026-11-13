@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "kind": "teerex_live_script",
+  "id": "claude-trust-decline",
+  "application": "claude",
+  "model_turns": 0,
+  "steps": [
+    {
+      "expect": [
+        {
+          "id": "decline-selected",
+          "capture_contains": "\u276f No, exit"
+        },
+        {
+          "id": "local-prompt",
+          "capture_contains": "Enter to confirm"
+        }
+      ],
+      "within_ms": 10000
+    },
+    {
+      "key": {
+        "key": "enter",
+        "mods": "",
+        "consumed_mods": "",
+        "text": "\r",
+        "unshifted_codepoint": 13,
+        "composing": false,
+        "action": "press"
+      },
+      "local_only": "Confirm the observed selected No, exit workspace-trust choice; decline only, no model request"
+    },
+    {
+      "expect": [
+        {
+          "id": "declined-exit",
+          "child_exit_code": 0
+        }
+      ],
+      "within_ms": 10000
+    },
+    {
+      "effect": {
+        "path_absent": ".claude",
+        "relative_to": "cwd"
+      }
+    }
+  ]
+}
