@@ -43,20 +43,39 @@ def canonical_server(value):
 
 def check_sender(server, sender):
     """A registered agent cannot accidentally speak under another agent's name."""
-    if os.environ.get("TEEREX_GENERATED_SENDER") == sender or not managed_agent():
+    if not managed_agent():
         return
     actor = caller_identity()
     root = state_root()
     registry = Path(os.environ.get("AGENT_REGISTRY") or os.environ.get("LC_AGENT_REGISTRY") or root / "teerex-agents")
-    for path in registry.glob("agents-*.json"):
-        record = read(path)
+    records = [read(path) for path in registry.glob("agents-*.json")]
+    server = canonical_server(server)
+    own = None
+    for record in records:
         target = record.get("target") or {}
-        if (canonical_server(target.get("server")) == canonical_server(server) and
+        if (canonical_server(target.get("server")) == server and
                 all(actor.get(k) and actor[k] == target.get(k) for k in ("session_id", "block_id"))):
-            name = record.get("name")
-            if sender != name:
-                raise ValueError("send refused: your registered name is " + str(name) + "; use --from " + str(name))
-            return
+            own = record
+            break
+    if own is None:
+        return
+    if sender == own.get("name"):
+        return
+    # Old supervisors have no generated-sender marker. Only another identity is
+    # protected: a service label or an otherwise unclaimed label is not an agent.
+    claimed = sender.casefold()
+    protected = {"seat", "human", "user", "operator", human_identity()["user"].casefold()}
+    for record in records:
+        if record is not own and canonical_server((record.get("target") or {}).get("server")) == server:
+            protected.add(str(record.get("name", "")).casefold())
+    store = Path(os.environ.get('TEEREX_BOARDS_STORE', str(root / 'teerex-boards')))
+    boards = read(store / 'state.json', {'seats': []})
+    for seat in boards.get('seats', []):
+        if canonical_server((seat.get('target') or {}).get('server')) == server:
+            protected.add(str(seat.get('name', 'seat')).casefold())
+    if claimed in protected:
+        name = own.get("name")
+        raise ValueError("send refused: your registered name is " + str(name) + "; use --from " + str(name))
 
 
 def snapshot(server, human_launch=False, session=None):

@@ -60,9 +60,11 @@ With label `worker` and canonical IDs, the measured preflight overhead is 234 by
 
 ## Receipt and unknowns
 
-Registered-agent sender mismatches return a `send_result` refusal with the reason
-on stderr and in `failure_reason`, before the Rex backend runs. Generated
-deliveries retain their sender marker across named-host routing.
+A registered agent claiming another registered agent, the seat, or a person-facing
+name returns a `send_result` refusal with the reason on stderr and in
+`failure_reason`, before the Rex backend runs. Service and unclaimed labels are
+accepted without a generated-sender marker, including from retained supervisors.
+A marker never authorizes impersonating another registered identity.
 Bodies beginning with `send refused:`, `pane control refused;`, `pane_guard_`,
 `registered_seat_`, `agent-send: not delivered`, or `teerex send:` (after
 leading whitespace) are rejected as `refusal_text_is_not_a_message` before

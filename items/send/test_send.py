@@ -153,42 +153,41 @@ class SendTest(unittest.TestCase):
         return self.rpc("com.superlogical.terminal.format", {"session_id": target[0], "block_id": target[1],
                         "args": {"format": "text", "max_bytes": 65536}})["content"]
 
-    def test_registered_sender_must_use_true_name_before_paste(self):
+    def test_registered_sender_protects_identities_and_accepts_service_labels(self):
         target, raw = self.fixture()
         registry = Path(self.env["AGENT_REGISTRY"])
         registry.mkdir(mode=0o700, exist_ok=True)
-        record = dict(schema_version=1, launch_id="a" * 32, name="registered-worker",
-                      target=dict(server="unix://" + str(self.socket), session_id=self.env["REX_SESSION"],
-                                  block_id=self.env["REX_BLOCK"]))
-        path = registry / ("agents-" + "a" * 32 + ".json")
-        path.write_text(json.dumps(record))
-        path.chmod(0o600)
+        for launch, name, address in (("a", "registered-worker", dict(
+                session_id=self.env["REX_SESSION"], block_id=self.env["REX_BLOCK"])),
+                ("b", "other-worker", dict(session_id=target[0], block_id=target[1]))):
+            record = dict(schema_version=1, launch_id=launch * 32, name=name,
+                          target=dict(server=self.endpoint, **address))
+            (registry / ("agents-" + launch * 32 + ".json")).write_text(json.dumps(record))
         self.env["AGENT_NAME"] = "claimed-name-is-not-authority"
-        refused, _ = self.send(target, b"must not arrive", sender="someone-else")
-        self.assertEqual(refused.returncode, 1, refused.stdout + refused.stderr)
-        self.assertIn("use --from registered-worker", refused.stderr)
-        self.assertEqual(raw.read_bytes(), b"")
-        for misleading in ("--socket", "--from"):
-            refused, _ = self.send(target, b"must not arrive", sender=misleading)
-            self.assertEqual(refused.returncode, 1, refused.stdout + refused.stderr)
-            self.assertIn("use --from registered-worker", refused.stderr)
-        self.assertEqual(raw.read_bytes(), b"")
-        sent, _ = self.send(target, b"correct", sender="registered-worker")
-        self.assertEqual(sent.returncode, 0, sent.stdout + sent.stderr)
-        expected = self.pasted(b"correct", "registered-worker")
-        self.received(raw, expected)
-        self.env["TEEREX_GENERATED_SENDER"] = "teerex-contract"
-        sent, _ = self.send(target, b"DONE registered-worker: result", sender="teerex-contract")
-        self.assertEqual(sent.returncode, 0, sent.stdout + sent.stderr)
-        expected += self.pasted(b"DONE registered-worker: result", "teerex-contract")
-        self.received(raw, expected)
-        self.env.pop("TEEREX_GENERATED_SENDER")
-        for key in list(self.env):
-            if key.startswith(("AGENT_", "LC_AGENT_", "TEEREX_CALLER_")) and key != "AGENT_REGISTRY":
-                self.env.pop(key)
-        sent, _ = self.send(target, b"human script", sender="free-label")
-        self.assertEqual(sent.returncode, 0, sent.stdout + sent.stderr)
-        self.received(raw, expected + self.pasted(b"human script", "free-label"))
+        for sender in ("other-worker", "OTHER-WORKER", "seat", "human", "user", "operator"):
+            for marker in (None, sender):
+                if marker is None:
+                    self.env.pop("TEEREX_GENERATED_SENDER", None)
+                else:
+                    self.env["TEEREX_GENERATED_SENDER"] = marker
+                refused, packet = self.send(target, b"must not arrive", sender=sender)
+                self.assertEqual(refused.returncode, 1, refused.stdout + refused.stderr)
+                self.assertFalse(packet["backend_invoked"])
+                self.assertIn("use --from registered-worker", packet["failure_reason"])
+                self.assertEqual(raw.read_bytes(), b"")
+        expected = b""
+        for sender in ("registered-worker", "teerex-contract", "teerex-scratchpad",
+                       "teerex-launcher", "teerex-cost", "teerex-future-service", "unclaimed-label"):
+            for marker in (None, "different-marker", sender):
+                if marker is None:
+                    self.env.pop("TEEREX_GENERATED_SENDER", None)
+                else:
+                    self.env["TEEREX_GENERATED_SENDER"] = marker
+                sent, packet = self.send(target, b"compatible", sender=sender)
+                self.assertEqual(sent.returncode, 0, sent.stdout + sent.stderr)
+                self.assertEqual(packet["outcome"], "events_acknowledged")
+                expected += self.pasted(b"compatible", sender)
+                self.received(raw, expected)
 
     def test_sender_refusal_preserves_both_input_lines(self):
         caller, caller_log = self.prompt(mode="codex")
@@ -201,6 +200,9 @@ class SendTest(unittest.TestCase):
         (registry / ("agents-" + "b" * 32 + ".json")).write_text(json.dumps(dict(
             name="registered-a", target=dict(server=self.endpoint,
                 session_id=caller[0], block_id=caller[1]))))
+        (registry / ("agents-" + "c" * 32 + ".json")).write_text(json.dumps(dict(
+            name="registered-b", target=dict(server=self.endpoint,
+                session_id=target[0], block_id=target[1]))))
         self.type_draft(caller, "caller draft α")
         self.type_draft(target, "target draft β")
         for _ in range(100):
@@ -227,8 +229,8 @@ class SendTest(unittest.TestCase):
         self.assertIsNotNone(wrapper, "installed agent-send required")
         commands = [("native", self.command(target, sender="registered-b"), self.env),
                     ("agent-send", [wrapper, *target, "registered-b", "must not arrive"], wrapper_env),
-                    ("contract-wrong-marker", self.command(target, sender="teerex-contract"),
-                     dict(self.env, TEEREX_GENERATED_SENDER="different-marker"))]
+                    ("identity-forged-marker", self.command(target, sender="registered-b"),
+                     dict(self.env, TEEREX_GENERATED_SENDER="registered-b"))]
         for prefix in ("send refused:", "pane control refused;", "pane_guard_", "registered_seat_",
                        "agent-send: not delivered", "teerex send:"):
             commands.append(("relay-native-" + prefix,
