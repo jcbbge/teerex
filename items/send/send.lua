@@ -132,8 +132,8 @@ local function deliver()
     local ok_records, records = pcall(rex.call, "com.superlogical.terminal.program_status", {session_id=a.session_id, block_id=a.block_id, args={}})
     if ok_records and type(records) == "table" then
         for _, record in ipairs(records.records or {}) do
-            if record.app == "teerex-agent" then agent = true end
-            if record.id == "teerex/tint" and record.app == "teerex-agent" then supervised = true end
+            if record.app == "teerex-agent" or record.id == "teerex" or record.id == "teerex/tint" then agent = true end
+            if record.id == "teerex/tint" then supervised = true end
         end
     end
     emit({event="status_target", status_pid=status_pid, seat=seat, supervised=supervised, agent=agent})

@@ -83,12 +83,12 @@ class SendTest(unittest.TestCase):
                         REX_SESSION="session:wrong", REX_CLIENT="client:wrong",
                         PATH=str(Path(self.rex).parent) + os.pathsep + os.environ.get("PATH", ""))
 
-    def fixture(self, redirect_stdout=False):
+    def fixture(self, redirect_stdout=False, status=""):
         raw = self.work / ("received-" + str(time.monotonic_ns()))
         # Raw, no echo/canonical line limits. Bracketed paste brackets distinguish each
         # event, independently of the controller's ACK receipt or terminal capture.
         code = ("import os,tty; tty.setraw(0); "
-                "os.write(1,b'\\x1b[?2004hREADY'); "
+                "os.write(1," + repr(("\x1b[?2004h" + status + "READY").encode()) + "); "
                 + ("os.dup2(os.open('/dev/null',os.O_WRONLY),1); " if redirect_stdout else "")
                 + f"f=open({str(raw)!r},'ab',buffering=0)\n"
                 "while True:\n b=os.read(0,65536)\n if not b: break\n f.write(b)\n")
@@ -146,6 +146,16 @@ class SendTest(unittest.TestCase):
     def prompt_text(self, target):
         return self.rpc("com.superlogical.terminal.format", {"session_id": target[0], "block_id": target[1],
                         "args": {"format": "text", "max_bytes": 65536}})["content"]
+
+    def test_harness_app_records_keep_managed_send_bookkeeping(self):
+        for app, identifier in (("codex", "teerex/tint"), ("claude", "teerex"), ("teerex-agent", "legacy")):
+            with self.subTest(app=app):
+                target, raw = self.fixture(status="\x1b]7501;state=idle:id=" + identifier + ":app=" + app + "\x07")
+                result, packet = self.send(target)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(packet["outcome"], "events_acknowledged")
+                self.assertEqual(packet["status_record"], "written" if identifier == "teerex/tint" else "agent_turn_start_recorded")
+                self.received(raw, self.pasted(b"hello"))
 
     def test_status_failure_does_not_fail_or_repeat_delivered_message(self):
         target, raw = self.fixture()
