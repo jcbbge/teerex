@@ -1981,7 +1981,7 @@ def supervise_child(o):
         signal.signal(signal.SIGTERM, forward)
         signal.signal(signal.SIGHUP, forward)
         signal.signal(signal.SIGINT, forward)
-        last_cost_check = 0
+        last_cost_check = time.monotonic() - 60
         last_hook = None
         last_status = None
         last_input_ns = 0

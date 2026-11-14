@@ -118,7 +118,11 @@ class CostLiveTests(unittest.TestCase):
         launched, packet = self.launch()
         self.assertEqual(launched.returncode, 0, launched.stdout + launched.stderr)
         launch = packet['launch_id']
-        self.fixture_module.wait_for(lambda: (self.record(launch).get('cost_flag') or {}).get('outcome') == 'acknowledged')
+        try:
+            self.fixture_module.wait_for(lambda: (self.record(launch).get('cost_flag') or {}).get('outcome') == 'acknowledged')
+        except AssertionError:
+            state = self.record(launch)
+            self.fail(str({k: state.get(k) for k in ('cost_flag', 'cost', 'last_hook', 'phase', 'immediate_child_started_at', 'turn_started_at', 'immediate_child_term', 'last_cost_error', 'last_supervisor_loop_error')}))
         before = self.record(launch)['cost_flag']
         p, result = self.run_cli('cost', '--registry', str(self.registry), '--json')
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
