@@ -275,7 +275,80 @@ The SSH test uses two real ephemeral SSH endpoints and a separate compute mount 
 
 The independent real bubblewrap test masks /tmp, /run and /var, denies direct Rex socket and registry access, then permits the scoped ACK, one exact multiline/trailing-newline report and configured Stop hook through only the read-only launch directory. Further cases cover malformed/oversized/duplicate frames, invalid targets/tokens/launch IDs, duplicate/lost response without resend, EOF budget, symlink refusal, expiry/count/INT/TERM teardown, seat append with zero PTY input and original store refusal without paste fallback. Synthetic hooks are not paid-harness certification; isolated environments are not two physical hosts or personal M5/hive validation.
 
-Rivet `jobs/src/relay.ts` explicitly grants its configured command to otherwise read-only workers; `jobs/src/sandbox.ts` currently adds a **shared** configured relay mailbox to writable fence paths. `jobs/sandboxes/bwrap.ts` uses explicit toolchain/cwd mounts and masks /tmp,/run,/var. Source was inspected, not personal service configuration. A migration must replace that shared mount/command with the per-launch grant without broadening any harness/git/native-owner guard. Actual Rivet adapter integration, remote fenced compute transport, macOS parity and authorized relay cutover remain open. **Retain agent-relay.service, its callers and all working guards until that parity is proven.** `run-visible` can later compose literal supervisor argv and scoped env for the same lifetime; no second service or extra run ABI is required here.
+Rivet source inspected on hive on 2026-11-14 now uses the native transport:
+`jobs/src/agent.ts` creates a private per-call channel and mounts it read-only;
+`jobs/src/rex-tab.ts` supplies `run-visible --channel-dir` and the exact report-to
+address, retains delivery receipts with the worker log, and removes the channel
+after verified tab closure. `jobs/src/sandbox.ts` runs `agents fence-probe` before
+the worker. The installed `~/.local/bin/agent-send` selects `agents channel` when
+`AGENT_CHANNEL` is present, refuses other destinations, and generates a fresh
+request ID. These are source observations, not certification of every running
+Rivet worker. Remote fenced compute remains unsupported by managed agents.
+
+### Retiring agent-relay.service (#21)
+
+This is an operator-run cutover procedure. Do not stop a service, remove its
+mailbox, restart Rivet, or change a live worker's fence as part of transport
+verification. Keep any existing transport available until its callers have
+finished or moved to the per-launch channel.
+
+1. Inspect the current installation without printing message bodies or tokens:
+
+   ```sh
+   systemctl --user show agent-relay.service -p LoadState -p ActiveState -p UnitFileState -p FragmentPath
+   rg -l 'agent-relay|\.local/state/agent-relay' "$HOME/rivet/jobs" "$HOME/.local/bin" "$HOME/.config/systemd/user"
+   ```
+
+   Review matching callers privately. Replace mailbox writes with the native
+   channel invocation above. For Rivet's `run-visible` path, supply a fresh
+   private `--channel-dir` and exact `--report-to-session`/`--report-to-block`;
+   mount only that directory read-only and pass `AGENT_CHANNEL` into the fence.
+   Keep Rex socket, registry and other launches inaccessible. The existing
+   `agent-send` wrapper may remain if it selects that handle; it must never
+   fall back to a mailbox after a refused or uncertain channel request.
+
+2. Run the isolated transport checks against the candidate binary on hive:
+
+   ```sh
+   TEEREX_AGENTS_FENCE=1 TEEREX_BIN=/absolute/teerex REX_BIN=/absolute/rex python3 items/agents/test_agents.py AgentsTest.test_real_fence_denies_rex_and_registry_but_scoped_ack_send_stop_work -v
+   TEEREX_AGENTS_FENCE=1 TEEREX_BIN=/absolute/teerex REX_BIN=/absolute/rex python3 items/run/test_visible.py VisibleTest.test_channel_through_real_read_only_bubblewrap_bind -v
+   ```
+
+   Then exercise the actual configured Rivet adapter with a disposable starter
+   and worker, not a real work item. Require the exact message at that starter,
+   its native `send_result` receipt, denied direct Rex/registry access, and
+   removal of the channel socket/handle and worker tab after exit. Reconcile
+   any pending legacy mailbox messages before retiring their consumer; never
+   replay an uncertain message. Save private evidence outside the fence.
+
+3. After the operator authorizes retirement and no old worker depends on it,
+   record the `FragmentPath` above, then run:
+
+   ```sh
+   systemctl --user disable --now agent-relay.service
+   systemctl --user show agent-relay.service -p LoadState -p ActiveState -p UnitFileState -p FragmentPath
+   ```
+
+   Require inactive and disabled. Archive the exact unit file returned by
+   `FragmentPath`, its inspected drop-ins, old relay executable and drained
+   mailbox outside systemd's unit search path; remove only those reviewed
+   legacy files after evidence retention is settled. Run
+   `systemctl --user daemon-reload`, then require `LoadState=not-found` and
+   `ActiveState=inactive`. If the initial inspection already says not-found,
+   skip disable/removal; it establishes no loaded unit, not caller migration.
+   Repeat the disposable adapter delivery after retirement. Rollback, if
+   needed, restores the archived files and previous caller configuration and
+   explicitly re-enables the former unit; never add a retry/fallback daemon.
+
+Physical checks on 2026-11-14: both hive fence tests above passed on API13,
+including native receipt destination/paste/Enter assertions and exact receiver
+bytes. On M5, `AgentsTest.test_channel_fixed_grants_framing_lease_and_no_retry`
+and `VisibleTest.test_optional_channel_live_receipts_and_refusals` passed using
+the hive cross-built macOS binary. Rivet's inspected adapters are `bwrap` and
+`none`; Linux bubblewrap does not apply on M5, and `none` is not a fence proof.
+The tests use disposable Rex servers and clean their roots/processes; the M5
+binary/test copy was removed. Read-only hive service inspection returned
+not-found/inactive. No relay service or mailbox was changed by these checks.
 
 ## Verification and migration gates
 
