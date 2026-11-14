@@ -25,11 +25,6 @@ def load(name, path):
 
 status = load('teerex_seat_status', 'items/boards/seat_status.py')
 scratch = load('scratch', 'items/scratch/scratch.py')
-agents = types.ModuleType('stop_test_agents')
-exec(compile((ROOT / 'src/scoped_channel.py').read_text(), 'scoped_channel.py', 'exec'), agents.__dict__)
-agents.SCRATCH_REMINDER = scratch.SCRATCH_REMINDER
-exec(compile((ROOT / 'items/agents/agents.py').read_text(), 'agents.py', 'exec'), agents.__dict__)
-
 class StopStatusTest(unittest.TestCase):
     def setUp(self):
         self.tmp = resources.temporary_directory()
@@ -76,18 +71,6 @@ class StopStatusTest(unittest.TestCase):
             scratch.claude_stop_status({'hook_event_name': 'Stop'}, {'action': 'allow'}, '/tmp/scratch')
         stopped.assert_called_once_with('Review pending')
 
-    def test_managed_hook_only_allowed_claude_stop_writes(self):
-        options = types.SimpleNamespace(payload=json.dumps(dict(hook_event_name='Stop')), event_file=None,
-                                        harness='claude', command_json=json.dumps(['/usr/bin/python3', '-c', 'pass']))
-        for action in ('allow', 'block'):
-            result = types.SimpleNamespace(returncode=0, stdout=json.dumps(dict(scratchpad_check=dict(action=action))).encode())
-            with patch.object(agents.subprocess, 'run', return_value=result), patch.object(agents, 'claude_stop_status', create=True) as stopped, patch('builtins.print'):
-                agents.hook(options)
-            self.assertEqual(stopped.call_count, int(action == 'allow'))
-        options.harness = 'pi'
-        with patch.object(agents.subprocess, 'run', return_value=result), patch.object(agents, 'claude_stop_status', create=True) as stopped:
-            agents.hook(options)
-        stopped.assert_not_called()
 
     def test_hook_without_tty_uses_pane_process(self):
         with patch.object(status, 'native', return_value=dict(child=dict(pid=123))), patch.object(status, 'write_status', side_effect=['tty_unavailable', 'written']) as write:

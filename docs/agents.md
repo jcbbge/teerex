@@ -2,13 +2,13 @@
 
 This is the guide an agent reads before it touches a terminal on Josh's machines. It covers what to run, in what order, and what each result means. Exact flags are in `teerex COMMAND --help`. Each item's README has the full contract.
 
-teerex is the only way agents use Rex. Every pane, read, wait, run, launch, message and board goes through it. Where teerex cannot do something yet, file a `jcbbge/teerex` issue and say so in your report. Do not build plumbing around the gap.
+teerex is the only way agents use Rex. Every pane, read, wait, run, message and board goes through it. Where teerex cannot do something yet, file a `jcbbge/teerex` issue and say so in your report. Do not build plumbing around the gap.
 
 ## Addresses
 
 - A pane is a Rex **block**. You address it by session and block: `session:UUID` and `block:UUID`.
 - Your own pane is in `REX_SESSION`/`REX_BLOCK` (over ssh: `LC_REX_SESSION`/`LC_REX_BLOCK`).
-- **The socket:** `observe`, `watch`, `run-visible`, `send`, `spawn`, `doctor` and `run` fill in `--socket` for you, from `REX_SERVER` or else the personal server, so you can leave it out, even where `--help` still lists it as required. For other verbs (`surfaces`, `jobs`, `agents`), pass `--socket /run/user/$UID/rex/server.sock` on hive, or `~/Library/Application Support/rex/server.sock` on a Mac. `REX_SERVER` is often empty inside agent panes.
+- **The socket:** `observe`, `watch`, `run-visible`, `send`, `spawn`, `doctor` and `run` fill in `--socket` for you, from `REX_SERVER` or else the personal server, so you can leave it out, even where `--help` still lists it as required. For other verbs (`surfaces`, `jobs`), pass `--socket /run/user/$UID/rex/server.sock` on hive, or `~/Library/Application Support/rex/server.sock` on a Mac. `REX_SERVER` is often empty inside agent panes.
 - **Labels and short ids work.** A command that needs a canonical id gets one from `teerex surfaces resolve`:
 
 ```sh
@@ -42,7 +42,7 @@ The Claude Stop hook blocks the first stale scratchpad stop and asks you to
 update Now/To-do/Done; a second stop records the stale exception. Codex notify
 runs after the turn and sends a reminder instead of vetoing it. Managed Pi
 continues settlement once. See the [scratch contract](../items/scratch/README.md)
-and [harness enforcement](../items/agents/README.md#scratchpad-enforcement-at-turn-end).
+and the harness hooks supplied by rexconfig.
 
 ## Find the seat
 
@@ -85,11 +85,6 @@ teerex run-visible --session "$SES" --cwd "$PWD" --env-file env.json --stdin-fil
 - teerex itself exits 1 when your command fails. Your command's own exit code is in the result at `exit_report.exit_code`; read that, not teerex's exit status.
 - Long or unbounded work: use `--no-deadline`.
 - Track it as a job: add `--registry … --owner … --purpose …`.
-- Let a sandboxed child report back:
-  - add `--channel-dir DIR` (you create it in advance, mode 0700) with `--report-to-session`/`--report-to-block`;
-  - the child sends with `teerex agents channel --handle "$AGENT_CHANNEL" --request-id HEX32 --operation send --to report-to --message-file -`;
-  - every request is written to `DIR/receipts.jsonl` as it happens.
-
 ## Panes
 
 ```sh
@@ -107,45 +102,7 @@ Generate a palette jump with `teerex surfaces palette focus --file /absolute/jum
 
 ## Start and talk to agents
 
-- **Start one:** `agent-spawn --brief-file brief.md --owner ME --purpose WHY "$SES" NAME -- claude|codex|pi`. This runs `teerex agents launch` with the profiles in `~/.config/teerex/profiles.json`.
-  - The new agent acknowledges the messaging protocol before it gets the brief.
-  - It is tracked as a job.
-  - When its turn ends, its last message reaches you once, as its stop report (Claude, Codex and pi).
-- **Several at once:** launches run independently; only short registry writes serialize. A busy maintenance pass is skipped and reported without delaying creation.
-- **Send:** `agent-send SES PANE ME "message"`. This is `teerex send`.
-  - The message arrives as `FROM ME: …` followed by Enter.
-  - If someone is typing in that pane, send waits until they stop, then puts their draft back after the message.
-  - A pane Josh has taken control of (`teerex clutch take`) is never typed into: the send waits, then refuses `pane_held_by_human`. This is cooperative: it binds teerex callers only.
-- **Your report** is the last message of your turn. Do not also send it with `agent-send`; use `agent-send` only for a question while you are still working.
-- **Questions for Josh** go to the seat, never to an on-screen prompt in your own pane.
-- **Housekeeping:** dead launch records are archived automatically. To do it by hand: `teerex agents prune --registry DIR [--apply]`.
-
-## Accept reports and reap workers
-
-After reviewing a worker's result, accept its pending DONE or FLAG without
-sending input, or send it back for changes:
-
-```sh
-teerex agents accept --launch-id "$LAUNCH_ID" --note "Reviewed result and proof"
-teerex surfaces close --socket "$S" --session "$SES" --pane "$WORKER_BLOCK"
-teerex surfaces close --socket "$S" --session "$SES" --pane "$SCRATCH_BLOCK"
-```
-
-Use only the exact worker and scratchpad block IDs from your own launch receipt.
-Close a finished worker's tab when its work has landed; verify the close receipts
-say the blocks are absent. Accepting a report clears the pending answer and
-records acceptance; it does not close panes or prove completion.
-
-The launcher retains the agent pane after immediate child exit. Its supervisor
-closes only the scratchpad viewer it created; that viewer also follows the exact
-owner block and closes itself when the owner is absent. Inspect before closing
-a viewer that may already be gone. Pruning archives dead launch records and
-scratchpads; it does not close panes or signal processes. Pane absence alone
-does not prove every descendant or remote process has died.
-
-Reap every test server, session, pane, temporary directory, worktree and process
-you started on either machine when its work lands. Leave other people's
-surfaces alone. Report what you started and the evidence each is gone.
+Agent lifecycle commands belong to rexconfig: use `agent-spawn`, `agent-send`, `scratch`, `agent-hook` and `agent-close`. teerex no longer provides an `agents` command, a launch registry, per-launch hooks, or a sandboxed channel. Use `teerex send` for guarded whole-message delivery and `run-visible` for visible noninteractive commands.
 
 ## Jobs, boards, recovery
 
@@ -191,12 +148,3 @@ teerex doctor --socket "$S"     # rex executable used, client/server mismatch, w
 - It never infers that work is done.
 
 Every result says what is known, and names anything unknown (`unknown`, `uncertain`, `not_assessed`).
-
-Human launches acquire a work starter on the first acknowledged message from a
-registered agent. The sender's pane and registered name must match. Generated
-teerex notices do not count. That first sender is retained across rapid input,
-and becomes both starter and report-to; scratch steps, flags and Stop reports
-then route there. Later messages never change that owner. A different owner
-requires the receiving agent (or operator) to run
-`teerex agents starter --registry REGISTRY --launch-id OWN_LAUNCH --starter-launch-id NEW_STARTER_LAUNCH`.
-This explicit command starts a new work assignment; ordinary messages never transfer ownership.

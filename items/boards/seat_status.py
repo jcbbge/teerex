@@ -350,11 +350,7 @@ def claude_stop_followup(socket, target, waiting):
 def apply(pid, report, context):
     attention = attention_record(context, context.get('attention_words', 0), context.get('attention_seat', False)) if 'attention_words' in context else 'not_requested'
     outcome = write_status(pid, report) if report and pid else 'tty_unavailable' if report else 'not_requested'
-    input_outcome = None
     try:
-        if context.get('agent_input'):
-            input_outcome = agent_input_write(context['socket'], context['session'], context['block'], context['input_at_ns'], reminder=context.get('sender') == 'teerex-scratchpad',
-                sender=dict(name=context.get('sender'), **(context.get('origin') or {})))
         if outcome == 'written' and context.get('state') == 'blocked' and str(context.get('id', '')).startswith('ask/'):
             register(context)
         if outcome == 'written' and context.get('state') == 'clear' and str(context.get('id', '')).startswith('ask/'):
@@ -370,13 +366,10 @@ def apply(pid, report, context):
         return 'written_tracking_unavailable' if outcome == 'written' else 'tracking_unavailable'
     if attention == 'unavailable':
         return 'attention_unavailable'
-    return input_outcome if input_outcome and outcome == 'not_requested' else outcome
+    return outcome
 
 
 if __name__ == '__main__':
     context = json.loads(sys.argv[3])
     context['origin'] = origin()
-    context['agent_input'] = len(sys.argv) > 4 and sys.argv[4] == '1'
-    if context['agent_input']:
-        context['input_at_ns'] = int(sys.argv[5])
     print(json.dumps(apply(int(sys.argv[1]), sys.argv[2], context)))

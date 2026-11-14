@@ -45,7 +45,7 @@ Managed and human launches initialize the file and export `AGENT_SCRATCHPAD` and
 
 Generate the native palette fragment with `teerex scratch palette --file ABS --socket ABS [--teerex ABS] [--rex ABS]`. `--rex ABS` pins the surface controller's Rex executable, including when the Rex server's PATH has no `rex`; without it the controller retains its normal PATH lookup. It adds **Show scratchpad**, opening a watch tiled beside the invoked pane. The output file must be new. Register it through the existing `teerex surfaces palette install` plan/apply workflow; generation does not change personal configuration.
 
-Verification: `TEEREX_BIN=ABS python3 items/scratch/test_scratch.py -v`; launch/display/archive coverage is in `items/agents/test_agents.py` against disposable API13 servers. The fleet board reads the same Markdown independently.
+Verification: `TEEREX_BIN=ABS python3 items/scratch/test_scratch.py -v`. The fleet board reads the same Markdown independently.
 
 
 ## Turn-end enforcement and the seat

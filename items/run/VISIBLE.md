@@ -4,7 +4,7 @@
 
 ## Who
 
-Operators and automation such as Rivet that need **one visible, noninteractive command** plus raw output and actual immediate-child exit evidence. This is not an interactive agent harness, general remote executor, hidden/headless worker, mailbox relay, daemon, sandbox or permission system. Managed protocol/ACK/brief delivery and callbacks remain owned by `agents`; the optional send-only channel below shares its transport without enrolling the command as a managed agent.
+Operators and automation such as Rivet that need **one visible, noninteractive command** plus raw output and actual immediate-child exit evidence. This is not an interactive agent harness, general remote executor, hidden/headless worker, mailbox relay, daemon, sandbox or permission system. Agent lifecycle and messaging belong to rexconfig.
 
 ## What
 
@@ -56,23 +56,6 @@ Supply `--registry ABS --owner LABEL --purpose TEXT` together, or omit all three
 
 On exit, deadline or cancellation, the controller lists the selected registry to obtain the current generation, then makes at most one `jobs forget` attempt under the original owner label. Adoption/owner changes, contention or transport failure remain visible rather than authorizing an overwrite. An opted-in receipt adds `jobs` with track outcome, generation, forget outcome and bounded operation receipts. Failed forget retains the program's actual exit evidence and success calculation; inspect the registry and reconcile it explicitly. No registry format is duplicated. Native jobs calls allow20s for their10s registry queue,5s live query and cleanup margin; successful tracking after the original startup gate expires still refuses argv and forgets the registration. No jobs field or registry call is added when these flags are absent.
 
-### Optional send-only channel
-
-Supply `--channel-dir ABS --report-to-session session:UUID --report-to-block block:UUID` together, or omit all three. Starter aliases this same fixed report-to address. There is no ACK gate, typed brief, arbitrary destination, or `ack`/`stop` grant. Before constructing its fence, the caller creates an **empty, owned, exactly0700, nonsymlink per-launch directory**. Validation refuses before pane creation/argv. No random subdirectory is created. Use a trusted parent: the handle is bearer authority, not authentication against other same-account code.
-
-The foreground controller creates `<dir>/channel.sock`, `<dir>/handle.json` and `<dir>/receipts.jsonl`, all0600. It injects `AGENT_CHANNEL=<dir>/handle.json` and `LC_AGENT_CHANNEL=<dir>/handle.json`, overriding those two exact-env keys only when opted in. Mount **only** `--ro-bind <dir> <dir>` into bubblewrap; no Rex socket or registry is needed inside. Do not expose this directory through another writable cwd/parent bind. The fenced program uses the existing CLI:
-
-```sh
-teerex agents channel --handle "$AGENT_CHANNEL" --request-id HEX32_UNIQUE_PER_ATTEMPT \
-  --operation send --to report-to --message-file -
-```
-
-Supply UTF-8 message bytes on stdin, then EOF. `--to starter` reaches the same fixed address. There are no new client flags or file-drop transport. Framing, request validation, token checks and the service loop are shared with managed agents. Limits: one JSON line/connection,49152-byte frame,32768-byte body,20 admissions/second,500ms frame-read budget, and a24-hour capability lease (even with unlimited execution). Admitted requests can finish their bounded send after expiry. A unique32-lowercase-hex ID is consumed before the single send attempt; duplicates refuse. Lost receipts never authorize replay. Native send uses its draft guard; an in-flight send can delay result collection within its120s transport budget, while the helper independently enforces execution deadlines. INT/TERM interrupts that transport and preserves uncertain delivery without retry.
-
-The parent exclusively creates the no-follow append-only receipt file before argv. It writes/fsyncs **one complete JSON line in one write before the next admission**. Live lines contain `schema_version:1`, `at_unix_ms`, `request_id`, `operation`, `to` (`report_to` or `starter`), `body`, `outcome` and nullable `failure_reason`; invalid/unavailable fields are null. `delivered` means native send returned `events_acknowledged`; other native outcomes keep their names. Protocol refusals are `refused`; lost delivery evidence is `uncertain`. No token field is logged. The receipts deliberately retain message bodies: keep them private and delete them explicitly when consumed.
-
-At most256 lines:255 ordinary admissions plus a reserved final `channel_request_limit` refusal. Malformed/authentication-failed requests also consume admissions. The channel closes on child exit/cancellation or lease/cap exhaustion. Final `channel` metadata summarizes these same lines with `count`, outcome totals, request IDs/operations/outcomes and `receipts_path`. Channel refusal/failure does not rewrite the command's exit evidence. Teardown removes **only socket and handle**; the caller's directory, receipts and other caller files survive. Crash/SIGKILL cannot promise teardown. Omit the flags to retain the original environment/receipt shape and create no channel files.
-
 ### Budgets and raw output
 
 - `--max-bytes`: combined raw **first-arrival prefix** retention across stdout/stderr, default4096, range1..65536. Per-stream ordering is preserved; cross-stream read order is not original write ordering. UTF-8 is decoded only after collection; an invalid/split retained prefix is base64, preserving exact bytes including binary/NUL/trailing newlines.
@@ -89,7 +72,7 @@ Without `--output-dir`, a new private temporary launch directory holds only boun
 
 `--output-dir NEW_ABSOLUTE_DIRECTORY` instead creates a0700 directory and **retains it after return**. `stdout.full` and `stderr.full` are separate raw bytes, capped at64MiB combined. Exceeding that cap requests scoped cancellation, returns `full_output_limit_exceeded` and marks full files incomplete, rather than filling disk or claiming a truncated file is full. Prefix retention remains separately bounded. Full files are closed before result publication, and callers can read them **after** the CLI returns. No background deletion timer exists: the caller deletes this directory only after consuming output and reconciling any uncertain execution/owned pane. The OS may remove `/tmp` later; choose a persistent caller-owned parent when durability is needed.
 
-Environment values are never copied into a regular file under the launch directory. The controller hands the exact map to the visible supervisor through an owned0600 FIFO inside the private0700 launch directory, bounded by the startup budget. It is consumed and removed before a detached launch receipt returns; failure or cancellation refuses the handoff. Both `request.json` and the receipt retain only `environment.keys` (sorted), `environment.sha256` and `environment.transport:private_fifo`. The digest is SHA-256 of UTF-8 `json.dumps(env, sort_keys=True, separators=(",", ":"), ensure_ascii=True)` with no trailing newline, including injected channel keys when requested, before actual `REX_SESSION`/`REX_BLOCK` metadata is added. The caller still owns its original `--env-file` and its deletion.
+Environment values are never copied into a regular file under the launch directory. The controller hands the exact map to the visible supervisor through an owned0600 FIFO inside the private0700 launch directory, bounded by the startup budget. It is consumed and removed before a detached launch receipt returns; failure or cancellation refuses the handoff. Both `request.json` and the receipt retain only `environment.keys` (sorted), `environment.sha256` and `environment.transport:private_fifo`. The digest is SHA-256 of UTF-8 `json.dumps(env, sort_keys=True, separators=(",", ":"), ensure_ascii=True)` with no trailing newline, before actual `REX_SESSION`/`REX_BLOCK` metadata is added. The caller still owns its original `--env-file` and its deletion.
 
 **Retained directories still contain exact argv in `request.json`, raw stdin in `stdin`, and captured stdout/stderr.** Values supplied independently through argv/stdin, or printed by the child, remain in those artifacts and may contain credentials or private output. Environment handoff does not redact command output or scrub independently supplied argv/stdin. Files are0600; directories0700, subject to a stricter umask. Use a trusted local filesystem/parent, not an untrusted or cross-host shared directory. This is not encrypted storage or isolation from arbitrary same-account processes; receipts/paths/diagnostics also need privacy review. Do not commit them or remove an uncertain directory while its helper may still need it.
 
@@ -118,23 +101,23 @@ The standalone acceptance executable dispatches only `run-visible`, `run` and pu
 
 ```sh
 zig build-exe --dep rex_run --dep rex_surfaces -Mroot=items/run/test_visible_cli.zig \
-  --dep supervised_child --dep scoped_channel -Mrex_run=items/run/main.zig \
+  --dep supervised_child -Mrex_run=items/run/main.zig \
   --dep supervised_child -Mrex_surfaces=items/surfaces/main.zig \
-  -Msupervised_child=src/child.zig -Mscoped_channel=src/scoped_channel.zig -lc -O ReleaseSmall -femit-bin=/absolute/teerex-visible
-# Full optional jobs/channel acceptance needs the combined CLI, not this core-only entry:
+  -Msupervised_child=src/child.zig -lc -O ReleaseSmall -femit-bin=/absolute/teerex-visible
+# Full optional jobs acceptance needs the combined CLI, not this core-only entry:
 zig build -Doptimize=ReleaseSmall
 TEEREX_BIN="$PWD/zig-out/bin/teerex" REX_BIN=/absolute/test-rex TEEREX_AGENTS_FENCE=1 python3 items/run/test_visible.py -v
 ```
 
-Integrator adds root `run-visible` dispatch to `rex_run.runVisible`, root help and named-host socket injection immediately after this verb; run and agents import the shared `scoped_channel` embedded Python module; no host/config schema is added. Root routing/combined CI/release and Rivet fleet cutover remain separate delivery steps. Do not remove `rex-tab.ts`, restart Rex, touch personal M5/hive, or delete existing relay/guards based on these disposable tests.
+Integrator adds root `run-visible` dispatch to `rex_run.runVisible`, root help and named-host socket injection immediately after this verb; no host/config schema is added. Root routing/combined CI/release and Rivet fleet cutover remain separate delivery steps. Do not remove `rex-tab.ts`, restart Rex, touch personal M5/hive, or delete existing relay/guards based on these disposable tests.
 
 ### Detached visible execution
 
-`--detach` keeps supervision in the **visible pane's own program** and returns after verified placement, same-host identity, optional jobs registration and the supervisor handoff. The launch receipt has `kind:run_visible_launch`, `outcome:launched`, a32-hex `launch_id`, `session_id`, `created.block_id`, `supervisor_pid` and an absolute `receipt_path`. Its success describes launch, not command completion. A missing/lost launch ACK never authorizes retry. Other argv/cwd/env/stdin, deadline, retention, channel and jobs flags keep their contracts. The default execution deadline remains10000ms; LONG callers explicitly choose `--no-deadline`.
+`--detach` keeps supervision in the **visible pane's own program** and returns after verified placement, same-host identity, optional jobs registration and the supervisor handoff. The launch receipt has `kind:run_visible_launch`, `outcome:launched`, a32-hex `launch_id`, `session_id`, `created.block_id`, `supervisor_pid` and an absolute `receipt_path`. Its success describes launch, not command completion. A missing/lost launch ACK never authorizes retry. Other argv/cwd/env/stdin, deadline, retention and jobs flags keep their contracts. The default execution deadline remains10000ms; LONG callers explicitly choose `--no-deadline`.
 
 Before self-close, the pane atomically writes exit/output evidence to the named receipt with `receipt_state:cleanup_pending_or_unknown`, `cleanup.block_absence:unknown` and `success:false`. Rex terminates the pane program when it closes itself. One already bounded native `surfaces close --publish-receipt-file ABS` invocation therefore publishes the verified absence afterward, marking `receipt_state:final` and recomputing final success. It has a5000ms RPC budget plus a hard2000ms publication/cleanup allowance, and never retries. A killed/lost publisher loses only absence evidence: the prepared command exit/output survives and stays unknown. This short-lived close is not a long-running supervisor.
 
-The pane program owns the actual command, capture thread and optional scoped channel after handoff; no separate long-running supervisor/daemon is started. The launch client can exit or disappear. After actual child exit, the supervisor closes the channel and forgets its tracked job. `jobs inspect` exposes `entry.receipt_path` while registered. The final private `run_visible_result` preserves exit/signal, separate output summaries, jobs/channel results and cleanup evidence. `--keep-open` retains normally exited success/failure panes; deadline/cancellation still requests scoped cleanup. Full-file capture still requires `--output-dir`.
+The pane program owns the actual command, capture thread after handoff; no separate long-running supervisor/daemon is started. The launch client can exit or disappear. After actual child exit, the supervisor forgets its tracked job. `jobs inspect` exposes `entry.receipt_path` while registered. The final private `run_visible_result` preserves exit/signal, separate output summaries, jobs results and cleanup evidence. `--keep-open` retains normally exited success/failure panes; deadline/cancellation still requests scoped cleanup. Full-file capture still requires `--output-dir`.
 
 Read the final evidence independently of Rex:
 

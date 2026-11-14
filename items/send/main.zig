@@ -25,7 +25,6 @@ const usage =
     \\Restore polls100ms up to1500ms; unverified/failed restore warns without failing acknowledged send.
     \\Stale locks are never stolen.
     \\JSON reports attempts/acknowledgements, NOT application consumption, atomic delivery, or an input lease.
-    \\Acknowledged managed-agent input records a turn start; its supervisor publishes working in Rex.
     \\Seat-labelled deliveries add best-effort OSC7501 status; replies from the seat clear matching ask cards.
     \\Status uses fd0/fd1/fd2 or controlling tty, including redirected stdout; Python3 required for status only.
     \\--status-id ID --status-state done|blocked|clear --status-message TEXT customize the seat record (ask uses these).
@@ -72,11 +71,9 @@ const Collector = struct {
     paste_acknowledged: bool = false,
     enter_attempted: bool = false,
     enter_acknowledged: bool = false,
-    input_at_ns: i128 = 0,
     status_pid: ?i32 = null,
     seat: bool = false,
     tinted_agent: bool = false,
-    agent: bool = false,
     finished: bool = false,
     reason: ?[]const u8 = null,
     encoded_rpc_bytes: ?usize = null,
@@ -94,7 +91,6 @@ const Collector = struct {
                 self.status_pid = f.status_pid;
                 self.seat = f.seat;
                 self.tinted_agent = f.supervised;
-                self.agent = f.agent;
             } else if (std.mem.eql(u8, f.event, "source")) {
                 if (self.source != null) return error.InvalidSendFrame;
                 self.source = f.source orelse return error.InvalidSendFrame;
@@ -117,9 +113,6 @@ const Collector = struct {
                     self.paste_attempted = true;
                 } else if (std.mem.eql(u8, f.stage orelse "", "enter") and self.paste_acknowledged and !self.enter_attempted) {
                     self.enter_attempted = true;
-                    // The turn cannot start before Enter; stamp it here so a turn that ends
-                    // before the Enter acknowledgement still orders after this input.
-                    self.input_at_ns = std.time.nanoTimestamp();
                 } else return error.InvalidSendFrame;
             } else if (std.mem.eql(u8, f.event, "ack")) {
                 if (std.mem.eql(u8, f.stage orelse "", "paste") and self.paste_attempted and !self.paste_acknowledged) {
@@ -446,11 +439,10 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
     if (collector.draft_wait_started) |start| collector.draft.waited_ms = timer.read() / std.time.ns_per_ms - start;
     const signal = supervised.requestedSignal();
     if (signal != 0) outcome = "cancel_requested";
-    // Keep acknowledged input events ordered with delivery, including concurrent senders.
     const delivered = std.mem.eql(u8, outcome, "events_acknowledged") and failure == null;
     const words = countWords(message);
     const attention_context = try std.fmt.allocPrint(allocator, "{s},\"attention_words\":{d},\"attention_seat\":{s}}}", .{ status_context[0 .. status_context.len - 1], words, if (collector.seat) "true" else "false" });
-    const status_outcome = if (delivered) statusReport(allocator, &env, collector.status_pid, sender, message, status_id, state, status_message, collector.seat, collector.tinted_agent, collector.agent, collector.input_at_ns, attention_context) catch "failed" else "not_requested";
+    const status_outcome = if (delivered) statusReport(allocator, &env, collector.status_pid, sender, message, status_id, state, status_message, collector.seat, collector.tinted_agent, attention_context) catch "failed" else "not_requested";
     // Keep the lock through subprocess cleanup. Never remove another sender's lock.
     if (locked) {
         std.fs.cwd().deleteDir(lock_path) catch |err| {
@@ -526,7 +518,7 @@ fn b64(allocator: std.mem.Allocator, bytes: []const u8) ![]const u8 {
     return std.base64.standard.Encoder.encode(out, bytes);
 }
 
-fn statusReport(allocator: std.mem.Allocator, env: *std.process.EnvMap, pid: ?i32, sender: []const u8, message: []const u8, id: ?[]const u8, state: []const u8, detail: ?[]const u8, seat: bool, reset_tint: bool, agent: bool, input_at_ns: i128, context: []const u8) ![]const u8 {
+fn statusReport(allocator: std.mem.Allocator, env: *std.process.EnvMap, pid: ?i32, sender: []const u8, message: []const u8, id: ?[]const u8, state: []const u8, detail: ?[]const u8, seat: bool, reset_tint: bool, context: []const u8) ![]const u8 {
     const child = pid orelse 0;
     // Encode the sender in the record key too: colon/equal/non-ASCII cannot alter OSC fields.
     const raw_key = id orelse try std.fmt.allocPrint(allocator, "msg/{s}", .{sender});
@@ -552,7 +544,7 @@ fn statusReport(allocator: std.mem.Allocator, env: *std.process.EnvMap, pid: ?i3
     }
     const report = try std.fmt.allocPrint(allocator, "\x1b]7501;state={s}:id={s}:app=teerex{s}:title={s}:msg={s}\x1b\\", .{ state, key.items, if (std.mem.eql(u8, state, "blocked")) ":kind=question" else "", try b64(allocator, try std.fmt.allocPrint(allocator, "FROM {s}", .{sender})), try b64(allocator, clean.items) });
     const bytes = try std.fmt.allocPrint(allocator, "{s}{s}", .{ if (reset_tint) "\x1b]111\x1b\\" else "", if (seat) report else "" });
-    const argv = [_][]const u8{ "python3", "-I", "-c", @import("rex_agents").input_events_source ++ "\n" ++ @import("rex_boards").seat_status_source, try std.fmt.allocPrint(allocator, "{d}", .{child}), bytes, context, if (agent) "1" else "0", try std.fmt.allocPrint(allocator, "{d}", .{input_at_ns}) };
+    const argv = [_][]const u8{ "python3", "-I", "-c", @import("rex_boards").seat_status_source, try std.fmt.allocPrint(allocator, "{d}", .{child}), bytes, context };
     var collector = StatusCollector{ .allocator = allocator };
     const result = try supervised.collect(allocator, &argv, env, 2500, &collector);
     if (result.deadline_exceeded) return "deadline_exceeded";

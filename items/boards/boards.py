@@ -608,14 +608,6 @@ def mutate(a):
             else:
                 check(seat["owner"] == a.owner, "seat_already_registered_by_another_owner")
             if inherited:
-                check(a.teerex and os.path.isabs(a.teerex), "seat_inheritance_requires_teerex")
-                registry = a.agents_registry or os.path.expanduser("~/.local/state/teerex-agents")
-                if os.path.exists(registry):
-                    args = [a.teerex, "agents", "rebind_seat", "--registry", registry, "--new-target", json.dumps(t)]
-                    for previous in inherited:
-                        args += ["--old-target", json.dumps(previous["target"])]
-                    rebound = bounded_command(args)
-                    check(rebound.get("outcome") == "rebound", "seat_inheritance_rebind_failed")
                 for previous in inherited:
                     seat["records"].extend(previous["records"])
                     previous["records"] = []

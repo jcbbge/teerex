@@ -21,9 +21,7 @@ const usage =
     \\  waiting list|next|back|put-away [--hosts hive,m5] [--focus] Cross-host attention navigation
     \\  docs [COMMAND] | try ID                      Floating command guides and safe examples
     \\  scratch init|now|todo|done|show|path|watch|hook|hook-settings  Per-pane working scratchpad
-    \\  agents launch|profiles|shell|ack|deliver|inspect|stop|present|timeline|prune
-    \\         exec|exited|channel|fence-probe       Compute callbacks / local delivery / fence checks
-    \\  spawn --profile NAME --profiles ABS           Managed protocol-ACK-before-brief launch
+    \\  spawn                                        Open a plain visible terminal
     \\  records init|new|park|add|attach|set|close|show|resume|navigate|list|lint|export|forget|forget-scratchpad  Private evidence and reasoning
     \\  recovery snapshot|inspect|restore|update|reconcile      Private snapshots and reviewed restoration
     \\  snapshot|restore|update                       Recovery aliases; update is manual handoff
@@ -45,11 +43,11 @@ const usage =
     \\Where: configured command host; paths belong there, never silently uploaded.
     \\Why: report actual activity/results and unknowns, not infer readiness or completion.
     \\How: explicit config/host or socket/full IDs; no retries, fallback or autostart.
-    \\Python3.9+ is required for targets, boards, agents, recovery, records, scratch, fleet, cartridges, replay, mcp and palette install.
+    \\Python3.9+ is required for targets, boards, recovery, records, scratch, fleet, cartridges, replay, mcp and palette install.
     \\Guarded Rex transports require Python3.9+ for seat and creator authority. SSH trust/key are explicit.
     \\Native call history adds no runtime dependency; missing end records stay unknown.
     \\Personal install/restart/close/config actions need their own authorization.
-    \\Guides: docs/agents.md and items/{surfaces,boards,agents,recovery,records}/README.md.
+    \\Guides: docs/agents.md and items/{surfaces,boards,recovery,records}/README.md.
     \\
 ;
 
@@ -313,24 +311,14 @@ fn run(allocator: std.mem.Allocator) !void {
         return std.process.execv(allocator, forwarded.items);
     }
     if (std.mem.eql(u8, command, "scratch")) finish(allocator, try @import("rex_scratch").run(allocator, rest));
-    if (std.mem.eql(u8, command, "agents")) finish(allocator, try @import("rex_agents").run(allocator, rest));
     if (std.mem.eql(u8, command, "spawn")) {
-        var managed = false;
-        for (rest) |arg| {
-            if (std.mem.eql(u8, arg, "--")) break;
-            if (std.mem.eql(u8, arg, "--profile")) managed = true;
-        }
-        if (managed) {
-            var forwarded: std.ArrayList([]const u8) = .empty;
-            try forwarded.append(allocator, "launch");
-            for (rest) |arg| try forwarded.append(allocator, if (std.mem.eql(u8, arg, "--profiles")) "--config" else arg);
-            finish(allocator, try @import("rex_agents").run(allocator, forwarded.items));
-        }
         finish(allocator, try @import("rex_spawn").run(allocator, rest));
     }
     if (std.mem.eql(u8, command, "maneuver-check")) finish(allocator, try @import("rex_maneuvers").run(allocator, rest, @import("rex_observe")));
     if (std.mem.eql(u8, command, "filter")) finish(allocator, try @import("rex_filter").run(allocator, rest, @import("rex_observe")));
-    finish(allocator, try @import("rex_observe").runObservations(allocator, args));
+    if (eq(command, "observe") or eq(command, "compare") or eq(command, "watch")) finish(allocator, try @import("rex_observe").runObservations(allocator, args));
+    std.debug.print("teerex: unknown command {s}; see teerex --help\n", .{command});
+    finish(allocator, 2);
 }
 
 fn eq(a: []const u8, b: []const u8) bool {
@@ -379,7 +367,6 @@ fn hasOption(args: []const []const u8, flag: []const u8) bool {
 fn takesSocket(args: []const []const u8) bool {
     if (args.len == 0 or hasOption(args, "--help")) return false;
     const command = args[0];
-    if (eq(command, "agents")) return false;
     if (eq(command, "jobs") and args.len > 1 and (eq(args[1], "doctor") or eq(args[1], "list"))) return false;
     if (eq(command, "doctor")) return args.len > 1 and (hasOption(args, "--baseline") or hasOption(args, "--timeout-ms"));
     if (eq(command, "adapters")) return args.len > 2 and (eq(args[1], "generate") or (eq(args[1], "call") and hasOption(args, "--adapter") and hasOption(args, "--policy") and hasOption(args, "--tool") and hasOption(args, "--arguments")));

@@ -333,14 +333,14 @@ class SendTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
         self.assertEqual(snapshot()['messages'], 8, 'custom registered ask counted once')
 
-    def test_harness_app_records_keep_managed_send_bookkeeping(self):
+    def test_harness_app_records_preserve_tint_reset_without_agent_events(self):
         for app, identifier in (("codex", "teerex/tint"), ("claude", "teerex"), ("teerex-agent", "legacy")):
             with self.subTest(app=app):
                 target, raw = self.fixture(status="\x1b]7501;state=idle:id=" + identifier + ":app=" + app + "\x07")
                 result, packet = self.send(target)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertEqual(packet["outcome"], "events_acknowledged")
-                self.assertEqual(packet["status_record"], "written" if identifier == "teerex/tint" else "agent_turn_start_recorded")
+                self.assertEqual(packet["status_record"], "written" if identifier == "teerex/tint" else "not_requested")
                 self.received(raw, self.pasted(b"hello"))
 
     def test_status_failure_does_not_fail_or_repeat_delivered_message(self):

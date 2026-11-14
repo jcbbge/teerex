@@ -22,7 +22,7 @@ const usage =
 pub fn runVisible(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
     const self = try @import("rex_boards").stableSelfPath(allocator);
     var argv: std.ArrayList([]const u8) = .empty;
-    try argv.appendSlice(allocator, &.{ "python3", "-I", "-c", try @import("rex_boards").call_log.python(allocator, @import("scoped_channel").source ++ "\n" ++ @embedFile("visible.py")), self, @import("scoped_channel").source ++ "\n" ++ @embedFile("visible.py") });
+    try argv.appendSlice(allocator, &.{ "python3", "-I", "-c", try @import("rex_boards").call_log.python(allocator, @embedFile("visible.py")), self, @embedFile("visible.py") });
     try argv.appendSlice(allocator, args);
     return std.process.execv(allocator, argv.items);
 }

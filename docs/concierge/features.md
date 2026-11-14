@@ -2,7 +2,7 @@
 
 **Use verified v0.1.0-alpha.5 for current installation.** Start with [setup](setup.md) for inspect-first installation or upgrade, checksums, retained rollback and the non-restarting read-only smoke. The [alpha.5 release and setup handoff](../releases/v0.1.0-alpha.5.md#quick-changelog-and-current-setup-handoff) and [support matrix](setup.md#supported-platforms-and-api-boundaries) define current delivery. These source-documentation corrections do not replace the README/onboarding already frozen in published archives.
 
-**Separate unreleased source:** [`run-visible`](../../items/run/VISIBLE.md) has a complete Who/What/When/Where/Why/How contract for noninteractive visible argv/cwd/env/stdin, raw output, actual exit/signal and owned-pane lifetime on Mac/Linux API13. It preserves section5's Mac-local legacy `run`, is absent from published alpha.5, and requires the [explicit source-only build route](setup.md#source-only-follow-ons-are-not-an-alpha5-upgrade). The [Rivet opt-in patch and remaining cutover gates](../../items/run/MIGRATION.md) do not authorize applying it or deleting its fallback/guards. Further source adds [explicit unfenced compute callbacks and independent local scoped delivery](../../items/agents/README.md#source-only-compute-routing-and-scoped-delivery-issues14-and21) (#14/#21) and [nested selector routing](../alpha5.md#leaf-aware-named-host-routing-issue16) (#16). Remote compute plus scoped channel refuses before creation; Linux SSH/fence evidence is not Mac fence or physical-host certification. Real Rivet/paid-harness integration and relay cutover remain gated, with wrappers and guards retained. None is in frozen alpha.5.
+**Separate unreleased source:** [`run-visible`](../../items/run/VISIBLE.md) has a complete Who/What/When/Where/Why/How contract for noninteractive visible argv/cwd/env/stdin, raw output, actual exit/signal and owned-pane lifetime on Mac/Linux API13. It preserves section5's Mac-local legacy `run`, is absent from published alpha.5, and requires the [explicit source-only build route](setup.md#source-only-follow-ons-are-not-an-alpha5-upgrade). The [Rivet opt-in patch and remaining cutover gates](../../items/run/MIGRATION.md) do not authorize applying it or deleting its fallback/guards. Further source adds [explicit unfenced compute callbacks and independent local scoped delivery](features.md#15-agent-lifecycle) (#14/#21) and [nested selector routing](../alpha5.md#leaf-aware-named-host-routing-issue16) (#16). Remote compute plus scoped channel refuses before creation; Linux SSH/fence evidence is not Mac fence or physical-host certification. Real Rivet/paid-harness integration and relay cutover remain gated, with wrappers and guards retained. None is in frozen alpha.5.
 
 Sections 1–11 retain the useful alpha.3-origin recipes, with current support corrections; they are not a recommendation to install alpha.3. The [five alpha.4-origin follow-ons](follow-ons.md) also ship in alpha.5. Sections 12–17 route to the alpha.5 operating-layer guides. The combined CLI has one shared binary lifecycle; the separate [cartridge manager](../cartridges.md) provides ten Mac/seven Linux independently removable experimental payloads, not independent surfaces/boards/agents/recovery packages. Stop invoking a command to end its foreground controller; removing code never undoes input, program side effects, retained private state or worker lifetimes. No automatic capture history, telemetry or background service is installed.
 
@@ -267,22 +267,9 @@ Expect exit0/schema1 complete state receipt, not liveness. `STORE` is the review
 
 Update/rollback/remove: private state and messages survive binary changes; older releases may not read them. Export/review privately before exact generation/reason-confirmed clears. Clearing registration/reporting never closes panes or stops work; preserve working stopgaps until [paired source-cutover gates](../../items/boards/MIGRATION.md) pass.
 
-## 15. Managed agents: profiles, protocol and responsibility
+## 15. Agent lifecycle
 
-- **Who:** the operator/authorized starter for one reviewed profile, target, starter and report-to tuple.
-- **What:** `spawn --profile/--profiles` or `agents launch` creates a visible supervisor, tracks jobs, supplies protocol-only initial prompt argv, waits for exact token/pane ACK, then attempts one brief.
-- **When:** use instead of low-level spawn for managed protocol/responsibility; inspect late/uncertain launches instead of retrying.
-- **Where:** Mac/Linux/API13, Python3.9+, exact command-host-local private registry and paths accessible to the pane host. Actual paid Claude/Codex/pi hooks, generic resume and arbitrary cross-host replies are not certified.
-- **Why:** attachment is not readiness; explicit cooperative ACK avoids a guessed startup delay without claiming authentication or safe input.
-- **How:** inspect reviewed profiles first:
-
-```sh
-"$TEEREX" agents profiles --config "$PROFILES"
-```
-
-`PROFILES` is the absolute private reviewed profile file. Require exit0/full JSON; profile inspection does not launch. [Full launch, ACK/deliver, reports, present and lifecycle recipes](../../items/agents/README.md) specify32 launch records/256KiB files, bounded messages, ACK100–60000ms/default10000, refusal1/usage2/ACK timeout124/cancellation130/143. `brief_submitted` means paste/Enter ACKs, not consumption. Stop hooks report idle/error; immediate-child exit is not whole-tree death. Supervisor loss can leave alerts unknown. Generated shell functions are opt-in and preserve existing functions by skipping, not saved-function call-through.
-
-Update/rollback/remove: code changes do not stop agents, expire tokens or remove jobs/private records. Finish only separately authorized owned work, inspect exact receipts and preserve unresolved state; no automatic pane close or retry. Real harness/guard/caller parity and [agent-core migration](../../items/agents/agent-core-migration.md) remain incomplete.
+Agent launch, hooks and reporting belong to rexconfig. teerex no longer provides `agents` or the managed `spawn --profile` alias.
 
 ## 16. Structural recovery and manual Rex update inventory
 

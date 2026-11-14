@@ -65,25 +65,9 @@ class RefusalNextTest(unittest.TestCase):
                         expected='before sending again')
         self.assertFalse(json.loads(p.stdout)['retry_safe'])
 
-    def test_agents_launch(self):
-        self.refusal('agents', 'launch', '--config', self.root / 'absent.json', '--profile', 'fixture',
-                     expected='Ask your starter')
-        self.refusal('agents', 'launch', expected='teerex agents launch --help')
 
-    def test_agents_ack(self):
-        self.refusal('agents', 'ack', '--registry', self.root / 'agents', '--launch-id', 'a' * 32,
-                     '--token', 'b' * 64, '--session', SESSION, '--block', BLOCK,
-                     expected='Ask your starter')
-        self.refusal('agents', 'ack', expected='teerex agents ack --help')
 
-    def test_agents_stop(self):
-        self.refusal('agents', 'stop', '--registry', self.root / 'agents', '--launch-id', 'a' * 32,
-                     '--event-file', self.root / 'absent.json', expected='Ask your starter')
-        self.refusal('agents', 'stop', expected='teerex agents stop --help')
 
-    def test_agents_prune(self):
-        self.refusal('agents', 'prune', '--registry', 'relative', expected='Use an absolute path')
-        self.refusal('agents', 'prune', expected='teerex agents prune --help')
 
     def test_scratch(self):
         self.refusal('scratch', 'show', expected='teerex scratch init')
@@ -131,13 +115,13 @@ class RefusalNextTest(unittest.TestCase):
         self.refusal('doctor', '--all', '--config', self.root / 'absent.json', expected='teerex doctor --all --help')
 
     def test_named_host_routing_refusal(self):
-        for command in ('send', 'agents', 'scratch', 'surfaces', 'waiting', 'ask', 'board', 'doctor'):
+        for command in ('send', 'scratch', 'surfaces', 'waiting', 'ask', 'board', 'doctor'):
             with self.subTest(command=command):
                 self.refusal('--config', self.root / 'absent.json', '--host', 'fixture', command,
                              expected='Check the selected host and configuration file')
 
     def test_help_and_success_do_not_print_next(self):
-        for command in ('send', 'agents', 'scratch', 'surfaces', 'waiting', 'ask', 'board', 'boards', 'doctor'):
+        for command in ('send', 'scratch', 'surfaces', 'waiting', 'ask', 'board', 'boards', 'doctor'):
             with self.subTest(command=command):
                 p = subprocess.run([BIN, command, '--help'], env=self.env, capture_output=True, text=True, timeout=15)
                 self.assertEqual(p.returncode, 0, p.stdout + p.stderr)

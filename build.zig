@@ -40,8 +40,9 @@ pub fn build(b: *std.Build) void {
     for ([_][]const u8{ "controller", "worker", "installer", "resolver" }, [_][]const u8{ "tools/fleet-install/fleet_install.py", "tools/fleet-install/worker.py", "tools/install/teerex-install", "src/targets.py" }) |name, path| {
         const source = b.build_root.handle.readFileAlloc(b.allocator, path, 1024 * 1024) catch @panic("fleet support source unavailable");
         fleet_sources.addOption([]const u8, name, if (std.mem.eql(u8, name, "resolver"))
-            std.mem.concat(b.allocator, u8, &.{@embedFile("src/caller_identity.py"), "\n", source}) catch @panic("resolver identity unavailable")
-        else source);
+            std.mem.concat(b.allocator, u8, &.{ @embedFile("src/caller_identity.py"), "\n", source }) catch @panic("resolver identity unavailable")
+        else
+            source);
     }
     exe.root_module.addOptions("fleet_sources", fleet_sources);
     const waiting_source = b.addOptions();
@@ -156,23 +157,10 @@ pub fn build(b: *std.Build) void {
     recovery.addImport("pane_guard", pane_guard);
     exe.root_module.addImport("rex_recovery", recovery);
     recovery.addImport("rex_boards", boards);
-    const agents = b.createModule(.{
-        .root_source_file = b.path("items/agents/main.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    agents.addImport("pane_guard", pane_guard);
     const scratch = b.createModule(.{ .root_source_file = b.path("items/scratch/main.zig"), .target = target, .optimize = optimize });
     exe.root_module.addImport("rex_scratch", scratch);
     scratch.addImport("pane_guard", pane_guard);
-    agents.addImport("rex_scratch", scratch);
     scratch.addImport("rex_boards", boards);
-    exe.root_module.addImport("rex_agents", agents);
-    send.addImport("rex_agents", agents);
-    const channel = b.createModule(.{ .root_source_file = b.path("src/scoped_channel.zig"), .target = target, .optimize = optimize });
-    agents.addImport("scoped_channel", channel);
-    rex_run.addImport("scoped_channel", channel);
-    agents.addImport("rex_boards", boards);
     const replay = b.createModule(.{
         .root_source_file = b.path("items/replay/main.zig"),
         .target = target,

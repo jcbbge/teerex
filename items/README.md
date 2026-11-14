@@ -1,6 +1,6 @@
 # Independent cartridges
 
-**Alpha.5 operating-layer additions:** [surfaces](surfaces/README.md), [boards](boards/README.md), [agents](agents/README.md) and [recovery](recovery/README.md) are tested composed commands in the combined CLI. They are not yet independent native cartridge packages; the established ten-Mac/seven-Linux payload catalog below is unchanged. [Named fleet installation](../docs/fleet-install.md) installs the combined CLI. Read the [alpha.5 scope and unfinished migration gates](../docs/releases/v0.1.0-alpha.5.md), not the historical alpha.4 checklist as a promise of full operating-layer completion.
+**Alpha.5 operating-layer additions:** [surfaces](surfaces/README.md), [boards](boards/README.md) and [recovery](recovery/README.md) are tested composed commands in the combined CLI. They are not yet independent native cartridge packages; the established ten-Mac/seven-Linux payload catalog below is unchanged. [Named fleet installation](../docs/fleet-install.md) installs the combined CLI. Read the [alpha.5 scope and unfinished migration gates](../docs/releases/v0.1.0-alpha.5.md), not the historical alpha.4 checklist as a promise of full operating-layer completion.
 
 [Records](records/README.md) adds private evidence and Rex park/resume as a combined-CLI composition, not a cartridge.
 

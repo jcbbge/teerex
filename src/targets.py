@@ -38,8 +38,7 @@ SELECTORS = {("board", "feed"): ("socket",), **{(verb,): ("socket",) for verb in
                  ("fleet", ("report", "forget"))) for op in operations},
              **{("clutch", op): ("socket",) for op in ("take", "release", "status", "queue", "palette")},
              **{("records", op): (("socket", "host", "records_store") if op in ("park", "resume", "navigate") else ("records_store",)) for op in
-                ("init", "new", "park", "add", "attach", "set", "close", "show", "resume", "navigate", "list", "lint", "export", "forget", "pin", "decide", "claim-status", "revalidate")},
-             ("agents", "launch"): ("socket", "host", "store")}
+                ("init", "new", "park", "add", "attach", "set", "close", "show", "resume", "navigate", "list", "lint", "export", "forget", "pin", "decide", "claim-status", "revalidate")}}
 
 
 def absolute(value, field):
@@ -123,7 +122,7 @@ def command_argv(host, command):
     # as well as boards inbox/fleet renderers. Preserve the user's spelling.
     if leaf[:1] == ("boards",):
         leaf = leaf[1:]
-    leaf_config = leaf[:1] == ("agents",) or leaf == ("fleet",)
+    leaf_config = leaf == ("fleet",)
     if flags.intersection(("--socket", "--server", "-S", "--host", "--rex")) or ("--config" in flags and not leaf_config):
         raise ValueError("named host conflicts with explicit socket/server/host/config/rex")
     result = list(command)

@@ -22,6 +22,16 @@ class PythonHelpTest(unittest.TestCase):
         self.assertNotIn("docs/alpha5.md", result.stdout)
         self.assertIn("seat register|resolve|inspect|clear", result.stdout)
 
+    def test_agents_command_is_unknown(self):
+        result = subprocess.run([BIN, "agents"], env=isolated_environment(),
+                                capture_output=True, text=True, timeout=10)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("unknown command", (result.stdout + result.stderr).lower())
+        help_result = subprocess.run([BIN, "run-visible", "--help"], env=isolated_environment(),
+                                     capture_output=True, text=True, timeout=10)
+        self.assertEqual(help_result.returncode, 0)
+        self.assertNotIn("--channel-dir", help_result.stdout)
+
     def test_seat_help_lists_resolve(self):
         result = subprocess.run([BIN, "seat", "--help"], env=isolated_environment(),
                                 capture_output=True, text=True, timeout=10)
@@ -30,8 +40,8 @@ class PythonHelpTest(unittest.TestCase):
 
     def test_embedded_python_help_uses_public_command_names(self):
         commands = [
-            ("records",), ("replay",), ("mcp",), ("agents",),
-            ("agents", "fence-probe"), ("recovery",), ("targets",),
+            ("records",), ("replay",), ("mcp",),
+            ("recovery",), ("targets",),
             ("targets", "resolve"), ("targets", "exec"),
             ("cartridges",), ("run-visible",), ("run-visible", "receipt"),
             ("observe", "--state"), ("clutch", "palette"),
@@ -50,9 +60,6 @@ class PythonHelpTest(unittest.TestCase):
         commands += [("boards", "friction", op) for op in (
             "enable", "disable", "status", "forget", "label", "report")]
         commands += [("recovery", op) for op in ("snapshot", "restore", "update", "inspect")]
-        commands += [("agents", op) for op in (
-            "profiles", "shell", "exec", "channel", "hook", "launch", "human", "prune",
-            "ack", "deliver", "inspect", "present", "stop", "supervise", "exited")]
         commands += [("cartridges", op) for op in (
             "install", "activate", "remove", "restore", "list", "doctor", "repair", "run")]
         commands += [("replay", op) for op in ("record", "play", "live")]
