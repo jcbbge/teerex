@@ -11,6 +11,7 @@ const usage =
     \\
     \\Operating-layer commands:
     \\  surfaces resolve|session ensure|ensure|open|inspect|rename|move|focus|close|palette  Visible terminals and native palette plans
+    \\  tour                                        Six guided pages of live practice; cleans up on quit
     \\  board [--replay FILE] | feed              Live themed stream and machine vitals
     \\  boards inbox|fleet|calls|friction|probe|state                Live boards, typed store and remap plans
     \\  seat register|inspect|clear              Exact-address operator seat
@@ -163,6 +164,12 @@ fn run(allocator: std.mem.Allocator) !void {
     args = try withDefaultSocket(allocator, args);
     const command = args[0];
     const rest = args[1..];
+    if (std.mem.eql(u8, command, "tour")) {
+        var forwarded: std.ArrayList([]const u8) = .empty;
+        try forwarded.appendSlice(allocator, &.{ "python3", "-I", "-c", @embedFile("tour.py"), try std.fs.selfExePathAlloc(allocator) });
+        try forwarded.appendSlice(allocator, rest);
+        return std.process.execv(allocator, forwarded.items);
+    }
     if (std.mem.eql(u8, command, "waiting")) {
         const resolver = try std.json.Stringify.valueAlloc(allocator, @import("fleet_sources").resolver, .{});
         const script = try std.fmt.allocPrint(allocator, "import types,sys\ntargets=types.ModuleType('targets')\nexec({s},targets.__dict__)\n{s}", .{ resolver, @import("waiting_source").source });
