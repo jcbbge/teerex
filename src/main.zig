@@ -15,7 +15,7 @@ const usage =
     \\  tour                                        Six guided pages of live practice; cleans up on quit
     \\  board [--replay FILE] | feed              Live themed stream and machine vitals
     \\  boards inbox|fleet|calls|attention|friction|probe|state                Live boards, typed store and remap plans
-    \\  seat register|inspect|clear              Exact-address operator seat
+    \\  seat register|resolve|inspect|clear      Exact-address operator seat
     \\  inbox append|inspect|clear                    Private retained messages
     \\  ask                                          Complete typed decisions or explicit resolution
     \\  waiting list|next|back|put-away [--hosts hive,m5] [--focus] Cross-host attention navigation
@@ -49,7 +49,7 @@ const usage =
     \\Guarded Rex transports require Python3.9+ for seat and creator authority. SSH trust/key are explicit.
     \\Native call history adds no runtime dependency; missing end records stay unknown.
     \\Personal install/restart/close/config actions need their own authorization.
-    \\Guides: docs/alpha5.md and items/{surfaces,boards,agents,recovery,records}/README.md.
+    \\Guides: docs/agents.md and items/{surfaces,boards,agents,recovery,records}/README.md.
     \\
 ;
 
