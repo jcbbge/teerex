@@ -32,6 +32,19 @@ class PythonHelpTest(unittest.TestCase):
         self.assertEqual(help_result.returncode, 0)
         self.assertNotIn("--channel-dir", help_result.stdout)
 
+    def test_retired_commands_are_unknown(self):
+        for command in ("tour", "cartridges", "mcp", "replay", "adapters", "maneuver-check",
+                        "filter", "log", "offstage", "spawn", "waiting", "docs"):
+            with self.subTest(command=command):
+                result = subprocess.run([BIN, command], env=isolated_environment(),
+                                        capture_output=True, text=True, timeout=10)
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertIn("unknown", result.stdout + result.stderr)
+        result = subprocess.run([BIN, "surfaces", "palette"], env=isolated_environment(),
+                                capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("unknown subcommand", result.stdout + result.stderr)
+
     def test_seat_help_lists_resolve(self):
         result = subprocess.run([BIN, "seat", "--help"], env=isolated_environment(),
                                 capture_output=True, text=True, timeout=10)
@@ -40,13 +53,11 @@ class PythonHelpTest(unittest.TestCase):
 
     def test_embedded_python_help_uses_public_command_names(self):
         commands = [
-            ("records",), ("replay",), ("mcp",),
+            ("records",),
             ("recovery",), ("targets",),
             ("targets", "resolve"), ("targets", "exec"),
-            ("cartridges",), ("run-visible",), ("run-visible", "receipt"),
+            ("run-visible",), ("run-visible", "receipt"),
             ("observe", "--state"), ("clutch", "palette"),
-            ("surfaces", "palette", "install"),
-            ("surfaces", "palette", "agents"), ("surfaces", "palette", "hosts"),
             ("boards", "inbox"), ("boards", "fleet"), ("boards", "calls"),
             ("boards", "probe"), ("boards", "state", "inspect"),
             ("boards", "friction"), ("ask",),
@@ -60,9 +71,6 @@ class PythonHelpTest(unittest.TestCase):
         commands += [("boards", "friction", op) for op in (
             "enable", "disable", "status", "forget", "label", "report")]
         commands += [("recovery", op) for op in ("snapshot", "restore", "update", "inspect")]
-        commands += [("cartridges", op) for op in (
-            "install", "activate", "remove", "restore", "list", "doctor", "repair", "run")]
-        commands += [("replay", op) for op in ("record", "play", "live")]
         with resources.temporary_directory(prefix="teerex-help-") as temp:
             env = dict(isolated_environment(), HOME=temp, XDG_CONFIG_HOME=temp,
                        XDG_STATE_HOME=temp, TEEREX_CALL_LOG_DIR=str(Path(temp) / "calls"),

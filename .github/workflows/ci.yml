@@ -83,7 +83,7 @@ jobs:
           printf 'Runner image: %s %s\n' "${ImageOS:-unknown}" "${ImageVersion:-unknown}"
 
       - name: Check Zig formatting
-        run: zig fmt --check build.zig src items tools/cartridges
+        run: zig fmt --check build.zig src items
 
       - name: Build target CLI
         run: zig build -Doptimize=ReleaseSmall -Dtarget=${{ matrix.target }}
@@ -109,41 +109,12 @@ jobs:
           TEEREX_BIN: ${{ github.workspace }}/zig-out/bin/teerex
         run: python3 items/observe/test_observe.py CompareTest -v
 
-      - name: Run offline maneuver regressions
-        env:
-          TEEREX_BIN: ${{ github.workspace }}/zig-out/bin/teerex
-        run: python3 items/maneuvers/test_maneuvers.py -v
-
-      - name: Run offline filter regressions
-        env:
-          TEEREX_BIN: ${{ github.workspace }}/zig-out/bin/teerex
-        run: python3 items/filter/test_filter.py -v
-
-      - name: Run opt-in historical observation cache regressions
-        env:
-          TEEREX_BIN: ${{ github.workspace }}/zig-out/bin/teerex
-        run: python3 items/filter/test_cache.py -v
-
       - name: Run disposable-Linux doctor offline regressions
         if: runner.os == 'Linux'
         env:
           TEEREX_BIN: ${{ github.workspace }}/zig-out/bin/teerex
           TEEREX_OFFLINE_ONLY: '1'
         run: python3 items/doctor/test_doctor.py -v
-
-      - name: Validate readiness evidence and baseline contracts
-        run: python3 -m unittest discover -s tools/acceptance -p test_acceptance.py -v
-
-      - name: Run cartridge lifecycle and native installed-payload contracts
-        if: runner.os == 'Linux' || matrix.rex-api == 13
-        run: |
-          env -u TEEREX_CALL_LOG_DIR python3 -m unittest discover -s tools/cartridges -p test_cartridges.py -v
-          env -u TEEREX_CALL_LOG_DIR python3 tools/cartridges/test_root_entry.py -v
-          platform=x86_64-linux
-          if [[ "$RUNNER_OS" == macOS ]]; then platform=aarch64-macos; fi
-          python3 tools/cartridges/package.py --platform "$platform" \
-            --version 0.1.0-alpha.6 --output "$RUNNER_TEMP/cartridge-catalog"
-          TEEREX_BIN="$PWD/zig-out/bin/teerex" python3 tools/cartridges/test_payloads.py --catalog "$RUNNER_TEMP/cartridge-catalog"
 
       - name: Run installer lifecycle and public release controls
         if: runner.os == 'Linux' || matrix.rex-api == 13
@@ -185,40 +156,6 @@ jobs:
           grep -E "^api: revision $REX_API \\(" "$RUNNER_TEMP/rex-version.txt"
           echo "$RUNNER_TEMP/rex-bin" >> "$GITHUB_PATH"
 
-      - name: Build older-Mac readiness catalogs
-        if: runner.os == 'macOS' && matrix.rex-api != 13
-        run: |
-          python3 tools/cartridges/package.py --platform aarch64-macos \
-            --version 0.1.0-alpha.6 --output "$RUNNER_TEMP/cartridge-catalog"
-
-      - name: Execute installed-payload readiness on three fresh servers
-        if: matrix.rex-api == 13
-        run: |
-          platform=x86_64-linux
-          if [[ "$RUNNER_OS" == macOS ]]; then platform=aarch64-macos; fi
-          python3 tools/acceptance/previous.py --platform "$platform" --out "$RUNNER_TEMP/previous-teerex"
-          python3 tools/acceptance/readiness.py --item observe --catalog "$RUNNER_TEMP/cartridge-catalog" \
-            --rex "$RUNNER_TEMP/rex-bin/rex" --previous-teerex "$RUNNER_TEMP/previous-teerex" \
-            --teerex "$PWD/zig-out/bin/teerex" --runs 3 --long \
-            --executor "ci:https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
-            --out "$RUNNER_TEMP/readiness-observe-${{ matrix.rex-api }}.json"
-
-      - name: Measure private-server safe-subset baseline
-        if: matrix.rex-api == 13
-        run: |
-          python3 tools/acceptance/baseline.py --teerex "$PWD/zig-out/bin/teerex" \
-            --rex "$RUNNER_TEMP/rex-bin/rex" --out "$RUNNER_TEMP/safe-subset-baseline"
-
-      - name: Preserve sanitized readiness records and baseline summary
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: readiness-${{ runner.os }}-api${{ matrix.rex-api }}
-          if-no-files-found: warn
-          path: |
-            ${{ runner.temp }}/readiness-observe-*.json
-            ${{ runner.temp }}/safe-subset-baseline/summary.md
-
       - name: Run disposable-Rex observation, comparison and watch regressions
         env:
           TEEREX_BIN: ${{ github.workspace }}/zig-out/bin/teerex
@@ -233,24 +170,6 @@ jobs:
         run: |
           python3 items/send/test_send.py -v
           python3 items/clutch/test_clutch.py -v
-
-      - name: Run disposable-Rex visible spawn regressions
-        env:
-          TEEREX_BIN: ${{ github.workspace }}/zig-out/bin/teerex
-          REX_BIN: ${{ runner.temp }}/rex-bin/rex
-        run: python3 items/spawn/test_spawn.py -v
-
-      - name: Run descriptor-bound read adapter regressions
-        env:
-          TEEREX_BIN: ${{ github.workspace }}/zig-out/bin/teerex
-          REX_BIN: ${{ runner.temp }}/rex-bin/rex
-        run: python3 items/adapters/test_adapters.py -v
-
-      - name: Run cross-host waiting on two disposable servers
-        env:
-          TEEREX_BIN: ${{ github.workspace }}/zig-out/bin/teerex
-          REX_BIN: ${{ runner.temp }}/rex-bin/rex
-        run: python3 items/waiting/test_waiting.py -v
 
       - name: Run API13 board event feed contracts
         if: matrix.rex-api == 13
@@ -276,17 +195,11 @@ jobs:
           python3 items/boards/test_boards.py CallsTest StatusTest -v
           python3 items/boards/test_friction.py -v
 
-      - name: Run visible surfaces and native palette plan/apply contracts
+      - name: Run visible surfaces contracts
         env:
           TEEREX_BIN: ${{ github.workspace }}/zig-out/bin/teerex
           REX_BIN: ${{ runner.temp }}/rex-bin/rex
         run: python3 items/surfaces/test_surfaces.py -v
-
-      - name: Run stdio MCP protocol and disposable-Rex round trips
-        env:
-          TEEREX_BIN: ${{ github.workspace }}/zig-out/bin/teerex
-          REX_BIN: ${{ runner.temp }}/rex-bin/rex
-        run: python3 items/mcp/test_mcp.py -v
 
       - name: Prepare disposable Linux SSH and fence acceptance
         if: runner.os == 'Linux'
@@ -343,29 +256,6 @@ jobs:
           REX_BIN: ${{ runner.temp }}/rex-bin/rex
         run: python3 items/recovery/test_recovery.py -v
 
-      - name: Run native installed-cartridge runtime contracts
-        if: runner.os == 'Linux' || matrix.rex-api == 13
-        env:
-          REX_BIN: ${{ runner.temp }}/rex-bin/rex
-        run: |
-          python3 tools/cartridges/test_payloads.py --catalog "$RUNNER_TEMP/cartridge-catalog" --with-rex
-          TEEREX_BIN="$PWD/zig-out/bin/teerex" python3 tools/cartridges/test_payloads.py --catalog "$RUNNER_TEMP/cartridge-catalog" --with-rex --managed-runtime
-          python3 tools/acceptance/perf_measure.py --rex "$REX_BIN" --teerex "$PWD/zig-out/bin/teerex" --machine "ci-${{ runner.os }}" --source-revision "$GITHUB_SHA" --output "$RUNNER_TEMP/perf-smoke" --warm-runs 0
-
-      - name: Check shared observation terms offline
-        env:
-          TEEREX_BIN: ${{ github.workspace }}/zig-out/bin/teerex
-        run: python3 items/replay/test_terms.py OfflineTerms -v
-
-      - name: Probe API13 replay data wire on a private server
-        if: matrix.rex-api == 13
-        env:
-          REX_BIN: ${{ runner.temp }}/rex-bin/rex
-        run: |
-          python3 items/replay/test_wire.py -v
-          python3 items/replay/test_replay.py FactContract Replay -v
-          python3 items/replay/test_terms.py -v
-
       - name: Run API13 visible foreground execution and cleanup contracts
         if: matrix.rex-api == 13
         env:
@@ -389,9 +279,3 @@ jobs:
         env:
           TEEREX_BIN: ${{ github.workspace }}/zig-out/bin/teerex
         run: python3 items/doctor/test_doctor.py -v
-
-      - name: Run disposable API13 offstage regressions
-        if: matrix.rex-api == 13
-        env:
-          TEEREX_BIN: ${{ github.workspace }}/zig-out/bin/teerex
-        run: python3 items/offstage/test_offstage.py -v

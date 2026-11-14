@@ -91,8 +91,7 @@ class CleanupTest(unittest.TestCase):
         root = Path(__file__).resolve().parents[2]
         paths = {*root.glob('items/**/test*.py'), *root.glob('src/test*.py'),
                  *root.glob('tools/**/test*.py'), *root.glob('tools/acceptance/*.py'),
-                 root / 'items/board/measure.py', root / 'items/board/measure_memory.py',
-                 root / 'items/replay/gen_fixtures.py'}
+                 root / 'items/board/measure.py', root / 'items/board/measure_memory.py'}
         unmanaged = []
         for path in paths:
             # F6 deliberately hands detached children to its enclosing proof,

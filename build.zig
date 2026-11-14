@@ -14,28 +14,6 @@ pub fn build(b: *std.Build) void {
     const build_version = b.addOptions();
     build_version.addOption([]const u8, "version", b.option([]const u8, "version", "Release/build identity without the leading v") orelse localVersion(b));
     exe.root_module.addOptions("build_version", build_version);
-    const docs_sources = b.addOptions();
-    var item_dir = b.build_root.handle.openDir("items", .{ .iterate = true }) catch @panic("items unavailable");
-    defer item_dir.close();
-    var item_iter = item_dir.iterate();
-    while (item_iter.next() catch @panic("items unreadable")) |entry| {
-        if (entry.kind != .directory) continue;
-        const path = b.fmt("items/{s}/README.md", .{entry.name});
-        const source = b.build_root.handle.readFileAlloc(b.allocator, path, std.math.maxInt(usize)) catch |err| {
-            if (err == error.FileNotFound) continue;
-            @panic("item guide unreadable");
-        };
-        docs_sources.addOption([]const u8, entry.name, source);
-    }
-    docs_sources.addOption([]const u8, "fleet", b.build_root.handle.readFileAlloc(b.allocator, "docs/fleet-install.md", std.math.maxInt(usize)) catch @panic("fleet guide unavailable"));
-    docs_sources.addOption([]const u8, "targets", b.build_root.handle.readFileAlloc(b.allocator, "README.md", std.math.maxInt(usize)) catch @panic("guide unavailable"));
-    docs_sources.addOption([]const u8, "cartridges", b.build_root.handle.readFileAlloc(b.allocator, "docs/cartridges.md", std.math.maxInt(usize)) catch @panic("cartridge guide unavailable"));
-    exe.root_module.addOptions("docs_sources", docs_sources);
-
-    const cartridge_sources = b.addOptions();
-    const manager = b.build_root.handle.readFileAlloc(b.allocator, "tools/cartridges/cartridges.py", 1024 * 1024) catch @panic("cartridge manager source unavailable");
-    cartridge_sources.addOption([]const u8, "manager", manager);
-    exe.root_module.addOptions("cartridge_sources", cartridge_sources);
     const fleet_sources = b.addOptions();
     for ([_][]const u8{ "controller", "worker", "installer", "resolver" }, [_][]const u8{ "tools/fleet-install/fleet_install.py", "tools/fleet-install/worker.py", "tools/install/teerex-install", "src/targets.py" }) |name, path| {
         const source = b.build_root.handle.readFileAlloc(b.allocator, path, 1024 * 1024) catch @panic("fleet support source unavailable");
@@ -45,9 +23,6 @@ pub fn build(b: *std.Build) void {
             source);
     }
     exe.root_module.addOptions("fleet_sources", fleet_sources);
-    const waiting_source = b.addOptions();
-    waiting_source.addOption([]const u8, "source", b.build_root.handle.readFileAlloc(b.allocator, "items/waiting/waiting.py", 1024 * 1024) catch @panic("waiting source unavailable"));
-    exe.root_module.addOptions("waiting_source", waiting_source);
     const observation = b.createModule(.{
         .root_source_file = b.path("items/observe/main.zig"),
         .target = target,
@@ -86,20 +61,6 @@ pub fn build(b: *std.Build) void {
     clutch.addImport("supervised_child", child);
     clutch.addImport("pane_guard", pane_guard);
     exe.root_module.addImport("rex_send", send);
-    const spawn = b.createModule(.{
-        .root_source_file = b.path("items/spawn/main.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    spawn.addImport("supervised_child", child);
-    exe.root_module.addImport("rex_spawn", spawn);
-    const offstage = b.createModule(.{
-        .root_source_file = b.path("items/offstage/main.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    offstage.addImport("supervised_child", child);
-    exe.root_module.addImport("rex_offstage", offstage);
     const doctor = b.createModule(.{
         .root_source_file = b.path("items/doctor/main.zig"),
         .target = target,
@@ -107,16 +68,6 @@ pub fn build(b: *std.Build) void {
     });
     doctor.addImport("supervised_child", child);
     exe.root_module.addImport("rex_doctor", doctor);
-    exe.root_module.addImport("rex_maneuvers", b.createModule(.{
-        .root_source_file = b.path("items/maneuvers/main.zig"),
-        .target = target,
-        .optimize = optimize,
-    }));
-    exe.root_module.addImport("rex_filter", b.createModule(.{
-        .root_source_file = b.path("items/filter/main.zig"),
-        .target = target,
-        .optimize = optimize,
-    }));
     const jobs = b.createModule(.{
         .root_source_file = b.path("items/jobs/main.zig"),
         .target = target,
@@ -124,13 +75,6 @@ pub fn build(b: *std.Build) void {
     });
     jobs.addImport("supervised_child", child);
     exe.root_module.addImport("rex_jobs", jobs);
-    const adapters = b.createModule(.{
-        .root_source_file = b.path("items/adapters/main.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    adapters.addImport("supervised_child", child);
-    exe.root_module.addImport("rex_adapters", adapters);
     const surfaces = b.createModule(.{
         .root_source_file = b.path("items/surfaces/main.zig"),
         .target = target,
@@ -161,18 +105,6 @@ pub fn build(b: *std.Build) void {
     exe.root_module.addImport("rex_scratch", scratch);
     scratch.addImport("pane_guard", pane_guard);
     scratch.addImport("rex_boards", boards);
-    const replay = b.createModule(.{
-        .root_source_file = b.path("items/replay/main.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    replay.addImport("pane_guard", pane_guard);
-    exe.root_module.addImport("rex_replay", replay);
-    exe.root_module.addImport("rex_mcp", b.createModule(.{
-        .root_source_file = b.path("items/mcp/main.zig"),
-        .target = target,
-        .optimize = optimize,
-    }));
     const records = b.createModule(.{ .root_source_file = b.path("items/records/main.zig"), .target = target, .optimize = optimize });
     records.addImport("supervised_child", child);
     records.addImport("rex_boards", boards);

@@ -10,31 +10,22 @@ const usage =
     \\       teerex --version
     \\
     \\Operating-layer commands:
-    \\  surfaces resolve|session ensure|ensure|open|inspect|rename|move|focus|close|palette  Visible terminals and native palette plans
-    \\  log [--since TIME] [--hosts HOSTS] [--page|--brief] Flight log and morning brief
-    \\  tour                                        Six guided pages of live practice; cleans up on quit
+    \\  surfaces resolve|session ensure|ensure|open|inspect|rename|move|focus|close  Visible terminals
     \\  board [--replay FILE] | feed              Live themed stream and machine vitals
     \\  boards inbox|fleet|calls|attention|friction|probe|state                Live boards, typed store and remap plans
     \\  seat register|resolve|inspect|clear|panes      Exact-address operator seat
     \\  inbox append|inspect|clear                    Private retained messages
     \\  ask                                          Complete typed decisions or explicit resolution
-    \\  waiting list|next|back|put-away [--hosts hive,m5] [--focus] Cross-host attention navigation
-    \\  docs [COMMAND] | try ID                      Floating command guides and safe examples
     \\  scratch init|now|todo|done|show|path|watch|hook|hook-settings  Per-pane working scratchpad
-    \\  spawn                                        Open a plain visible terminal
     \\  records init|new|park|add|attach|set|close|show|resume|navigate|list|lint|export|forget|forget-scratchpad  Private evidence and reasoning
     \\  recovery snapshot|inspect|restore|update|reconcile      Private snapshots and reviewed restoration
     \\  snapshot|restore|update                       Recovery aliases; update is manual handoff
     \\  fleet install|rollback                       Explicit named-host installation plan/apply
-    \\  cartridges install|list|run|activate|remove|restore  Independent native payloads
-    \\  cartridges doctor|repair                     Read-only findings; explicit old-stage cleanup plans
-    \\  mcp [--print-config claude|codex|pi]           Local stdio MCP tools; registration snippets only
     \\  targets resolve|exec                         Named-host lookup and explicit transport
     \\  run-visible                                  Visible noninteractive argv, output and actual exit
-    \\  replay record|play|live                       Capture bytes, faithful replay and independent live checks
     \\  clutch take|release|status|queue|palette|prune  Cooperative human takeover and hand-back
-    \\Existing tools: observe, compare, watch, run, offstage, doctor, send, spawn,
-    \\                jobs, adapters, maneuver-check, filter
+    \\Existing tools: observe, compare, watch, run, doctor, send,
+    \\                jobs
     \\Socket verbs default --socket from percent-decoded REX_SERVER (unix://), then platform home/runtime path.
     \\Defaulted observe/watch/doctor and boards probe receipts report socket_source. Explicit and named-host calls retain their contracts.
     \\Use COMMAND --help for exact flags, effects, evidence and limits.
@@ -43,7 +34,7 @@ const usage =
     \\Where: configured command host; paths belong there, never silently uploaded.
     \\Why: report actual activity/results and unknowns, not infer readiness or completion.
     \\How: explicit config/host or socket/full IDs; no retries, fallback or autostart.
-    \\Python3.9+ is required for targets, boards, recovery, records, scratch, fleet, cartridges, replay, mcp and palette install.
+    \\Python3.9+ is required for targets, boards, recovery, records, scratch and fleet.
     \\Guarded Rex transports require Python3.9+ for seat and creator authority. SSH trust/key are explicit.
     \\Native call history adds no runtime dependency; missing end records stay unknown.
     \\Personal install/restart/close/config actions need their own authorization.
@@ -57,11 +48,6 @@ fn nextAction(code: u8) void {
     // Hints are for a person at a terminal. A hook, supervisor or agent tool
     // inherits a pane it does not own; writing there paints the harness input row.
     if (!std.posix.isatty(std.posix.STDIN_FILENO) or !std.posix.isatty(std.posix.STDERR_FILENO)) return;
-    if (eq(active_command, "surfaces palette")) {
-        // Argument errors already include the selected palette command's help.
-        if (code != 2) std.debug.print("next: Inspect the selected configuration and action file before planning the palette installation again.\n", .{});
-        return;
-    }
     if (code == 2) {
         std.debug.print("next: teerex {s} --help\n", .{active_command});
         return;
@@ -177,9 +163,6 @@ fn run(allocator: std.mem.Allocator) !void {
     const all = try std.process.argsAlloc(allocator);
     var args: []const []const u8 = all[1..];
     if (args.len > 0) active_command = args[0];
-    if (args.len > 2 and eq(args[0], "surfaces") and eq(args[1], "palette") and
-        (eq(args[2], "install") or eq(args[2], "agents") or eq(args[2], "hosts") or eq(args[2], "focus")))
-        active_command = "surfaces palette";
     if (args.len == 1 and std.mem.eql(u8, args[0], "--version")) {
         try std.fs.File.stdout().writeAll("teerex " ++ version ++ "\n");
         return;
@@ -211,10 +194,6 @@ fn run(allocator: std.mem.Allocator) !void {
                 host = args[i + 1];
             } else return error.UnknownOrRepeatedGlobalOption;
         }
-        if (i < args.len and std.mem.eql(u8, args[i], "cartridges")) {
-            try std.fs.File.stderr().writeAll("{\"error\": \"cartridges cannot use named-host routing; run teerex cartridges on that machine\", \"next_step\": \"Log in to the selected machine and run teerex cartridges there.\", \"ok\": false, \"schema_version\": 1}\n");
-            finish(allocator, 1);
-        }
         var forwarded: std.ArrayList([]const u8) = .empty;
         try forwarded.appendSlice(allocator, &.{ "exec", "--config", config orelse return error.ExplicitConfigRequired, "--host", host orelse return error.ExplicitHostRequired, "--" });
         try forwarded.appendSlice(allocator, args[i..]);
@@ -237,34 +216,10 @@ fn run(allocator: std.mem.Allocator) !void {
     args = try withDefaultSocket(allocator, args);
     const command = args[0];
     const rest = args[1..];
-    if (std.mem.eql(u8, command, "log")) {
-        const resolver = try std.json.Stringify.valueAlloc(allocator, @import("fleet_sources").resolver, .{});
-        const script = try std.fmt.allocPrint(allocator, "import types,sys\ntargets=types.ModuleType('targets')\nexec({s},targets.__dict__)\n{s}", .{ resolver, @embedFile("flight_log.py") });
-        var forwarded: std.ArrayList([]const u8) = .empty;
-        try forwarded.appendSlice(allocator, &.{ "python3", "-I", "-c", script, try std.fs.selfExePathAlloc(allocator) });
-        try forwarded.appendSlice(allocator, rest);
-        return std.process.execv(allocator, forwarded.items);
-    }
-    if (std.mem.eql(u8, command, "tour")) {
-        var forwarded: std.ArrayList([]const u8) = .empty;
-        try forwarded.appendSlice(allocator, &.{ "python3", "-I", "-c", @embedFile("tour.py"), try std.fs.selfExePathAlloc(allocator) });
-        try forwarded.appendSlice(allocator, rest);
-        return std.process.execv(allocator, forwarded.items);
-    }
-    if (std.mem.eql(u8, command, "waiting")) {
-        const resolver = try std.json.Stringify.valueAlloc(allocator, @import("fleet_sources").resolver, .{});
-        const script = try std.fmt.allocPrint(allocator, "import types,sys\ntargets=types.ModuleType('targets')\nexec({s},targets.__dict__)\n{s}", .{ resolver, @import("waiting_source").source });
-        var forwarded: std.ArrayList([]const u8) = .empty;
-        try forwarded.appendSlice(allocator, &.{ "python3", "-I", "-c", try @import("rex_boards").call_log.python(allocator, try @import("pane_guard").python(allocator, script)) });
-        try forwarded.appendSlice(allocator, rest);
-        return std.process.execv(allocator, forwarded.items);
-    }
     if (std.mem.eql(u8, command, "board")) {
         if (rest.len > 0 and std.mem.eql(u8, rest[0], "feed")) finish(allocator, try @import("rex_boardfeed").run(allocator, rest[1..]));
         finish(allocator, try @import("rex_board").run(allocator, rest));
     }
-    if (std.mem.eql(u8, command, "mcp")) finish(allocator, try @import("rex_mcp").run(allocator, rest));
-    if (std.mem.eql(u8, command, "replay")) finish(allocator, try @import("rex_replay").run(allocator, rest));
     if (std.mem.eql(u8, command, "fleet") and rest.len > 0 and (std.mem.eql(u8, rest[0], "install") or std.mem.eql(u8, rest[0], "rollback"))) {
         const sources = @import("fleet_sources");
         var forwarded: std.ArrayList([]const u8) = .empty;
@@ -272,50 +227,19 @@ fn run(allocator: std.mem.Allocator) !void {
         try forwarded.appendSlice(allocator, rest);
         return std.process.execv(allocator, forwarded.items);
     }
-    if (std.mem.eql(u8, command, "cartridges")) {
-        var argv: std.ArrayList([]const u8) = .empty;
-        try argv.appendSlice(allocator, &.{ "python3", "-I", "-c", try @import("rex_boards").call_log.python(allocator, @import("cartridge_sources").manager) });
-        try argv.appendSlice(allocator, rest);
-        const err = std.process.execv(allocator, argv.items);
-        var buf: [512]u8 = undefined;
-        const line = std.fmt.bufPrint(&buf, "{{\"error\": \"cannot execute python3 ({s}): teerex cartridges requires Python 3.9+\", \"next_step\": \"Install Python 3.9+ on this machine and retry.\", \"ok\": false, \"schema_version\": 1}}\n", .{@errorName(err)}) catch unreachable;
-        std.fs.File.stderr().writeAll(line) catch {};
-        finish(allocator, 1);
-    }
     if (std.mem.eql(u8, command, "records")) finish(allocator, try @import("rex_records").run(allocator, rest));
     if (std.mem.eql(u8, command, "recovery")) finish(allocator, try @import("rex_recovery").run(allocator, rest));
     if (std.mem.eql(u8, command, "snapshot") or std.mem.eql(u8, command, "restore") or std.mem.eql(u8, command, "update")) finish(allocator, try @import("rex_recovery").run(allocator, args));
     if (std.mem.eql(u8, command, "surfaces")) finish(allocator, try @import("rex_surfaces").run(allocator, rest));
     if (std.mem.eql(u8, command, "run")) finish(allocator, try @import("rex_run").run(allocator, rest));
     if (std.mem.eql(u8, command, "run-visible")) finish(allocator, try @import("rex_run").runVisible(allocator, rest));
-    if (std.mem.eql(u8, command, "offstage")) finish(allocator, try @import("rex_offstage").run(allocator, rest));
     if (std.mem.eql(u8, command, "doctor")) finish(allocator, try @import("rex_doctor").run(allocator, rest));
     if (std.mem.eql(u8, command, "jobs")) finish(allocator, try @import("rex_jobs").run(allocator, rest));
-    if (std.mem.eql(u8, command, "adapters")) finish(allocator, try @import("rex_adapters").run(allocator, rest));
     if (std.mem.eql(u8, command, "clutch")) finish(allocator, try @import("rex_clutch").run(allocator, rest));
     if (std.mem.eql(u8, command, "send")) finish(allocator, try send(allocator, rest));
     if (std.mem.eql(u8, command, "boards")) finish(allocator, try @import("rex_boards").run(allocator, rest));
     if (std.mem.eql(u8, command, "seat") or std.mem.eql(u8, command, "inbox") or std.mem.eql(u8, command, "ask") or std.mem.eql(u8, command, "fleet")) finish(allocator, try @import("rex_boards").run(allocator, args));
-    if (std.mem.eql(u8, command, "docs")) {
-        var names: std.ArrayList([]const u8) = .empty;
-        inline for (@typeInfo(@import("docs_sources")).@"struct".decls) |decl| {
-            if (rest.len == 2 and eq(rest[0], "_readme") and eq(rest[1], decl.name)) {
-                try std.fs.File.stdout().writeAll(@field(@import("docs_sources"), decl.name));
-                return;
-            }
-            try names.append(allocator, decl.name);
-        }
-        var forwarded: std.ArrayList([]const u8) = .empty;
-        try forwarded.appendSlice(allocator, &.{ "python3", "-I", "-c", @embedFile("docs.py"), try std.fs.selfExePathAlloc(allocator), try std.json.Stringify.valueAlloc(allocator, names.items, .{}) });
-        try forwarded.appendSlice(allocator, rest);
-        return std.process.execv(allocator, forwarded.items);
-    }
     if (std.mem.eql(u8, command, "scratch")) finish(allocator, try @import("rex_scratch").run(allocator, rest));
-    if (std.mem.eql(u8, command, "spawn")) {
-        finish(allocator, try @import("rex_spawn").run(allocator, rest));
-    }
-    if (std.mem.eql(u8, command, "maneuver-check")) finish(allocator, try @import("rex_maneuvers").run(allocator, rest, @import("rex_observe")));
-    if (std.mem.eql(u8, command, "filter")) finish(allocator, try @import("rex_filter").run(allocator, rest, @import("rex_observe")));
     if (eq(command, "observe") or eq(command, "compare") or eq(command, "watch")) finish(allocator, try @import("rex_observe").runObservations(allocator, args));
     std.debug.print("teerex: unknown command {s}; see teerex --help\n", .{command});
     finish(allocator, 2);
@@ -369,11 +293,9 @@ fn takesSocket(args: []const []const u8) bool {
     const command = args[0];
     if (eq(command, "jobs") and args.len > 1 and (eq(args[1], "doctor") or eq(args[1], "list"))) return false;
     if (eq(command, "doctor")) return args.len > 1 and (hasOption(args, "--baseline") or hasOption(args, "--timeout-ms"));
-    if (eq(command, "adapters")) return args.len > 2 and (eq(args[1], "generate") or (eq(args[1], "call") and hasOption(args, "--adapter") and hasOption(args, "--policy") and hasOption(args, "--tool") and hasOption(args, "--arguments")));
     if (eq(command, "boards")) return args.len > 1 and eq(args[1], "probe");
     if (eq(command, "surfaces")) {
         if (args.len > 2 and eq(args[1], "session") and eq(args[2], "ensure")) return hasOption(args, "--label");
-        if (args.len > 1 and eq(args[1], "palette")) return args.len > 2 and eq(args[2], "install") and hasOption(args, "--init") and hasOption(args, "--file") and hasOption(args, "--plan");
         return hasOption(args, "--session");
     }
     if (eq(command, "snapshot") or eq(command, "restore") or eq(command, "update") or eq(command, "recovery")) {
@@ -382,14 +304,12 @@ fn takesSocket(args: []const []const u8) bool {
     }
     if (eq(command, "run")) return hasOption(args, "--cwd") and hasCommand(args);
     if (!hasOption(args, "--session")) return false;
-    if (eq(command, "spawn")) return !hasOption(args, "--profile") and hasOption(args, "--name") and hasOption(args, "--report-to-session") and hasOption(args, "--report-to-block");
-    if (eq(command, "run-visible") or eq(command, "offstage")) return hasOption(args, "--cwd");
+    if (eq(command, "run-visible")) return hasOption(args, "--cwd");
     if (!hasOption(args, "--block")) return false;
     if (eq(command, "observe")) return true;
     if (eq(command, "watch")) return hasOption(args, "--baseline") and (hasOption(args, "--timeout-ms") or hasOption(args, "--no-deadline"));
     if (eq(command, "send")) return hasOption(args, "--from") and hasOption(args, "--message-file");
     if (eq(command, "jobs")) return hasOption(args, "--registry");
-    if (eq(command, "maneuver-check")) return hasOption(args, "--observation") and !hasOption(args, "--list");
     return false;
 }
 

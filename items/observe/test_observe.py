@@ -358,7 +358,7 @@ class CompareTest(unittest.TestCase):
         for line in view_help.splitlines():
             if re.search(r'\b(stable|idle|done|complete|finished|waiting|ready|busy|working)\b', line, re.I):
                 self.assertRegex(line, r'(?i)\b(not|never|no|cannot|exclude)\b')
-        for name, marker in (('items/observe/README.md', '## Declared presentation views'), ('items/filter/README.md', '## Opt-in presentation view')):
+        for name, marker in (('items/observe/README.md', '## Declared presentation views'),):
             additions = (root / name).read_text().split(marker, 1)[1].split("\n## ", 1)[0]
             for line in additions.splitlines():
                 if re.search(r'\b(stable|idle|done|complete|finished|waiting|ready|busy|working)\b', line, re.I):

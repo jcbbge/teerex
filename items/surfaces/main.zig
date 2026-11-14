@@ -37,29 +37,13 @@ const usage =
     \\close --publish-receipt-file ABS atomically completes a private prepared run-visible receipt.json.
     \\Target must match; one close attempt; hard exit after timeout+2000ms includes publication.
     \\If killed, prepared exit/output evidence remains, with block_absence unknown.
-    \\       teerex surfaces palette focus --file ABS --teerex ABS --name ACTION --title TEXT
-    \\           (--label TEXT [--config ABS --host NAME] | --seat --board-store ABS --socket ABS)
-    \\       teerex surfaces palette agents --file ABS --teerex ABS --rex ABS [--profiles ABS]
-    \\       teerex surfaces palette hosts --file ABS --teerex ABS [--config ABS]
-    \\Generates native profile/workspace menus, frozen until regenerated; never changes personal config.
-    \\Profiles/hosts default to ~/.config/teerex/{profiles,hosts}.json. Install generated menus via plan/apply.
-    \\Agent actions take name/brief_file, or open a visible name/brief form; managed launch handles ACK.
-    \\Host actions use optional hosts.NAME.workspaces (label -> cwd, argv, session label), default home shell.
-    \\       teerex surfaces palette install --init ABS --file ABS --socket ABS --plan ABS [--apply PLAN_SHA256]
-    \\Plan previews native config inclusion and one reload; apply requires the unchanged plan's printed hash.
-    \\Requires Python3.9+. Checks selected server config path/instance and actual action source after reload.
-    \\       teerex surfaces palette --file ABS --name ACTION --title TEXT --layout tiled|float|tab
-    \\         --label TEXT [--direction D --ratio N | --bounds '[x,y,w,h]'] [--cwd ABS] -- ARGV...
     \\Open actual terminal programs, not graphical widgets. Tiled/float need an attached terminal anchor;
     \\tab forbids one. Tiled defaults right, NEW pane share 1/3 (not Rex's before ratio). Float requires
     \\explicit fractional bounds inside the window. Tab forbids ratio/direction/bounds. No fallback/retry.
     \\Fresh session.view readback returns actual normalized geometry/label/host, not pixel or paint proof.
     \\Open never requests focus or auto-close; no detached worker/autostart. API10..13; Unix; rex on PATH.
-    \\Palette creates a NEW fragment (no overwrite/reload); palette install plans/applies native inclusion
-    \\and verifies registration. Then use ACTION via Rex's palette or rex do.
-    \\Palette uses the invoking session/pane, never a baked-in personal target; programs stay attached.
     \\Deadline defaults 5000ms (100..60000), plus bounded cleanup. Inspect before any uncertain retry.
-    \\Exit: 0 stated postcondition/fragment/plan verified; 1 refusal/mismatch/uncertain;
+    \\Exit: 0 stated postcondition verified; 1 refusal/mismatch/uncertain;
     \\2 usage; 124 deadline; 130/143 cancellation. Program readiness/painted visibility not assessed.
     \\
 ;
@@ -200,21 +184,6 @@ fn encodedDiagnostic(allocator: std.mem.Allocator, bytes: []const u8) ![]const u
     const buffer = try allocator.alloc(u8, encoder.calcSize(bytes.len));
     return encoder.encode(buffer, bytes);
 }
-fn luaString(allocator: std.mem.Allocator, input: []const u8) ![]const u8 {
-    var out: std.ArrayList(u8) = .empty;
-    try out.append(allocator, '"');
-    for (input) |c| {
-        if (c == '"' or c == '\\') {
-            try out.append(allocator, '\\');
-            try out.append(allocator, c);
-        } else if (c < 32 or c == 127) {
-            try out.appendSlice(allocator, try std.fmt.allocPrint(allocator, "\\{d:0>3}", .{c}));
-        } else try out.append(allocator, c);
-    }
-    try out.append(allocator, '"');
-    return out.items;
-}
-
 fn executionFailure(allocator: std.mem.Allocator, action: []const u8, err: anyerror) ![]const u8 {
     const detail = switch (err) {
         error.SystemResources => "system resources unavailable (exec may exceed argument/environment limits: E2BIG)",
@@ -223,56 +192,6 @@ fn executionFailure(allocator: std.mem.Allocator, action: []const u8, err: anyer
         else => @errorName(err),
     };
     return std.fmt.allocPrint(allocator, "{s}: {s}", .{ action, detail });
-}
-
-const RawOutput = struct {
-    allocator: std.mem.Allocator,
-    bytes: std.ArrayList(u8) = .empty,
-    pub fn receive(self: *RawOutput, bytes: []const u8) !void {
-        if (bytes.len > 32768 - self.bytes.items.len) return error.PaletteOutputTooLarge;
-        try self.bytes.appendSlice(self.allocator, bytes);
-    }
-};
-fn paletteController(allocator: std.mem.Allocator, args: []const []const u8, script: []const u8) !u8 {
-    const help = for (args) |arg| {
-        if (std.mem.eql(u8, arg, "--help")) break true;
-    } else false;
-    var argv: std.ArrayList([]const u8) = .empty;
-    try argv.appendSlice(allocator, &.{ "python3", "-I", "-c", try @import("rex_boards").call_log.python(allocator, script) });
-    try argv.appendSlice(allocator, args);
-    var env = try std.process.getEnvMap(allocator);
-    for ([_][]const u8{ "REX_SERVER", "REX_SESSION", "REX_BLOCK", "REX_CLIENT" }) |key| env.remove(key);
-    // The child's output is collected; it can only learn from us whether a person is at the terminal.
-    env.remove("TEEREX_INTERACTIVE");
-    if (std.posix.isatty(std.posix.STDIN_FILENO) and std.posix.isatty(std.posix.STDERR_FILENO)) try env.put("TEEREX_INTERACTIVE", "1");
-    const signals = supervised.Signals.init();
-    defer signals.deinit();
-    var output: RawOutput = .{ .allocator = allocator };
-    var failure: ?[]const u8 = null;
-    const result = supervised.collect(allocator, argv.items, &env, 15000, &output) catch |err| blk: {
-        failure = try executionFailure(allocator, "running surfaces palette controller", err);
-        break :blk null;
-    };
-    const sig = supervised.requestedSignal();
-    const deadline = result != null and result.?.deadline_exceeded;
-    if (sig == 0 and result != null and !result.?.stopped and result.?.term == .Exited) {
-        if (result.?.term.Exited == 2) {
-            try std.fs.File.stderr().writeAll(result.?.stderr);
-            return 2;
-        }
-        if (help and result.?.term.Exited == 0) {
-            try std.fs.File.stdout().writeAll(output.bytes.items);
-            try std.fs.File.stderr().writeAll(result.?.stderr);
-            return 0;
-        }
-        const parsed = std.json.parseFromSlice(std.json.Value, allocator, output.bytes.items, .{}) catch null;
-        if (parsed != null and parsed.?.value == .object) {
-            try std.fs.File.stdout().writeAll(output.bytes.items);
-            return result.?.term.Exited;
-        }
-    }
-    try writeJson(allocator, .{ .schema_version = 1, .kind = "surface_palette_install_result", .outcome = "uncertain", .registered_in_running_server = false, .config_updated = "unknown", .failure_reason = failure orelse "palette_install_transport_incomplete", .backend_stderr_base64 = try encodedDiagnostic(allocator, if (result) |r| r.stderr else ""), .retry_safe = false });
-    return if (sig != 0) 128 + sig else if (deadline) 124 else 1;
 }
 
 // Detached run-visible prepares exit/output evidence before its own pane is closed.
@@ -355,13 +274,7 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
         try std.fs.File.stdout().writeAll(usage);
         return 0;
     }
-    if (args.len >= 2 and std.mem.eql(u8, args[0], "palette") and std.mem.eql(u8, args[1], "install")) return paletteController(allocator, args[2..], @embedFile("palette.py"));
-    if (args.len >= 2 and std.mem.eql(u8, args[0], "palette") and std.mem.eql(u8, args[1], "focus")) {
-        const source = try std.fmt.allocPrint(allocator, "SURFACE_SOURCE = {s}\n{s}", .{ try std.json.Stringify.valueAlloc(allocator, @embedFile("surfaces.lua"), .{}), @embedFile("menu.py") });
-        return paletteController(allocator, args[1..], source);
-    }
-    if (args.len >= 2 and std.mem.eql(u8, args[0], "palette") and (std.mem.eql(u8, args[1], "agents") or std.mem.eql(u8, args[1], "hosts"))) return paletteController(allocator, args[1..], @embedFile("menu.py"));
-    if (args.len == 0) return usageError("resolve, session ensure/close, ensure, open, inspect, rename, focus, close, move or palette is required");
+    if (args.len == 0) return usageError("resolve, session ensure/close, ensure, open, inspect, rename, focus, close, move is required");
     if (args.len >= 2 and std.mem.eql(u8, args[0], "session") and (std.mem.eql(u8, args[1], "ensure") or std.mem.eql(u8, args[1], "close"))) {
         var translated: std.ArrayList([]const u8) = .empty;
         try translated.append(allocator, if (std.mem.eql(u8, args[1], "close")) "session-close" else "session-ensure");
@@ -378,14 +291,13 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
     const move = std.mem.eql(u8, args[0], "move");
     const rename = std.mem.eql(u8, args[0], "rename");
     const pane_control = focus or close or move or rename;
-    const palette = std.mem.eql(u8, args[0], "palette");
-    if (!resolve and !session_ensure and !session_close and !ensure and !inspect and !pane_control and !palette and !std.mem.eql(u8, args[0], "open")) return usageError("unknown subcommand");
+    if (!resolve and !session_ensure and !session_close and !ensure and !inspect and !pane_control and !std.mem.eql(u8, args[0], "open")) return usageError("unknown subcommand");
     if (args.len == 2 and std.mem.eql(u8, args[1], "--help")) {
         try std.fs.File.stdout().writeAll(usage);
         return 0;
     }
     var options: std.StringHashMap([]const u8) = .init(allocator);
-    const allowed = [_][]const u8{ "--socket", "--session", "--anchor", "--pane", "--window", "--layout", "--direction", "--ratio", "--bounds", "--label", "--cwd", "--timeout-ms", "--create-session", "--file", "--name", "--title", "--focus", "--publish-receipt-file" };
+    const allowed = [_][]const u8{ "--socket", "--session", "--anchor", "--pane", "--window", "--layout", "--direction", "--ratio", "--bounds", "--label", "--cwd", "--timeout-ms", "--create-session", "--focus", "--publish-receipt-file" };
     var i: usize = 1;
     while (i < args.len and !std.mem.eql(u8, args[i], "--")) : (i += 2) {
         if (i + 1 >= args.len) return usageError("every option needs a value");
@@ -416,13 +328,8 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
     var budget: u64 = 5000;
     if (options.get("--timeout-ms")) |v| budget = std.fmt.parseUnsigned(u64, v, 10) catch return usageError("invalid timeout");
     if (budget < 100 or budget > 60000) return usageError("timeout must be 100..60000ms");
-    if (palette) {
-        for ([_][]const u8{ "--socket", "--session", "--anchor", "--pane", "--timeout-ms" }) |key| if (options.contains(key)) return usageError("palette takes context at invocation, not target options");
-    } else {
-        if (socket == null or !std.fs.path.isAbsolute(socket.?)) return usageError("--socket ABS is required");
-        if (!session_ensure and (session == null or !selectorValid(session.?, "session:"))) return usageError("--session TEXT is required");
-        for ([_][]const u8{ "--file", "--name", "--title" }) |key| if (options.contains(key)) return usageError("palette-only option");
-    }
+    if (socket == null or !std.fs.path.isAbsolute(socket.?)) return usageError("--socket ABS is required");
+    if (!session_ensure and (session == null or !selectorValid(session.?, "session:"))) return usageError("--session TEXT is required");
     var move_focus = false;
     if (options.get("--focus")) |value| {
         if ((!move and !ensure) or (!std.mem.eql(u8, value, "yes") and !std.mem.eql(u8, value, "no"))) return usageError("--focus yes|no requires move or ensure");
@@ -457,7 +364,7 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
         const floating = std.mem.eql(u8, layout.?, "float");
         const tab = std.mem.eql(u8, layout.?, "tab");
         if (!tiled and !floating and !tab) return usageError("layout must be tiled, float or tab");
-        if (!palette and !tab and (anchor == null or !selectorValid(anchor.?, "block:"))) return usageError("tiled/float need --anchor TEXT");
+        if (!tab and (anchor == null or !selectorValid(anchor.?, "block:"))) return usageError("tiled/float need --anchor TEXT");
         if (tab and anchor != null) return usageError("tab does not take an anchor");
         if (tiled) {
             if (options.contains("--bounds")) return usageError("tiled does not take bounds");
@@ -485,25 +392,6 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
     const request = .{ .operation = if (resolve) "resolve" else if (session_ensure) "session-ensure" else if (session_close) "session-close" else if (ensure) "ensure" else if (inspect) "inspect" else if (focus) "focus" else if (close) "close" else if (move) "move" else if (rename) "rename" else "open", .focus = focus or move_focus, .session_id = session, .create_session = create_session, .block_id = pane, .window_id = window, .anchor = anchor, .layout = layout, .label = label, .direction = direction, .ratio = ratio, .bounds = bounds, .cwd = cwd, .argv = command };
     const encoded = try std.json.Stringify.valueAlloc(allocator, request, .{ .emit_null_optional_fields = false });
     if (encoded.len > 24000) return usageError("encoded arguments exceed 24000 bytes");
-    if (palette) {
-        const file = options.get("--file") orelse return usageError("palette requires --file ABS");
-        const name = options.get("--name") orelse return usageError("palette requires --name");
-        const title = options.get("--title") orelse return usageError("palette requires --title");
-        if (!std.fs.path.isAbsolute(file) or !labelValid(title) or name.len == 0 or name.len > 64) return usageError("invalid palette path/title/name");
-        for (name) |c| if (!(std.ascii.isLower(c) or std.ascii.isDigit(c) or c == '_')) return usageError("palette name: lowercase letters, digits, underscores only");
-        const source = try std.fmt.allocPrint(allocator, "-- teerex-surface-action:{s}\n{s}\nrex.action{{name={s},title={s},category=\"teerex\",run=function(ctx)\nlocal a=rex.json.decode({s})\na.session_id=ctx.session_id\na.anchor=ctx.block_id\nlocal r=surface(a)\nif r.outcome~=\"created_and_verified\" then error(rex.json.encode(r),0) end\nreturn r\nend}}\n", .{ name, @embedFile("surfaces.lua"), try luaString(allocator, name), try luaString(allocator, title), try luaString(allocator, encoded) });
-        var f = std.fs.createFileAbsolute(file, .{ .exclusive = true, .mode = 0o600 }) catch |err| {
-            try writeJson(allocator, .{ .schema_version = 1, .kind = "surface_palette_result", .outcome = "refused", .failure_reason = @errorName(err), .registered_in_running_server = false });
-            return 1;
-        };
-        defer f.close();
-        f.writeAll(source) catch |err| {
-            std.fs.deleteFileAbsolute(file) catch {};
-            return err;
-        };
-        try writeJson(allocator, .{ .schema_version = 1, .kind = "surface_palette_result", .outcome = "fragment_written", .file = file, .name = name, .registered_in_running_server = false, .next = "Use surfaces palette install to plan/apply native config inclusion and verify selected-server registration" });
-        return 0;
-    }
     var publisher_done: std.Thread.ResetEvent = .{};
     const watchdog: ?std.Thread = if (publish_path != null) try std.Thread.spawn(.{}, publisherDeadline, .{ &publisher_done, budget + 2000 }) else null;
     defer if (watchdog) |thread| {

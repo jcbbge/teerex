@@ -8,7 +8,7 @@ teerex is the only way agents use Rex. Every pane, read, wait, run, message and 
 
 - A pane is a Rex **block**. You address it by session and block: `session:UUID` and `block:UUID`.
 - Your own pane is in `REX_SESSION`/`REX_BLOCK` (over ssh: `LC_REX_SESSION`/`LC_REX_BLOCK`).
-- **The socket:** `observe`, `watch`, `run-visible`, `send`, `spawn`, `doctor` and `run` fill in `--socket` for you, from `REX_SERVER` or else the personal server, so you can leave it out, even where `--help` still lists it as required. For other verbs (`surfaces`, `jobs`), pass `--socket /run/user/$UID/rex/server.sock` on hive, or `~/Library/Application Support/rex/server.sock` on a Mac. `REX_SERVER` is often empty inside agent panes.
+- **The socket:** `observe`, `watch`, `run-visible`, `send`, `doctor` and `run` fill in `--socket` for you, from `REX_SERVER` or else the personal server, so you can leave it out, even where `--help` still lists it as required. For other verbs (`surfaces`, `jobs`, `agents`), pass `--socket /run/user/$UID/rex/server.sock` on hive, or `~/Library/Application Support/rex/server.sock` on a Mac. `REX_SERVER` is often empty inside agent panes.
 - **Labels and short ids work.** A command that needs a canonical id gets one from `teerex surfaces resolve`:
 
 ```sh
@@ -95,7 +95,6 @@ teerex surfaces ensure --socket "$S" --session any --label seat --create-session
 teerex surfaces rename|focus|move|close --socket "$S" --session "$SES" --pane "$P" …
 ```
 
-Generate a palette jump with `teerex surfaces palette focus --file /absolute/jump.lua --teerex /absolute/teerex --name jump_logs --title "Jump to logs" --label logs`. It resolves across all sessions and focuses the existing pane; absent or ambiguous targets refuse without opening anything. For the registered seat, use `--seat --board-store /absolute/boards --socket "$S"` instead of `--label logs`. Install the fragment through the [palette plan/apply workflow](../items/surfaces/README.md#prepare-and-register-a-palette-action).
 
 - Every pane you open is visible, and yours to close when your work lands.
 - Long output for Josh goes in a `.md` file, opened in `leaf` in a pane beside yours.
@@ -114,24 +113,10 @@ teerex recovery update --socket "$S" --snapshot          # before any Rex restar
 
 Never restart the Rex server or kill Rex processes without Josh's yes. A restart closes every pane.
 
-## Cartridges
-
-Single-purpose native payloads, managed by `teerex cartridges`. Each can be installed, run and removed on its own:
-
-```sh
-teerex cartridges list
-teerex cartridges install filter --catalog DIR --allow-experimental          # plan; add --apply to do it
-teerex cartridges run filter -- --sample a.json --sample b.json
-```
-
-Every item is currently experimental, so a plain `--all` selects none (the plan lists them under `excluded_experimental`). Removing a cartridge keeps its data.
-
 ## Inspect and repair state
 
 ```sh
 teerex jobs doctor --registry "$REG" [--socket "$S"]     # read-only: stale, due, uncertain, orphaned registrations
-teerex cartridges doctor                                # read-only: stage leftovers, hash/state mismatches
-teerex cartridges repair --plan                         # only old orphaned stages; --apply to remove
 ```
 
 ## Machine check

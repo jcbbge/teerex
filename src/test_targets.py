@@ -109,9 +109,9 @@ class TargetsTest(unittest.TestCase):
 
     def test_selected_host_literal_argv_status_and_no_secret_receipt(self):
         secret = "literal ; touch " + str(self.root / "MUST_NOT_EXIST") + " $(false) α"
-        result = self.call("--config", str(self.config), "--host", "hive", "spawn", "--session", "session:test", "--", "sh", "-c", secret)
+        result = self.call("--config", str(self.config), "--host", "hive", "run-visible", "--session", "session:test", "--", "sh", "-c", secret)
         self.assertEqual(result.returncode, 7, result.stderr)
-        self.assertEqual(json.loads(self.output.read_text()), ["--rex", self.host["rex"], "spawn", "--socket", self.host["socket"], "--session", "session:test", "--", "sh", "-c", secret])
+        self.assertEqual(json.loads(self.output.read_text()), ["--rex", self.host["rex"], "run-visible", "--socket", self.host["socket"], "--session", "session:test", "--", "sh", "-c", secret])
         self.assertFalse((self.root / "MUST_NOT_EXIST").exists())
         self.assertNotIn(secret, result.stderr)
         receipt = json.loads(result.stderr)
@@ -190,7 +190,6 @@ class TargetsTest(unittest.TestCase):
         cases += [(["boards", "probe"], socket), (["boards", "try-route"], target)]
         cases += [(["surfaces", op], socket) for op in ("open", "ensure", "resolve", "inspect", "rename", "move", "focus", "close")]
         cases += [(["surfaces", "session", "ensure"], socket)]
-        cases += [(["surfaces", "palette"], []), (["surfaces", "palette", "install"], socket)]
         cases += [(["jobs", op], [] if op == "list" else socket)
                   for op in ("list", "track", "inspect", "adopt", "present", "forget")]
         cases += [(["recovery", op], (["--root", self.host["home"] + "/.local/state/teerex-recovery"] if op != "update" else []) + ([] if op == "inspect" else socket))
@@ -198,7 +197,6 @@ class TargetsTest(unittest.TestCase):
         cases += [([op], (["--root", self.host["home"] + "/.local/state/teerex-recovery"] if op != "update" else []) + socket) for op in ("snapshot", "restore", "update")]
         cases += [(["clutch", op], socket) for op in ("take", "release", "status", "queue", "palette")]
         cases += [(["run-visible", "receipt"], [])]
-        cases += [(["adapters", op], socket) for op in ("generate", "call")]
         for path, selectors in cases:
             with self.subTest(path=path):
                 # Public argv fixture tests placement without running a mutation or using help to bypass injection.

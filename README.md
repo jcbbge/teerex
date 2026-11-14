@@ -10,7 +10,6 @@ Licensed under [Apache-2.0](LICENSE) for teerex's original material. Third-party
 
 | Need | Command |
 | --- | --- |
-| Learn the basics with six pages of live practice; Enter continues, q cleans up | `tour` |
 | Read a pane, or wait until it changes or reports done/error | `observe` (`--tail` for the newest output, `--state` for agent state), `watch`, `compare` |
 | Run a command in a visible tab and get its real exit and output | `run-visible` (`--detach` returns at once; `run-visible receipt` reads the result) |
 | Open, find, rename, move, focus or close panes and sessions | `surfaces open/ensure/resolve/rename/move/focus/close`, `surfaces session ensure/close` |
@@ -20,16 +19,13 @@ Licensed under [Apache-2.0](LICENSE) for teerex's original material. Third-party
 | See who owns what and what ran | `jobs`, `boards fleet`, `boards calls` |
 | Survive a Rex restart | `recovery snapshot/restore/update` |
 | Work on another machine by name | `--config ~/.config/teerex/hosts.json --host hive\|m5 COMMAND …` |
-| Install, run and remove single-purpose payloads | `cartridges install/list/run/remove/doctor/repair` |
-| Use teerex as native agent tools | `mcp` (stdio MCP server; `--print-config claude\|codex\|pi`) |
-| Record and replay terminal sessions | `replay record/play/live` |
 | Check the machine | `doctor` |
 
 Managed workers report each turn end with one `DONE` or `NOT DONE` answer. Full last words accompany completion or a flag once; waiting answers contain the wait and next check time.
 
 An empty session attached only by app clients may be closed by its recorded creator or the operator; see the [session close contract](items/surfaces/README.md).
 
-Command receipts are JSON; help and interactive tour output are text, and `mcp --print-config` emits the selected client’s registration format. It states what was verified and labels the rest `unknown`, `uncertain` or `not_assessed`. teerex never starts a hidden process, never retries on its own, never closes a pane you did not ask it to close, and never infers that work is done. Exact flags: `teerex COMMAND --help`. For `clutch take` and `clutch release`, use `teerex clutch --help`; their subcommand help currently prints usage with exit 2. Full contracts: each `items/*/README.md`.
+Command receipts are JSON; help output is text. It states what was verified and labels the rest `unknown`, `uncertain` or `not_assessed`. teerex never starts a hidden process, never retries on its own, never closes a pane you did not ask it to close, and never infers that work is done. Exact flags: `teerex COMMAND --help`. For `clutch take` and `clutch release`, use `teerex clutch --help`; their subcommand help currently prints usage with exit 2. Full contracts: each `items/*/README.md`.
 
 ## Named-host recovery stores
 
@@ -68,7 +64,6 @@ identity with `-Dversion=0.1.0-alpha.6`; without Git, the default is
 
 - **Tests** are the Python suites under `items/` and `tools/`. They run against disposable Rex servers only. [docs/ci.md](docs/ci.md) lists them and the two current hosted lanes (Linux API13 and Mac API13).
 - **Install:** `tools/install/teerex-install upgrade|rollback|list` installs a verified build into `~/.local/opt/teerex-managed`, keeping earlier versions for rollback ([docs/install.md](docs/install.md)).
-- **Cartridges:** `tools/cartridges/package.py` builds the catalogs that `teerex cartridges` installs ([docs/cartridges.md](docs/cartridges.md)).
 
 ## Where things are
 

@@ -81,17 +81,6 @@ class RefusalNextTest(unittest.TestCase):
         self.refusal('surfaces', 'resolve', '--socket', self.root / 'absent.sock',
                      '--session', SESSION, '--pane', BLOCK, '--timeout-ms', '100', expected='before changing it again')
 
-        self.refusal('surfaces', 'palette', 'install', expected='teerex surfaces palette install --help')
-        self.refusal('surfaces', 'palette', 'install', '--init', self.root / 'absent.lua',
-                     '--file', self.root / 'action.lua', '--socket', '/absent.sock', '--plan', self.root / 'plan.json',
-                     expected='before planning the palette installation again')
-        for operation in ('agents', 'hosts', 'focus'):
-            self.refusal('surfaces', 'palette', operation, expected='teerex surfaces palette ' + operation + ' --help')
-
-    def test_waiting(self):
-        self.refusal('waiting', 'list', '--config', self.root / 'absent.json', expected='teerex doctor --all')
-        self.refusal('waiting', '--not-an-option', expected='teerex waiting --help')
-
     def test_ask(self):
         self.refusal('ask', expected='teerex ask --help')
         self.refusal('ask', '--store', self.root / 'boards', '--host', 'fixture', '--socket', '/absent.sock',
@@ -115,13 +104,13 @@ class RefusalNextTest(unittest.TestCase):
         self.refusal('doctor', '--all', '--config', self.root / 'absent.json', expected='teerex doctor --all --help')
 
     def test_named_host_routing_refusal(self):
-        for command in ('send', 'scratch', 'surfaces', 'waiting', 'ask', 'board', 'doctor'):
+        for command in ('send', 'scratch', 'surfaces', 'ask', 'board', 'doctor'):
             with self.subTest(command=command):
                 self.refusal('--config', self.root / 'absent.json', '--host', 'fixture', command,
                              expected='Check the selected host and configuration file')
 
     def test_help_and_success_do_not_print_next(self):
-        for command in ('send', 'scratch', 'surfaces', 'waiting', 'ask', 'board', 'boards', 'doctor'):
+        for command in ('send', 'scratch', 'surfaces', 'ask', 'board', 'boards', 'doctor'):
             with self.subTest(command=command):
                 p = subprocess.run([BIN, command, '--help'], env=self.env, capture_output=True, text=True, timeout=15)
                 self.assertEqual(p.returncode, 0, p.stdout + p.stderr)

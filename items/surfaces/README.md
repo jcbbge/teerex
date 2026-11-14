@@ -1,6 +1,6 @@
 # Terminal surfaces
 
-**Shipped experimentally in current alpha.5's combined CLI**, not as an independent cartridge. Use [current setup](../../docs/concierge/setup.md) and the [alpha.5 release support guide](../../docs/releases/v0.1.0-alpha.5.md). Mac arm64 API10/12/13 and Linux x86_64/API13 were tested; actual API11/every build and Rex.app graphical painting remain uncertified. Dated leaf-only validation below is preserved separately from released-byte acceptance.
+**Shipped experimentally in current alpha.5's combined CLI**, in the combined CLI. Use [current setup](../../docs/concierge/setup.md) and the [alpha.5 release support guide](../../docs/releases/v0.1.0-alpha.5.md). Mac arm64 API10/12/13 and Linux x86_64/API13 were tested; actual API11/every build and Rex.app graphical painting remain uncertified. Dated leaf-only validation below is preserved separately from released-byte acceptance.
 
 ## Who
 
@@ -17,8 +17,6 @@ Operators and agents placing an actual terminal program in an explicitly selecte
 - `surfaces move`: relocate the **same existing attached terminal** beside an attached anchor, including across tabs in the same session; no new program or replacement pane. Explicit focus intent and fresh split/identity readback are required.
 - `surfaces focus`: explicitly select the given pane and its window, then verify that focus in a new view. A minimized layer refuses rather than silently restoring it.
 - `surfaces close`: explicitly close the given terminal block, including a window's last pane, then verify its absence from both `session.view` and `session.list_blocks`. This is not proof of all descendant or SSH-remote processes dying.
-- `surfaces palette`: prepare one new, exclusive, private Rex action fragment. This alone does **not** claim registration.
-- `surfaces palette install`: preview a native-config inclusion plan; apply only the exact approved plan and verify the running server's action list. No runtime script injection or extra plugin layer.
 
 Open never asks for focus, retries creation, falls back to a different layout, or automatically closes a pane. Rex can activate the first window of an empty session; `focus_requested:false` is a request fact, not a promise that focus never changes. A split ends an existing zoom according to Rex's API contract. Floating layers can cover other panes even without requesting keyboard focus.
 
@@ -77,7 +75,7 @@ Use open for visible terminal tools such as an inbox, fleet board, log reader, e
 
 Leaf commands require `--socket ABS`, explicit session/pane selectors, and Rex on PATH. Surface selectors accept canonical IDs, unique ID suffixes and exact labels; resolution stays on the explicitly selected server. The shared root supports named command-host routing (`teerex --config ABS --host NAME surfaces ...`) and a pinned Rex binary; it injects the explicit socket. Named-host config, socket, cwd, fragment, init, plan and program paths belong to that command host; files are not silently uploaded. The geometry result's `actual.host_id` identifies where Rex says the terminal lives, not where the controller runs or a command inside `ssh` executes.
 
-The module ABI is `rex_surfaces.run(allocator, args) !u8`, importing `supervised_child`. macOS arm64 and Linux x86_64 are the validated platforms. Native placement uses the public Rex control API. Managed palette install additionally requires Python 3.9+ and stdlib `fcntl`; its bounded Rex subprocesses honor `TEEREX_REX`. No GUI client is required for server/API tests.
+The module ABI is `rex_surfaces.run(allocator, args) !u8`, importing `supervised_child`. macOS arm64 and Linux x86_64 are the validated platforms. Native placement uses the public Rex control API. No GUI client is required for server/API tests.
 
 ## Why
 
@@ -196,107 +194,6 @@ Geometry is in **window fractions**, not pixels or terminal rows/columns. Inacti
 
 Open/inspect/focus/close default to a 5000ms local budget (`--timeout-ms 100..60000`) with bounded transport cleanup. At most 32KiB of one pending receipt and 4KiB of raw diagnostics are retained (`backend_stderr_base64` keeps arbitrary bytes JSON-safe); overly deep geometry or malformed/partial evidence refuses success. There is one supervised Rex connection, no automatic retry or close. Exit 0 means the command's stated postcondition; 1 is refusal/mismatch/uncertainty; 2 is usage; 124 deadline; 130/143 cancellation. Cancellation can leave a real created or changed pane behind. Inspect before another mutation.
 
-### Focus an existing pane from the palette
-
-Generate a fragment with `teerex surfaces palette focus --file ABS --teerex ABS --name jump_board --title "Jump to board" --label board`. The action resolves the label (or unique pane ID) server-wide through native `surfaces resolve --session any` semantics, then focuses and verifies that pane. It refuses absent or ambiguous matches with "Pane to focus was not found" or "More than one pane matches the focus target", leaving panes and focus unchanged. It never opens a replacement.
-
-Add `--config ABS --host NAME` to focus a label on a named host instead of the palette server. The generated action calls `surfaces resolve --session any --pane LABEL` through that host, then focuses the returned canonical session and pane through the same named host. Missing or ambiguous labels refuse before focus; neither command creates a pane. Named focus requires `--label` and cannot combine local `--socket`, `--board-store`, or `--seat` options. Config paths belong to the palette server, while the selected host's paths belong to that command host.
-
-For the registered seat, replace `--label seat` with `--seat --board-store ABS --socket ABS`. The explicit socket selects the board references for the palette's server; exactly one seat registration must match, and its canonical pane must still exist. A stale registration refuses without creating a replacement. Install either fragment with the normal palette install plan/apply workflow. (Jump to seat itself is native Rex Lua in rexconfig's `rex/seat.lua`.) Generation alone does not register it.
-
-Palette focus proof (2026-11-14): the following isolated command passed **2 tests** on hive (Linux x86_64, Rex API13 commit `348d751`) and the M5 (macOS arm64, Rex API13 commit `aa2db1b`):
-
-```sh
-REX_BIN=/absolute/rex python3 items/surfaces/test_surfaces.py \
-  SurfacesTest.test_focus_palette_resolves_server_wide_and_refuses_missing_or_ambiguous \
-  SurfacesTest.test_registered_seat_focus_palette_requires_live_registration
-```
-
-The checks invoke loaded native actions on private disposable servers: cross-session label focus, plain absent/ambiguous refusals with unchanged pane/focus state, registered seat focus, and stale registration refusal without replacement. The Mac executable was cross-built on hive with `uv run --with ziglang==0.15.2 python -m ziglang build -Doptimize=ReleaseSmall -Dtarget=aarch64-macos --prefix zig-out/mac`; Linux used the same command without target/prefix flags. After the checks, explicit assertions verified each disposable server had exited and its temporary root was absent; the M5 test copy was removed. This proves server focus/readback, not graphical Rex.app palette presentation or personal configuration installation.
-
-### Prepare and register a palette action
-
-Generate complete native menus with:
-
-```sh
-teerex surfaces palette agents --profiles /absolute/profiles.json --file /absolute/agents-menu.lua \
-  --teerex /absolute/teerex --rex /absolute/rex
-teerex surfaces palette hosts --config /absolute/hosts.json --file /absolute/hosts-menu.lua \
-  --teerex /absolute/teerex
-# Install either generated file with the same palette install plan/apply commands below.
-```
-
-`--profiles` defaults to `~/.config/teerex/profiles.json`; host `--config` defaults to `~/.config/teerex/hosts.json`. `--teerex` is the installed absolute controller path on the palette server's machine; agent menus also require an absolute `--rex` pin. Generation reads caller-owned regular files with a 256KiB cap, creates one exclusive 0600 fragment, and never edits or reloads personal config. At most 128 actions/256KiB per fragment. Stable action names derive from profile or host/workspace identities. Generation freezes the menu entries; deliberately generate a new fragment and review a replacement inclusion to refresh. There is no always-on refresher or hidden config writer.
-
-The complete `profiles.json` schema and a launch-ready example are in
-[agents: Configure deliberately](../agents/README.md#configure-deliberately).
-Use its explicit defaults for the socket, registry, host, cwd and ownership.
-
-A minimal local `hosts.json` with one workspace is:
-
-```json
-{
-  "schema_version": 1,
-  "hosts": {
-    "local": {
-      "host_id": "local",
-      "transport": "local",
-      "platform": "linux-x86_64",
-      "home": "/home/operator",
-      "socket": "/absolute/existing/rex.sock",
-      "rex": "/absolute/bin/rex",
-      "teerex": "/absolute/bin/teerex",
-      "store": "/absolute/private/boards",
-      "workspaces": {
-        "Terminal": {"cwd": "/home/operator", "session": "work", "argv": ["/bin/sh"]}
-      }
-    }
-  }
-}
-```
-
-Replace paths with locations on the command host; use `macos-arm64` for that
-platform. Named-host fields are validated by [`src/targets.py`](../../src/targets.py);
-workspace fields are read by [`menu.py`](menu.py). A remote host additionally
-requires `transport:"ssh"`, literal `address:"user@host"`, integer `port`, and
-absolute `known_hosts` and `identity_file` paths.
-
-Each profile becomes **Start an agent: PROFILE**. Managed agent actions require API13 jobs; an older/unknown server revision refuses before opening either a form or worker. Invoked without arguments, the action opens and focuses one visible terminal form asking for an agent name and absolute brief-file path. That form runs `agents launch`, preserving the original invoking pane as starter and report-to; its controller tab closes after completion, and the actual worker remains a managed visible tab. Invoked through `rex do ACTION name=NAME brief_file=/absolute/brief`, it runs a synchronous controller with a 20-second command budget and immediate launch-queue refusal, leaving ACK-before-brief and responsibility tracking to `agents launch`. A timed-out/lost action is uncertainty, never authorization to retry. Profiles/defaults must already provide the selected socket, private registry, host, cwd and ownership settings; compute routing remains the profile's explicit execution/callback contract. A form-created receipt means the form opened, not that an agent started. No schema argument is treated as an inline task prompt.
-
-Host records may add `workspaces`, an object mapping menu labels to `{ "cwd": "/absolute/path", "argv": ["/absolute/program", "arg"], "session": "session label" }`. `session` defaults to the host's configured name; `argv` defaults to `/bin/sh`. A host without `workspaces` gets one **HOST: Terminal** action in its configured home. Each **HOST: WORKSPACE** action explicitly routes session ensure and then `surfaces open --layout tab` through the named-host config, returning the latter's verified receipt. File/program paths belong to that command host. It opens a new workspace tab on each invocation, with open's no-focus-request semantics; selecting a remote session in a GUI is not claimed. A failure after session creation can leave that empty session; there is no rollback or automatic retry.
-
-Install plans list every generated action name; apply verifies **all** names/kinds/source paths in the running server after its single reload. A partial registration refuses. Plan/apply behavior for individual action fragments remains the same.
-
-Preparation writes a new 0600 file and refuses overwrite. It uses Rex's native `rex.action`; the program is launched by that action directly in a visible terminal, not as a detached `rex.exec` worker. The invoking Rex session and pane become the placement context. A tab action needs a session but no pane. A tiled or float action needs an attached normal terminal pane.
-
-```sh
-teerex surfaces palette --file /absolute/config/inbox-surface.lua \
-  --name show_inbox --title 'Open Inbox' --layout float \
-  --bounds '[0.667,0,0.333,1]' --label inbox -- /absolute/terminal-inbox-program
-
-# PLAN: writes a new private plan, prints exact appended bytes and plan_sha256.
-# It verifies --init against the selected server's observed client.keymap.config.path.
-teerex surfaces palette install --socket "$SOCKET" \
-  --init /absolute/rex/init.lua --file /absolute/config/inbox-surface.lua \
-  --plan /absolute/config/inbox-install-plan.json
-
-# APPLY only after reviewing the plan, using its exact printed hash.
-teerex surfaces palette install --socket "$SOCKET" \
-  --init /absolute/rex/init.lua --file /absolute/config/inbox-surface.lua \
-  --plan /absolute/config/inbox-install-plan.json --apply "$PLAN_SHA256"
-
-# After registered_and_verified, use Open Inbox in the actual Rex palette, or:
-rex --autostart=false --server "unix://$SOCKET" do --session "$SESSION" --block "$ANCHOR" show_inbox
-```
-
-Init, fragment and plan must be distinct, absolute, caller-owned regular UTF-8 files (the new plan is created by planning); symlink final components and oversized files refuse. The init must already exist and be the config actually reported by the selected running server; this command does not guess/create a personal config. Reads are capped at 256KiB per file/Rex response, diagnostics at 4KiB. The embedded install controller has a 15s overall budget; each of at most four bounded Rex commands in apply has a 3s process budget. It is not a background worker.
-
-Apply rejects changed plan bytes, fragment, init, running server instance, or loaded-config hash, and refuses an already registered action name. It appends only the previewed comment plus native `dofile(...)`, preserves existing bytes/mode, checks config, requests **one** `server.config_reload`, and verifies fresh `client.keymap` config path/instance/generation and the actual Lua action's name/source. Rex can report source paths relative to its init directory; these are resolved against that observed directory, not the controller cwd.
-
-A plan is not registration. A prepared file is not registration. A successful reload ACK alone is not registration. Any missing/mismatched evidence keeps `registered_in_running_server:false` and nonzero status. After an append with failed/lost reload evidence, `config_updated:true` or `unknown` warns that the change may exist; there is no automatic rollback or retry. Review the exact inclusion and actual config/action list before further changes. Advisory locking excludes cooperating init writers, not another administrator ignoring that lock. Installation isn't an exclusive lease over concurrent config edits or server restarts.
-
-For removal, deliberately remove only that action's recorded inclusion from the actual init, check/reload the selected server, verify its disappearance, then delete its fragment and plan if no longer needed. This is a reviewable native-config removal, not an automatic removal of unrelated palette actions. To update, prepare a new fragment and review the replacement inclusion; frozen generated fragments do not secretly follow installed teerex upgrades.
-
 ## Validation and boundaries
 
 On 12 November 2026, `python3 items/surfaces/test_surfaces.py -v` passed **15 tests** in each disposable-server environment:
@@ -349,7 +246,6 @@ output, jobs and channel evidence alongside these fields.
 }
 ```
 
-Palette help uses `teerex surfaces palette` for menu generation and `teerex surfaces palette install` for registration.
 
 ### Close an empty session
 

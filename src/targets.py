@@ -23,11 +23,9 @@ PATH_FIELDS = ("home", "socket", "rex", "teerex", "store")
 # Selectors belong to complete leaves, not command families. Offline leaves receive
 # no Rex target; board state/rendering still needs its selected command-host store.
 SELECTORS = {("board", "feed"): ("socket",), **{(verb,): ("socket",) for verb in
-                ("observe", "watch", "spawn", "run", "run-visible", "doctor", "offstage", "snapshot", "restore", "update")},
+                ("observe", "watch", "run", "run-visible", "doctor", "snapshot", "restore", "update")},
              **{("surfaces", op): ("socket",) for op in ("open", "ensure", "resolve", "inspect", "rename", "move", "focus", "close")},
              **{("surfaces", "session", op): ("socket",) for op in ("ensure", "close")},
-             ("surfaces", "palette", "install"): ("socket",),
-             **{("adapters", op): ("socket",) for op in ("generate", "call")},
              **{("jobs", op): ("socket",) for op in ("track", "inspect", "adopt", "present", "forget")},
              **{("recovery", op): ("socket",) for op in ("snapshot", "restore", "update")},
              **{("state", op): ("store",) for op in ("inspect", "remap-preview", "remap-apply")},
@@ -128,8 +126,6 @@ def command_argv(host, command):
     result = list(command)
     if "--help" not in flags:
         selectors = SELECTORS.get(leaf, ())
-        if leaf == ("spawn",) and "--profile" in flags:
-            selectors = ("socket", "host", "store")
         supplied = []
         if leaf in (("snapshot",), ("restore",), ("recovery", "snapshot"), ("recovery", "restore"), ("recovery", "inspect")) and not flags.intersection(("--directory", "--root")):
             supplied += ["--root", host.get("recovery_store", host["home"] + "/.local/state/teerex-recovery")]
