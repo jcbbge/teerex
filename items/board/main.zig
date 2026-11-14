@@ -628,11 +628,23 @@ const UI = struct {
             try add(&lines, a, try fmt(a, "✓ {d} finished: {s}", .{ finished.items.len, names.items }), .secondary);
         }
         if (self.held_rows.items.len > 0) {
+            const held_selected = self.selected >= self.rows.items.len;
+            // Preserve the selected held item when live rows fill the pane.
+            if (self.held_open and held_selected and lines.items.len > height -| 4) {
+                const retained = @min(lines.items.len, height -| 4);
+                lines.shrinkRetainingCapacity(retained);
+                for (retained..self.hit.len) |i| self.hit[i] = null;
+            }
             try add(&lines, a, try lr(a, try fmt(a, "▸ held {d} · oldest {s}", .{ self.held_rows.items.len, try age(a, model.timestamp, num(get(self.held_rows.items[0], "since"))) }), "h", inner), .secondary);
-            if (self.held_open) for (self.held_rows.items, 0..) |item, i| {
-                if (lines.items.len < self.hit.len) self.hit[lines.items.len] = self.rows.items.len + i;
-                try lines.append(a, .{ .value = try fmt(a, "  {s}  {s:>3}", .{ try fit(a, text(item, "text"), inner -| 7), try age(a, model.timestamp, num(get(item, "since"))) }), .selected = self.selected == self.rows.items.len + i, .held_broken = get(item, "broken").bool });
-            };
+            lines.items[lines.items.len - 1].selected = held_selected and !self.held_open;
+            if (self.held_open) {
+                const held_room = height -| (lines.items.len + 1);
+                const held_first = if (held_selected) (self.selected - self.rows.items.len + 1) -| held_room else 0;
+                for (self.held_rows.items[held_first..], held_first..) |item, i| {
+                    if (lines.items.len < self.hit.len) self.hit[lines.items.len] = self.rows.items.len + i;
+                    try lines.append(a, .{ .value = try fmt(a, "  {s}  {s:>3}", .{ try fit(a, text(item, "text"), inner -| 7), try age(a, model.timestamp, num(get(item, "since"))) }), .selected = self.selected == self.rows.items.len + i, .held_broken = get(item, "broken").bool });
+                }
+            }
         } else if (host.held != null and !get(host.held.?.value, "available").bool) try add(&lines, a, "held work · unavailable", .secondary);
         if (self.inline_pad and self.selected < self.rows.items.len) {
             const r = self.rows.items[self.selected];

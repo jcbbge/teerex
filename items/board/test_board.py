@@ -382,6 +382,16 @@ class BoardTest(unittest.TestCase):
         p.key(b'j');self.assertIn('ship? newer',p.view());self.assertIn(b'\x1b[7m',p.output)
         p.key(b' ');self.assertNotIn('Scratchpad',p.view())
 
+    def test_held_selection_scrolls_past_full_live_rows(self):
+        base=dict(v=1,t=200000000,host='hive')
+        rows=[dict(base,kind='agent',id=str(i),name='worker'+str(i),state='working',now='Build',done=0,total=1) for i in range(20)]
+        rows.append(dict(base,kind='held',available=True,items=[dict(id=str(i),text='held item '+str(i),since=i+1,broken=False) for i in range(40)]))
+        path=self.root/'scroll-held.jsonl';path.write_text('\n'.join(map(json.dumps,rows)))
+        p=Pane(self.root,width=48,fixture=path);self.addCleanup(p.close);p.settle()
+        p.key(b'h');p.key(b'j'*59)
+        self.assertIn('held item 39',p.view())
+        self.assertEqual(screen(p.output,48)[1],0)
+
     def test_held_long_text_reserves_age_at_narrow_width(self):
         path=self.root/'long-held.jsonl'
         row=dict(id='long',text='ship? '+('Long title 界 '*30),since=1,broken=False)
