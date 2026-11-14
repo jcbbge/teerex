@@ -204,12 +204,14 @@ class SendTest(unittest.TestCase):
             result = subprocess.run(self.command(target, b'legacy route', sender='attention-worker') + ['--store', str(store), '--host', 'test'],
                                     env=self.env, capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
-            self.assertEqual(json.loads(result.stdout)['attention_count'], 'written')
+            receipt = json.loads(result.stdout)
+            self.assertEqual(receipt['outcome'], 'events_acknowledged')
+            self.assertEqual(receipt['history'], 'recorded')
         self.assertEqual(snapshot()['messages'], 7)
         result = subprocess.run([BIN, 'ask', *common, '--from', 'attention-worker',
                                  '--title', 'Registered question', '--ask', 'Choose one?', '--context', 'Test only',
                                  '--option', 'One :: gain :: loss', '--option', 'Two :: gain :: loss',
-                                 '--recommend', 'One', '--draft', 'ignore'],
+                                 '--recommend', 'One'],
                                 env=self.env, capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
         self.assertEqual(snapshot()['messages'], 8, 'custom registered ask counted once')
