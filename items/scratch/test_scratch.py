@@ -45,6 +45,18 @@ class ScratchTest(unittest.TestCase):
         return subprocess.run([BIN, "scratch", "hook"], env=self.env, input=json.dumps(dict(hook_event_name=kind, **fields)),
                               text=True, capture_output=True, timeout=15)
 
+    def test_fast_sequence_retains_every_transition(self):
+        self.init()
+        self.cli("todo", "one")
+        self.cli("todo", "two")
+        for args in (("now", "one"), ("done",), ("now", "two"),
+                     ("flag", "stuck; tried; need"), ("done",)):
+            self.cli(*args)
+        events = [json.loads(v) for v in Path(str(self.path) + ".events").read_text().splitlines()]
+        self.assertEqual([v["kind"] for v in events], ["step", "step", "step", "scratch_flag", "step"])
+        self.assertIn("started: two", events[2]["line"])
+        self.assertIn("stuck; tried; need", events[3]["line"])
+
     def test_done_clears_closed_work_flags_only_when_no_steps_open(self):
         self.init()
         self.cli("now", "First", "--waiting", "review", "--check", "10m")

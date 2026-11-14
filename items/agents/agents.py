@@ -805,7 +805,7 @@ def contract_tell(root, launch_id, kind, line, to="starter", last_message=None, 
                 c["last_contact_failed"] = dict(at=sent_at, line=line, receipt=results)
             if kind == "flag" and c.get("flag", {}).get("sha") == flag["sha"]:
                 c["flag"].update(delivered_at=now() if ok else None, receipt=results)
-            if ok and kind in ("done", "flag") and s.get("last_input_at_ns", 0) < sent_at * 1000000:
+            if ok and kind in ("done", "flag", "scratch_flag") and s.get("last_input_at_ns", 0) < sent_at * 1000000:
                 c.update(awaiting_starter=dict(kind=kind, at=sent_at), starter_lapses=0)
         update(root, launch_id, told)
     return (0 if ok else 1), dict(outcome=("queued" if queued else "transport_acknowledged") if ok else "uncertain", results=results)
@@ -2175,6 +2175,24 @@ def supervisor_error(o, field, exc):
 def contract_steps(root, launch_id, previous):
     state = load(root, launch_id)
     if not state.get("contract") or not contract_active(state):
+        return previous
+    journal = Path(state["scratchpad"] + ".events")
+    if journal.exists():
+        # Claim each immutable transition before input; uncertain transport is never replayed.
+        fd = os.open(journal, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        with os.fdopen(fd) as stream:
+            info = os.fstat(stream.fileno())
+            require(stat.S_ISREG(info.st_mode) and info.st_uid == os.getuid() and info.st_nlink == 1,
+                    "owned_regular_scratch_events_required")
+            stream.seek(state.get("scratch_event_offset", 0))
+            while True:
+                raw = stream.readline()
+                if not raw or not raw.endswith("\n"):
+                    break
+                event = json.loads(raw)
+                offset = stream.tell()
+                update(root, launch_id, lambda s: s.update(scratch_event_offset=offset))
+                contract_tell(root, launch_id, event["kind"], event["line"])
         return previous
     try:
         snapshot = contract_snapshot(state)

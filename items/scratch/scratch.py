@@ -155,6 +155,9 @@ def scratch_archive(path, session, block):
         if destination.exists():
             destination = target / (path.stem + "-" + str(time.time_ns()) + ".md")
         os.replace(path, destination)
+        journal = Path(str(path) + ".events")
+        if journal.exists():
+            os.replace(journal, Path(str(destination) + ".events"))
         os.chmod(destination, 0o600)
         return str(destination)
 
@@ -449,6 +452,28 @@ def scratch_main(argv=None):
                 if o.operation == "done" and not data["now"] and not data["todo"]:
                     data.update(waiting="", check="", blocked="")
                 scratch_write(path, data)
+                # Keep transitions while the supervisor is busy delivering earlier lines.
+                total = bool(data["now"]) + len(data["todo"]) + len(data["done"])
+                number = len(data["done"]) + bool(data["now"])
+                lines = []
+                if o.operation == "now":
+                    if o.done and data["done"]:
+                        lines.append(("step", f"STEP {data['name']} {len(data['done'])}/{total} finished: {data['done'][0]}"))
+                    lines.append(("step", f"STEP {data['name']} {number}/{total} started: {data['now']}"))
+                elif o.operation == "done" and data["done"]:
+                    lines.append(("step", f"STEP {data['name']} {len(data['done'])}/{total} finished: {data['done'][0]}"))
+                elif o.operation == "flag" and data["blocked"]:
+                    lines.append(("scratch_flag", f"FLAG {data['name']} step {number}/{total}: {data['blocked']}"))
+                journal = Path(str(path) + ".events")
+                fd = os.open(journal, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+                with os.fdopen(fd, "a") as stream:
+                    info = os.fstat(stream.fileno())
+                    if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_nlink != 1:
+                        raise ScratchError("owned_regular_scratch_events_required")
+                    for kind, line in lines:
+                        stream.write(json.dumps(dict(kind=kind, line=line)) + "\n")
+                    stream.flush()
+                    os.fsync(stream.fileno())
         return 0
     except (OSError, ValueError) as exc:
         print("teerex scratch: " + str(exc), file=sys.stderr)

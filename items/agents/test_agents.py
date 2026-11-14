@@ -317,6 +317,24 @@ class ContractHelpersTest(unittest.TestCase):
                 registry.save(record, new=True)
                 self.assertEqual(registry.read(record["launch_id"])["purpose"], record["purpose"])
 
+    def test_journal_delivers_rapid_transitions_in_order_once(self):
+        with resources.temporary_directory() as directory:
+            pad = Path(directory) / "pad.md"
+            events = [("step", "STEP worker 1/2 started: one"),
+                      ("step", "STEP worker 1/2 finished: one"),
+                      ("step", "STEP worker 2/2 started: two"),
+                      ("scratch_flag", "FLAG worker step 2/2: stuck; tried; need"),
+                      ("step", "STEP worker 2/2 finished: two")]
+            Path(str(pad) + ".events").write_text("".join(json.dumps(dict(kind=k, line=l)) + "\n" for k, l in events))
+            state = dict(contract={"active": True}, brief_attempted=True, scratchpad=str(pad))
+            sent = []
+            self.ns["load"] = lambda *a: state
+            self.ns["update"] = lambda r, i, f: f(state)
+            self.ns["contract_tell"] = lambda r, i, k, l: sent.append((k, l))
+            self.ns["contract_steps"]("root", "id", (None, []))
+            self.ns["contract_steps"]("root", "id", (None, []))
+            self.assertEqual(sent, events)
+
     def test_init_precedence_and_interval_validation(self):
         state = dict(starter=None, purpose="task", intent="intent")
         init = self.ns["contract_init"]
