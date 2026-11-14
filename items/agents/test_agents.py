@@ -535,6 +535,25 @@ class ContractHelpersTest(unittest.TestCase):
         with self.assertRaises(self.ns["Refusal"]):
             self.ns["contract_seat"](state)
 
+    def test_absent_starter_is_a_starter_fault_without_worker_lapse(self):
+        starter = dict(session_id="starter", block_id="gone")
+        state = dict(name="worker", starter=starter, brief_attempted=True,
+                     contract=dict(declared=None, last_contact_at=0, interval_s=1, lapses=0, stalled=False))
+        self.ns["load"] = lambda *_: state
+        self.ns["pane_presence"] = lambda *_: False
+        sent = []
+        self.ns["contract_tell"] = lambda *a, **kw: sent.append((a, kw))
+        self.ns["contract_lapse"]("root", "id")
+        self.assertEqual(state["contract"]["lapses"], 0)
+        self.assertFalse(state["contract"]["stalled"])
+        self.assertEqual(sent[0][0][2], "starter_absent")
+
+    def test_unknown_presence_never_authorizes_fall_up(self):
+        state = dict(socket="/tmp/test", client_path="/bin", rex_executable="/bin/rex")
+        self.ns["invoke"] = lambda *a, **kw: (1, dict(reason="unreachable"))
+        with self.assertRaisesRegex(self.ns["Refusal"], "presence_unknown"):
+            self.ns["pane_presence"](state, dict(session_id="s", block_id="b"))
+
     def test_input_older_than_report_does_not_clear_pending_answer(self):
         state = dict(contract=dict(awaiting_starter=dict(kind="flag", at=10), starter_lapses=1))
         self.ns["update"] = lambda root, launch, change: change(state)

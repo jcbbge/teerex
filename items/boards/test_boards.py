@@ -884,6 +884,38 @@ class RexBoardsTest(unittest.TestCase):
         subprocess.check_output(self.base + ['block', 'close', '-s', sid, bid])
         self.assertEqual(resolve()['outcome'], 'no_seat')
 
+    def test_absent_starter_delivery_falls_up_registry_chain(self):
+        sys.path.insert(0, str(ROOT / 'items/agents'))
+        from test_agents import ContractHelpersTest
+        helper = ContractHelpersTest()
+        helper.setUp()
+        api = helper.ns
+        api['RUNTIME'] = BIN
+        root = self.root / ('fall-up-' + str(time.monotonic_ns()))
+        root.mkdir(mode=0o700)
+        def pane():
+            made = json.loads(subprocess.check_output(self.base + ['new', '--json', '--keep-open', '--shell=none', '--', '/bin/sleep', '120']))
+            return dict(host='fixture', server='unix://' + str(self.socket), session_id=made['session_id'],
+                        block_id=made['initial_windows'][0]['block_ids'][0])
+        grandparent, starter, worker = pane(), pane(), pane()
+        launch = 'a' * 32
+        state = dict(schema_version=1, launch_id=launch, name='worker', target=worker, starter=starter, report_to=starter,
+                     socket=str(self.socket), client_path=os.environ.get('PATH', ''), rex_executable=self.rex, store=None,
+                     contract=dict(stalled=True, lapses=2))
+        with api['Registry'](str(root)) as registry:
+            registry.save(state, new=True)
+            registry.save(dict(schema_version=1, launch_id='b' * 32, target=starter, starter=grandparent), new=True)
+        subprocess.check_output(self.base + ['block', 'close', '-s', starter['session_id'], starter['block_id']])
+        self.assertEqual(api['delivery_destination'](str(root), state, starter), grandparent)
+        saved = api['load'](str(root), launch)
+        self.assertFalse(saved['contract']['stalled'])
+        self.assertEqual(saved['contract']['lapses'], 0)
+        self.assertEqual(saved['starter_faults'][0]['absent'], [starter])
+        # Unknown transport is not permission to choose another owner.
+        api['invoke'] = lambda *a, **kw: (1, dict(reason='unreachable'))
+        with self.assertRaisesRegex(api['Refusal'], 'presence_unknown'):
+            api['delivery_destination'](str(root), saved, grandparent)
+
     def test_fleet_full_evicts_dead_and_all_live_grows(self):
         store = self.root / 'capacity-store'
         store.mkdir(mode=0o700)

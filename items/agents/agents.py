@@ -575,7 +575,70 @@ def succeeded(code, packet, *outcomes):
     return code == 0 and isinstance(packet, dict) and packet.get("outcome") in outcomes
 
 
+def pane_presence(state, destination):
+    code, packet = invoke(["boards", "probe", "--socket", destination.get("server", "unix://" + state["socket"])[7:]],
+                          client_path=state["client_path"], rex_executable=state["rex_executable"])
+    require(code == 0 and isinstance(packet, dict) and isinstance(packet.get("rows"), list),
+            "destination_presence_unknown_no_reroute")
+    return any(row["session"] == destination["session_id"] and row["block"] == destination["block_id"]
+               for row in packet["rows"])
+
+
+def registered_seat(state, destination):
+    if destination.get("role") == "seat":
+        return True
+    if not state.get("store"):
+        return False
+    code, packet = invoke(["boards", "state", "inspect", "--store", absolute(state["store"])],
+                          client_path=state["client_path"], rex_executable=state["rex_executable"])
+    require(code == 0 and isinstance(packet, dict) and isinstance(packet.get("state"), dict),
+            "seat_registration_lookup_failed")
+    return any(seat["target"] == destination for seat in packet["state"]["seats"])
+
+
+def seat_address(state):
+    return dict(role="seat", host=state["target"]["host"], server="unix://" + state["socket"],
+                session_id="seat", block_id="seat")
+
+
+def delivery_destination(root, state, destination):
+    """Fall up only after fresh absence evidence; unknown is never absence."""
+    visited, absent = [], []
+    while destination and destination not in visited:
+        visited.append(destination)
+        if registered_seat(state, destination):
+            return seat_address(state)
+        if pane_presence(state, destination):
+            if absent:
+                def rerouted(s):
+                    s.setdefault("starter_faults", []).append(dict(at=now(), absent=absent, rerouted_to=destination))
+                    c = s.get("contract")
+                    if c:
+                        c.update(stalled=False, lapses=0, last_contact_at=now())
+                update(root, state["launch_id"], rerouted)
+            return destination
+        absent.append(destination)
+        with Registry(root) as registry:
+            parent = None
+            for path in list(Path(root).glob("agents-*.json")) + list(Path(root).glob("archive/*/agents-*.json")):
+                candidate = json.loads(read_file(str(path), limit=None, private=True))
+                if candidate.get("target") == destination:
+                    parent = candidate.get("starter")
+                    break
+        destination = parent
+    if absent:
+        def orphaned(s):
+            s.setdefault("starter_faults", []).append(dict(at=now(), absent=absent, rerouted_to="seat"))
+            if s.get("contract"):
+                s["contract"].update(stalled=False, lapses=0, last_contact_at=now())
+        update(root, state["launch_id"], orphaned)
+    require(state.get("store"), "no_live_starter_or_seat_store")
+    return seat_address(state)
+
+
 def send(root, state, destination, body, label):
+    if destination != state["target"]:
+        destination = delivery_destination(root, state, destination)
     with Registry(root) as registry:
         path = registry.write_message(state["launch_id"], label, body)
     return invoke(["send", "--socket", state["socket"], "--session", destination["session_id"],
@@ -690,7 +753,7 @@ def contract_tell(root, launch_id, kind, line, to="starter", last_message=None, 
         line = state["name"] + ": " + line
     destinations = [state["target"]] if to == "self" else [state.get("starter"), state.get("report_to")]
     if to == "seat":
-        destinations = [contract_seat(state)]
+        destinations = [seat_address(state)]
     destinations = [d for i, d in enumerate(destinations) if d and d not in destinations[:i]]
     sent_at = now()
     results = []
@@ -2099,6 +2162,11 @@ def contract_lapse(root, launch_id):
     state = load(root, launch_id)
     c = state.get("contract")
     if not c or not contract_active(state) or c.get("declared") == "done":
+        return
+    starter = state.get("starter")
+    if starter and not pane_presence(state, starter):
+        contract_tell(root, launch_id, "starter_absent",
+                      f"STARTER ABSENT {state['name']}: starter pane is gone; responsibility rerouted")
         return
     timestamp = now()
     window = max(c["last_contact_at"], c.get("last_lapse_at", 0))
