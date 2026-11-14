@@ -613,9 +613,7 @@ class BoardTest(unittest.TestCase):
         taskpane=Pane(self.root,fixture=path,config=config,extra_args=['--tasks',str(self.root)])
         self.addCleanup(taskpane.close);taskpane.settle()
         taskpane.key(b'm');taskpane.key(b'\r');taskpane.until(lambda:b'Jumped to pane' in taskpane.output)
-        taskview=rpc('session.view',dict(session_id=sid))
-        active=next(w for w in taskview['windows'] if w['window_id']==taskview['active_window_id'])
-        self.assertEqual(active['focused_block_id'],target)
+        self.assertEqual(poll(focused_block,lambda block:block==target),target)
         # Held Enter creates a readable adjacent pane on the board's server;
         # its command is routed to the configured source host.
         p.key(b'm');p.key(b'j');p.key(b'j');p.key(b'\r')
