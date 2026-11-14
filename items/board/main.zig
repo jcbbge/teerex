@@ -61,6 +61,12 @@ fn amount(a: A, n: f64) ![]const u8 {
     return fmt(a, "{d:.1}{s}", .{ val, names[unit] });
 }
 
+fn memUsed(a: A, mem: Value) ![]const u8 {
+    const used = try amount(a, num(get(mem, "used")));
+    const total = try amount(a, num(get(mem, "total")));
+    return if (used[used.len - 1] == total[total.len - 1]) used[0 .. used.len - 1] else used;
+}
+
 const Role = enum { words, secondary, accent, problem, pass, lines, marks, warning };
 const Line = struct { value: []const u8, role: Role = .words, selected: bool = false, held_broken: ?bool = null };
 const Host = struct {
@@ -266,7 +272,19 @@ fn fit(a: A, input: []const u8, width: usize) ![]const u8 {
     if (!whole) if (std.mem.lastIndexOfScalar(u8, cut[0..end], ' ')) |space| {
         if (cells(cut[0..space]) >= cells(cut[0..end]) / 2) end = space;
     };
-    return fmt(a, "{s}…", .{std.mem.trimEnd(u8, cut[0..end], " ·,;:-")});
+    return fmt(a, "{s}…", .{trimFitEnd(cut[0..end])});
+}
+fn trimFitEnd(input: []const u8) []const u8 {
+    var result = input;
+    while (result.len > 0) {
+        if (std.mem.endsWith(u8, result, "·")) {
+            result = result[0 .. result.len - "·".len];
+            continue;
+        }
+        if (std.mem.indexOfScalar(u8, " ,;:-", result[result.len - 1]) == null) break;
+        result = result[0 .. result.len - 1];
+    }
+    return result;
 }
 fn lr(a: A, left: []const u8, right: []const u8, width: usize) ![]const u8 {
     const r = try fit(a, right, width);
@@ -805,7 +823,7 @@ const UI = struct {
         const cpu = num(get(v, "cpu_total"));
         const bw = @max(8, @min(30, width -| (11 + if (width >= 60) @as(usize, 12) else 0)));
         try add(lines, a, try fmt(a, "cpu  {s}  {d}%", .{ try spark(a, host, bw), integer(cpu) }), .marks);
-        try add(lines, a, try fmt(a, "mem  {s}  {d}%{s}", .{ try bar(a, percent(mem), bw), integer(percent(mem)), if (width >= 60) try fmt(a, "  {s}/{s}", .{ try amount(a, num(get(mem, "used"))), try amount(a, num(get(mem, "total"))) }) else "" }), .marks);
+        try add(lines, a, try fmt(a, "mem  {s}  {d}%{s}", .{ try bar(a, percent(mem), bw), integer(percent(mem)), if (width >= 60) try fmt(a, "  {s}/{s}", .{ try memUsed(a, mem), try amount(a, num(get(mem, "total"))) }) else "" }), .marks);
         const disks = arr(get(v, "disks"));
         if (disks.len > 0) {
             const disk = disks[0];
@@ -940,7 +958,7 @@ fn dimensions() p.winsize {
     return size;
 }
 fn query() !void {
-    try std.fs.File.stdout().writeAll(ESC ++ "_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA" ++ ESC ++ "\\" ++ ESC ++ "[c" ++ ESC ++ "]10;?" ++ ESC ++ "\\" ++ ESC ++ "]11;?" ++ ESC ++ "\\");
+    try std.fs.File.stdout().writeAll(ESC ++ "[c" ++ ESC ++ "]10;?" ++ ESC ++ "\\" ++ ESC ++ "]11;?" ++ ESC ++ "\\");
     for (0..16) |slot| {
         var buf: [32]u8 = undefined;
         try std.fs.File.stdout().writeAll(try std.fmt.bufPrint(&buf, ESC ++ "]4;{d};?" ++ ESC ++ "\\", .{slot}));
@@ -1060,7 +1078,7 @@ const TabLabel = struct {
     }
 };
 
-const Options = struct { config: []const u8, hosts: []const u8 = "hive,m5", replay: ?[]const u8 = null, once: bool = false, json: bool = false, graphics: bool = false, tasks: ?[]const u8 = null, width: usize = 60, height: usize = 30, lens: usize = 0, benchmark: usize = 0 };
+const Options = struct { config: []const u8, hosts: []const u8 = "hive,m5", replay: ?[]const u8 = null, once: bool = false, json: bool = false, tasks: ?[]const u8 = null, width: usize = 60, height: usize = 30, lens: usize = 0, benchmark: usize = 0 };
 fn options(a: A, args: []const []const u8) !Options {
     const home = try std.process.getEnvVarOwned(a, "HOME");
     var result: Options = .{ .config = try std.fs.path.join(a, &.{ home, ".config/teerex/hosts.json" }) };
@@ -1077,7 +1095,7 @@ fn options(a: A, args: []const []const u8) !Options {
     var i: usize = 0;
     while (i < args.len) : (i += 1) {
         const s = args[i];
-        if (eq(s, "--json")) result.json = true else if (eq(s, "--once")) result.once = true else if (eq(s, "--no-graphics")) result.graphics = false else if (eq(s, "--config") or eq(s, "--hosts") or eq(s, "--replay") or eq(s, "--benchmark") or eq(s, "--lens") or eq(s, "--width") or eq(s, "--height") or eq(s, "--tasks")) {
+        if (eq(s, "--json")) result.json = true else if (eq(s, "--once")) result.once = true else if (eq(s, "--no-graphics")) {} else if (eq(s, "--config") or eq(s, "--hosts") or eq(s, "--replay") or eq(s, "--benchmark") or eq(s, "--lens") or eq(s, "--width") or eq(s, "--height") or eq(s, "--tasks")) {
             i += 1;
             if (i >= args.len) return error.BoardOptionNeedsValue;
             if (eq(s, "--tasks")) {
