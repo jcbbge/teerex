@@ -84,7 +84,7 @@ def collect(home, held_command=None):
                             section = line[3:]
                         elif line.startswith('- [x] ') and section == 'Done':
                             text = clean(name + ': ' + line[6:])
-                            result['finished'].append(dict(at=timestamp(updated), text=text))
+                            result['finished'].append(dict(at=timestamp(updated), text=text, owner=clean(agent.get('owner') or name)))
                             event(updated, name, 'scratch snapshot', line[6:] + ' (snapshot time; completion time unknown)', pad)
                 except (OSError, ValueError) as exc:
                     result['unavailable'].append(clean(str(pad) + ': ' + str(exc)))
@@ -138,7 +138,19 @@ def brief(hosts, since):
         text += ['## ' + title, '']
         lines = []
         for host, data in hosts.items():
-            for item in data[key]:
+            items = data[key]
+            if key == 'finished':
+                groups = {}
+                for item in items:
+                    if item['at'] >= since:
+                        groups.setdefault(item.get('owner', 'work'), []).append(item)
+                items = []
+                for owner, steps in sorted(groups.items()):
+                    latest = max(steps, key=lambda item: item['at'])
+                    proven = [item for item in steps if 'proof:' in item['text']]
+                    proof = max(proven, key=lambda item: item['at'])['text'].partition('proof:')[2].strip() if proven else 'no proof supplied'
+                    items.append(owner + ': ' + str(len(steps)) + ' reported steps finished. Latest: ' + latest['text'].split(' — ')[0] + '. Proof sample: ' + proof)
+            for item in items:
                 if isinstance(item, dict):
                     if item['at'] < since:
                         continue

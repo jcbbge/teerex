@@ -15,7 +15,8 @@ resources. An existing explicit path is refused rather than overwritten.
 the invoking pane; `--no-open` prints only. `--session`, `--block`, and `--socket`
 provide explicit reader context. `--json` exposes normalized evidence for tools.
 
-The brief includes reported finished steps and their supplied proof text, open
+The brief groups reported finished steps by owner with the latest step and a
+supplied proof sample (the complete step list stays in the log), open
 decision records, declared stalls, Rivet ship stops, machine load/CPU/disk, and
 source errors. A reported finished step is not independently verified success.
 Scratch times are snapshot times; contract-file times are recording times.
