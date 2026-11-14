@@ -34,7 +34,7 @@ const usage =
     \\  targets resolve|exec                         Named-host lookup and explicit transport
     \\  run-visible                                  Visible noninteractive argv, output and actual exit
     \\  replay record|play|live                       Capture bytes, faithful replay and independent live checks
-    \\  clutch take|release|status|palette|prune  Cooperative human takeover and hand-back
+    \\  clutch take|release|status|queue|palette|prune  Cooperative human takeover and hand-back
     \\Existing tools: observe, compare, watch, run, offstage, doctor, send, spawn,
     \\                jobs, adapters, maneuver-check, filter
     \\Socket verbs default --socket from percent-decoded REX_SERVER (unix://), then platform home/runtime path.

@@ -58,6 +58,7 @@ sys.exit(p.returncode)
         return counter
 
     def test_held_queue_private_inspection_ordered_drain_and_repeat_release(self):
+        # Every CLI invocation is a new process: no sender survives to release.
         target, raw = self.fixture()
         _, hold = self.clutch("take", target)
         ids = [self.queued(target, b"first\nPRIVATE_SECOND_LINE", "alpha"), self.queued(target, b"second", "beta"), self.queued(target, b"third", "gamma")]

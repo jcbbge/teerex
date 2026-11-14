@@ -337,6 +337,22 @@ class ContractHelpersTest(unittest.TestCase):
         self.assertEqual(sent[0][1]["name"], "teerex-contract")
         self.assertEqual(state["contract"]["awaiting_starter"]["kind"], "done")
         self.assertFalse(state["contract"]["stalled"])
+    def test_queued_contract_contact_is_accepted_without_transport_ack(self):
+        destination = dict(session_id="s", block_id="b")
+        state = dict(name="worker", starter=destination, report_to=destination, contract={})
+        sent = []
+        self.ns["load"] = lambda *_: state
+        self.ns["update"] = lambda root, launch, change: change(state)
+        self.ns["send"] = lambda *args: (sent.append(args) or (0, {"outcome": "queued", "queue_id": "stored"}))
+        answer = dict(outcome="waiting", step_n=1, steps_total=2, reason="review")
+        code, packet = self.ns["contract_tell"]("root", "id", "waiting", "NOT DONE worker: review", turn_report=answer)
+        self.assertEqual((code, packet["outcome"]), (0, "queued"))
+        self.assertIn("last_contact_at", state["contract"])
+        self.assertFalse(self.ns["transport_ack"](0, packet["results"][0]["receipt"]))
+        code, packet = self.ns["contract_tell"]("root", "id", "waiting", "NOT DONE worker: review", turn_report=answer)
+        self.assertEqual(packet["outcome"], "unchanged_turn_suppressed")
+        self.assertEqual(len(sent), 1)
+
     def test_turn_answers_suppress_unchanged_per_destination_until_check_expires(self):
         starter = dict(session_id="s", block_id="starter")
         report_to = dict(session_id="s", block_id="report")
@@ -688,6 +704,41 @@ class AgentsTest(unittest.TestCase):
         self.assertEqual(after['active_window_id'], before['active_window_id'])
         self.assertEqual(after['windows'][0]['focused_block_id'], self.starter)
         self.assertEqual(self.rpc('session.describe_block', dict(session_id=self.session, block_id=block))['block']['placement'], 'placed')
+
+    def test_held_turn_reports_queue_then_release_once(self):
+        for contract in (False, True):
+            with self.subTest(contract=contract):
+                process, launched = self.launch(contract=contract)
+                self.assertEqual(process.returncode, 0, process.stdout + process.stderr)
+                launch_id = launched["launch_id"]
+                Path(self.record(launch_id)["scratchpad"]).write_text("# worker\n## Now\n## To-do\n## Done\n- [x] Report test\n")
+                if contract:
+                    wait_for(lambda: any("STEP probe 1/1 finished: Report test" in v.get("payload", "") for v in events(self.starter_log)))
+                command = [BIN, "clutch", "take", "--socket", str(self.socket),
+                           "--session", self.session, "--pane", self.starter]
+                held = subprocess.run(command, env=self.env, capture_output=True, text=True, timeout=5)
+                self.assertEqual(held.returncode, 0, held.stdout + held.stderr)
+                before = [v for v in events(self.starter_log) if v["event"] == "input"]
+                identity = ("4" if contract else "3") * 32
+                process, packet = self.run_cli("stop", "--registry", str(self.registry), "--launch-id", launch_id,
+                    "--event-id", identity, "--event-file", "-",
+                    input=json.dumps(dict(hook_event_name="Stop", last_assistant_message="QUEUE_REPORT_PROBE")))
+                self.assertEqual(process.returncode, 0, process.stdout + process.stderr)
+                self.assertEqual(packet["outcome"], "notification_queued")
+                notice = self.record(launch_id)["notifications"][identity]
+                self.assertEqual(notice["outcome"], "queued")
+                native = (notice["receipt"] if contract else notice)["results"][0]["receipt"]
+                self.assertFalse(native["paste"]["attempted"] or native["enter"]["attempted"])
+                self.assertEqual([v for v in events(self.starter_log) if v["event"] == "input"], before)
+                command[2] = "release"
+                released = subprocess.run(command, env=self.env, capture_output=True, text=True, timeout=15)
+                self.assertEqual(released.returncode, 0, released.stdout + released.stderr)
+                self.assertEqual(json.loads(released.stdout)["queue"]["delivered"], [native["queue_id"]])
+                expected = len(before) + 1
+                wait_for(lambda: sum(v["event"] == "input" for v in events(self.starter_log)) == expected)
+                released = subprocess.run(command, env=self.env, capture_output=True, text=True, timeout=15)
+                self.assertEqual(json.loads(released.stdout)["queue"]["delivered"], [])
+                self.assertEqual(sum(v["event"] == "input" for v in events(self.starter_log)), expected)
 
     def test_stop_notification_waits_for_and_restores_operator_draft(self):
         prompt_log = self.work / "prompt.jsonl"

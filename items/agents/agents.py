@@ -720,7 +720,9 @@ def contract_tell(root, launch_id, kind, line, to="starter", last_message=None, 
         results.append(dict(client_exit=code, receipt=packet))
     if turn_report is not None and not results and destinations:
         return 0, dict(outcome="unchanged_turn_suppressed", results=[])
-    ok = bool(results) and all(transport_ack(r["client_exit"], r["receipt"]) for r in results)
+    queued = any(succeeded(r["client_exit"], r["receipt"], "queued") for r in results)
+    ok = bool(results) and all(transport_ack(r["client_exit"], r["receipt"]) or
+                               succeeded(r["client_exit"], r["receipt"], "queued") for r in results)
     if to == "starter":
         def told(s):
             c = s["contract"]
@@ -733,7 +735,7 @@ def contract_tell(root, launch_id, kind, line, to="starter", last_message=None, 
             if ok and kind in ("done", "flag") and s.get("last_input_at_ns", 0) < sent_at * 1000000:
                 c.update(awaiting_starter=dict(kind=kind, at=sent_at), starter_lapses=0)
         update(root, launch_id, told)
-    return (0 if ok else 1), dict(outcome="transport_acknowledged" if ok else "uncertain", results=results)
+    return (0 if ok else 1), dict(outcome=("queued" if queued else "transport_acknowledged") if ok else "uncertain", results=results)
 
 
 def execution_config(profile):
@@ -1542,16 +1544,22 @@ def notify(root, launch_id, event_id, body, evidence, reported_state="unknown", 
     for i, destination in enumerate(destinations):
         code, packet = send(root, state, destination, body, "notice-" + event_id + "-" + str(i))
         results.append(dict(target=destination, client_exit=code, receipt=packet,
-                            outcome="transport_acknowledged" if transport_ack(code, packet) else "uncertain"))
+                            outcome="queued" if succeeded(code, packet, "queued") else "transport_acknowledged" if transport_ack(code, packet) else "uncertain"))
     def reported(s):
         s["notifications"][event_id]["results"] = results
-        s["notifications"][event_id]["outcome"] = ("suppressed" if delivery_rule == "progress_turn_suppressed" else "transport_acknowledged" if all(r["outcome"] == "transport_acknowledged"
-                                                                                   for r in results) else "uncertain")
+        outcomes = {r["outcome"] for r in results}
+        s["notifications"][event_id]["outcome"] = (
+            "suppressed" if delivery_rule == "progress_turn_suppressed" else
+            "uncertain" if "uncertain" in outcomes else
+            "queued" if "queued" in outcomes else "transport_acknowledged")
     state = update(root, launch_id, reported)
     publish_fleet(root, state, event_id, reported_state, body.replace("\n", " "))
     state = load(root, launch_id)
-    ok = state["notifications"][event_id]["outcome"] in ("transport_acknowledged", "suppressed")
-    return (0 if ok else 1), receipt(state, "notification_suppressed" if delivery_rule == "progress_turn_suppressed" else "notification_acknowledged" if ok else "notification_uncertain", delivery_rule=delivery_rule)
+    ok = state["notifications"][event_id]["outcome"] in ("transport_acknowledged", "queued", "suppressed")
+    outcome = ("notification_suppressed" if delivery_rule == "progress_turn_suppressed" else
+               "notification_queued" if ok and state["notifications"][event_id]["outcome"] == "queued" else
+               "notification_acknowledged" if ok else "notification_uncertain")
+    return (0 if ok else 1), receipt(state, outcome, delivery_rule=delivery_rule)
 
 
 def transcript_last_text(path):
@@ -1757,10 +1765,10 @@ def report_stop(root, launch_id, event_id, event, allow_transcript=True):
                                steps_total=c["steps_total"], reason=reason)
         code, delivery = contract_tell(root, launch_id, declared or "no_answer", body,
                                        last_message=last_message, turn_report=turn_report)
-        update(root, launch_id, lambda s: s["notifications"][event_id].update(outcome="transport_acknowledged" if code == 0 else "uncertain", receipt=delivery))
+        update(root, launch_id, lambda s: s["notifications"][event_id].update(outcome=("queued" if delivery.get("outcome") == "queued" else "transport_acknowledged") if code == 0 else "uncertain", receipt=delivery))
         state = load(root, launch_id)
         publish_fleet(root, state, event_id, "completed" if declared == "done" else "blocked" if declared in ("blocked", "waiting") else "idle", body)
-        packet = receipt(load(root, launch_id), "notification_acknowledged" if code == 0 else "notification_uncertain", delivery_rule=delivery_rule, contract_delivery=delivery)
+        packet = receipt(load(root, launch_id), ("notification_queued" if delivery.get("outcome") == "queued" else "notification_acknowledged") if code == 0 else "notification_uncertain", delivery_rule=delivery_rule, contract_delivery=delivery)
     else:
         code, packet = notify(root, launch_id, event_id, body, "harness_report_not_process_death",
                               reported_state=("completed" if turn_state == "done" else "idle") if kind == "Stop" else "unknown", delivery_rule=delivery_rule)

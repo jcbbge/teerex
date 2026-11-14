@@ -464,3 +464,5 @@ transcripts on hive on 2026-11-14. Isolated checks:
 `python3 items/agents/test_cost.py CostTests -v`; the disposable-server live
 threshold check is `REX_BIN=ABS TEEREX_BIN=ABS python3
 items/agents/test_cost.py CostLiveTests -v`.
+
+Held-pane turn reports and contract contacts accept native durable queue acknowledgment as `queued` / `notification_queued`. They retain the queue ID and distinguish stored messages from acknowledged terminal events. Repeated unchanged turn reports keep their existing suppression; release performs the guarded delivery.
