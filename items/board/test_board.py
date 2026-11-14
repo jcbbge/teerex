@@ -590,12 +590,22 @@ class BoardTest(unittest.TestCase):
         p.key(b'\r')
         p.until(lambda:b'Jumped to pane' in p.output)
         rpc,sid,target,_=targets['m5']
-        view=rpc('session.view',dict(session_id=sid))
-        active=next(w for w in view['windows'] if w['window_id']==view['active_window_id'])
-        self.assertEqual(active['focused_block_id'],target)
+        def poll(read, ready):
+            end=time.monotonic()+5
+            value=read()
+            while not ready(value) and time.monotonic()<end:
+                p.read(min(.1,max(0,end-time.monotonic())))
+                value=read()
+            return value
+        def focused_block():
+            view=rpc('session.view',dict(session_id=sid))
+            active=next(w for w in view['windows'] if w['window_id']==view['active_window_id'])
+            return active['focused_block_id']
+        self.assertEqual(poll(focused_block,lambda block:block==target),target)
         p.key(b' ')
-        self.assertIn('Check complete scratchpad',p.view())
-        self.assertIn('Started private Rex',p.view())
+        view=poll(p.view,lambda view:'Check complete scratchpad' in view and 'Started private Rex' in view)
+        self.assertIn('Check complete scratchpad',view)
+        self.assertIn('Started private Rex',view)
         p.key(b'h')
         # The task view focuses the joined owner's exact named-host pane too.
         events.append(dict(v=1,t=200000000,host='m5',kind='task',id='1-task.md',number='1',title='Owner jump',owner='codex-render',state='WORKING',done=False,chunks=[],last=''))
@@ -614,8 +624,8 @@ class BoardTest(unittest.TestCase):
         def held_panes():
             listed=json.loads(subprocess.check_output([rex,'--autostart=false','--server','unix://'+hosts['hive']['socket'],'block','ls','--session',board_sid,'--json'],timeout=5))
             return [pane for pane in listed['blocks'] if pane.get('label')=='Held work']
-        panes=held_panes()
-        self.assertEqual(len(panes),1)
+        panes=poll(held_panes,lambda panes:len(panes)==1)
+        self.assertEqual(len(panes),1,panes)
         held_block=panes[0]['block_id']
         try:
             end=time.monotonic()+5
