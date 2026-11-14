@@ -428,6 +428,7 @@ def scratch_main(argv=None):
             completion = " — proof: " + proof if proof else " — unproven"
             with scratch_lock(path):
                 data = scratch_read(path)
+                old_now = data["now"]
                 if o.operation == "todo":
                     data["todo"].append(scratch_line(o.text))
                 elif o.operation == "flag":
@@ -457,10 +458,10 @@ def scratch_main(argv=None):
                 number = len(data["done"]) + bool(data["now"])
                 lines = []
                 if o.operation == "now":
-                    if o.done and data["done"]:
+                    if o.done and old_now:
                         lines.append(("step", f"STEP {data['name']} {len(data['done'])}/{total} finished: {data['done'][0]}"))
                     lines.append(("step", f"STEP {data['name']} {number}/{total} started: {data['now']}"))
-                elif o.operation == "done" and data["done"]:
+                elif o.operation == "done" and old_now:
                     lines.append(("step", f"STEP {data['name']} {len(data['done'])}/{total} finished: {data['done'][0]}"))
                 elif o.operation == "flag" and data["blocked"]:
                     lines.append(("scratch_flag", f"FLAG {data['name']} step {number}/{total}: {data['blocked']}"))

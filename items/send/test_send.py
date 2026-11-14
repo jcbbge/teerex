@@ -153,6 +153,43 @@ class SendTest(unittest.TestCase):
         return self.rpc("com.superlogical.terminal.format", {"session_id": target[0], "block_id": target[1],
                         "args": {"format": "text", "max_bytes": 65536}})["content"]
 
+    def test_registered_sender_must_use_true_name_before_paste(self):
+        target, raw = self.fixture()
+        registry = Path(self.env["AGENT_REGISTRY"])
+        registry.mkdir(mode=0o700, exist_ok=True)
+        record = dict(schema_version=1, launch_id="a" * 32, name="registered-worker",
+                      target=dict(server="unix://" + str(self.socket), session_id=self.env["REX_SESSION"],
+                                  block_id=self.env["REX_BLOCK"]))
+        path = registry / ("agents-" + "a" * 32 + ".json")
+        path.write_text(json.dumps(record))
+        path.chmod(0o600)
+        self.env["AGENT_NAME"] = "claimed-name-is-not-authority"
+        refused, _ = self.send(target, b"must not arrive", sender="someone-else")
+        self.assertEqual(refused.returncode, 1, refused.stdout + refused.stderr)
+        self.assertIn("use --from registered-worker", refused.stderr)
+        self.assertEqual(raw.read_bytes(), b"")
+        for misleading in ("--socket", "--from"):
+            refused, _ = self.send(target, b"must not arrive", sender=misleading)
+            self.assertEqual(refused.returncode, 1, refused.stdout + refused.stderr)
+            self.assertIn("use --from registered-worker", refused.stderr)
+        self.assertEqual(raw.read_bytes(), b"")
+        sent, _ = self.send(target, b"correct", sender="registered-worker")
+        self.assertEqual(sent.returncode, 0, sent.stdout + sent.stderr)
+        expected = self.pasted(b"correct", "registered-worker")
+        self.received(raw, expected)
+        self.env["TEEREX_GENERATED_SENDER"] = "teerex-contract"
+        sent, _ = self.send(target, b"DONE registered-worker: result", sender="teerex-contract")
+        self.assertEqual(sent.returncode, 0, sent.stdout + sent.stderr)
+        expected += self.pasted(b"DONE registered-worker: result", "teerex-contract")
+        self.received(raw, expected)
+        self.env.pop("TEEREX_GENERATED_SENDER")
+        for key in list(self.env):
+            if key.startswith(("AGENT_", "LC_AGENT_", "TEEREX_CALLER_")) and key != "AGENT_REGISTRY":
+                self.env.pop(key)
+        sent, _ = self.send(target, b"human script", sender="free-label")
+        self.assertEqual(sent.returncode, 0, sent.stdout + sent.stderr)
+        self.received(raw, expected + self.pasted(b"human script", "free-label"))
+
     def test_attention_three_sends_ask_and_refusal(self):
         target, raw = self.fixture()
         self.env['TEEREX_ATTENTION_DIR'] = str(self.work / 'attention')

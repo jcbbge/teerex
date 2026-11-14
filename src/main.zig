@@ -127,6 +127,24 @@ fn send(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
             try native.append(allocator, args[i]);
         }
     }
+    var socket: ?[]const u8 = null;
+    var sender: ?[]const u8 = null;
+    var index: usize = 0;
+    while (index < native.items.len) {
+        const arg = native.items[index];
+        if (std.mem.eql(u8, arg, "--no-queue")) {
+            index += 1;
+            continue;
+        }
+        if (index + 1 >= native.items.len) break;
+        if (std.mem.eql(u8, arg, "--socket")) socket = native.items[index + 1];
+        if (std.mem.eql(u8, arg, "--from")) sender = native.items[index + 1];
+        index += 2;
+    }
+    if (socket != null and sender != null) {
+        const endpoint = try std.fmt.allocPrint(allocator, "unix://{s}", .{socket.?});
+        if (!try @import("pane_guard").checkSender(allocator, endpoint, sender.?)) return 1;
+    }
     if (store != null or host != null) {
         if (store == null or host == null) return error.SendStoreAndHostRequiredTogether;
         try route.appendSlice(allocator, &.{ "--store", store.?, "--host", host.? });

@@ -179,7 +179,8 @@ def drain(path, executable, receipt):
                         command.extend(["--" + key.replace("_", "-"), record[key]])
                 try:
                     sent = subprocess.run(command, input=record["body"], text=True, capture_output=True,
-                                          timeout=record["timeout_ms"] / 1000 + 5)
+                                          timeout=record["timeout_ms"] / 1000 + 5,
+                                          env=dict(os.environ, TEEREX_GENERATED_SENDER=record["sender"]))
                     packet = json.loads(sent.stdout)
                 except (OSError, ValueError, subprocess.TimeoutExpired):
                     result["stopped"] = dict(id=match[1], reason="delivery_uncertain")

@@ -586,3 +586,7 @@ then route there. Later messages never change that owner. A different owner
 requires the receiving agent (or operator) to run
 `teerex agents starter --registry REGISTRY --launch-id OWN_LAUNCH --starter-launch-id NEW_STARTER_LAUNCH`.
 This explicit command starts a new work assignment; ordinary messages never transfer ownership.
+Only the receiving agent itself or the operator can run it, and the launch record
+retains the reassignment. It changes report routing, not pane ownership: the
+opener (or human who launched it) retains control. A pane's own supervisor may
+close its own pane for cleanup.

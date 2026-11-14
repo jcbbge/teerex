@@ -50,7 +50,7 @@ class ScratchTest(unittest.TestCase):
         self.cli("todo", "one")
         self.cli("todo", "two")
         for args in (("now", "one"), ("done",), ("now", "two"),
-                     ("flag", "stuck; tried; need"), ("done",)):
+                     ("flag", "stuck; tried; need"), ("done",), ("done",)):
             self.cli(*args)
         events = [json.loads(v) for v in Path(str(self.path) + ".events").read_text().splitlines()]
         self.assertEqual([v["kind"] for v in events], ["step", "step", "step", "scratch_flag", "step"])

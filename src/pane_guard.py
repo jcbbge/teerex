@@ -41,6 +41,24 @@ def canonical_server(value):
     return 'unix://' + os.path.realpath(path)
 
 
+def check_sender(server, sender):
+    """A registered agent cannot accidentally speak under another agent's name."""
+    if os.environ.get("TEEREX_GENERATED_SENDER") == sender or not managed_agent():
+        return
+    actor = caller_identity()
+    root = state_root()
+    registry = Path(os.environ.get("AGENT_REGISTRY") or os.environ.get("LC_AGENT_REGISTRY") or root / "teerex-agents")
+    for path in registry.glob("agents-*.json"):
+        record = read(path)
+        target = record.get("target") or {}
+        if (canonical_server(target.get("server")) == canonical_server(server) and
+                all(actor.get(k) and actor[k] == target.get(k) for k in ("session_id", "block_id"))):
+            name = record.get("name")
+            if sender != name:
+                raise ValueError("send refused: your registered name is " + str(name) + "; use --from " + str(name))
+            return
+
+
 def snapshot(server, human_launch=False, session=None):
     server = canonical_server(server)
     if server is None:
@@ -425,6 +443,9 @@ def record_created(server, method, payload, result):
 
 if __name__ == '__main__':
     try:
-        print(prelude(sys.argv[1], len(sys.argv) > 2 and sys.argv[2] == 'message', session=sys.argv[3] if len(sys.argv) > 3 and sys.argv[3] else None))
+        if len(sys.argv) > 2 and sys.argv[2] == 'sender':
+            check_sender(sys.argv[1], sys.argv[3])
+        else:
+            print(prelude(sys.argv[1], len(sys.argv) > 2 and sys.argv[2] == 'message', session=sys.argv[3] if len(sys.argv) > 3 and sys.argv[3] else None))
     except Exception as exc:
-        sys.exit('pane_guard_unavailable: ' + str(exc))
+        sys.exit(str(exc) if len(sys.argv) > 2 and sys.argv[2] == 'sender' else 'pane_guard_unavailable: ' + str(exc))

@@ -525,7 +525,7 @@ def receipt(state, outcome, **extra):
     return result
 
 
-def invoke(arguments, timeout=10, client_path=None, rex_executable=None, input_bytes=None, human_launch=False, creator=None):
+def invoke(arguments, timeout=10, client_path=None, rex_executable=None, input_bytes=None, human_launch=False, creator=None, generated_sender=None):
     """Bounded foreground client, never the agent. Retain diagnostics without treating exit as ACK."""
     import tempfile
     if arguments and arguments[0] == "send":
@@ -537,6 +537,9 @@ def invoke(arguments, timeout=10, client_path=None, rex_executable=None, input_b
     # Output sinks are private regular files, not pipes that a failed descendant can hold open.
     with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err, tempfile.TemporaryFile() as source:
         environment = dict(os.environ)
+        environment.pop("TEEREX_GENERATED_SENDER", None)
+        if generated_sender is not None:
+            environment["TEEREX_GENERATED_SENDER"] = generated_sender
         if creator is not None:
             # Managed launch ownership is its explicit starter, even without caller env.
             import socket
@@ -669,7 +672,8 @@ def send(root, state, destination, body, label):
     return invoke(["send", "--socket", state["socket"], "--session", destination["session_id"],
                    "--block", destination["block_id"], "--from", state["name"], "--message-file", path, *send_options(state),
                    *(["--no-queue", "--draft-wait-ms", "1000", "--timeout-ms", "11000"] if state.get("require_delivery") else [])],
-                  timeout=45, client_path=state["client_path"], rex_executable=state["rex_executable"])
+                  timeout=45, client_path=state["client_path"], rex_executable=state["rex_executable"],
+                  generated_sender=state["name"])
 
 
 def transport_ack(code, packet):
@@ -1886,7 +1890,8 @@ def deliver(root, launch_id):
         registry.save(state)
     code, packet = invoke(["send", "--socket", state["socket"], "--session", state["target"]["session_id"],
                            "--block", state["target"]["block_id"], "--from", starter_name(root, state), "--message-file", state["brief_file"]],
-                          client_path=state["client_path"], rex_executable=state["rex_executable"])
+                          client_path=state["client_path"], rex_executable=state["rex_executable"],
+                          generated_sender=starter_name(root, state))
     def delivered(s):
         s["brief_receipt"] = packet
         s["brief_outcome"] = "events_acknowledged" if transport_ack(code, packet) else "uncertain"
@@ -2142,7 +2147,8 @@ def report_stop(root, launch_id, event_id, event, allow_transcript=True):
             code, packet = invoke(["send", "--socket", state["socket"], "--session", target["session_id"],
                                    "--block", target["block_id"], "--from", "teerex-scratchpad", "--message-file", "-"],
                                   timeout=45, client_path=state["client_path"], rex_executable=state["rex_executable"],
-                                  input_bytes=(check["reason"] if check.get("contract") else SCRATCH_REMINDER).encode())
+                                  input_bytes=(check["reason"] if check.get("contract") else SCRATCH_REMINDER).encode(),
+                                  generated_sender="teerex-scratchpad")
             check = dict(check, action="reminded", reminder_exit=code, reminder_receipt=packet)
             state = update(root, launch_id, lambda s: s.update(scratchpad_check=check))
             return 0, receipt(state, "scratchpad_blocked", scratchpad_check=check)
