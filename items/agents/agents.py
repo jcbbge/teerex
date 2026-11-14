@@ -1217,6 +1217,62 @@ def launch(o):
         raise
 
 
+def write_project_trust(path, result, mode):
+    """Caller holds the sibling config lock; replace only after a complete write."""
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(dir=path.parent, prefix=path.name + ".", delete=False) as out:
+            temporary = out.name
+            os.fchmod(out.fileno(), mode)
+            out.write(result.encode("utf-8"))
+            out.flush()
+            os.fsync(out.fileno())
+        os.replace(temporary, path)
+        temporary = None
+    finally:
+        if temporary is not None:
+            os.unlink(temporary)
+
+
+def ensure_project_trust_json(profile, cwd, execution):
+    if "project_trust_json" not in profile:
+        return
+    require(execution is None, "project_trust_json_requires_local_execution_host")
+    path = Path(absolute(profile["project_trust_json"]))
+    import fcntl
+    cwd = str(Path(cwd).resolve(strict=True))
+
+    def invalid_constant(value):
+        raise ValueError("non-JSON numeric constant")
+
+    def read():
+        try:
+            data = json.loads(path.read_bytes(), parse_constant=invalid_constant)
+            mode = stat.S_IMODE(path.stat().st_mode)
+        except FileNotFoundError:
+            data, mode = {}, 0o600
+        require(isinstance(data, dict), "invalid_project_trust_json_object")
+        projects = data.setdefault("projects", {})
+        require(isinstance(projects, dict), "invalid_project_trust_json_projects")
+        project = projects.setdefault(cwd, {})
+        require(isinstance(project, dict), "invalid_project_trust_json_project")
+        return data, project, mode
+
+    try:
+        data, project, mode = read()
+        if project.get("hasTrustDialogAccepted") is True:
+            return
+        with open(str(path) + ".lock", "a+b") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            data, project, mode = read()
+            if project.get("hasTrustDialogAccepted") is True:
+                return
+            project["hasTrustDialogAccepted"] = True
+            write_project_trust(path, json.dumps(data, ensure_ascii=False, indent=2) + "\n", mode)
+    except (OSError, ValueError) as exc:
+        raise Refusal("project_trust_json_update_failed: " + type(exc).__name__) from exc
+
+
 def ensure_project_trust(profile, cwd, execution):
     """Opt-in, execution-local TOML edit before any launch objects are created."""
     if "project_trust_toml" not in profile:
@@ -1297,19 +1353,7 @@ def ensure_project_trust(profile, cwd, execution):
                     result = source[:body] + 'trust_level = "trusted"\n' + source[body:]
             # Also catches unsupported inline/dotted table shapes without touching the file.
             require(trusted(tomllib.loads(result)), "project_trust_update_failed")
-            temporary = None
-            try:
-                with tempfile.NamedTemporaryFile(dir=path.parent, prefix=path.name + ".", delete=False) as out:
-                    temporary = out.name
-                    os.fchmod(out.fileno(), mode)
-                    out.write(result.encode("utf-8"))
-                    out.flush()
-                    os.fsync(out.fileno())
-                os.replace(temporary, path)
-                temporary = None
-            finally:
-                if temporary is not None:
-                    os.unlink(temporary)
+            write_project_trust(path, result, mode)
     except (OSError, ValueError) as exc:
         raise Refusal("project_trust_toml_update_failed: " + type(exc).__name__) from exc
 
@@ -1380,6 +1424,7 @@ def launch_agent(o):
     host = text(o.host)
     cwd = absolute(o.cwd)
     ensure_project_trust(profile, cwd, execution)
+    ensure_project_trust_json(profile, cwd, execution)
     review = o.review_at or now() + cfg.get("defaults", {}).get("review_after_ms", 3600000)
     require(type(review) is int and now() < review <= now() + 30 * 86400000, "invalid_review_at")
     brief = message(read_file(o.brief_file, 32768)) if o.brief_file else None

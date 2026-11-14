@@ -91,6 +91,14 @@ Explicit SSH `execution` routes refuse this option with
 `project_trust_toml_requires_local_execution_host`; configure it in a profile
 launched on the execution host instead (including through `human_route`).
 
+Profile `project_trust_json` optionally names an absolute JSON config path on the
+execution host. Using the same sibling lock and atomic replacement, launch merges
+`projects["<canonical cwd>"].hasTrustDialogAccepted = true`, preserving every other
+field. An existing `true` causes no write. Missing files use mode 0600; existing
+modes are preserved. Invalid/unreadable JSON or non-object project structures
+refuse before launch creation. Absent key means no change. Explicit SSH execution
+routes refuse with `project_trust_json_requires_local_execution_host`.
+
 `hook_events:true` supports explicit `harness:"claude"`, `"codex"`, and `"pi"`; false omits all turn callbacks. These profiles share schema1: absolute `argv`, optional string-array `standing_flags`, `harness`, required `protocol_mode:"argument"`, optional boolean `hook_events`. No extra Pi-specific profile field or global extension install is needed.
 
 | Harness | Per-launch adapter | Verified contract/source |

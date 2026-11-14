@@ -2,6 +2,7 @@
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import tempfile
+import json
 try:
     import tomllib
 except ImportError:
@@ -93,6 +94,78 @@ class ProjectTrustTest(unittest.TestCase):
         self.assertFalse(self.path.exists())
         with self.assertRaisesRegex(self.ns['Refusal'], 'requires_local_execution_host'):
             self.ns['ensure_project_trust'](self.profile, str(self.root), {'host': 'remote'})
+        self.assertFalse(self.path.exists())
+
+
+class ProjectTrustJsonTest(unittest.TestCase):
+    def setUp(self):
+        ProjectTrustTest.setUp(self)
+        self.path = self.root / "settings.json"
+        self.profile = {"project_trust_json": str(self.path)}
+
+    def ensure(self, cwd=None):
+        self.ns["ensure_project_trust_json"](self.profile, str(cwd or self.root), None)
+
+    def test_fresh_file_canonical_cwd(self):
+        alias = self.root / "alias"
+        alias.symlink_to(self.root, target_is_directory=True)
+        self.ensure(alias)
+        self.assertEqual(json.loads(self.path.read_text()),
+                         {"projects": {str(self.root): {"hasTrustDialogAccepted": True}}})
+        self.assertEqual(self.path.stat().st_mode & 0o777, 0o600)
+
+    def test_existing_fields_and_mode_preserved(self):
+        data = {"global": [1, "β", {"enabled": False}], "projects": {
+            "/other": {"hasTrustDialogAccepted": False, "notes": "keep"},
+            str(self.root): {"hasTrustDialogAccepted": False, "allowedTools": ["one"], "nested": {"value": 5}}}}
+        self.path.write_text(json.dumps(data))
+        self.path.chmod(0o640)
+        self.ensure()
+        data["projects"][str(self.root)]["hasTrustDialogAccepted"] = True
+        self.assertEqual(json.loads(self.path.read_text()), data)
+        self.assertEqual(self.path.stat().st_mode & 0o777, 0o640)
+
+    def test_already_true_no_write_or_lock(self):
+        self.ensure()
+        Path(str(self.path) + '.lock').unlink()
+        initial = self.path.stat()
+        self.ensure()
+        self.assertEqual(self.path.stat().st_mtime_ns, initial.st_mtime_ns)
+        self.assertEqual(self.path.stat().st_ino, initial.st_ino)
+        self.assertFalse(Path(str(self.path) + '.lock').exists())
+
+    def test_invalid_json_or_shapes_refuse_before_lock(self):
+        for raw in ('{"broken":', '[]', '{"projects": []}', '{"number": NaN}',
+                    json.dumps({"projects": {str(self.root): None}})):
+            with self.subTest(raw=raw):
+                self.path.write_text(raw)
+                with self.assertRaises(self.ns['Refusal']):
+                    self.ensure()
+                self.assertEqual(self.path.read_text(), raw)
+                self.assertFalse(Path(str(self.path) + '.lock').exists())
+        self.path.unlink()
+        self.path.mkdir()
+        with self.assertRaisesRegex(self.ns['Refusal'], 'project_trust_json_update_failed'):
+            self.ensure()
+        self.assertFalse(Path(str(self.path) + '.lock').exists())
+
+    def test_concurrent_writers_both_recorded(self):
+        dirs = [self.root / 'one', self.root / 'two']
+        for cwd in dirs:
+            cwd.mkdir()
+        self.path.write_text('{"keep": 7}')
+        with ThreadPoolExecutor() as pool:
+            list(pool.map(self.ensure, dirs))
+        data = json.loads(self.path.read_text())
+        self.assertEqual(data['keep'], 7)
+        self.assertEqual(set(data['projects']), set(map(str, dirs)))
+        self.assertTrue(all(p['hasTrustDialogAccepted'] is True for p in data['projects'].values()))
+
+    def test_absent_key_and_remote_refusal(self):
+        self.ns['ensure_project_trust_json']({}, '/does/not/exist', {'host': 'remote'})
+        self.assertFalse(self.path.exists())
+        with self.assertRaisesRegex(self.ns['Refusal'], 'requires_local_execution_host'):
+            self.ns['ensure_project_trust_json'](self.profile, str(self.root), {'host': 'remote'})
         self.assertFalse(self.path.exists())
 
 

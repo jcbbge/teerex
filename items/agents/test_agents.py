@@ -664,6 +664,40 @@ class AgentsTest(unittest.TestCase):
         self.assertFalse(self.worker_log.exists())
         self.assertFalse(Path(str(trust) + ".lock").exists())
 
+    def test_project_trust_json_two_concurrent_launches_record_execution_cwds(self):
+        trust = self.work / "trust.json"
+        self.settings["profiles"]["probe"]["project_trust_json"] = str(trust)
+        self.config.write_text(json.dumps(self.settings))
+        cwds = [self.work / "first", self.work / "second"]
+        for cwd in cwds:
+            cwd.mkdir()
+        def start(cwd):
+            return self.run_cli("launch", "--config", str(self.config), "--profile", "probe",
+                                "--cwd", str(cwd), "--brief-file", str(self.brief),
+                                "--ack-timeout-ms", "5000", timeout=30)
+        with ThreadPoolExecutor() as pool:
+            results = list(pool.map(start, cwds))
+        for proc, packet in results:
+            self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+            self.assertTrue(packet["protocol_acknowledged"])
+            self.assertTrue(packet["brief_attempted"])
+        projects = json.loads(trust.read_text())["projects"]
+        for cwd in cwds:
+            self.assertIs(projects[str(cwd.resolve())]["hasTrustDialogAccepted"], True)
+
+    def test_project_trust_invalid_json_refuses_before_launch_creation(self):
+        trust = self.work / "trust.json"
+        trust.write_text('{"bad":')
+        self.settings["profiles"]["probe"]["project_trust_json"] = str(trust)
+        self.config.write_text(json.dumps(self.settings))
+        before = set(self.registry.iterdir())
+        proc, packet = self.run_cli("launch", "--config", str(self.config), "--profile", "probe")
+        self.assertNotEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("project_trust_json_update_failed", proc.stdout + proc.stderr)
+        self.assertEqual(set(self.registry.iterdir()), before)
+        self.assertFalse(self.worker_log.exists())
+        self.assertFalse(Path(str(trust) + ".lock").exists())
+
     def test_detached_launch_tracking_prune_present_and_come_forward(self):
         profile = self.settings['profiles']['probe']
         profile.update(layout='detached', come_forward=True)
