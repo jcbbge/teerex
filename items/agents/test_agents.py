@@ -242,6 +242,30 @@ class ContractHelpersTest(unittest.TestCase):
         exec(compile((base / "agents/input_events.py").read_text(), "input_events.py", "exec"), self.ns)
         exec(compile((base / "agents/agents.py").read_text(), "agents.py", "exec"), self.ns)
 
+    def test_harness_app_and_launch_flourish_keep_record_identity(self):
+        import base64
+        import io
+        from unittest.mock import patch
+        for harness in ("claude", "codex", "pi"):
+            for tint, identifier in ((False, "teerex"), (None, "teerex/tint")):
+                state = dict(name="worker", harness=harness)
+                if tint is False:
+                    state["tint"] = False
+                for prefix in ("✦ ", "→ ", False):
+                    state["launch_flourish"] = prefix
+                    output = io.StringIO()
+                    with patch.object(self.ns["sys"], "stdout", output):
+                        self.ns["program_status"](state, "working", "launching", starting=True)
+                        self.ns["program_status"](state, "working", "working")
+                    reports = [part.split("\x07")[0] for part in output.getvalue().split("\x1b]7501;")[1:]]
+                    fields = [dict(pair.split("=", 1) for pair in report.split(":")) for report in reports]
+                    for field in fields:
+                        self.assertEqual(field["app"], harness)
+                        self.assertEqual(field["id"], identifier)
+                    self.assertEqual(base64.b64decode(fields[0]["title"]).decode(), (prefix if prefix is not False else "") + "worker")
+                    self.assertEqual(base64.b64decode(fields[0]["msg"]).decode(), "starting" if prefix is not False else "launching")
+                    self.assertEqual(base64.b64decode(fields[1]["title"]).decode(), "worker")
+
     def test_status_display_error_is_recorded_without_stopping_work(self):
         from unittest.mock import patch
         state = dict(registry="root", launch_id="a" * 32, name="worker")
@@ -2671,7 +2695,42 @@ Path('/work/network-harness').touch()
     def program_state(self, block):
         result = json.loads(subprocess.check_output(self.base + ["block", "call", "-s", self.session, "-b", block,
                                                                 "program_status", "{}"], timeout=5))
-        return next((r["state"] for r in result.get("records", []) if r.get("app") == "teerex-agent"), None)
+        return next((r["state"] for r in result.get("records", []) if r.get("id") in ("teerex", "teerex/tint")), None)
+
+    def test_harness_app_and_normal_title_live(self):
+        event_path = self.work / "status-events.jsonl"
+        with event_path.open("w") as output:
+            stream = subprocess.Popen(self.base + ["events", "--all", "--json"], stdout=output, stderr=subprocess.DEVNULL)
+            self.addCleanup(stream.wait, timeout=5)
+            self.addCleanup(stream.terminate)
+            def stream_ready():
+                self.rpc("session.set_block_label", dict(session_id=self.session, block_id=self.starter, label="status-probe-" + str(time.monotonic_ns())))
+                return event_path.stat().st_size > 0
+            wait_for(stream_ready)
+            for harness in ("claude", "codex"):
+                with self.subTest(harness=harness):
+                    self.settings["profiles"]["probe"].update(harness=harness)
+                    p, launched = self.launch()
+                    self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+                    block = self.record(launched["launch_id"])["target"]["block_id"]
+                    def normal():
+                        records = self.rpc("com.superlogical.terminal.program_status", dict(session_id=self.session, block_id=block, args={}))
+                        return next((r for r in records.get("records", []) if r.get("id") == "teerex/tint" and r.get("title") == "probe"), None)
+                    wait_for(normal)
+                    self.assertEqual(normal()["app"], harness)
+                    def records(value):
+                        if isinstance(value, dict):
+                            yield value
+                            for child in value.values():
+                                yield from records(child)
+                        elif isinstance(value, list):
+                            for child in value:
+                                yield from records(child)
+                    def starting_seen():
+                        return any(record.get("app") == harness and record.get("title") == "✦ probe" and record.get("msg") == "starting"
+                                   for event in events(event_path) for record in records(event))
+                    wait_for(starting_seen)
+                    print("Status evidence:", harness, "✦ probe / starting -> probe / working", flush=True)
 
     def test_all_harness_exits_and_crashes_replace_working_status(self):
         for harness in ("claude", "codex", "pi"):
@@ -2917,7 +2976,7 @@ Path('/work/network-harness').touch()
             waiting("reviewer · approval")
             wait_for(lambda: self.program_state(block) == "blocked")
             result = self.rpc("com.superlogical.terminal.program_status", dict(session_id=self.session, block_id=block, args={}))
-            record = next(r for r in result["records"] if r.get("app") == "teerex-agent")
+            record = next(r for r in result["records"] if r.get("id") in ("teerex", "teerex/tint"))
             self.assertIn("reviewer", json.dumps(record))
             waiting("")
             wait_for(lambda: self.program_state(block) == "working")

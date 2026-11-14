@@ -888,7 +888,7 @@ def tint_config(value):
     return defaults
 
 
-def program_status(state, status, detail):
+def program_status(state, status, detail, starting=False):
     try:
         # Rex OSC7501 is colon-separated key=value, NOT JSON; text fields are base64.
         def encoded(value):
@@ -898,7 +898,12 @@ def program_status(state, status, detail):
         record_id = "teerex/tint" if tint is not False else "teerex"
         if tint is not False:
             sys.stdout.write("\x1b]11;" + tint[status] + "\x1b\\" if status in tint else "\x1b]111\x1b\\")
-        sys.stdout.write("\x1b]7501;state=" + status + ":id=" + record_id + ":app=teerex-agent:title=" + encoded(state["name"]) +
+        title = state["name"]
+        flourish = state.get("launch_flourish", "✦ ")
+        if starting and flourish is not False:
+            title, detail = flourish + title, "starting"
+        app = state.get("harness", state.get("profile", "teerex-agent"))
+        sys.stdout.write("\x1b]7501;state=" + status + ":id=" + record_id + ":app=" + app + ":title=" + encoded(title) +
                          ":msg=" + encoded(detail) + "\x07")
         sys.stdout.flush()
     except OSError as exc:
@@ -1460,6 +1465,10 @@ def launch_agent(o):
     require(layout in ('tab', 'detached'), 'invalid_agent_layout')
     require(type(profile.get('come_forward', False)) is bool, 'invalid_come_forward')
     execution, callbacks = execution_config(profile)
+    harness = profile.get("harness", o.profile)
+    require(isinstance(harness, str) and re.fullmatch(r"[A-Za-z0-9_.+-]{1,32}", harness), "invalid_status_app")
+    flourish = profile.get("launch_flourish", "✦ ")
+    require(flourish is False or isinstance(flourish, str) and not any(ord(c) < 32 or 127 <= ord(c) <= 159 for c in flourish), "invalid_launch_flourish")
     tint = tint_config(profile.get("tint"))
     accounting = cost_settings(profile)
     delivery = delivery_config(profile.get("delivery"))
@@ -1503,7 +1512,7 @@ def launch_agent(o):
     report_to = dict(host=host, server="unix://" + socket, session_id=rs, block_id=rb) if not human else None
     state = dict(schema_version=1, launch_id=launch_id, token=token, name=name, owner=owner, purpose=purpose,
                  review_at=review, target=target, starter=starter, report_to=report_to, profile=o.profile, argv=argv,
-                 cwd=cwd, harness=text(profile.get("harness", o.profile)), resume_session_id=profile.get("resume_session_id"),
+                 cwd=cwd, harness=harness, launch_flourish=flourish, resume_session_id=profile.get("resume_session_id"),
                  store=o.store, created_at=now(), socket=socket, registry=root, phase="creation_uncertain", tracked=False,
                  protocol_acknowledged=False, protocol_outcome=None, brief_attempted=False, brief_outcome=None,
                  immediate_child_term=None, notifications={}, brief_file=None, protocol_file=None,
@@ -2185,7 +2194,7 @@ def supervise_child(o):
         argv = [RUNTIME, "targets", "exec", "--config", execution["config"], "--host", execution["host"], "--tty",
                 "--", "agents", "exec", "--payload", encoded]
     # No output pipe: agent, supervisor and real pointer/keyboard input share the visible terminal.
-    program_status(state, "working", "visible agent process starting; readiness not assessed")
+    program_status(state, "working", "visible agent process starting; readiness not assessed", starting=True)
     child = None
     term = None
     try:
