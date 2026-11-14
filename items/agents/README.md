@@ -406,6 +406,8 @@ Managed launches record a contract with their starter, purpose, done-when and co
 `--done-when TEXT` overrides the brief's first `Done when` / `done-when` line, then Intent.
 `--contract-interval-s N` overrides profile `contract_interval_s` (default 600 seconds).
 Launch writes `Done-when` to the scratchpad. Human launches have no worker contract.
+Enforcement starts with a turn begun at or after the brief attempt; protocol ACK turns use
+the previous reporting path. The contact clock starts at the brief attempt.
 
 After the existing freshness check, a worker turn must declare exactly one state:
 all steps finished, `scratch flag "stuck; tried; need"`, or Waiting with a future Check.

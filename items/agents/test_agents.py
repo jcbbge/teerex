@@ -261,7 +261,7 @@ class ContractHelpersTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             pad = Path(directory) / "pad.md"
             pad.write_text("# Worker\nWaiting: review\nCheck: 2099-01-01T00:00:00Z\n")
-            state = dict(scratchpad=str(pad), contract={})
+            state = dict(scratchpad=str(pad), contract={}, brief_attempted=True, brief_attempt_at=1, turn_started_at=1)
             first = self.ns["contract_turn"](state)
             self.assertEqual(first["action"], "block")
             self.assertIn("write your steps first", first["reason"])
@@ -330,6 +330,30 @@ class ContractHelpersTest(unittest.TestCase):
             self.assertEqual(saved["awaiting_starter"]["kind"], "flag")
             self.assertEqual(sorted(r[1]["outcome"] for r in results), ["already_attempted", "transport_acknowledged"])
 
+    def test_contract_activation_requires_brief_and_post_brief_turn(self):
+        state = dict(brief_attempted=False, brief_attempt_at=10, turn_started_at=20)
+        self.assertFalse(self.ns["contract_active"](state))
+        state.update(brief_attempted=True, turn_started_at=9)
+        self.assertFalse(self.ns["contract_active"](state))
+        self.assertEqual(self.ns["contract_turn"](state), dict(status="not_applicable", action="allow"))
+        state["turn_started_at"] = 10
+        self.assertTrue(self.ns["contract_active"](state))
+        state.pop("brief_attempt_at")
+        state["brief_receipt"] = dict(started_at_unix_ms=10)
+        self.assertTrue(self.ns["contract_active"](state))
+
+    def test_supervisor_contract_is_quiet_before_brief_turn(self):
+        state = dict(brief_attempted=True, brief_attempt_at=10, turn_started_at=9,
+                     contract=dict(awaiting_starter=dict(kind="done", at=1)))
+        self.ns["load"] = lambda *_: state
+        def unexpected(*args, **kwargs):
+            self.fail("pre-brief supervisor performed contract work")
+        for name in ("contract_snapshot", "contract_tell", "update"):
+            self.ns[name] = unexpected
+        self.assertEqual(self.ns["contract_steps"]("root", "id", (None, [])), (None, []))
+        self.ns["contract_lapse"]("root", "id")
+        self.ns["contract_starter"]("root", "id")
+
     def test_answer_consumed_during_report_dispatch_is_not_reopened(self):
         destination = dict(session_id="s", block_id="b")
         state = dict(name="worker", starter=destination, report_to=destination, target=destination,
@@ -368,7 +392,8 @@ class ContractHelpersTest(unittest.TestCase):
         self.assertEqual(state["contract"]["starter_lapses"], 0)
 
     def test_failed_lapse_delivery_still_starts_a_fresh_window(self):
-        state = dict(name="worker", contract=dict(declared=None, last_contact_at=0,
+        state = dict(name="worker", brief_attempted=True, brief_attempt_at=1, turn_started_at=1,
+                     contract=dict(declared=None, last_contact_at=0,
                      interval_s=2, lapses=0, step_n=1, steps_total=2))
         self.ns["load"] = lambda *_: json.loads(json.dumps(state))
         self.ns["update"] = lambda root, launch, change: change(state)
@@ -2004,6 +2029,41 @@ Path('/work/network-harness').touch()
 
     def starter_messages(self):
         return [v["payload"] for v in events(self.starter_log) if v["event"] == "input"]
+
+    def test_ack_turn_is_legacy_and_first_brief_turn_requires_steps(self):
+        self.settings["profiles"]["probe"]["contract_interval_s"] = 1
+        self.config.write_text(json.dumps(self.settings))
+        p, launched = self.run_cli("launch", "--config", str(self.config), "--profile", "probe", "--ack-timeout-ms", "5000")
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        launch_id = launched["launch_id"]
+        args = ("stop", "--registry", str(self.registry), "--launch-id", launch_id, "--event-file", "-")
+        stop = json.dumps(dict(hook_event_name="Stop", last_assistant_message="ACK only"))
+        for _ in range(2):
+            p, packet = self.run_cli(*args, input=stop)
+            self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+            self.assertNotEqual(packet["outcome"], "scratchpad_blocked")
+            self.assertFalse(packet["delivery_rule"].startswith("contract_"))
+        # No lapse or automatic STEP/FLAG before the brief, even after the interval.
+        self.scratch_contract(self.record(launch_id), "Protocol setup")
+        time.sleep(1.2)
+        self.assertFalse([m for m in self.starter_messages() if any(tag in m for tag in ("STEP probe", "FLAG probe", "LAPSE probe", "NO ANSWER probe"))])
+        self.scratch_contract(self.record(launch_id))
+        with (self.registry / "agents.lock").open("a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            state = self.record(launch_id)
+            state["brief_file"] = str(self.brief)
+            (self.registry / ("agents-" + launch_id + ".json")).write_text(json.dumps(state))
+        p, delivered = self.run_cli("deliver", "--registry", str(self.registry), "--launch-id", launch_id)
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        state = self.record(launch_id)
+        self.assertEqual(state["contract"]["last_contact_at"], state["brief_attempt_at"])
+        # A delayed ACK stop still belongs to the old turn until prompt-submit.
+        p, packet = self.run_cli(*args, input=json.dumps(dict(hook_event_name="UserPromptSubmit")))
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        p, packet = self.run_cli(*args, input=stop)
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertEqual(packet["outcome"], "scratchpad_blocked")
+        self.assertIn("write your steps first", packet["scratchpad_check"]["reason"])
 
     def test_contract_steps_and_flag_are_delivered_once(self):
         p, launched = self.launch(contract=True)

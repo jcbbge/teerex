@@ -533,7 +533,15 @@ def send_options(state):
 CONTRACT_REFUSE = 'Turn not ended: declare one — teerex scratch done (finished) | teerex scratch flag "stuck; tried; need" | teerex scratch now STEP --waiting "on what" --check 10m'
 
 
+def contract_active(state):
+    attempted_at = state.get("brief_attempt_at") or (state.get("brief_receipt") or {}).get("started_at_unix_ms")
+    started_at = state.get("turn_started_at", state.get("immediate_child_started_at", 0))
+    return bool(state.get("brief_attempted") and attempted_at and started_at >= attempted_at)
+
+
 def contract_turn(state):
+    if not contract_active(state):
+        return dict(status="not_applicable", action="allow")
     c = state["contract"]
     try:
         snapshot = contract_snapshot(state)
@@ -558,7 +566,7 @@ def contract_init(state, profile, brief_text, done_when_arg, interval_arg):
     done_when = done_when_arg if done_when_arg is not None else fallback or state.get("intent", state["purpose"])
     scratch_line(done_when)
     return dict(starter=state.get("starter"), task=state["purpose"], done_when=done_when, interval_s=interval,
-                steps_total=0, step_n=0, now=None, last_contact_at=now(), last_contact="",
+                steps_total=0, step_n=0, now=None, last_contact_at=0, last_contact="",
                 declared=None, declared_at=None, check_at=None, flag=None, lapses=0, stalled=False,
                 awaiting_starter=None, starter_lapses=0)
 
@@ -1301,6 +1309,8 @@ def deliver(root, launch_id):
             return 0, receipt(state, "protocol_acknowledged_no_brief")
         state["brief_attempted"] = True
         state["brief_attempt_at"] = now()
+        if state.get("contract"):
+            state["contract"]["last_contact_at"] = state["brief_attempt_at"]
         state["brief_outcome"] = "uncertain"
         state["phase"] = "brief_attempt_uncertain"
         registry.save(state)
@@ -1497,7 +1507,7 @@ def report_stop(root, launch_id, event_id, event, allow_transcript=True):
                 s["codex_last_notify_at"] = now()
                 basis = "previous_notify_or_initial_child_start_actual_turn_start_unknown"
             s["scratchpad_check"] = dict(scratch_turn(s, event, s.get("scratchpad")), basis=basis)
-            if s.get("contract") and s["scratchpad_check"]["action"] == "allow":
+            if s.get("contract") and contract_active(s) and s["scratchpad_check"]["action"] == "allow":
                 contract_check = contract_turn(s)
                 s["contract_check"] = contract_check
                 if contract_check["action"] == "block":
@@ -1533,7 +1543,7 @@ def report_stop(root, launch_id, event_id, event, allow_transcript=True):
     body = f"{title}: {state['name']}\n{details}"
     if check and check["status"] == "stale":
         body += "\nScratchpad: stale; " + check["action"]
-    if state.get("contract") and kind == "Stop":
+    if state.get("contract") and contract_active(state) and kind == "Stop":
         # All adapters have passed freshness first. Direct stop callbacks also enforce declaration.
         if not event.get("scratch_harness"):
             state = update(root, launch_id, lambda s: s.update(contract_check=contract_turn(s)))
@@ -1597,7 +1607,7 @@ def supervisor_error(o, field, exc):
 
 def contract_steps(root, launch_id, previous):
     state = load(root, launch_id)
-    if not state.get("contract"):
+    if not state.get("contract") or not contract_active(state):
         return previous
     try:
         snapshot = contract_snapshot(state)
@@ -1634,7 +1644,7 @@ def contract_steps(root, launch_id, previous):
 def contract_lapse(root, launch_id):
     state = load(root, launch_id)
     c = state.get("contract")
-    if not c or c.get("declared") == "done":
+    if not c or not contract_active(state) or c.get("declared") == "done":
         return
     timestamp = now()
     window = max(c["last_contact_at"], c.get("last_lapse_at", 0))
@@ -1666,7 +1676,7 @@ def contract_starter(root, launch_id):
     state = load(root, launch_id)
     c = state.get("contract") or {}
     pending = c.get("awaiting_starter")
-    if not pending:
+    if not pending or not contract_active(state):
         return
     timestamp = now()
     if timestamp - max(pending["at"], c.get("starter_reminded_at", 0)) <= c["interval_s"] * 1000:
