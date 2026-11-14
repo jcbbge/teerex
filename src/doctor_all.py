@@ -44,6 +44,21 @@ def inspect_host(host):
             shlex.join([host['rex'], 'server', 'run', '--listen', 'unix://' + host['socket']]))
     except (OSError, ValueError) as exc:
         add('rex_server', False, str(exc), shlex.join([host['rex'], 'version', '--json']))
+    # Resolving a canonical, absent session exercises the guarded Lua path without
+    # reading terminal text, creating a pane or requiring a caller pane on that host.
+    probe = [host['teerex'], '--rex', host['rex'], 'surfaces', 'resolve',
+             '--socket', host['socket'], '--session', 'session:00000000-0000-0000-0000-000000000000']
+    try:
+        code, out, err = run_command(probe)
+        receipt = json.loads(out)
+        ok = (code == 1 and receipt.get('kind') == 'surface_result' and
+              receipt.get('outcome') == 'refused' and receipt.get('failure_reason') == 'target_not_found' and
+              isinstance((receipt.get('source') or {}).get('api_revision'), int)) or (
+              code == 0 and receipt.get('outcome') == 'resolved')
+        add('guarded_surfaces', ok, 'guarded resolve round trip passed' if ok else
+            receipt.get('failure_reason') or err or 'guarded resolve returned an unexpected receipt', install)
+    except (OSError, ValueError) as exc:
+        add('guarded_surfaces', False, 'running guarded surfaces resolve: ' + str(exc), install)
     try:
         code, out, err = run_command([str(root / 'install'), '--check'])
         # Build drift has its own check; keep a pin-only mismatch from producing two red lines.

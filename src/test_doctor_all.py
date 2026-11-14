@@ -33,6 +33,8 @@ class DoctorAllTest(unittest.TestCase):
             def invoke(argv):
                 if 'server.version' in argv:
                     return 0, json.dumps({'rex_version': 'test', 'api_revision': 13}), ''
+                if 'surfaces' in argv:
+                    return 1, json.dumps(dict(kind='surface_result', outcome='refused', failure_reason='target_not_found', source=dict(api_revision=13))), ''
                 if '--check' in argv:
                     return 1, 'drift: teerex build actual, pinned wrong', ''
                 return 0, 'help', ''
@@ -47,6 +49,17 @@ class DoctorAllTest(unittest.TestCase):
             failures = [(h['host'], c['check']) for h in packet['hosts'] for c in h['checks'] if not c['ok']]
             self.assertEqual(failures, [('good', 'teerex_build'), ('bad', 'host_reachable')])
             self.assertTrue(all(c['fix'] for h in packet['hosts'] for c in h['checks']))
+
+    def test_guarded_surfaces_failure_is_red(self):
+        with resources.temporary_directory() as directory:
+            host = dict(home=directory, rex='/rex', teerex='/teerex', socket='/socket')
+            for response in ((1, json.dumps(dict(kind='surface_result', outcome='uncertain', failure_reason='starting rex: argument list too long (E2BIG)')), ''),
+                             (1, '', 'exec failed')):
+                with self.subTest(response=response), patch.object(doctor_all, 'run_command', return_value=response):
+                    checks = doctor_all.inspect_host(host)
+                check = next(c for c in checks if c['check'] == 'guarded_surfaces')
+                self.assertFalse(check['ok'])
+                self.assertTrue(check['detail'])
 
     def test_shared_pin_match_mismatch_and_missing(self):
         with resources.temporary_directory() as directory:
