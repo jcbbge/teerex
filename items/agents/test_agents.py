@@ -1166,19 +1166,104 @@ class AgentsTest(unittest.TestCase):
         self.assertEqual(set(block_ids), {self.starter, state["target"]["block_id"]})
         self.assertEqual(after["windows"][0]["focused_block_id"], state["target"]["block_id"])
 
-    @unittest.skipUnless(os.environ.get("TEEREX_AGENTS_INTEGRATION") == "1", "requires combined boards store")
-    def test_integrated_failed_fleet_store_never_starts_harness_or_submits_brief(self):
+    def test_failed_fleet_store_still_starts_harness_and_submits_brief(self):
         store = self.work / "not-private-boards"
         store.mkdir(mode=0o755)
         self.settings["defaults"]["store"] = str(store)
         p, packet = self.launch()
-        self.assertEqual(p.returncode, 1, p.stderr + p.stdout)
-        self.assertEqual(packet["outcome"], "fleet_report_uncertain")
+        self.assertEqual(p.returncode, 0, p.stderr + p.stdout)
         self.assertTrue(packet["tracked"])
-        self.assertFalse(packet["brief_attempted"])
+        self.assertTrue(packet["brief_attempted"])
+        self.assertEqual(packet["fleet_report"]["outcome"], "uncertain")
+        self.assertTrue(self.worker_log.exists())
+
+    def test_full_fleet_still_starts_child_and_later_reports_are_nonfatal(self):
+        store = self.work / "boards"
+        store.mkdir(mode=0o700)
+        rows = []
+        for i in range(128):
+            rows.append(dict(target=dict(host="disposable", server="unix://" + str(self.socket),
+                             session_id=self.session, block_id="block:00000000-0000-0000-0000-%012d" % i),
+                             owner="fixture", purpose="capacity", state="unknown", at=1, detail="fixture"))
+        state = store / "state.json"
+        state.write_text(json.dumps(dict(schema_version=1, generation=0, seats=[], fleet=rows)))
+        state.chmod(0o600)
+        self.settings["defaults"]["store"] = str(store)
+        p, packet = self.launch()
+        self.assertEqual(p.returncode, 0, p.stderr + p.stdout)
+        self.assertTrue(packet["protocol_acknowledged"])
+        self.assertTrue(packet["brief_attempted"])
+        report = packet["fleet_report"]
+        self.assertEqual(report["outcome"], "uncertain")
+        self.assertIn("fleet_capacity_reached", json.dumps(report))
+        record = self.record(packet["launch_id"])
+        self.assertTrue(Path(record["protocol_file"]).exists())
+        self.assertTrue(any(e["event"] == "started" for e in events(self.worker_log)))
+        event = self.work / "stop.json"
+        event.write_text(json.dumps(dict(hook_event_name="Stop", last_assistant_message="still working")))
+        p, notice = self.run_cli("stop", "--registry", str(self.registry), "--launch-id", packet["launch_id"],
+                                 "--event-file", str(event))
+        self.assertEqual(p.returncode, 0, p.stderr + p.stdout)
+        self.assertEqual(notice["fleet_report"]["outcome"], "uncertain")
+
+    def test_prune_releases_absent_fleet_rows_but_keeps_retired_live_panes(self):
+        store = self.work / "boards"
+        store.mkdir(mode=0o700)
+        self.settings["defaults"]["store"] = str(store)
+        live = self.launch("exit7")[1]["launch_id"]
+        gone = self.launch()[1]["launch_id"]
+        wait_for(lambda: self.record(live)["immediate_child_term"])
+        for launch_id in (live, gone):
+            self.backdate(launch_id)
+        def close(launch_id, archived=False):
+            record = (json.loads((self.registry / "archive" / launch_id / "retired.json").read_text())
+                      if archived else self.record(launch_id))
+            p = subprocess.run([BIN, "surfaces", "close", "--socket", str(self.socket), "--session", self.session,
+                                "--pane", record["target"]["block_id"]], env=self.env, capture_output=True, text=True)
+            self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        close(gone)
+        p, result = self.run_cli("prune", "--registry", str(self.registry), "--apply", timeout=60)
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertEqual([r["launch_id"] for r in result["retired"] if r.get("fleet_report", {}).get("outcome") == "cleared"], [gone])
+        rows = json.loads((store / "state.json").read_text())["fleet"]
+        self.assertEqual(len(rows), 1)
+        close(live, archived=True)
+        p, result = self.run_cli("prune", "--registry", str(self.registry), "--apply", timeout=60)
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertEqual(json.loads((store / "state.json").read_text())["fleet"], [])
+
+    def test_pre_protocol_failure_is_recorded_and_displayed_promptly(self):
+        ns = {"__name__": "launch_failure_test", "SCRATCH_LIBRARY": True}
+        base = Path(__file__).resolve().parents[1]
+        for path in (base / "scratch/scratch.py", base.parent / "src/scoped_channel.py",
+                     base / "agents/input_events.py", base / "agents/agents.py"):
+            exec(compile(path.read_text(), str(path), "exec"), ns)
+        ns["RUNTIME"] = BIN
+        original = ns["Registry"].write_message
+        def fail_protocol(registry, launch_id, kind, body):
+            if kind == "protocol":
+                raise OSError("forced protocol write failure")
+            return original(registry, launch_id, kind, body)
+        ns["Registry"].write_message = fail_protocol
+        o = ns["parser"]().parse_args(["launch", "--config", str(self.config), "--profile", "probe"])
+        from unittest.mock import patch
+        start = time.monotonic()
+        with patch.dict(os.environ, self.env), self.assertRaisesRegex(OSError, "forced protocol write failure"):
+            ns["launch"](o)
+        path = next(self.registry.glob("agents-*.json"))
+        launch_id = path.stem[7:]
+        record = wait_for(lambda: self.record(launch_id) if self.record(launch_id).get("launch_failure_displayed_at") else None)
+        self.assertLess(time.monotonic() - start, 10)
+        self.assertEqual(record["phase"], "launch_failed")
+        self.assertEqual(record["failure_reason"], "forced protocol write failure")
         self.assertFalse(self.worker_log.exists())
-        self.assertEqual(len(self.rpc("session.view", {"session_id": self.session})["windows"]), 2)
-        self.assertEqual([v for v in events(self.starter_log) if v["event"] == "input"], [])
+        p = subprocess.run([BIN, "observe", "--socket", str(self.socket), "--session", self.session,
+                            "--block", record["target"]["block_id"], "--tail"], env=self.env, capture_output=True, text=True)
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        capture = json.loads(p.stdout)["capture"]["content"]
+        self.assertEqual(capture.count("teerex: launch failed before the agent started:"), 1)
+        self.assertIn("forced protocol write failure", capture)
+        self.assertIn(launch_id, capture)
 
     @unittest.skipUnless(os.environ.get("TEEREX_AGENTS_SSH") == "1", "explicit isolated Linux SSH compute acceptance gate")
     def test_isolated_ssh_compute_ack_protocol_hooks_and_measured_exit(self):

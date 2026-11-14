@@ -344,6 +344,23 @@ def forget_job(root, state):
     return packet.get("outcome", "uncertain") if isinstance(packet, dict) else "uncertain"
 
 
+def forget_fleet(state):
+    """Release only a verified absent pane's report, using the board's generation guard."""
+    if not state.get("store"):
+        return dict(outcome="not_requested")
+    code, packet = invoke(["boards", "state", "inspect", "--store", state["store"]])
+    if code or not isinstance(packet, dict):
+        return dict(outcome="uncertain", client_exit=code, receipt=packet)
+    board = packet["state"]
+    if not any(row["target"] == state["target"] for row in board["fleet"]):
+        return dict(outcome="no_fleet_record")
+    t = state["target"]
+    code, packet = invoke(["fleet", "forget", "--store", state["store"], "--host", t["host"],
+                           "--socket", state["socket"], "--session", t["session_id"], "--block", t["block_id"],
+                           "--generation", str(board["generation"]), "--reason", "agents prune: pane gone"])
+    return dict(outcome="cleared" if code == 0 else "uncertain", client_exit=code, receipt=packet)
+
+
 def prune_records(root, apply, at_least=0):
     """Move retired launch records (and their message files) to ROOT/archive/<launch_id>/; history is kept, never deleted."""
     with Registry(root) as registry:
@@ -366,6 +383,8 @@ def prune_records(root, apply, at_least=0):
         item = dict(launch_id=launch_id, name=state.get("name"), owner=state.get("owner"), phase=state.get("phase"),
                     reason=reason, evidence=evidence)
         if apply:
+            if reason == "pane_gone" or pane_absent(state) is True:
+                item["fleet_report"] = forget_fleet(state)
             if reason == "pane_gone":
                 item["jobs"] = forget_job(root, state)
             if state.get("scratchpad") and (reason == "pane_gone" or pane_absent(state) is True):
@@ -424,7 +443,11 @@ def prune_records(root, apply, at_least=0):
                 old = json.loads(read_file(str(entry / "retired.json"), private=True))
                 pad = old.get("scratchpad")
                 target = old.get("target") or {}
-                if not pad or not Path(pad).exists() or pane_absent(old) is not True:
+                if pane_absent(old) is not True:
+                    continue
+                if apply and old.get("store"):
+                    forget_fleet(old)
+                if not pad or not Path(pad).exists():
                     continue
                 archived = scratch_archive(pad, target["session_id"], target["block_id"]) if apply else pad
                 result["archived_scratchpads"].append(archived)
@@ -447,7 +470,7 @@ def receipt(state, outcome, **extra):
     result = {k: state.get(k) for k in ("launch_id", "name", "owner", "purpose", "review_at", "profile", "target",
                                         "starter", "report_to", "phase", "tracked", "protocol_acknowledged",
                                         "brief_attempted", "brief_outcome", "immediate_child_term", "remote_child_term", "notifications",
-                                        "auto_prune", "layout", "placement", "come_forward", "come_forward_last", "scratchpad", "scratch_pane_opened", "scratch_pane_receipt")}
+                                        "auto_prune", "failure_reason", "fleet_report", "layout", "placement", "come_forward", "come_forward_last", "scratchpad", "scratch_pane_opened", "scratch_pane_receipt")}
     result["execution_host"] = state.get("execution", {}).get("host") if state.get("execution") else None
     result["immediate_child_role"] = "ssh_transport" if state.get("execution") else "agent_program"
     result.update(schema_version=1, kind="agents_result", outcome=outcome, agent_readiness="not_assessed",
@@ -1100,6 +1123,18 @@ def config(path):
     return value
 
 
+def launch_failed(root, launch_id, reason):
+    reason = " ".join(str(reason).split())[:600]
+    return update(root, launch_id, lambda s: s.update(phase="launch_failed", failure_reason=reason))
+
+
+def supervisor_launch_failed(o, reason):
+    state = launch_failed(o.registry, o.launch_id, reason)
+    line = f"teerex: launch failed before the agent started: {state['failure_reason']} (launch {o.launch_id})"
+    print(line, flush=True)
+    update(o.registry, o.launch_id, lambda s: s.update(launch_failure_displayed_at=now()))
+
+
 def launch(o):
     cfg = config(o.config)
     human = o.operation == "human"
@@ -1213,66 +1248,73 @@ def launch(o):
                 s["target"]["block_id"] = address_id(packet["created"]["block_id"], "block")
         state = update(root, launch_id, created)
         if not succeeded(code, packet, "created_and_verified" if human or layout == "detached" else "created_and_attached"):
+            if state["target"].get("block_id"):
+                state = launch_failed(root, launch_id, "creation_uncertain")
             return 1, receipt(state, "creation_uncertain", client_exit=code)
-        block = state["target"]["block_id"]
-        scratchpad = scratch_init(session, block, name, purpose, scratch_line(intent), (state.get("contract") or {}).get("done_when", ""))
-        state = update(root, launch_id, lambda s: s.update(scratchpad=scratchpad))
-        if state["scratch_pane"] and layout != "detached":
-            side_code, side_packet = invoke(["surfaces", "open", "--socket", socket, "--session", session,
-                                            "--layout", "tiled", "--anchor", block, "--label", name + " scratchpad",
-                                            "--", RUNTIME, "scratch", "watch", "--session", session, "--block", block])
-            state = update(root, launch_id, lambda s: s.update(scratch_pane_receipt=side_packet,
-                            scratch_pane_opened=succeeded(side_code, side_packet, "created_and_verified")))
-        code, packet = invoke(["jobs", "track", "--registry", root, "--socket", socket, "--session", session, "--block", block,
-                               "--owner", owner, "--kind", "agent", "--purpose", purpose,
-                               "--deadline-unix-ms", str(review), "--cleanup", "manual"])
-        def tracked(s):
-            s["track_receipt"] = packet
-            s["tracked"] = succeeded(code, packet, "verified")
-            s["phase"] = "protocol_pending" if s["tracked"] else "tracking_uncertain"
-        state = update(root, launch_id, tracked)
-        if not state["tracked"]:
-            return 1, receipt(state, "tracking_uncertain", client_exit=code)
-        if publish_fleet(root, state, "launch", "unknown", "Visible agent registered; protocol not acknowledged; readiness not assessed"):
-            return 1, receipt(load(root, launch_id), "fleet_report_uncertain")
-        if human:
+        try:
+            block = state["target"]["block_id"]
+            scratchpad = scratch_init(session, block, name, purpose, scratch_line(intent), (state.get("contract") or {}).get("done_when", ""))
+            state = update(root, launch_id, lambda s: s.update(scratchpad=scratchpad))
+            if state["scratch_pane"] and layout != "detached":
+                side_code, side_packet = invoke(["surfaces", "open", "--socket", socket, "--session", session,
+                                                "--layout", "tiled", "--anchor", block, "--label", name + " scratchpad",
+                                                "--", RUNTIME, "scratch", "watch", "--session", session, "--block", block])
+                state = update(root, launch_id, lambda s: s.update(scratch_pane_receipt=side_packet,
+                                scratch_pane_opened=succeeded(side_code, side_packet, "created_and_verified")))
+            code, packet = invoke(["jobs", "track", "--registry", root, "--socket", socket, "--session", session, "--block", block,
+                                   "--owner", owner, "--kind", "agent", "--purpose", purpose,
+                                   "--deadline-unix-ms", str(review), "--cleanup", "manual"])
+            def tracked(s):
+                s["track_receipt"] = packet
+                s["tracked"] = succeeded(code, packet, "verified")
+                s["phase"] = "protocol_pending" if s["tracked"] else "tracking_uncertain"
+            state = update(root, launch_id, tracked)
+            if not state["tracked"]:
+                state = launch_failed(root, launch_id, "tracking_uncertain")
+                return 1, receipt(state, "tracking_uncertain", client_exit=code)
+            publish_fleet(root, state, "launch", "unknown", "Visible agent registered; protocol not acknowledged; readiness not assessed")
+            state = load(root, launch_id)
+            if human:
+                with Registry(root) as registry:
+                    state = registry.read(launch_id)
+                    state["protocol_file"] = registry.write_message(launch_id, "human", "Human interactive launch; no brief or ACK.")
+                    state["phase"] = "human_interactive"
+                    registry.save(state)
+                return 0, receipt(state, "human_launched")
+            # The first harness prompt is an explicit profile-supported argv argument. Sending terminal input
+            # immediately after creation would race shell/harness startup and silently lose the protocol.
+            ack_command = [RUNTIME, "agents", "ack", "--registry", root, "--launch-id", launch_id,
+                           "--token", token, "--session", session, "--block", block]
+            if delivery is not None:
+                ack_command = [RUNTIME, "agents", "channel", "--handle", str(Path(delivery["directory"]) / launch_id / "handle.json"),
+                               "--request-id", secrets.token_hex(16), "--operation", "ack", "--session", session, "--block", block]
+            report_command = [RUNTIME, "send", "--socket", socket, "--session", rs, "--block", rb, "--from", name,
+                              "--message-file", "-", *send_options(state)]
+            if delivery is not None:
+                report_command = [RUNTIME, "agents", "channel", "--handle", str(Path(delivery["directory"]) / launch_id / "handle.json"),
+                                  "--request-id", "NEW_HEX32", "--operation", "send", "--to", "report-to", "--message-file", "-"]
+            protocol = ("Messaging protocol (not a task brief):\n"
+                        f"Your name is {name}; your pane is {session} {block}.\n"
+                        f"Your starter is {ss} {sb}; report-to is {rs} {rb}.\n"
+                        f"Your session scratchpad is {scratchpad} (AGENT_SCRATCHPAD).\n"
+                        + ('Contract: write your steps first; every turn after the brief ends declared — finished (every step checked off, To-do empty), blocked (teerex scratch flag "what is stuck; what you tried; what you need"; never check off steps you could not do), or waiting (teerex scratch now STEP --waiting "on what" --check 10m). teerex tells your starter each step and each declaration.\n' if state.get("contract") else "") +
+                        "Keep its Now/To-do/Done current before and after every step; Now has at most one task.\n"
+                        "Report stops, results, blockers and questions directly to report-to; never type into a registered human seat.\n"
+                        "A finished turn is idle, not process death. Supply report bytes on stdin then EOF using:\n" +
+                        shlex.join(report_command) + "\n" +
+                        ("Replace NEW_HEX32 with a fresh 32-lowercase-hex request id for each NEW message; never retry uncertain input.\n"
+                         if delivery is not None else "Never retry uncertain input.\n") +
+                        "Do not begin a task or launch another agent before the brief. Acknowledge this protocol now by running:\n" +
+                        shlex.join(ack_command) +
+                        "\nThis ACK records protocol acknowledgment only, not readiness, authorization or exclusive input control.")
             with Registry(root) as registry:
                 state = registry.read(launch_id)
-                state["protocol_file"] = registry.write_message(launch_id, "human", "Human interactive launch; no brief or ACK.")
-                state["phase"] = "human_interactive"
+                state["protocol_file"] = registry.write_message(launch_id, "protocol", protocol)
+                state["phase"] = "awaiting_protocol_ack"
                 registry.save(state)
-            return 0, receipt(state, "human_launched")
-        # The first harness prompt is an explicit profile-supported argv argument. Sending terminal input
-        # immediately after creation would race shell/harness startup and silently lose the protocol.
-        ack_command = [RUNTIME, "agents", "ack", "--registry", root, "--launch-id", launch_id,
-                       "--token", token, "--session", session, "--block", block]
-        if delivery is not None:
-            ack_command = [RUNTIME, "agents", "channel", "--handle", str(Path(delivery["directory"]) / launch_id / "handle.json"),
-                           "--request-id", secrets.token_hex(16), "--operation", "ack", "--session", session, "--block", block]
-        report_command = [RUNTIME, "send", "--socket", socket, "--session", rs, "--block", rb, "--from", name,
-                          "--message-file", "-", *send_options(state)]
-        if delivery is not None:
-            report_command = [RUNTIME, "agents", "channel", "--handle", str(Path(delivery["directory"]) / launch_id / "handle.json"),
-                              "--request-id", "NEW_HEX32", "--operation", "send", "--to", "report-to", "--message-file", "-"]
-        protocol = ("Messaging protocol (not a task brief):\n"
-                    f"Your name is {name}; your pane is {session} {block}.\n"
-                    f"Your starter is {ss} {sb}; report-to is {rs} {rb}.\n"
-                    f"Your session scratchpad is {scratchpad} (AGENT_SCRATCHPAD).\n"
-                    + ('Contract: write your steps first; every turn after the brief ends declared — finished (every step checked off, To-do empty), blocked (teerex scratch flag "what is stuck; what you tried; what you need"; never check off steps you could not do), or waiting (teerex scratch now STEP --waiting "on what" --check 10m). teerex tells your starter each step and each declaration.\n' if state.get("contract") else "") +
-                    "Keep its Now/To-do/Done current before and after every step; Now has at most one task.\n"
-                    "Report stops, results, blockers and questions directly to report-to; never type into a registered human seat.\n"
-                    "A finished turn is idle, not process death. Supply report bytes on stdin then EOF using:\n" +
-                    shlex.join(report_command) + "\n" +
-                    ("Replace NEW_HEX32 with a fresh 32-lowercase-hex request id for each NEW message; never retry uncertain input.\n"
-                     if delivery is not None else "Never retry uncertain input.\n") +
-                    "Do not begin a task or launch another agent before the brief. Acknowledge this protocol now by running:\n" +
-                    shlex.join(ack_command) +
-                    "\nThis ACK records protocol acknowledgment only, not readiness, authorization or exclusive input control.")
-        with Registry(root) as registry:
-            state = registry.read(launch_id)
-            state["protocol_file"] = registry.write_message(launch_id, "protocol", protocol)
-            state["phase"] = "awaiting_protocol_ack"
-            registry.save(state)
+        except BaseException as exc:
+            launch_failed(root, launch_id, str(exc) or type(exc).__name__)
+            raise
     end = time.monotonic() + o.ack_timeout_ms / 1000
     while time.monotonic() < end:
         state = load(root, launch_id)
@@ -1328,6 +1370,15 @@ def deliver(root, launch_id):
 
 
 def publish_fleet(root, state, event_id, reported_state, detail):
+    try:
+        return publish_fleet_attempt(root, state, event_id, reported_state, detail)
+    except (Refusal, OSError, ValueError, KeyError, subprocess.SubprocessError) as exc:
+        report = dict(event_id=event_id, outcome="uncertain", failure_reason=str(exc)[:600])
+        update(root, state["launch_id"], lambda s: s.update(fleet_report=report))
+        return 1
+
+
+def publish_fleet_attempt(root, state, event_id, reported_state, detail):
     if state["store"] is None:
         return 0
     def intent(s):
@@ -1341,8 +1392,11 @@ def publish_fleet(root, state, event_id, reported_state, detail):
                            "--block", state["target"]["block_id"], "--owner", state["owner"], "--purpose", state["purpose"],
                            "--state", reported_state, "--detail", detail[:512]], client_path=state["client_path"],
                           rex_executable=state["rex_executable"])
-    update(root, state["launch_id"], lambda s: s["fleet_reports"][event_id].update(
-        outcome="reported" if code == 0 else "uncertain", client_exit=code, receipt=packet))
+    def reported(s):
+        report = dict(outcome="reported" if code == 0 else "uncertain", client_exit=code, receipt=packet)
+        s["fleet_reports"][event_id].update(report)
+        s["fleet_report"] = dict(event_id=event_id, **report)
+    update(root, state["launch_id"], reported)
     return code
 
 
@@ -1405,8 +1459,9 @@ def notify(root, launch_id, event_id, body, evidence, reported_state="unknown", 
         s["notifications"][event_id]["outcome"] = ("suppressed" if delivery_rule == "progress_turn_suppressed" else "transport_acknowledged" if all(r["outcome"] == "transport_acknowledged"
                                                                                    for r in results) else "uncertain")
     state = update(root, launch_id, reported)
-    fleet_code = publish_fleet(root, state, event_id, reported_state, body.replace("\n", " "))
-    ok = state["notifications"][event_id]["outcome"] in ("transport_acknowledged", "suppressed") and fleet_code == 0
+    publish_fleet(root, state, event_id, reported_state, body.replace("\n", " "))
+    state = load(root, launch_id)
+    ok = state["notifications"][event_id]["outcome"] in ("transport_acknowledged", "suppressed")
     return (0 if ok else 1), receipt(state, "notification_suppressed" if delivery_rule == "progress_turn_suppressed" else "notification_acknowledged" if ok else "notification_uncertain", delivery_rule=delivery_rule)
 
 
@@ -1587,9 +1642,8 @@ def report_stop(root, launch_id, event_id, event, allow_transcript=True):
         code, delivery = contract_tell(root, launch_id, "flag" if declared == "blocked" else declared or "no_answer", body)
         update(root, launch_id, lambda s: s["notifications"][event_id].update(outcome="transport_acknowledged" if code == 0 else "uncertain", receipt=delivery))
         state = load(root, launch_id)
-        fleet_code = publish_fleet(root, state, event_id, "completed" if declared == "done" else "blocked" if declared in ("blocked", "waiting") else "idle", body)
-        packet = receipt(state, "notification_acknowledged" if code == fleet_code == 0 else "notification_uncertain", delivery_rule=delivery_rule, contract_delivery=delivery)
-        code = 0 if code == fleet_code == 0 else 1
+        publish_fleet(root, state, event_id, "completed" if declared == "done" else "blocked" if declared in ("blocked", "waiting") else "idle", body)
+        packet = receipt(load(root, launch_id), "notification_acknowledged" if code == 0 else "notification_uncertain", delivery_rule=delivery_rule, contract_delivery=delivery)
     else:
         code, packet = notify(root, launch_id, event_id, body, "harness_report_not_process_death",
                               reported_state=("completed" if turn_state == "done" else "idle") if kind == "Stop" else "unknown", delivery_rule=delivery_rule)
@@ -1703,6 +1757,8 @@ def supervise(o):
         return supervise_child(o)
     except Exception as exc:
         supervisor_error(o, "last_supervisor_error", exc)
+        if not getattr(o, "child_started", False):
+            supervisor_launch_failed(o, str(exc))
         return 1, None
     finally:
         if state is not None:
@@ -1723,8 +1779,9 @@ def supervise_child(o):
     while (not state["tracked"] or not state["protocol_file"]) and time.monotonic() < end:
         time.sleep(.05)
         state = load(o.registry, o.launch_id)
-        if state["phase"] == "tracking_uncertain":
+        if state["phase"] in ("tracking_uncertain", "launch_failed"):
             break
+    require(state["phase"] != "launch_failed", state.get("failure_reason", "launch_failed"))
     require(state["tracked"] and state["protocol_file"] and state["target"]["block_id"] == bid,
             "supervisor_requires_verified_tracked_pane_and_protocol")
     def claim(s):
@@ -1775,6 +1832,7 @@ def supervise_child(o):
     term = None
     try:
         child = subprocess.Popen(argv, env=env, cwd=state["cwd"])
+        o.child_started = True
         update(o.registry, o.launch_id, lambda s: s.update(immediate_child_started_at=now(), protocol_outcome="not_applicable_human" if state.get("human") else "argument_supplied"))
         def forward(sig, unused):
             # Revoke on cancellation even if the child ignores its forwarded signal.
@@ -1840,6 +1898,8 @@ def supervise_child(o):
         code = child.returncode
         term = {"Exited": code} if code >= 0 else {"Signal": -code}
     except OSError as exc:
+        if not getattr(o, "child_started", False):
+            supervisor_launch_failed(o, str(exc))
         term = {"launch_error": str(exc)[:600]}
         code = 125
     finally:
