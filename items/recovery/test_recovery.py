@@ -269,9 +269,7 @@ class RecoveryTest(unittest.TestCase):
     def test_restart_restore_nested_layout_exact_argv_and_report_inbox_remap(self):
         self.fixture(nested=True)
         metadata = self.metadata()
-        empty_boards = self.root / "empty-boards"
-        empty_boards.mkdir(mode=0o700)
-        self.invoke("snapshot", "--metadata", str(metadata), "--board-store", str(empty_boards))
+        self.invoke("snapshot", "--metadata", str(metadata))
         source_instance = json.loads((self.store / "snapshot.json").read_text())["source"]["instance_id"]
         self.restart()
         plan = self.invoke("restore")
@@ -280,7 +278,7 @@ class RecoveryTest(unittest.TestCase):
         self.assertFalse(self.rpc("session.list").get("sessions"))
         self.invoke("restore", "--apply", "--confirm", "incorrect", code=1)
         self.assertFalse(self.rpc("session.list").get("sessions"))
-        result = self.invoke("restore", "--apply", "--confirm", plan["confirmation"], "--board-store", str(empty_boards))
+        result = self.invoke("restore", "--apply", "--confirm", plan["confirmation"])
         self.assertEqual(result["mapped_panes"], 4)
         receipt = json.loads((self.store / "remap.json").read_text())
         self.assertFalse(receipt["board_state_applied"])
@@ -386,80 +384,22 @@ class RecoveryTest(unittest.TestCase):
         self.assertEqual(self.rpc("server.status")["instance_id"], identity)
         self.assertEqual(self.rpc("session.view", {"session_id": self.sid}), before)
 
-    def test_boards_snapshot_references_preview_and_explicit_remap_preserve_cards(self):
-        self.fixture(nested=True)
-        metadata = self.metadata()
-        board_store = self.root / "boards"
-        board_store.mkdir(mode=0o700)
-        seat = self.target(self.blocks[0]["block_id"])
-        def boards(*args):
-            p = subprocess.run([BIN, "boards", *args], capture_output=True, text=True, env=self.env, timeout=20)
-            self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
-            return json.loads(p.stdout)
-        target_args = ["--host", seat["host"], "--socket", str(self.socket), "--session", self.sid, "--block", seat["block_id"]]
-        boards("seat", "register", "--store", str(board_store), *target_args, "--owner", "operator")
-        message = self.root / "message.txt"
-        message.write_text("PRIVATE_PINNED_CONTENT_NOT_IN_SNAPSHOT")
-        boards("inbox", "append", "--store", str(board_store), *target_args, "--from", "worker", "--message-file", str(message))
-        card = self.root / "decision.json"
-        card.write_text(json.dumps(dict(id="restart-decision", title="PRIVATE_CARD_NOT_IN_SNAPSHOT", ask="Restart the disposable server?",
-                                        context="The fixture has private inbox state.", options=[dict(label="Restart", gain="New build", lose="Lose unsent inputs"),
-                                        dict(label="Wait", gain="Keep inputs", lose="Delay update")], recommend="Wait until snapshot review.")))
-        boards("ask", "--store", str(board_store), *target_args, "--from", "worker", "--card-file", str(card))
-        before = boards("state", "inspect", "--store", str(board_store))["state"]
-        self.invoke("snapshot", "--metadata", str(metadata), "--board-store", str(board_store))
-        saved = json.loads((self.store / "snapshot.json").read_text())
-        self.assertEqual(saved["boards"]["seats"], [seat])
-        self.assertFalse(saved["boards"]["messages_copied"])
-        self.assertNotIn(message.read_text(), (self.store / "snapshot.json").read_text())
-        self.assertNotIn("PRIVATE_CARD_NOT_IN_SNAPSHOT", (self.store / "snapshot.json").read_text())
+    def test_legacy_board_data_is_ignored_during_restore(self):
+        self.fixture()
+        self.invoke("snapshot", "--metadata", str(self.metadata()))
+        snapshot = self.store / "snapshot.json"
+        saved = json.loads(snapshot.read_text())
+        saved["boards"] = {"targets": ["obsolete invalid reference"], "seats": "old data"}
+        saved["omissions"]["absent_references"] = [
+            {"reason": "board_target_absent_at_snapshot", "target": "obsolete"}]
+        snapshot.write_text(json.dumps(saved))
+        self.assertEqual(self.invoke("inspect")["panes"], 1)
         self.restart()
         plan = self.invoke("restore")
-        self.invoke("restore", "--board-store", str(board_store), "--apply", "--confirm", plan["confirmation"])
-        remap = json.loads((self.store / "remap.json").read_text())
-        handoff = remap["board_handoff"]
-        self.assertEqual(handoff["preview"]["outcome"], "preview_only")
-        self.assertEqual(boards("state", "inspect", "--store", str(board_store))["state"], before)
-        mapping = json.loads((self.store / "board-map.json").read_text())
-        self.assertEqual(len(mapping), 1)
-        self.assertEqual(mapping[0]["old"], seat)
-        boards("state", "remap-apply", "--store", str(board_store), "--map-file", handoff["map_file"],
-               "--generation", str(handoff["preview"]["generation"]), "--reason", "disposable restored surfaces verified")
-        after = boards("state", "inspect", "--store", str(board_store))["state"]
-        self.assertEqual(after["seats"][0]["target"], mapping[0]["new"])
-        self.assertEqual(after["seats"][0]["records"], before["seats"][0]["records"])
-
-    def test_stale_board_reference_is_an_explicit_omission(self):
-        self.fixture()
-        board_store = self.root / "boards"
-        board_store.mkdir(mode=0o700)
-        missing = "block:00000000-0000-0000-0000-000000000002"
-        p = subprocess.run([BIN, "boards", "seat", "register", "--store", str(board_store),
-                            "--host", "disposable", "--socket", str(self.socket), "--session", self.sid,
-                            "--block", missing, "--owner", "historical-owner"],
-                           capture_output=True, text=True, env=self.env, timeout=20)
-        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
-        self.invoke("snapshot", "--metadata", str(self.metadata()), "--board-store", str(board_store))
-        self.assertEqual(self.invoke("inspect")["panes"], 1)
-        saved = json.loads((self.store / "snapshot.json").read_text())
-        self.assertEqual(saved["boards"]["targets"], [])
-        self.assertEqual(saved["omissions"]["absent_references"][0]["target"]["block_id"], missing)
-        self.restart()
-        plan = self.invoke("restore", "--accept-omissions")
         self.assertTrue(plan["can_apply"])
-        self.assertEqual(plan["hard_blockers"], [])
-        self.assertEqual(plan["omissions"][0]["reason"], "board_target_absent_at_snapshot")
-        # Older snapshots retained stale references in boards.targets.
-        target = saved["omissions"]["absent_references"][0]["target"]
-        saved["boards"]["targets"] = [target]
-        saved["boards"]["seats"] = [target]
-        saved["omissions"].pop("absent_references")
-        (self.store / "snapshot.json").write_text(json.dumps(saved))
-        plan = self.invoke("restore", "--accept-omissions")
-        self.assertTrue(plan["can_apply"])
-        self.invoke("restore", "--accept-omissions", "--board-store", str(board_store),
-                    "--apply", "--confirm", plan["confirmation"], code=3)
-
+        self.assertEqual(plan["omissions"], [])
+        self.invoke("restore", "--apply", "--confirm", plan["confirmation"])
+        self.assertEqual(json.loads(snapshot.read_text()), saved)
 
     def test_root_creates_private_snapshots_and_selects_newest(self):
         self.fixture()

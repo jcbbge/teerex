@@ -15,8 +15,8 @@ This table records where every roadmap item stands at main on 14 November 2026 (
 | U05 perception (agent state) | Built | `observe --state` |
 | U06 Linux run/offstage | Built | `run`, `offstage` |
 | U07 MCP surface | Built | `teerex mcp` |
-| U11 richer presentation | Built: keyboard fleet board | `board`, `boards fleet` |
-| H02 friction, H03 replay, H06 decisions, H07 section T, H08 terms | Built | `boards friction`, `replay`, `records` decisions, `ask --deliver paste`, [observation terms](observation-terms.md) |
+| U11 richer presentation | Built: keyboard fleet board | `board` |
+| H02 friction, H03 replay, H06 decisions, H07 section T, H08 terms | Built | `replay`, `records` decisions, [observation terms](observation-terms.md) |
 | H04 fence probe | Built (teerex's part); the fence itself belongs to Rivet | `agents fence-probe` |
 | H05 pause/redirect/takeover | Done in Rivet, live on 13 Nov 2026 (pause, go, redirect, takeover, stop on a throwaway item); teerex's part is the spec | [spec](planning/workloads/authority-task-runtime.md) |
 | U10 Rex–Rivet integration | Built: run-visible, channel, detach, session ensure; fenced workers reach their starter through the agents channel with no relay (#21) | `run-visible --channel-dir`, `agents channel` |

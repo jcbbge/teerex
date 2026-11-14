@@ -144,7 +144,7 @@ Update/rollback/remove: changing teerex does not stop workers. Finish/close only
 - **Who:** an operator/agent explicitly authorized to type into a dedicated agent terminal, not any observed pane.
 - **What:** exact `FROM worker: <file bytes>` paste then Enter on one connection; separate attempts/ACKs.
 - **When:** a reviewed private UTF-8 message is intended for that exact agent and preexisting drafts/prompt context have been considered locally.
-- **Where:** Mac/Linux integer API10–13, existing visible terminal, absolute regular message file or alpha.5's bounded EOF-terminated `--message-file -` stdin. Cooperating locks are CLI-host/TMPDIR-local, not shared across forwarded hosts. Explicit `--store` and leaf `--host` enable exact registered-seat inbox append before native paste; store failures never fall back. [Seat routing contract](../../items/boards/README.md#append-without-typing-route-send-fail-closed).
+- **Where:** Mac/Linux integer API10–13, existing visible terminal, absolute regular message file or alpha.5's bounded EOF-terminated `--message-file -` stdin. Cooperating locks are CLI-host/TMPDIR-local, not shared across forwarded hosts.
 - **Why:** avoid shell joining, truncation, guessed draft clearing and unsafe retries while preserving transport evidence.
 - **How:** after creating/reviewing the private regular file at `MESSAGE_FILE`, and obtaining the dedicated `AGENT_BLOCK` and `AGENT_SESSION`:
 
@@ -250,22 +250,6 @@ Require exit0, complete JSON and actual geometry/identity readback. Use [complet
 
 Update/rollback/remove: shared code lifecycle; prepared fragments, appended includes and running panes survive code removal. Review the [migration/config retention gates](../../items/surfaces/MIGRATION.md) before deliberate config cleanup; never reload/restart or delete unrelated actions as an installation side effect.
 
-## 14. Boards, seat, inbox and typed decisions
-
-- **Who:** authorized operators and reporters; sender/owner labels and recorded answers are claims, not authenticated consent.
-- **What:** visible foreground inbox/fleet boards, exact tuple seat registration, retained messages, complete decision cards/resolutions and explicit state inspection/remap.
-- **When:** register a seat before routing messages; inspect retained cards before clearing. Boards refresh only while deliberately running visibly.
-- **Where:** Mac/Linux, Python3.9+, explicit existing0700 private store. Local seat/inbox/ask operations are offline; live fleet/probe requires API13. API10/12 probe refusal remains visible unknown.
-- **Why:** append to a registered seat's inbox instead of typing over operator input; keep reported activity separate from observations/unknowns.
-- **How:** inspect local state without sending input:
-
-```sh
-"$TEEREX" boards state inspect --store "$STORE"
-```
-
-Expect exit0/schema1 complete state receipt, not liveness. `STORE` is the reviewed command-host-local board directory. [Full registration, visible board, typed-card, routing and clear/remap recipes](../../items/boards/README.md) include default2s foreground refresh, TTY/`--once` rules,32 seats/128 records per seat/1MiB store bounds, exits and crash recovery. Every failed named host stays visible; one-shot partial fleet failure exits1. No automatic decision execution or reply, log import, eviction, hidden watcher or draft clearing. Store errors refuse, never fall back to paste.
-
-Update/rollback/remove: private state and messages survive binary changes; older releases may not read them. Export/review privately before exact generation/reason-confirmed clears. Clearing registration/reporting never closes panes or stops work; preserve working stopgaps until [paired source-cutover gates](../../items/boards/MIGRATION.md) pass.
 
 ## 15. Agent lifecycle
 

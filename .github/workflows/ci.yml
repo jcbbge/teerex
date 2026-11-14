@@ -191,8 +191,6 @@ jobs:
         run: |
           python3 src/test_help.py -v
           python3 src/test_targets.py -v
-          python3 items/boards/test_boards.py CallsTest StatusTest -v
-          python3 items/boards/test_friction.py -v
 
       - name: Run visible surfaces contracts
         env:
@@ -220,16 +218,12 @@ jobs:
           sysctl kernel.apparmor_restrict_unprivileged_userns
           bwrap --ro-bind / / /bin/true
 
-      - name: Run API13 boards, managed agent and recovery integration
+      - name: Run API13 recovery integration
         if: matrix.rex-api == 13
         env:
           TEEREX_BIN: ${{ github.workspace }}/zig-out/bin/teerex
           REX_BIN: ${{ runner.temp }}/rex-bin/rex
         run: |
-          zig build-exe --dep rex_boards -Mroot=items/boards/test_cli.zig \
-            -Mrex_boards=items/boards/main.zig -O ReleaseSmall \
-            -femit-bin="$RUNNER_TEMP/boards-route-helper"
-          BOARDS_ROUTE_HELPER_BIN="$RUNNER_TEMP/boards-route-helper" python3 items/boards/test_boards.py -v
           python3 items/recovery/test_recovery.py -v
           python3 tools/fleet-install/test_fleet_install.py -v
 

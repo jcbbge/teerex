@@ -20,7 +20,6 @@ class PythonHelpTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("Guides: docs/agents.md", result.stdout)
         self.assertNotIn("docs/alpha5.md", result.stdout)
-        self.assertIn("seat register|resolve|inspect|clear", result.stdout)
 
     def test_scratch_command_is_unknown(self):
         result = subprocess.run([BIN, "scratch", "--help"], env=isolated_environment(),
@@ -51,11 +50,13 @@ class PythonHelpTest(unittest.TestCase):
         self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
         self.assertIn("unknown subcommand", result.stdout + result.stderr)
 
-    def test_seat_help_lists_resolve(self):
-        result = subprocess.run([BIN, "seat", "--help"], env=isolated_environment(),
-                                capture_output=True, text=True, timeout=10)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn("{register,resolve,inspect,clear}", result.stdout)
+    def test_removed_boards_commands_are_unknown(self):
+        for command in ("boards", "seat", "ask", "inbox"):
+            with self.subTest(command=command):
+                result = subprocess.run([BIN, command], env=isolated_environment(),
+                                        capture_output=True, text=True, timeout=10)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("unknown command", (result.stdout + result.stderr).lower())
 
     def test_embedded_python_help_uses_public_command_names(self):
         commands = [
@@ -64,17 +65,12 @@ class PythonHelpTest(unittest.TestCase):
             ("targets", "resolve"), ("targets", "exec"),
             ("run-visible",), ("run-visible", "receipt"),
             ("observe", "--state"), ("clutch", "palette"),
-            ("boards", "inbox"), ("boards", "fleet"), ("boards", "calls"),
-            ("boards", "probe"), ("boards", "state", "inspect"),
-            ("boards", "friction"), ("ask",),
             ("fleet", "install"), ("fleet", "rollback"),
         ]
         commands += [("records", op) for op in (
             "init", "new", "park", "add", "attach", "set", "close", "show",
             "resume", "navigate", "list", "lint", "export", "forget", "pin",
             "decide", "claim-status", "revalidate")]
-        commands += [("boards", "friction", op) for op in (
-            "enable", "disable", "status", "forget", "label", "report")]
         commands += [("recovery", op) for op in ("snapshot", "restore", "update", "inspect")]
         with resources.temporary_directory(prefix="teerex-help-") as temp:
             env = dict(isolated_environment(), HOME=temp, XDG_CONFIG_HOME=temp,

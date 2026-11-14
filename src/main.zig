@@ -12,10 +12,6 @@ const usage =
     \\Operating-layer commands:
     \\  surfaces resolve|session ensure|ensure|open|inspect|rename|move|focus|close  Visible terminals
     \\  board [--replay FILE] | feed              Live themed stream and machine vitals
-    \\  boards inbox|fleet|calls|attention|friction|probe|state                Live boards, typed store and remap plans
-    \\  seat register|resolve|inspect|clear|panes      Exact-address operator seat
-    \\  inbox append|inspect|clear                    Private retained messages
-    \\  ask                                          Complete typed decisions or explicit resolution
     \\  records init|new|park|add|attach|set|close|show|resume|navigate|list|lint|export|forget|forget-scratchpad  Private evidence and reasoning
     \\  recovery snapshot|inspect|restore|update|reconcile      Private snapshots and reviewed restoration
     \\  snapshot|restore|update                       Recovery aliases; update is manual handoff
@@ -26,18 +22,17 @@ const usage =
     \\Existing tools: observe, compare, watch, run, doctor, send,
     \\                jobs
     \\Socket verbs default --socket from percent-decoded REX_SERVER (unix://), then platform home/runtime path.
-    \\Defaulted observe/watch/doctor and boards probe receipts report socket_source. Explicit and named-host calls retain their contracts.
+    \\Defaulted observe/watch/doctor receipts report socket_source. Explicit and named-host calls retain their contracts.
     \\Use COMMAND --help for exact flags, effects, evidence and limits.
     \\Who: operators and agents. What: inspectable programs, not a Rex fork/plugin daemon.
     \\When: explicit invocation; every managed agent/board remains visible and controllable.
     \\Where: configured command host; paths belong there, never silently uploaded.
     \\Why: report actual activity/results and unknowns, not infer readiness or completion.
     \\How: explicit config/host or socket/full IDs; no retries, fallback or autostart.
-    \\Python3.9+ is required for targets, boards, recovery, records and fleet.
+    \\Python3.9+ is required for targets, recovery, records and fleet.
     \\Guarded Rex transports require Python3.9+ for seat and creator authority. SSH trust/key are explicit.
-    \\Native call history adds no runtime dependency; missing end records stay unknown.
     \\Personal install/restart/close/config actions need their own authorization.
-    \\Guides: docs/agents.md and items/{surfaces,boards,recovery,records}/README.md.
+    \\Guides: docs/agents.md and items/{surfaces,recovery,records}/README.md.
     \\
 ;
 
@@ -67,65 +62,41 @@ fn nextAction(code: u8) void {
 pub fn main() void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
-    @import("rex_boards").call_log.server_uri = frictionServer;
-    @import("rex_boards").call_log.start(arena.allocator(), version);
     run(arena.allocator()) catch |err| {
         std.debug.print("teerex: {s}\n", .{@errorName(err)});
         finish(arena.allocator(), 1);
     };
-    @import("rex_boards").call_log.end(arena.allocator(), 0);
 }
 
-fn finish(allocator: std.mem.Allocator, code: u8) noreturn {
+fn finish(_: std.mem.Allocator, code: u8) noreturn {
     if (code != 0) nextAction(code);
-    @import("rex_boards").call_log.end(allocator, code);
     std.process.exit(code);
 }
 
 fn python(allocator: std.mem.Allocator, args: []const []const u8) !void {
     var argv: std.ArrayList([]const u8) = .empty;
-    try argv.appendSlice(allocator, &.{ "python3", "-I", "-c", try @import("rex_boards").call_log.namedHostPython(allocator, @import("pane_guard").identity_source ++ "\n" ++ @embedFile("targets.py")) });
+    try argv.appendSlice(allocator, &.{ "python3", "-I", "-c", @import("pane_guard").identity_source ++ "\n" ++ @embedFile("targets.py") });
     try argv.appendSlice(allocator, args);
     return std.process.execv(allocator, argv.items);
 }
 
 fn send(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
-    var native: std.ArrayList([]const u8) = .empty;
-    var route: std.ArrayList([]const u8) = .empty;
-    var store: ?[]const u8 = null;
-    var host: ?[]const u8 = null;
-    var i: usize = 0;
-    while (i < args.len) : (i += 1) {
-        if (std.mem.eql(u8, args[i], "--store") or std.mem.eql(u8, args[i], "--host")) {
-            if (i + 1 >= args.len) return error.SendRouteOptionNeedsValue;
-            if (std.mem.eql(u8, args[i], "--store")) {
-                if (store != null) return error.RepeatedSendStore;
-                store = args[i + 1];
-            } else {
-                if (host != null) return error.RepeatedSendHost;
-                host = args[i + 1];
-            }
-            i += 1;
-        } else {
-            try native.append(allocator, args[i]);
-        }
-    }
     var socket: ?[]const u8 = null;
     var sender: ?[]const u8 = null;
     var session: ?[]const u8 = null;
     var block: ?[]const u8 = null;
     var index: usize = 0;
-    while (index < native.items.len) {
-        const arg = native.items[index];
+    while (index < args.len) {
+        const arg = args[index];
         if (std.mem.eql(u8, arg, "--no-queue")) {
             index += 1;
             continue;
         }
-        if (index + 1 >= native.items.len) break;
-        if (std.mem.eql(u8, arg, "--socket")) socket = native.items[index + 1];
-        if (std.mem.eql(u8, arg, "--from")) sender = native.items[index + 1];
-        if (std.mem.eql(u8, arg, "--session")) session = native.items[index + 1];
-        if (std.mem.eql(u8, arg, "--block")) block = native.items[index + 1];
+        if (index + 1 >= args.len) break;
+        if (std.mem.eql(u8, arg, "--socket")) socket = args[index + 1];
+        if (std.mem.eql(u8, arg, "--from")) sender = args[index + 1];
+        if (std.mem.eql(u8, arg, "--session")) session = args[index + 1];
+        if (std.mem.eql(u8, arg, "--block")) block = args[index + 1];
         index += 2;
     }
     if (socket != null and sender != null) {
@@ -149,13 +120,7 @@ fn send(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
             return 1;
         }
     }
-    if (store != null or host != null) {
-        if (store == null or host == null) return error.SendStoreAndHostRequiredTogether;
-        try route.appendSlice(allocator, &.{ "--store", store.?, "--host", host.? });
-        try route.appendSlice(allocator, native.items);
-        if (try @import("rex_boards").tryRoute(allocator, route.items)) |code| return code;
-    }
-    return @import("rex_send").run(allocator, native.items);
+    return @import("rex_send").run(allocator, args);
 }
 
 fn run(allocator: std.mem.Allocator) !void {
@@ -203,7 +168,6 @@ fn run(allocator: std.mem.Allocator) !void {
         var env = try std.process.getEnvMap(allocator);
         try env.put("TEEREX_INTERNAL_REX", args[1]);
         try env.put("TEEREX_REX", args[1]);
-        try env.put("TEEREX_CALL_START", try @import("rex_boards").call_log.context(allocator));
         const self = try std.fs.selfExePathAlloc(allocator);
         var forwarded: std.ArrayList([]const u8) = .empty;
         try forwarded.append(allocator, self);
@@ -222,7 +186,7 @@ fn run(allocator: std.mem.Allocator) !void {
     if (std.mem.eql(u8, command, "fleet") and rest.len > 0 and (std.mem.eql(u8, rest[0], "install") or std.mem.eql(u8, rest[0], "rollback"))) {
         const sources = @import("fleet_sources");
         var forwarded: std.ArrayList([]const u8) = .empty;
-        try forwarded.appendSlice(allocator, &.{ "python3", "-I", "-c", try @import("rex_boards").call_log.python(allocator, @embedFile("fleet_bridge.py")), sources.controller, sources.worker, sources.installer, sources.resolver });
+        try forwarded.appendSlice(allocator, &.{ "python3", "-I", "-c", @embedFile("fleet_bridge.py"), sources.controller, sources.worker, sources.installer, sources.resolver });
         try forwarded.appendSlice(allocator, rest);
         return std.process.execv(allocator, forwarded.items);
     }
@@ -236,8 +200,6 @@ fn run(allocator: std.mem.Allocator) !void {
     if (std.mem.eql(u8, command, "jobs")) finish(allocator, try @import("rex_jobs").run(allocator, rest));
     if (std.mem.eql(u8, command, "clutch")) finish(allocator, try @import("rex_clutch").run(allocator, rest));
     if (std.mem.eql(u8, command, "send")) finish(allocator, try send(allocator, rest));
-    if (std.mem.eql(u8, command, "boards")) finish(allocator, try @import("rex_boards").run(allocator, rest));
-    if (std.mem.eql(u8, command, "seat") or std.mem.eql(u8, command, "inbox") or std.mem.eql(u8, command, "ask") or std.mem.eql(u8, command, "fleet")) finish(allocator, try @import("rex_boards").run(allocator, args));
     if (eq(command, "observe") or eq(command, "compare") or eq(command, "watch")) finish(allocator, try @import("rex_observe").runObservations(allocator, args));
     std.debug.print("teerex: unknown command {s}; see teerex --help\n", .{command});
     finish(allocator, 2);
@@ -291,7 +253,6 @@ fn takesSocket(args: []const []const u8) bool {
     const command = args[0];
     if (eq(command, "jobs") and args.len > 1 and (eq(args[1], "doctor") or eq(args[1], "list"))) return false;
     if (eq(command, "doctor")) return args.len > 1 and (hasOption(args, "--baseline") or hasOption(args, "--timeout-ms"));
-    if (eq(command, "boards")) return args.len > 1 and eq(args[1], "probe");
     if (eq(command, "surfaces")) {
         if (args.len > 2 and eq(args[1], "session") and eq(args[2], "ensure")) return hasOption(args, "--label");
         return hasOption(args, "--session");
@@ -339,25 +300,6 @@ fn defaultSocket(allocator: std.mem.Allocator, env: *const std.process.EnvMap) !
         else => return error.UnsupportedSocketPlatform,
     };
     return .{ .path = path, .source = "platform_default" };
-}
-
-// Share target selection with the consent-gated collector without probing or
-// reading configuration. Named-host resolution remains unknown at this hook.
-fn frictionServer(allocator: std.mem.Allocator, original: []const []const u8) !?[]const u8 {
-    var args = original;
-    if (args.len > 2 and eq(args[0], "--rex")) args = args[2..];
-    if (args.len == 0 or eq(args[0], "--config") or eq(args[0], "--host") or eq(args[0], "targets")) return null;
-    for (args, 0..) |arg, i| {
-        if (eq(arg, "--")) break;
-        if (eq(arg, "--socket") and i + 1 < args.len and std.fs.path.isAbsolute(args[i + 1]))
-            return try std.fmt.allocPrint(allocator, "unix://{s}", .{args[i + 1]});
-        if (std.mem.startsWith(u8, arg, "--socket=") and std.fs.path.isAbsolute(arg[9..]))
-            return try std.fmt.allocPrint(allocator, "unix://{s}", .{arg[9..]});
-    }
-    if (!takesSocket(args)) return null;
-    var env = try std.process.getEnvMap(allocator);
-    const selected = try defaultSocket(allocator, &env);
-    return try std.fmt.allocPrint(allocator, "unix://{s}", .{selected.path});
 }
 
 // A borrowed argv remains untouched for explicit sockets and offline leaves.

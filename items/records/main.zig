@@ -16,7 +16,7 @@ const Output = struct {
 // Foreground only: bounded reads/control calls, no relaunch or background worker.
 pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
     var argv: std.ArrayList([]const u8) = .empty;
-    try argv.appendSlice(allocator, &.{ "python3", "-I", "-c", try @import("rex_boards").call_log.python(allocator, @embedFile("records.py")) });
+    try argv.appendSlice(allocator, &.{ "python3", "-I", "-c", @embedFile("records.py") });
     try argv.appendSlice(allocator, args);
     var env = try std.process.getEnvMap(allocator);
     try env.put("TEEREX_RECORDS_EXECUTABLE", try std.fs.selfExePathAlloc(allocator));

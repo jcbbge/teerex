@@ -19,21 +19,16 @@ if "caller_identity" not in globals():
 
 MAX_CONFIG = 1024 * 1024
 NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}\Z")
-PATH_FIELDS = ("home", "socket", "rex", "teerex", "store")
+PATH_FIELDS = ("home", "socket", "rex", "teerex")
 # Selectors belong to complete leaves, not command families. Offline leaves receive
-# no Rex target; board state/rendering still needs its selected command-host store.
+# no Rex target.
 SELECTORS = {("board", "feed"): ("socket",), **{(verb,): ("socket",) for verb in
                 ("observe", "watch", "run", "run-visible", "doctor", "snapshot", "restore", "update")},
              **{("surfaces", op): ("socket",) for op in ("open", "ensure", "resolve", "inspect", "rename", "move", "focus", "close")},
              **{("surfaces", "session", op): ("socket",) for op in ("ensure", "close")},
              **{("jobs", op): ("socket",) for op in ("track", "inspect", "adopt", "present", "forget")},
              **{("recovery", op): ("socket",) for op in ("snapshot", "restore", "update")},
-             **{("state", op): ("store",) for op in ("inspect", "remap-preview", "remap-apply")},
-             ("fleet",): ("store",), ("probe",): ("socket",),
-             **{(verb,): ("socket", "host", "store") for verb in ("send", "ask", "try-route", "inbox")},
-             **{(verb, op): ("socket", "host", "store") for verb, operations in
-                (("seat", ("register", "resolve", "inspect", "clear", "panes")), ("inbox", ("append", "inspect", "clear")),
-                 ("fleet", ("report", "forget"))) for op in operations},
+             ("send",): ("socket",),
              **{("clutch", op): ("socket",) for op in ("take", "release", "status", "queue", "palette")},
              **{("records", op): (("socket", "host", "records_store") if op in ("park", "resume", "navigate") else ("records_store",)) for op in
                 ("init", "new", "park", "add", "attach", "set", "close", "show", "resume", "navigate", "list", "lint", "export", "forget", "pin", "decide", "claim-status", "revalidate")}}
@@ -80,7 +75,7 @@ def resolve_host(config_path, name):
         raise ValueError("host_id must be an explicit identifier")
     for field in PATH_FIELDS:
         absolute(host.get(field), field)
-    for field in ("records_store", "recovery_store"):
+    for field in ("store", "records_store", "recovery_store"):
         if field in host:
             absolute(host[field], field)
     if host.get("platform") not in ("macos-arm64", "linux-x86_64"):
@@ -116,10 +111,6 @@ def command_argv(host, command):
     flags = {option.split("=", 1)[0] for option in options if option.startswith("-")}
     at = next((i for i, arg in enumerate(options) if arg.startswith("-")), len(options))
     leaf = tuple(options[:at])
-    # The native board bridge accepts both boards seat OP and root seat OP,
-    # as well as boards inbox/fleet renderers. Preserve the user's spelling.
-    if leaf[:1] == ("boards",):
-        leaf = leaf[1:]
     leaf_config = leaf == ("fleet",)
     if flags.intersection(("--socket", "--server", "-S", "--host", "--rex")) or ("--config" in flags and not leaf_config):
         raise ValueError("named host conflicts with explicit socket/server/host/config/rex")
@@ -190,21 +181,10 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         host = resolve_host(args.config, args.host)
-        # The ordinary resolver supplies metadata to the existing in-process hook;
-        # standalone use has no hook and never gains a telemetry dependency.
-        calls = sys.modules.get("teerex_calls")
-        if calls is not None:
-            server = "unix://" + host["socket"]
-            if host["transport"] == "ssh":
-                server = "ssh://" + host["address"] + ":" + str(host["port"]) + host["socket"]
-            calls.resolved_target(server)
         if args.operation == "resolve":
             print(json.dumps({"schema_version": 1, "host": host, "identity_basis": "explicit_configuration_not_observed_identity"}, separators=(",", ":")))
         else:
             command = args.command[1:] if args.command[:1] == ["--"] else args.command
-            leaf = command[1:] if command[:1] == ["boards"] else command
-            if leaf[:2] == ["seat", "panes"]:
-                command = [*command, "--board-config", args.config, "--board-host", args.host]
             execute(host, command, tty=args.tty)
         return 0
     except (OSError, ValueError, UnicodeError) as exc:

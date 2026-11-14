@@ -63,7 +63,7 @@ Disposable Linux acceptance separately verified actual PTY allocation versus def
 
 ## Source-only leaf routing repair (#16)
 
-[Complete selector contract](alpha5.md#leaf-aware-named-host-routing-issue16): named execution now inserts only selectors accepted by the full leaf. Nested boards state gets store only; seat/inbox/report/forget gets socket/host/store. Offline jobs list/recovery inspect and non-launch agents get no injected Rex selectors. Palette install receives socket after its full path; palette preparation gets none. Fleet rendering may select its own explicit config/hosts on the chosen command host. Literal argv after `--`, explicit store overrides, strict SSH and no-retry semantics remain. This repairs source, not frozen alpha.5 archives.
+Named execution inserts only selectors accepted by the full leaf. Send receives the socket; records receives its records store and supported target fields. The legacy `store` host key remains accepted but is no longer added to send. Offline jobs list/recovery inspect get no injected Rex selectors. Palette install receives socket after its full path; palette preparation gets none. Literal argv after `--`, explicit records-store overrides, strict SSH and no-retry semantics remain.
 
 ## Plans, apply, and PATH consent
 

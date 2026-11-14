@@ -42,15 +42,10 @@ The `scratch` command and `agent-hook` harness hooks are supplied by rexconfig.
 
 ## Find the seat
 
-```sh
-teerex --config ~/.config/teerex/hosts.json --host hive seat resolve
-```
-
-This reads the live registered seat and returns its address or `no_seat`.
-Resolve by role each time; never reuse a remembered pane ID. Without named-host
-configuration, `teerex seat resolve` requires explicit `--store`, `--host`
-and `--socket`. Send questions to your starter when your brief requires it;
-only the seat asks the operator.
+The seat is the pane labelled `seat`. Use `agent-send seat <your name> <message>`
+to send to it, or `teerex surfaces resolve --session any --pane seat` to find it.
+Resolve by role each time; never reuse a remembered pane ID. Send questions to
+your starter when your brief requires it; only the seat asks the operator.
 
 ## Read and wait
 
@@ -103,7 +98,7 @@ Agent lifecycle commands belong to rexconfig: use `agent-spawn`, `agent-send`, `
 
 ```sh
 teerex jobs list|present|forget --registry "$REG" …     # who owns which pane; bring a finished pane beside you
-teerex boards fleet --store "$ST" --config ~/.config/teerex/hosts.json --hosts hive,m5   # read-only fleet board
+teerex board                                           # live panes and machine vitals
 teerex recovery update --socket "$S" --snapshot          # before any Rex restart: panes at risk + snapshot
 ```
 

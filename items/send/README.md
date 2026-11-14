@@ -1,6 +1,6 @@
 # send
 
-[Operator/agent addendum: Who, What, When, Where, Why, How](../../docs/concierge/features.md#8-send-one-whole-message-paste-then-enter) covers current alpha.5 use, platform/API support, verification, privacy and recovery. [Current setup](../../docs/concierge/setup.md) installs alpha.5; the [standalone send cartridge](../../docs/cartridges.md) keeps native message transport, while combined-CLI [registered-seat routing](../boards/README.md) adds explicit inbox append before paste. Separate paste/Enter ACKs are not atomic delivery or consumption; no blind resend is safe.
+[Operator/agent addendum: Who, What, When, Where, Why, How](../../docs/concierge/features.md#8-send-one-whole-message-paste-then-enter) covers current alpha.5 use, platform/API support, verification, privacy and recovery. [Current setup](../../docs/concierge/setup.md) installs alpha.5; the [standalone send cartridge](../../docs/cartridges.md) keeps native message transport. Separate paste/Enter ACKs are not atomic delivery or consumption; no blind resend is safe.
 
 **Experimental terminal-input module, not a global messaging authority.** `rex_send.run(allocator, args) !u8` uses the shared `supervised_child` ABI and is integrated into the combined CLI and native cartridge builds. Combined root routing is a separate boards-store operation; the standalone payload does not acquire that Python-backed routing surface. Installation does not change Rex configuration, agent-core files or running personal servers. Historical compatibility-only alpha.2 did not include send.
 
@@ -50,7 +50,7 @@ The receipt adds `draft:{mode,detected,chars,waited_ms,bound_reached,cleared,res
 
 This is a heuristic, not an input lease: **keystrokes in the few milliseconds between the final read and Ctrl-U can land in the cleared line**, and typing during message/restore events can still race them. Cancellation, deadline or transport failure after clearing can interrupt restoration. Prompt detection, paste/Enter and restore are separate calls and do not establish arbitrary application safety. Check the receipt; never resend automatically.
 
-Managed-agent send subprocess budgets now cover the native115000ms maximum plus cleanup (120s); hook/callback/channel response wrappers allow250s for two fixed destinations. Named-host routing does not add a shorter send timeout. Registered-seat boards routing accepts these flags but appends to the inbox without terminal input; it uses the same default overall input budget and115000ms maximum. The lock, encoding rules and no-retry policy remain unchanged.
+Managed-agent send subprocess budgets now cover the native115000ms maximum plus cleanup (120s); hook/callback/channel response wrappers allow250s for two fixed destinations. Named-host routing does not add a shorter send timeout. The lock, encoding rules and no-retry policy remain unchanged.
 
 ## Encoded bounds, not just raw-message size
 
@@ -102,26 +102,12 @@ A separate Linux disposable-server probe ran the **unmodified actual agent-send 
 Linux testing imports the Linux owner's byte-transferred supervisor directly from scratch, without editing shared source: `linux-child.zig` SHA-256 `cdc1299d19b5b3de737d78d7912379e3d3219aba363c1d2e03d3e288f34c0587`, sibling `child_linux.zig` SHA-256 `3bdd456196033032dad22f2798a7c87503ad185f01ca0c5329b083076d3447f3`. Mac testing uses the published supervisor. Both builds use a minimal standalone send dispatcher because shared main/build wiring is owned elsewhere; combined-executable verification remains with integration. No package/global install is performed. Upgrade by rebuilding reviewed integrated source and rerunning tests; uninstall by stopping use/removing only the executable/build output. Current sends retain private clutch metadata in addition to their intended terminal effects; no persistent service runs. Agent-core/Rivet routing and system-wide enforcement are outside this leaf.
 
 
-Terminal deliveries into the native server-wide `seat` label (block or window) publish a child OSC7501 record `msg/<sender>` with `FROM <sender>` and the first 180 Unicode characters of the first message line, controls removed. Unsafe key bytes are percent-encoded. Root records remain untouched. Optional `--status-id`, `--status-state done|blocked|clear`, and `--status-message` customize that record. The host-local tty is opened write-only, nonblocking and without acquiring a controlling tty; a single write emits each report. The optional Python helper has a 2500ms post-delivery budget. Failure never changes acknowledged delivery; `status_record` reports written, not_requested, tty_unavailable, failed, short_write or deadline_exceeded. Named-host execution performs this on the selected pane host. Legacy explicit inbox routing remains unchanged.
-
-Successful terminal send also restores OSC111 when it finds the supervised `teerex/tint` child record. Profiles with tint disabled use a different child ID and receive no colour write. The same `status_record` receipt reports the best-effort write outcome.
-
 On API13, an explicitly targeted detached terminal is validated against
 `session.list_blocks` when absent from the window view. The same clutch, draft
 capture/clear/restore and paste/Enter checks apply; sending does not place or focus
 it. Earlier APIs retain their placed-terminal check.
 
-Question status follows its answer: an acknowledged send from the seat pane to a
-recorded asker clears matching pending question records on that seat. This uses
-pane identity and a private ask ledger, not the `--from` label alone. Status remains
-best effort and never causes a delivered message to be resent. The helper has a
-2500 ms outer budget, independent of guarded input delivery.
-
-On Linux, status output finds a tty through child fds **0, 1, 2**, then through
-`/proc/<pid>/stat`'s controlling-tty device. macOS uses the process's controlling
-tty from `ps`. A redirected stdout therefore does not prevent status output.
-
-Acknowledged delivery does not record agent turn-start events. Agent lifecycle status belongs to rexconfig hooks. Seat status and tint reset remain best effort and are reported in `status_record`; they do not establish model consumption.
+Agent lifecycle status belongs to rexconfig hooks.
 
 Confirmed clutch holds now durably queue sends without input (`outcome:"queued"`, `queue_id`, exit0). Release drains in order through guarded send. `--no-queue` preserves bounded wait/refusal for callers that require immediate transport evidence. A queued receipt is storage acknowledgment, not delivery or consumption. The queue has no count/size cap; native message validation remains unchanged.
 

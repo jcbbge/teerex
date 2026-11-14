@@ -29,7 +29,7 @@ OMISSIONS = {
     "credentials": "no_environment_or_credential_file_reads; explicit_argv_may_contain_secrets_and_stays_private",
     "agent_relaunch": "withheld_requires_new_protocol_gate; historical_ACK_is_not_new_ACK",
     "focus_zoom_minimized_state": "recorded_but_not_reapplied; restored_panes_remain_inspectable",
-    "board_state": "not_copied; remap_receipt_requires_explicit_boards_remap",
+    "board_state": "legacy_references_ignored",
     "application_internal_addresses": "argv_is_literal; embedded_pane_IDs_not_rewritten; relaunch_viewers_via_their_owning_command",
     "detached_blocks": "inventoried_but_not_recreated_as_hidden_programs",
 }
@@ -301,24 +301,6 @@ def snapshot(rex, args):
     result = {"schema_version": 1, "kind": "recovery_snapshot", "captured_at_unix_ms": int(time.time() * 1000),
               "source": source, "sessions": [], "boards": None, "omissions": dict(OMISSIONS), "metadata_provenance": "explicit_private_caller_records_not_harness_verified",
               "consistency": "per_session_layout_double_checked; process_and_cross_session_state_not_atomic"}
-    if args.board_store:
-        executable = os.environ.get("TEEREX_RECOVERY_EXECUTABLE")
-        require(executable and os.path.isabs(executable), "board_capture_requires_integrated_teerex")
-        with contextlib.closing(Store(args.board_store)):
-            state = run_process([executable, "boards", "state", "inspect", "--store", args.board_store], rex.timeout)
-        require(state.get("kind") == "boards_state" and state.get("state", {}).get("schema_version") == 1, "invalid_boards_state_receipt")
-        state = state["state"]
-        seats = [address(s["target"]) for s in state.get("seats", []) if s["target"]["server"] == rex.server]
-        targets = {key(t): t for t in seats}
-        require(len(targets) == len(seats), "conflicting_board_seat_alias_for_same_pane")
-        for f in state.get("fleet", []):
-            t = address(f["target"])
-            if t["server"] == rex.server:
-                require(key(t) not in targets or targets[key(t)] == t, "conflicting_board_host_alias_for_same_pane")
-                targets[key(t)] = t
-        # Only routing references, not inbox bodies/decision content, are copied.
-        result["boards"] = {"store": args.board_store, "generation": state["generation"], "targets": list(targets.values()), "seats": seats,
-                            "messages_copied": False, "provenance": "explicit_boards_state_inspect_report"}
     used = set()
     for s in sessions:
         sid = s["session_id"]
@@ -346,12 +328,11 @@ def snapshot(rex, args):
                 pane["command_support"] = "explicit_private_metadata"
                 used.add(ident)
             launch = pane["launch"] or {}
-            board_seat = any(t["session_id"] == sid and t["block_id"] == b["block_id"] for t in (result.get("boards") or {}).get("seats", []))
             pane["field_support"] = {"layout_labels_host": "public_API_observed", "cwd": "public_process_observed" if pane["cwd"] else "unknown",
                                      "argv": pane["command_support"], "harness": "explicit_metadata_unverified" if launch.get("harness") else "unknown",
                                      "resume_session_id": "explicit_metadata_unverified" if launch.get("resume_session_id") else "unknown",
                                      "report_to": "explicit_metadata" if launch.get("report_to") else "unknown",
-                                     "seat": "explicit_boards_reference" if board_seat else "explicit_metadata" if launch.get("seat") is not None else "unknown",
+                                     "seat": "explicit_metadata" if launch.get("seat") is not None else "unknown",
                                      "inbox": "explicit_metadata" if launch.get("inbox") else "unknown", "draft": "unsupported_not_read"}
             panes.append(pane)
         # Detect layout/list races. Process/cwd observations remain per-call, not atomic.
@@ -365,14 +346,6 @@ def snapshot(rex, args):
     for ident in sorted(set(launches) - used):
         require(ident[2] not in blocks, "metadata_pane_identity_contradiction")
         omitted.append({"reason": "launch_target_absent_at_snapshot", "target": launches[ident]["target"]})
-    boards = result.get("boards")
-    if boards:
-        for target in boards["targets"]:
-            if key(target) not in inventory:
-                require(target["block_id"] not in blocks, "board_pane_identity_contradiction")
-                omitted.append({"reason": "board_target_absent_at_snapshot", "target": target})
-        boards["targets"] = [t for t in boards["targets"] if key(t) in inventory]
-        boards["seats"] = [t for t in boards["seats"] if key(t) in inventory]
     result["omissions"]["absent_references"] = omitted
     declared_addresses(result)
     require((rex.call("session.list").get("sessions") or []) == sessions, "session_inventory_changed_no_retry")
@@ -401,15 +374,6 @@ def load_snapshot(store):
             if p.get("launch"):
                 p["launch"] = sanitize_launch(p["launch"], value["source"]["server"])
                 require(p["launch"]["target"]["session_id"] == sid and p["launch"]["target"]["block_id"] == bid, "snapshot_metadata_pane_mismatch")
-    boards = value.get("boards")
-    if boards is not None:
-        require(isinstance(boards, dict) and isinstance(boards.get("targets"), list) and isinstance(boards.get("seats"), list), "invalid_snapshot_boards_references")
-        board_keys = set()
-        for t in boards["targets"]:
-            address(t)
-            require(t["server"] == value["source"]["server"] and key(t) not in board_keys, "invalid_or_ambiguous_board_reference")
-            board_keys.add(key(t))
-        require(all(t in boards["targets"] for t in boards["seats"]), "seat_reference_not_in_board_targets")
     return value
 
 
@@ -430,7 +394,7 @@ def leaves(node, depth=0):
 
 def declared_addresses(saved):
     result = {}
-    refs = list((saved.get("boards") or {}).get("targets", []))
+    refs = []
     for s in saved["sessions"]:
         for p in s["panes"]:
             launch = p.get("launch") or {}
@@ -447,10 +411,10 @@ def restore_plan(rex, saved, accept):
     current = rex.identity()
     require(current["host_id"] == saved["source"]["host_id"], "restore_host_mismatch_no_cross_host_execution")
     target_sessions = rex.call("session.list").get("sessions") or []
-    issues = list(saved["omissions"].get("absent_references", []))
+    issues = [item for item in saved["omissions"].get("absent_references", [])
+              if item.get("reason") != "board_target_absent_at_snapshot"]
     hard = []
     pane_count = 0
-    placed_keys = set()
     for session in saved["sessions"]:
         panes = {p["block"]["block_id"]: p for p in session["panes"]}
         placed = []
@@ -470,7 +434,6 @@ def restore_plan(rex, saved, accept):
                 for bid in ids:
                     require(bid in panes, "layout_pane_absent_from_inventory")
         require(len(placed) == len(set(placed)), "pane_placed_more_than_once")
-        placed_keys.update((saved["source"]["server"], session["view"]["session_id"], bid) for bid in placed)
         for bid, pane in panes.items():
             b = pane["block"]
             pane_count += 1
@@ -495,15 +458,6 @@ def restore_plan(rex, saved, accept):
                         hard.append("unmapped_" + field + ":" + bid)
             if reason:
                 issues.append({"block_id": bid, "reason": reason})
-    for target in (saved.get("boards") or {}).get("targets", []):
-        if key(target) not in placed_keys:
-            inventory = {(saved["source"]["server"], s["view"]["session_id"], p["block"]["block_id"])
-                         for s in saved["sessions"] for p in s["panes"]}
-            require(not any(k[2] == target["block_id"] and k != key(target) for k in inventory), "board_pane_identity_contradiction")
-            if key(target) in inventory:
-                hard.append("unmapped_board_reference:" + target["block_id"])
-            else:
-                issues.append({"reason": "board_target_absent_at_snapshot", "target": target})
     context = {"snapshot_sha256": digest(saved), "target": current, "existing_sessions": target_sessions, "accept_omissions": accept}
     return {"schema_version": 1, "kind": "restore_plan", "confirmation": digest(context), "context": context,
             "panes_in_snapshot": pane_count, "omissions": issues, "hard_blockers": hard,
@@ -569,7 +523,7 @@ def restore_apply(rex, saved, plan, store, args):
         require(full_id(bid, "block") and made["actual"].get("block_id") == bid and made["actual"].get("session_id") == sid, "surface_receipt_identity_mismatch")
         old = declared.get((saved["source"]["server"], old_sid, b["block_id"])) or {"host": saved["source"]["host_id"], "server": saved["source"]["server"], "session_id": old_sid, "block_id": b["block_id"]}
         new = {"host": old["host"], "server": rex.server, "session_id": sid, "block_id": bid}
-        is_seat = old in (saved.get("boards") or {}).get("seats", []) or launch.get("seat")
+        is_seat = launch.get("seat")
         mapping = {"old": old, "new": new, "seat": is_seat, "holding_shell": holding, "geometry": made["actual"]}
         mappings.append(mapping)
         map_by_old[key(old)] = new
@@ -637,19 +591,6 @@ def restore_apply(rex, saved, plan, store, args):
             mapping["geometry"] = actual
             store.journal({"event": "final_geometry_verified", "mapping": mapping})
         board_handoff = None
-        if (saved.get("boards") or {}).get("targets"):
-            inventory = {(saved["source"]["server"], s["view"]["session_id"], p["block"]["block_id"]) for s in saved["sessions"] for p in s["panes"]}
-            board_targets = {key(t) for t in saved["boards"]["targets"] if key(t) in inventory}
-            if board_targets:
-                board_map = [{"old": m["old"], "new": m["new"]} for m in mappings if key(m["old"]) in board_targets]
-                require(len(board_map) == len(board_targets), "boards_target_not_restored")
-                store.create("board-map.json", board_map)
-                board_handoff = {"map_file": os.path.join(store.path, "board-map.json"), "applied": False,
-                                 "next": "boards state remap-preview --store ABS --map-file ABS; then explicit remap-apply with preview generation and reason"}
-                if args.board_store:
-                    board_handoff["preview"] = run_process([executable, "boards", "state", "remap-preview", "--store", args.board_store,
-                                                            "--map-file", board_handoff["map_file"]], rex.timeout)
-                    require(board_handoff["preview"].get("outcome") == "preview_only", "boards_remap_preview_not_confirmed")
         remapped_launches = []
         for pane, new in created_panes:
             launch = copy.deepcopy(pane.get("launch") or {})
@@ -760,7 +701,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(prog="teerex recovery", description="Private bounded Rex snapshot and restore (API13), update inventory (API10..13). Python 3.9+. No updater, close, screen scraping or retries.",
                                      epilog="Exit 0: requested structural evidence only, not complete recovery; 1: refusal/uncertainty; 2: usage; 3: explicit partial restore; 124: controller deadline; 130/143: cancellation. See items/recovery/README.md for omissions.")
     sub = parser.add_subparsers(dest="operation", required=True)
-    descriptions = {"snapshot": "Capture layout/labels/hosts/process cwd plus explicit private launch/board references. No drafts or automatic argv/resume discovery.",
+    descriptions = {"snapshot": "Capture layout/labels/hosts/process cwd plus explicit private launch references. No drafts or automatic argv/resume discovery.",
                     "restore": "Default is read-only preview. Apply creates visible panes only on an empty same-host server, with exact target/impact hash confirmation. Agents require a fresh gate and are withheld.",
                     "update": "Read-only running-vs-installed CLI inventory and pane impact. Optional snapshot; update/restart/restore are manual, separate actions, never performed here.",
                     "inspect": "Read the private snapshot inventory and per-field support without contacting Rex or exposing full argv/resume IDs on stdout."}
@@ -772,8 +713,6 @@ def main(argv=None):
         if name != "inspect":
             p.add_argument("--socket", required=True, help="explicit absolute socket on command host")
             p.add_argument("--timeout-ms", type=int, default=5000, help="per child/request bound 100..60000 ms")
-        if name in ("snapshot", "update", "restore"):
-            p.add_argument("--board-store", help="explicit private boards store; snapshot routing refs only, restore remap-preview only")
         if name in ("snapshot", "update"):
             p.add_argument("--metadata", help="absolute private schema1 entries JSON; no credentials/briefs/drafts")
             p.add_argument("--registry", help="explicit private agents registry; sanitized launch metadata only")

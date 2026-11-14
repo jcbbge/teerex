@@ -13,9 +13,9 @@ Licensed under [Apache-2.0](LICENSE) for teerex's original material. Third-party
 | Read a pane, or wait until it changes or reports done/error | `observe` (`--tail` for the newest output, `--state` for agent state), `watch`, `compare` |
 | Run a command in a visible tab and get its real exit and output | `run-visible` (`--detach` returns at once; `run-visible receipt` reads the result) |
 | Open, find, rename, move, focus or close panes and sessions | `surfaces open/ensure/resolve/rename/move/focus/close`, `surfaces session ensure/close` |
-| Message a pane without clobbering what someone is typing | `send` (typing guard on by default), `ask` (decision cards) |
+| Message a pane without clobbering what someone is typing | `send` (typing guard on by default) |
 | Take a pane back from agents, and hand it back | `clutch take/release` (cooperative) |
-| See who owns what and what ran | `jobs`, `boards fleet`, `boards calls` |
+| See who owns what and what ran | `jobs`, `board` |
 | Survive a Rex restart | `recovery snapshot/restore/update` |
 | Work on another machine by name | `--config ~/.config/teerex/hosts.json --host hive\|m5 COMMAND …` |
 | Check the machine | `doctor` |

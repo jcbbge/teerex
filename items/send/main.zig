@@ -25,9 +25,6 @@ const usage =
     \\Restore polls100ms up to1500ms; unverified/failed restore warns without failing acknowledged send.
     \\Stale locks are never stolen.
     \\JSON reports attempts/acknowledgements, NOT application consumption, atomic delivery, or an input lease.
-    \\Seat-labelled deliveries add best-effort OSC7501 status; replies from the seat clear matching ask cards.
-    \\Status uses fd0/fd1/fd2 or controlling tty, including redirected stdout; Python3 required for status only.
-    \\--status-id ID --status-state done|blocked|clear --status-message TEXT customize the seat record (ask uses these).
     \\Exit: 0 queued (queue_id) or both ACKs; 1 refusal/error/uncertain, 2 usage, 124 deadline, 130 SIGINT, 143 SIGTERM.
     \\
 ;
@@ -45,10 +42,6 @@ const Draft = struct {
 };
 const Clutch = struct { state: []const u8 = "unknown", failure_reason: ?[]const u8 = null, held_observed: bool = false, waited_ms: u64 = 0, bound_reached: bool = false };
 const Frame = struct {
-    status_pid: ?i32 = null,
-    seat: bool = false,
-    supervised: bool = false,
-    agent: bool = false,
     clutch: ?Clutch = null,
     event: []const u8,
     source: ?Source = null,
@@ -71,9 +64,6 @@ const Collector = struct {
     paste_acknowledged: bool = false,
     enter_attempted: bool = false,
     enter_acknowledged: bool = false,
-    status_pid: ?i32 = null,
-    seat: bool = false,
-    tinted_agent: bool = false,
     finished: bool = false,
     reason: ?[]const u8 = null,
     encoded_rpc_bytes: ?usize = null,
@@ -87,11 +77,7 @@ const Collector = struct {
             const parsed = try std.json.parseFromSlice(Frame, self.allocator, self.pending.items[0..end], .{ .allocate = .alloc_always });
             const f = parsed.value;
             if (self.finished) return error.InvalidSendFrame;
-            if (std.mem.eql(u8, f.event, "status_target")) {
-                self.status_pid = f.status_pid;
-                self.seat = f.seat;
-                self.tinted_agent = f.supervised;
-            } else if (std.mem.eql(u8, f.event, "source")) {
+            if (std.mem.eql(u8, f.event, "source")) {
                 if (self.source != null) return error.InvalidSendFrame;
                 self.source = f.source orelse return error.InvalidSendFrame;
             } else if (std.mem.eql(u8, f.event, "clutch")) {
@@ -196,9 +182,6 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
         try std.fs.File.stdout().writeAll(usage);
         return 0;
     }
-    var status_id: ?[]const u8 = null;
-    var status_state: ?[]const u8 = null;
-    var status_message: ?[]const u8 = null;
     var socket: ?[]const u8 = null;
     var session: ?[]const u8 = null;
     var block: ?[]const u8 = null;
@@ -234,12 +217,6 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
             draft_mode = value;
         } else if (std.mem.eql(u8, name, "--draft-wait-ms") and draft_wait == null) {
             draft_wait = std.fmt.parseUnsigned(u64, value, 10) catch usageError("invalid draft wait");
-        } else if (std.mem.eql(u8, name, "--status-id") and status_id == null) {
-            status_id = value;
-        } else if (std.mem.eql(u8, name, "--status-state") and status_state == null) {
-            status_state = value;
-        } else if (std.mem.eql(u8, name, "--status-message") and status_message == null) {
-            status_message = value;
         } else usageError("unknown or repeated option");
         i += 2;
     }
@@ -258,17 +235,11 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
     if (timeout_ms < 100 or timeout_ms > 115000) usageError("timeout must be 100..115000 ms");
     if (builtin.os.tag != .macos and builtin.os.tag != .linux) return error.SendRequiresUnix;
 
-    if (status_id) |id| {
-        if (id.len == 0 or id.len > 1024 or !textValid(id, true)) usageError("invalid status id");
-    }
-    const state = status_state orelse "done";
-    if (!std.mem.eql(u8, state, "done") and !std.mem.eql(u8, state, "blocked") and !std.mem.eql(u8, state, "clear")) usageError("status state must be done|blocked|clear");
     const signals = supervised.Signals.init();
     defer signals.deinit();
     var timer = try std.time.Timer.start();
     const started_at = std.time.milliTimestamp();
     var env = try std.process.getEnvMap(allocator);
-    const status_context = try std.json.Stringify.valueAlloc(allocator, .{ .socket = path, .session = sid, .block = bid, .sender = sender, .id = status_id, .state = state }, .{});
     for ([_][]const u8{ "REX_SERVER", "REX_CLIENT" }) |key| env.remove(key);
     var clutch_failure: ?[]const u8 = null;
     var clutch = clutch_state.Store.openRead(allocator, &env, path, sid, bid) catch |err| blk: {
@@ -319,9 +290,6 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
         .draft = mode,
         .draft_wait_ms = draft_wait_ms,
         .timeout_ms = timeout_ms,
-        .status_id = status_id,
-        .status_state = status_state,
-        .status_message = status_message,
     }, .{});
     work: {
         // A diagnostic is for the invoking caller, never a message to another pane.
@@ -439,10 +407,6 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
     if (collector.draft_wait_started) |start| collector.draft.waited_ms = timer.read() / std.time.ns_per_ms - start;
     const signal = supervised.requestedSignal();
     if (signal != 0) outcome = "cancel_requested";
-    const delivered = std.mem.eql(u8, outcome, "events_acknowledged") and failure == null;
-    const words = countWords(message);
-    const attention_context = try std.fmt.allocPrint(allocator, "{s},\"attention_words\":{d},\"attention_seat\":{s}}}", .{ status_context[0 .. status_context.len - 1], words, if (collector.seat) "true" else "false" });
-    const status_outcome = if (delivered) statusReport(allocator, &env, collector.status_pid, sender, message, status_id, state, status_message, collector.seat, collector.tinted_agent, attention_context) catch "failed" else "not_requested";
     // Keep the lock through subprocess cleanup. Never remove another sender's lock.
     if (locked) {
         std.fs.cwd().deleteDir(lock_path) catch |err| {
@@ -453,7 +417,6 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
     const success = std.mem.eql(u8, outcome, "events_acknowledged") and failure == null;
     const output = try std.json.Stringify.valueAlloc(allocator, .{
         .schema_version = 1,
-        .status_record = status_outcome,
         .kind = "send_result",
         .target = .{ .server = endpoint, .session_id = sid, .block_id = bid },
         .source = collector.source,
@@ -486,70 +449,6 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
     try std.fs.File.stdout().writeAll(output);
     try std.fs.File.stdout().writeAll("\n");
     return if (signal != 0) 128 + signal else if (std.mem.eql(u8, outcome, "deadline_exceeded")) 124 else if (success or queued_id != null) 0 else 1;
-}
-
-// Match Python str.split() for Unicode whitespace, without passing message text to accounting.
-fn countWords(message: []const u8) usize {
-    var it = std.unicode.Utf8View.initUnchecked(message).iterator();
-    var words: usize = 0;
-    var inside = false;
-    while (it.nextCodepoint()) |cp| {
-        const whitespace = switch (cp) {
-            9...13, 28...32, 0x85, 0xa0, 0x1680, 0x2000...0x200a, 0x2028, 0x2029, 0x202f, 0x205f, 0x3000 => true,
-            else => false,
-        };
-        if (!whitespace and !inside) words += 1;
-        inside = !whitespace;
-    }
-    return words;
-}
-
-const StatusCollector = struct {
-    bytes: std.ArrayList(u8) = .empty,
-    allocator: std.mem.Allocator,
-    pub fn receive(self: *StatusCollector, bytes: []const u8) !void {
-        if (self.bytes.items.len + bytes.len > 256) return error.StatusOutputTooLarge;
-        try self.bytes.appendSlice(self.allocator, bytes);
-    }
-};
-
-fn b64(allocator: std.mem.Allocator, bytes: []const u8) ![]const u8 {
-    const out = try allocator.alloc(u8, std.base64.standard.Encoder.calcSize(bytes.len));
-    return std.base64.standard.Encoder.encode(out, bytes);
-}
-
-fn statusReport(allocator: std.mem.Allocator, env: *std.process.EnvMap, pid: ?i32, sender: []const u8, message: []const u8, id: ?[]const u8, state: []const u8, detail: ?[]const u8, seat: bool, reset_tint: bool, context: []const u8) ![]const u8 {
-    const child = pid orelse 0;
-    // Encode the sender in the record key too: colon/equal/non-ASCII cannot alter OSC fields.
-    const raw_key = id orelse try std.fmt.allocPrint(allocator, "msg/{s}", .{sender});
-    var key: std.ArrayList(u8) = .empty;
-    for (raw_key) |c| {
-        if (std.ascii.isAlphanumeric(c) or c == '/' or c == '-' or c == '_' or c == '.') {
-            try key.append(allocator, c);
-        } else {
-            try key.appendSlice(allocator, try std.fmt.allocPrint(allocator, "%{X:0>2}", .{c}));
-        }
-    }
-    const line = detail orelse message[0 .. std.mem.indexOfScalar(u8, message, '\n') orelse message.len];
-    var clean: std.ArrayList(u8) = .empty;
-    var chars: usize = 0;
-    var it = (try std.unicode.Utf8View.init(line)).iterator();
-    while (it.nextCodepoint()) |cp| {
-        if (cp < 32 or (cp >= 127 and cp <= 159)) continue;
-        if (chars == 180) break;
-        var buf: [4]u8 = undefined;
-        const n = try std.unicode.utf8Encode(cp, &buf);
-        try clean.appendSlice(allocator, buf[0..n]);
-        chars += 1;
-    }
-    const report = try std.fmt.allocPrint(allocator, "\x1b]7501;state={s}:id={s}:app=teerex{s}:title={s}:msg={s}\x1b\\", .{ state, key.items, if (std.mem.eql(u8, state, "blocked")) ":kind=question" else "", try b64(allocator, try std.fmt.allocPrint(allocator, "FROM {s}", .{sender})), try b64(allocator, clean.items) });
-    const bytes = try std.fmt.allocPrint(allocator, "{s}{s}", .{ if (reset_tint) "\x1b]111\x1b\\" else "", if (seat) report else "" });
-    const argv = [_][]const u8{ "python3", "-I", "-c", @import("rex_boards").seat_status_source, try std.fmt.allocPrint(allocator, "{d}", .{child}), bytes, context };
-    var collector = StatusCollector{ .allocator = allocator };
-    const result = try supervised.collect(allocator, &argv, env, 2500, &collector);
-    if (result.deadline_exceeded) return "deadline_exceeded";
-    const parsed = std.json.parseFromSlice([]const u8, allocator, collector.bytes.items, .{ .allocate = .alloc_always }) catch return "failed";
-    return parsed.value;
 }
 
 const QueueCollector = struct {

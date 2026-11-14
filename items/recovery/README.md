@@ -10,11 +10,11 @@ Python 3.9+ stdlib and Rex are explicit prerequisites. Snapshot/restore support 
 
 Named-host records may set `recovery_store` to an absolute command-host root; otherwise it defaults to `HOME/.local/state/teerex-recovery`. Thus `teerex --config ABS --host m5 snapshot` needs no snapshot path. Explicit `--directory` or `--root` overrides that default.
 
-Registry launches and board references whose panes are absent from the snapshot inventory are listed under `omissions.absent_references`, with their target and reason, and are excluded from replay/remapping. A live block ID with a conflicting session identity still refuses. Restore also recognizes absent board references in older snapshots as omissions; `--accept-omissions` is required to apply a partial plan. Detached panes present in inventory still retain the existing unmapped-reference blocker.
+Registry launches whose panes are absent from the snapshot inventory are listed under `omissions.absent_references`, with their target and reason, and are excluded from replay/remapping. A live block ID with a conflicting session identity still refuses. Legacy board references in older snapshots are ignored; `--accept-omissions` is required for other partial plans. Detached panes present in inventory still retain the existing unmapped-reference blocker.
 
 ## Who
 
-The operator or an authorized setup agent selects one command host and explicit Rex socket. The shared root's named-host transport may invoke this leaf on another machine; all directories, registry paths, board stores, binaries and cwd values then belong to **that command host**. This module does not invent SSH routes, discover personal machines or interpret a label as an execution address.
+The operator or an authorized setup agent selects one command host and explicit Rex socket. The shared root's named-host transport may invoke this leaf on another machine; all directories, registry paths, binaries and cwd values then belong to **that command host**. This module does not invent SSH routes, discover personal machines or interpret a label as an execution address.
 
 A recovery file is private operator-owned state, not a portable permission grant. A preview hash binds the snapshot content, live target instance/host/version, existing-session inventory and omission policy. It is a confirmation of that concrete plan, not a security sandbox or exclusive mutation lease.
 
@@ -31,8 +31,7 @@ A recovery file is private operator-owned state, not a portable permission grant
 | Command/argv | Rex intentionally exposes executable identity/argv0, **not full arguments** | Full argv must come from explicit private metadata. Exact positional arguments, including empty strings, quotes and Unicode, are retained; no shell interpolation. |
 | Harness/resume ID | Optional explicit metadata only | Stored as **unverified** harness state. No generic Claude/Codex/pi resume adapter is proven; agent argv is never replayed blindly. Historical ACK is not a fresh protocol gate. |
 | Reporting/starter/inbox | Explicit full `{host,server,session_id,block_id}` tuples | Exact old/new remap receipt; report/inbox environment references point to newly created panes. Cross-server/unmapped references are blocked. Conflicting host aliases for one Rex pane are refused. |
-| Seat | Explicit metadata boolean or `boards state inspect` reference | Remapped receipt and board-map handoff. Never inferred from a label, title or rendered prompt. |
-| Inbox cards/messages | Remain in the explicit board store | Snapshot copies routing references only, **not bodies**. After surface verification, optional board `remap-preview`; separate generation/reason-confirmed board apply preserves records in that one store. |
+| Seat | Explicit metadata boolean | Remapped receipt. Never inferred from a label, title or rendered prompt. |
 | Unsent drafts | **Unsupported: no authoritative input-buffer API** | No capture or paste-back. Not inferred from grey/dim suggestions, screen text, cursor position, `input_mode` or prompt shapes. Save real drafts separately before any restart. |
 | Focus, zoom, minimized layers | Original public view retained | Not reapplied: restored panes remain inspectable. No focus request is made, though Rex necessarily activates a first window in a new session. |
 | Detached blocks/nonterminal flavors | Inventoried explicitly | Detached blocks are not recreated as hidden programs. Nonterminal/foreign-host placed blocks are hard blockers. Explicit omission acceptance can skip detached blocks or create holding shells for unknown commands/gated agents. |
@@ -78,7 +77,7 @@ Inspect `running.version`, `running.host_id`, `running.instance_id`, `installed_
 ```sh
 mkdir -m 700 /ABS/new-recovery-directory
 teerex recovery snapshot --socket /ABS/rex.sock --directory /ABS/new-recovery-directory \
-  --registry /ABS/agent-registry --board-store /ABS/board-store
+  --registry /ABS/agent-registry
 teerex recovery inspect --directory /ABS/new-recovery-directory
 ```
 
@@ -98,7 +97,7 @@ and confirmed apply both select anew, so a newer capture invalidates an older
 confirmation. `--directory` selects one exact existing private directory;
 it cannot be combined with `--root`.
 
-`--registry` and `--board-store` are optional and explicit. Registry input is schema1 `agents-LAUNCHID.json`; tokens, briefs, hook details and arbitrary fields are discarded. `protocol_outcome`, `protocol_acknowledged` and measured immediate-child exit codes remain historical declared evidence, never new readiness/death claims. No token-bearing protocol argument is copied from the live process: the agents registry's argv is the pre-protocol profile argv.
+`--registry` is optional and explicit. Registry input is schema1 `agents-LAUNCHID.json`; tokens, briefs, hook details and arbitrary fields are discarded. `protocol_outcome`, `protocol_acknowledged` and measured immediate-child exit codes remain historical declared evidence, never new readiness/death claims. No token-bearing protocol argument is copied from the live process: the agents registry's argv is the pre-protocol profile argv.
 
 For independently owned non-agent panes, an optional private `--metadata /ABS/metadata.json` has this shape (illustrative IDs only):
 
@@ -132,7 +131,7 @@ The combined read-only update/snapshot step is:
 
 ```sh
 teerex recovery update --socket /ABS/rex.sock --snapshot --directory /ABS/new-recovery-directory \
-  --registry /ABS/agent-registry --board-store /ABS/board-store
+  --registry /ABS/agent-registry
 ```
 
 This still performs **no update, restart or restore**. There is no public updater API in the inspected Rex release. Use that selected server's documented installer/app restart control only after separately approving target/impact, preserving drafts and accounting for every unsupported field. There is no invented universal one-click action.
@@ -151,7 +150,7 @@ Only after the operator authorizes this specific target and impact:
 
 ```sh
 teerex recovery restore --socket /ABS/rex.sock --directory /ABS/new-recovery-directory \
-  --apply --confirm EXACT_PREVIEW_HASH --board-store /ABS/board-store
+  --apply --confirm EXACT_PREVIEW_HASH
 ```
 
 Use the same `--accept-omissions` choice as the preview, if any. The token is revalidated against snapshot and live identity/inventory before mutation. `restore.jsonl` is created exclusively **before** the first session-creation attempt; it records mutation attempts and every verified mapping durably. An existing journal interlocks another apply, including after a crash. There is no resume/retry mode or automatic cleanup/close.
@@ -160,19 +159,7 @@ Each new surface initially runs a visible fixed recovery shim. All final pane re
 
 `remap.json` contains full old/new pane addresses, old/new session IDs, final measured geometry and remapped launch references. It is **not** an importable replacement for the agents lifecycle registry, and its old `launch_id`/ACK facts do not authorize relaunch. Relaunch an agent through an explicitly configured fresh `agents launch` gate; operator-authored resume flags in a profile are not measured harness-recovery support.
 
-### 5. Review and apply the separate inbox/seat remap
-
-If snapshot captured board references, recovery writes a private `board-map.json`. Supplying `--board-store` during restore runs the public board `remap-preview` **after all surfaces pass inspection**, but never applies it. Existing messages/cards stay in the board store.
-
-```sh
-teerex boards state remap-preview --store /ABS/board-store \
-  --map-file /ABS/new-recovery-directory/board-map.json
-teerex boards state remap-apply --store /ABS/board-store \
-  --map-file /ABS/new-recovery-directory/board-map.json \
-  --generation EXACT_BOARD_PREVIEW_GENERATION --reason 'Reviewed restored pane mapping'
-```
-
-The board owns generation/collision/unknown-source checks. Seat/fleet target references change together in **one** local private store; this is not remote/global atomicity or live validity. Historical board references absent from the captured placed-pane inventory remain inspectable in the snapshot, but are hard restore blockers even with `--accept-omissions`: recovery never drops history or guesses a replacement target. Restore receipts keep `board_state_applied:false` because recovery does not own that apply.
+Legacy board fields in older snapshots are ignored; snapshot files and retained board stores are never changed.
 
 ## Exit codes and uncertainty
 
@@ -190,11 +177,11 @@ An individual request timeout is a structured exit-1 uncertainty, not a server-s
 From the source tree with checksum-verified Zig 0.15.2, Rex preview.16 and Python3.9+:
 
 ```sh
-zig build-exe --dep rex_recovery --dep rex_surfaces --dep rex_boards \
+zig build-exe --dep rex_recovery --dep rex_surfaces \
   -Mroot=items/recovery/test_cli.zig \
   --dep supervised_child -Mrex_recovery=items/recovery/main.zig \
   --dep supervised_child -Mrex_surfaces=items/surfaces/main.zig \
-  -Mrex_boards=items/boards/main.zig -Msupervised_child=src/child.zig \
+  -Msupervised_child=src/child.zig \
   -lc -O ReleaseSmall -femit-bin=/ABS/teerex-recovery-test
 REX_BIN=/ABS/rex TEEREX_BIN=/ABS/teerex-recovery-test python3 items/recovery/test_recovery.py -v
 ```

@@ -10,7 +10,7 @@ All native `send` inputs check the clutch, including `--draft ignore`. The check
 
 When the `--no-queue` wait runs out, `failure_reason:"pane_held_by_human"` reports the refusal. `retry_safe:true` is emitted only if no message paste or draft-clear attempt occurred. After any input, uncertainty remains; never blindly retry a partially dispatched send. A hold during restoration preserves acknowledged message success and reports the restoration warning rather than typing the saved draft into a held pane. Receipts include `clutch.held_observed`, `waited_ms`, `bound_reached` and `state_file`; draft text is never included.
 
-Agent notifications, Stop reports and channel sends that use native send inherit this check. Registered-seat routing and ask cards append records without typing; they can continue while a pane is held. No typing path bypass is added.
+Agent notifications, Stop reports and channel sends that use native send inherit this check. No typing path bypass is added.
 
 ## Private state and scope
 
@@ -39,7 +39,7 @@ Darwin socket identity uses POSIX `realpath`, preserving symlink aliases and pat
 
 Only valid owned single-link0600 records with `held:false` qualify, and only when the socket path is absent or a successful read-only Rex query confirms the session/pane is absent. Held records survive even when their target is gone. Live targets, unreachable servers, malformed records, unsafe links/files, and uncertain endpoints are preserved. Plan changes nothing. Apply recomputes eligibility and rechecks record identity under the existing mutation lock before unlinking; it never deletes the lock or directory. This coordinates with take/release, not arbitrary same-account filesystem writers. Rex queries have bounded response retention and time, are cached per socket/session during the invocation, and never autostart, attach, type or close panes. A missing directory is an empty plan. Unsafe/missing locks or contention refuse cleanup rather than manufacturing a new lock.
 
-All sending test fixtures set `TEEREX_CLUTCH_DIR` in their own disposable directory. Regressions cover no-store sends/status, lock-independent reads, deletion on release, no-write planning, missing sockets/dead panes, held/live preservation, a take between plan/apply, corrupt records, links and unknown endpoints. Existing send/clutch/agents/boards CI suites include these checks.
+All sending test fixtures set `TEEREX_CLUTCH_DIR` in their own disposable directory. Regressions cover no-store sends/status, lock-independent reads, deletion on release, no-write planning, missing sockets/dead panes, held/live preservation, a take between plan/apply, corrupt records, links and unknown endpoints. Existing send/clutch CI suites include these checks.
 
 `teerex clutch palette --help` uses the public command name.
 

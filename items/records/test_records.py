@@ -747,7 +747,7 @@ class LiveRecordsTest(RecordsFixture):
         self.assertNotIn(token, json.dumps(exported))
         self.assertEqual(exported["uncertainty"]["text"], "[REDACTED]")
 
-    def test_C07_real_run_failure_success_and_decision_card_without_answer(self):
+    def test_C07_real_run_failure_and_success_evidence(self):
         packets = []
         envfile = self.root / "env.json"
         envfile.write_text("{}")
@@ -761,27 +761,13 @@ class LiveRecordsTest(RecordsFixture):
             packets.append(path)
         digests = [hashlib.sha256(p.read_bytes()).hexdigest() for p in packets]
         self.park(extra=("--evidence", str(packets[0])))
-        board = self.root / "board"
-        board.mkdir(mode=0o700)
-        common = ["--store", board, "--host", "fixture", "--socket", self.socket, "--session", self.session, "--block", self.anchor]
-        self.raw("boards", "seat", "register", *common, "--owner", "worker")
-        card = self.root / "card.json"
-        card.write_text(json.dumps(dict(id="q", title="Review result", ask="Choose", context="records: teerex records resume --id a",
-                                           options=[dict(label="a", gain="gain", lose="loss"), dict(label="b", gain="gain", lose="loss")], recommend="a")))
-        self.raw("ask", *common, "--from", "worker", "--card-file", card)
-        self.call("attach", "--id", "a", "--by", "worker", "--card", board, "--card-id", "q", "--seat-host", "fixture", "--seat-socket", self.socket,
-                  "--seat-session", self.session, "--seat-block", self.anchor)
-        self.assertEqual(self.resume()["evidence"][1]["card"]["state"], "open")
-        self.raw("ask", *common, "--from", "worker", "--resolve", "q", "--answer", "PRIVATE ANSWER")
         self.attach(packets[1], assertion="passed")
         evidence = self.resume()["evidence"]
         self.assertEqual(evidence[0]["teerex"]["exit"]["code"], 1)
         self.assertFalse(evidence[0]["teerex"]["reported_success"])
-        self.assertEqual(evidence[2]["teerex"]["exit"]["code"], 0)
-        self.assertTrue(evidence[2]["teerex"]["reported_success"])
-        self.assertEqual(evidence[2]["teerex"]["carried_flags"]["task_completion"], "not_assessed")
-        self.assertEqual(evidence[1]["card"]["state"], "resolved")
-        self.assertNotIn("PRIVATE ANSWER", json.dumps(evidence))
+        self.assertEqual(evidence[1]["teerex"]["exit"]["code"], 0)
+        self.assertTrue(evidence[1]["teerex"]["reported_success"])
+        self.assertEqual(evidence[1]["teerex"]["carried_flags"]["task_completion"], "not_assessed")
         self.assertNotIn("success", self.read())
         self.assertEqual(json.loads(packets[0].read_text())["success"], False)
         self.assertEqual([hashlib.sha256(p.read_bytes()).hexdigest() for p in packets], digests)

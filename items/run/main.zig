@@ -20,9 +20,9 @@ const usage =
 
 // Explicit new capability; legacy run remains CLI-local exec with its original contract.
 pub fn runVisible(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
-    const self = try @import("rex_boards").stableSelfPath(allocator);
+    const self = try stableSelfPath(allocator);
     var argv: std.ArrayList([]const u8) = .empty;
-    try argv.appendSlice(allocator, &.{ "python3", "-I", "-c", try @import("rex_boards").call_log.python(allocator, @embedFile("visible.py")), self, @embedFile("visible.py") });
+    try argv.appendSlice(allocator, &.{ "python3", "-I", "-c", @embedFile("visible.py"), self, @embedFile("visible.py") });
     try argv.appendSlice(allocator, args);
     return std.process.execv(allocator, argv.items);
 }
@@ -221,4 +221,15 @@ fn supervise(allocator: std.mem.Allocator, socket: []const u8, cwd: []const u8, 
     try std.fs.File.stdout().writeAll(output);
     try std.fs.File.stdout().writeAll("\n");
     return exit_code;
+}
+
+pub fn stableSelfPath(allocator: std.mem.Allocator) ![]const u8 {
+    const self = try std.fs.selfExePathAlloc(allocator);
+    const version_dir = std.fs.path.dirname(self) orelse return self;
+    const versions = std.fs.path.dirname(version_dir) orelse return self;
+    if (!std.mem.eql(u8, std.fs.path.basename(versions), "versions")) return self;
+    const prefix = std.fs.path.dirname(versions) orelse return self;
+    const current = try std.fs.path.join(allocator, &.{ prefix, "current", std.fs.path.basename(self) });
+    std.fs.accessAbsolute(current, .{}) catch return self;
+    return current;
 }

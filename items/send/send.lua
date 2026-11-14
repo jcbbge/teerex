@@ -15,11 +15,10 @@ end
 local view = rex.call("session.view", {session_id=a.session_id})
 if type(view) ~= "table" or view.session_id ~= a.session_id then refuse("target_unavailable"); return end
 local terminal = false
-local seat = false
 for _, w in ipairs(view.windows or {}) do
     for _, l in ipairs(w.layers or {}) do
         for _, b in ipairs(l.blocks or {}) do
-            if b.block_id == a.block_id and b.creator_name == "com.superlogical.terminal" then terminal = true; seat = b.label == "seat" or w.label == "seat" end
+            if b.block_id == a.block_id and b.creator_name == "com.superlogical.terminal" then terminal = true end
         end
     end
 end
@@ -29,7 +28,7 @@ if not terminal and v.api_revision==13 then
     local listed=rex.call("session.list_blocks", {session_id=a.session_id})
     for _,b in ipairs(type(listed)=="table" and listed.blocks or {}) do
         if b.block_id==a.block_id and b.creator_name=="com.superlogical.terminal" and b.placement=="detached" then
-            terminal=true; seat=b.label=="seat"
+            terminal=true
         end
     end
 end
@@ -135,19 +134,6 @@ local function deliver()
         return
     end
     emit({event="ack", stage="enter"})
-    local ok_status, process = pcall(rex.call, "com.superlogical.terminal.process", {session_id=a.session_id, block_id=a.block_id, args={}})
-    local status_pid
-    if ok_status and type(process) == "table" and type(process.child) == "table" then status_pid = process.child.pid end
-    local supervised = false
-    local agent = false
-    local ok_records, records = pcall(rex.call, "com.superlogical.terminal.program_status", {session_id=a.session_id, block_id=a.block_id, args={}})
-    if ok_records and type(records) == "table" then
-        for _, record in ipairs(records.records or {}) do
-            if record.app == "teerex-agent" or record.id == "teerex" or record.id == "teerex/tint" then agent = true end
-            if record.id == "teerex/tint" then supervised = true end
-        end
-    end
-    emit({event="status_target", status_pid=status_pid, seat=seat, supervised=supervised, agent=agent})
     if saved ~= "" then
         rex.sleep(.4)
         local acknowledged = not not paste_text(saved)

@@ -83,16 +83,6 @@ pub fn build(b: *std.Build) void {
     });
     surfaces.addImport("supervised_child", child);
     exe.root_module.addImport("rex_surfaces", surfaces);
-    const boards = b.createModule(.{
-        .root_source_file = b.path("items/boards/main.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    boards.addImport("pane_guard", pane_guard);
-    exe.root_module.addImport("rex_boards", boards);
-    send.addImport("rex_boards", boards);
-    surfaces.addImport("rex_boards", boards);
-    rex_run.addImport("rex_boards", boards);
     const recovery = b.createModule(.{
         .root_source_file = b.path("items/recovery/main.zig"),
         .target = target,
@@ -101,10 +91,8 @@ pub fn build(b: *std.Build) void {
     recovery.addImport("supervised_child", child);
     recovery.addImport("pane_guard", pane_guard);
     exe.root_module.addImport("rex_recovery", recovery);
-    recovery.addImport("rex_boards", boards);
     const records = b.createModule(.{ .root_source_file = b.path("items/records/main.zig"), .target = target, .optimize = optimize });
     records.addImport("supervised_child", child);
-    records.addImport("rex_boards", boards);
     exe.root_module.addImport("rex_records", records);
     const board = b.createModule(.{ .root_source_file = b.path("items/board/main.zig"), .target = target, .optimize = optimize });
     board.addImport("fleet_sources", fleet_module);

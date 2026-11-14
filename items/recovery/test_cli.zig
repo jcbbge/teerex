@@ -10,8 +10,6 @@ pub fn main() void {
         @import("rex_recovery").run(a, args[2..])
     else if (std.mem.eql(u8, args[1], "surfaces"))
         @import("rex_surfaces").run(a, args[2..])
-    else if (std.mem.eql(u8, args[1], "boards"))
-        @import("rex_boards").run(a, args[2..])
     else
         return std.process.exit(2);
     std.process.exit(code catch |err| {
