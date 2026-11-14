@@ -600,7 +600,9 @@ class LiveRecordsTest(RecordsFixture):
         self.env["TEEREX_INTERNAL_REX"] = self.rex
         self.env["PATH"] = str(Path(self.rex).parent) + os.pathsep + self.env["PATH"]
         import pane_authority
-        pane_authority.caller(self, self.rpc, self.env, self.root)
+        caller_session = self.rpc("session.create", {"label": "records test caller"})["session_id"]
+        self.addCleanup(self.destroy_session, caller_session)
+        pane_authority.caller(self, self.rpc, self.env, self.root, session_id=caller_session)
         self.session = self.rpc("session.create", {"label": "records disposable"})["session_id"]
         self.addCleanup(self.destroy_session)
         self.anchor = self.open_pane("investigation")
@@ -617,10 +619,11 @@ class LiveRecordsTest(RecordsFixture):
         self.assertTrue(self.canary.exists())
         self.addCleanup(lambda: self.assertEqual(self.canary.read_bytes(), b""))
 
-    def destroy_session(self):
-        # C4 restarts the fixture, which legitimately destroys the old session.
-        if any(s["session_id"] == self.session for s in self.rpc("session.list", {})["sessions"]):
-            self.rpc("session.destroy", {"session_id": self.session})
+    def destroy_session(self, session=None):
+        # C4 restarts the fixture, which legitimately destroys both sessions.
+        session = session or self.session
+        if any(s["session_id"] == session for s in self.rpc("session.list", {})["sessions"]):
+            self.rpc("session.destroy", {"session_id": session})
 
     def view(self):
         return self.rpc("session.view", {"session_id": self.session})
