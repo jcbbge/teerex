@@ -348,6 +348,43 @@ class ContractHelpersTest(unittest.TestCase):
 
 
 
+    def test_seat_lookup_is_limited_to_registered_host_and_server(self):
+        state = dict(store="/tmp/boards", client_path="/bin", rex_executable="/bin/rex",
+                     socket="/tmp/private.sock", target=dict(host="worker-host"))
+        target = dict(host="worker-host", server="unix:///tmp/private.sock", session_id="s", block_id="b")
+        seats = [dict(target=dict(target, host="other-host")), dict(target=dict(target, server="unix:///tmp/other.sock"))]
+        self.ns["invoke"] = lambda *args, **kwargs: (0, dict(state=dict(seats=seats)))
+        self.assertIsNone(self.ns["contract_seat"](state))
+        seats.append(dict(target=target))
+        self.assertEqual(self.ns["contract_seat"](state), target)
+        seats.append(dict(target=dict(target, block_id="other")))
+        with self.assertRaises(self.ns["Refusal"]):
+            self.ns["contract_seat"](state)
+
+
+    def test_failed_lapse_delivery_still_starts_a_fresh_window(self):
+        state = dict(name="worker", contract=dict(declared=None, last_contact_at=0,
+                     interval_s=2, lapses=0, step_n=1, steps_total=2))
+        self.ns["load"] = lambda *_: json.loads(json.dumps(state))
+        self.ns["update"] = lambda root, launch, change: change(state)
+        clock = [2001]
+        self.ns["now"] = lambda: clock[0]
+        sent = []
+        self.ns["contract_tell"] = lambda *args, **kwargs: (sent.append((args, kwargs)) or (1, {}))
+        self.ns["contract_lapse"]("root", "id")
+        self.assertEqual(state["contract"]["lapses"], 1)
+        self.assertTrue(state["contract"]["stalled"])
+        self.assertEqual(state["contract"]["last_contact_at"], 0)
+        clock[0] += 50
+        self.ns["contract_lapse"]("root", "id")
+        self.assertEqual(len(sent), 2)
+        clock[0] += 2000
+        self.ns["contract_lapse"]("root", "id")
+        self.assertEqual(state["contract"]["lapses"], 2)
+        self.assertEqual(sent[-1][1], {"to": "seat"})
+
+
+
 class AgentsTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -1983,6 +2020,61 @@ Path('/work/network-harness').touch()
                                 "--event-file", "-", input=json.dumps(dict(hook_event_name="Stop", last_assistant_message="blocked")))
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
         self.assertEqual(sum("FLAG probe step 2/2:" in text for text in self.starter_messages()), 1)
+
+
+    def contract_seat_fixture(self):
+        store = self.work / "boards"
+        store.mkdir(mode=0o700)
+        self.settings["defaults"]["store"] = str(store)
+        self.settings["profiles"]["probe"]["contract_interval_s"] = 2
+        self.settings["profiles"]["probe"]["scratch_pane"] = False
+        seat_log = self.work / "seat.jsonl"
+        target = json.loads(subprocess.check_output(self.base + ["run", "-s", self.session, "--json", "--keep-open", "--",
+            sys.executable, str(self.fixture), str(seat_log), "noack"], timeout=10))
+        # rex run returns the newly created block IDs on the top level.
+        seat = target["block_ids"][0]
+        args = ["--store", str(store), "--host", "disposable", "--socket", str(self.socket),
+                "--session", self.session, "--block", seat]
+        p = subprocess.run([BIN, "seat", "register", *args, "--owner", "operator"], env=self.env, capture_output=True, text=True)
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        def records():
+            p = subprocess.run([BIN, "boards", "state", "inspect", "--store", str(store)], env=self.env, capture_output=True, text=True)
+            self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+            return json.loads(p.stdout)["state"]["seats"][0]["records"]
+        return records, seat_log
+
+
+    def test_contract_lapse_wakes_worker_and_second_lapse_reaches_seat(self):
+        seat_records, seat_log = self.contract_seat_fixture()
+        p, launched = self.launch(contract=True)
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        launch_id = launched["launch_id"]
+        state = self.record(launch_id)
+        self.scratch_contract(state, "Work", ["Verify"])
+        wait_for(lambda: any("STEP probe 1/2 started" in text for text in self.starter_messages()))
+        wait_for(lambda: self.record(launch_id)["contract"]["lapses"] == 1)
+        self.assertTrue(self.record(launch_id)["contract"]["stalled"])
+        wait_for(lambda: self.program_state(state["target"]["block_id"]) == "blocked")
+        wait_for(lambda: any("Contract check:" in v.get("payload", "") for v in events(self.worker_log)))
+        wait_for(lambda: len([r for r in seat_records() if "LAPSE probe" in r["body"]]) == 1, timeout=12)
+        self.assertEqual(sum("LAPSE probe" in text for text in self.starter_messages()), 2)
+        self.assertFalse([v for v in events(seat_log) if v["event"] == "input"])
+        self.scratch_contract(state, "Verify", done=["Work"])
+        wait_for(lambda: not self.record(launch_id)["contract"]["stalled"])
+        self.assertEqual(self.record(launch_id)["contract"]["lapses"], 0)
+
+
+    def test_contract_expired_wait_check_wakes_before_interval(self):
+        import datetime
+        self.settings["profiles"]["probe"]["contract_interval_s"] = 60
+        p, launched = self.launch(contract=True)
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        state = self.record(launched["launch_id"])
+        check = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=1)).isoformat()
+        self.scratch_contract(state, "Wait", waiting="dependency", check=check)
+        wait_for(lambda: self.record(launched["launch_id"])["contract"]["lapses"] == 1)
+        time.sleep(.3)
+        self.assertEqual(sum("LAPSE probe" in text for text in self.starter_messages()), 1)
 
 
     def test_scratch_waiting_blocks_with_text_and_clears_for_all_harnesses(self):

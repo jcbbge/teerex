@@ -417,3 +417,5 @@ Only acknowledged sends count as contact; an uncertain flag attempt is retained 
 Legacy launch records without a contract retain the previous turn-report rules.
 
 Managed workers keep their starter informed through the existing supervisor. Scratchpad Now changes and new Done items send one STEP line; a Blocked flag sends one FLAG per distinct SHA through the shared contract helper. Human launches have no worker contract.
+
+The profile's `contract_interval_s` (default 600), or launch `--contract-interval-s`, bounds quiet time. A missed interval or expired waiting Check wakes the worker and sends LAPSE to the starter; a second consecutive lapse also reaches the registered seat on the same host and server. The worker shows blocked with `stalled` until new contact. Each lapse starts a fresh interval.

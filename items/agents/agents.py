@@ -586,7 +586,18 @@ def contract_snapshot(state):
 
 
 def contract_seat(state):
-    return None
+    """Resolve only an explicitly registered seat on this launch's server."""
+    if not state.get("store"):
+        return None
+    code, packet = invoke(["boards", "state", "inspect", "--store", absolute(state["store"])],
+                          client_path=state["client_path"], rex_executable=state["rex_executable"])
+    require(code == 0 and isinstance(packet, dict) and isinstance(packet.get("state"), dict),
+            "contract_seat_lookup_failed")
+    seats = [seat["target"] for seat in packet["state"]["seats"]
+             if seat["target"]["host"] == state["target"]["host"]
+             and seat["target"]["server"] == "unix://" + state["socket"]]
+    require(len(seats) <= 1, "contract_seat_ambiguous")
+    return seats[0] if seats else None
 
 
 def contract_tell(root, launch_id, kind, line, to="starter"):
@@ -1615,6 +1626,37 @@ def contract_steps(root, launch_id, previous):
     return snapshot["now"], list(done)
 
 
+def contract_lapse(root, launch_id):
+    state = load(root, launch_id)
+    c = state.get("contract")
+    if not c or c.get("declared") == "done":
+        return
+    timestamp = now()
+    window = max(c["last_contact_at"], c.get("last_lapse_at", 0))
+    elapsed = timestamp - c["last_contact_at"]
+    check = c.get("check_at")
+    if timestamp - window <= c["interval_s"] * 1000 and not (check and window < check <= timestamp):
+        return
+    lapses = c["lapses"] + 1
+    name = state["name"]
+    line = f"LAPSE {name} step {c['step_n']}/{c['steps_total']}: no contact for {elapsed // 60000} min; woken"
+    def lapsed(s):
+        # LAPSE is a supervisor report, not contact from the worker. Preserve the streak.
+        if (s["contract"]["last_contact_at"] == c["last_contact_at"]
+                or s["contract"].get("last_contact") == line):
+            s["contract"].update(lapses=lapses, stalled=True, last_lapse_at=timestamp)
+    # Start the next window before dispatch, even when delivery raises or is uncertain.
+    update(root, launch_id, lapsed)
+    try:
+        contract_tell(root, launch_id, "wake", f"Contract check: {name}, done? If yes run teerex scratch done. "
+                      'If no: teerex scratch flag "why not" or --waiting with --check.', to="self")
+        contract_tell(root, launch_id, "lapse", line)
+        if lapses == 2:
+            contract_tell(root, launch_id, "lapse", line, to="seat")
+    finally:
+        update(root, launch_id, lapsed)
+
+
 def supervise(o):
     state = None
     try:
@@ -1730,7 +1772,9 @@ def supervise_child(o):
                     delivered_input(o.registry, o.launch_id, incoming)
                     last_input_ns = incoming["at_ns"]
                 previous_steps = contract_steps(o.registry, o.launch_id, previous_steps)
-                current = load(o.registry, o.launch_id).get("last_hook")
+                contract_lapse(o.registry, o.launch_id)
+                live = load(o.registry, o.launch_id)
+                current = live.get("last_hook")
                 try:
                     waiting = scratch_read(Path(state["scratchpad"])).get("waiting", "")
                 except (OSError, ValueError) as exc:
@@ -1739,6 +1783,8 @@ def supervise_child(o):
                 status = ("blocked", waiting[:300]) if waiting and (current or {}).get("state") != "error" else (
                     (current.get("state") or {"Stop": "idle", "StopFailure": "error", "UserPromptSubmit": "working"}[current["kind"]], current["text"])
                     if current else ("working", "visible agent process starting; readiness not assessed"))
+                if (live.get("contract") or {}).get("stalled"):
+                    status = ("blocked", f"stalled: no contact {(now() - live['contract']['last_contact_at']) // 60000} min")
                 if status != last_status:
                     program_status(state, *status)
                     last_status = status
@@ -1749,6 +1795,7 @@ def supervise_child(o):
             except Exception as exc:
                 supervisor_error(o, "last_supervisor_loop_error", exc)
                 time.sleep(.05)
+
         code = child.returncode
         term = {"Exited": code} if code >= 0 else {"Signal": -code}
     except OSError as exc:
