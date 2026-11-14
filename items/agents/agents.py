@@ -1285,39 +1285,94 @@ def project_trust_lines(source, cwd):
     lines = source.splitlines(keepends=True)
     target = trust = None
     in_target = False
-    for i, line in enumerate(lines):
-        stripped = line.strip()
-        if not stripped or stripped.startswith('#'):
-            continue
-        require('"""' not in line and "'''" not in line, reason)
-        if stripped.startswith('['):
-            in_target = False
-            require(re.fullmatch(r'\[[^\r\n]+\](?:\s*#.*)?', stripped), reason)
-            require(re.match(r'\[[A-Za-z0-9_-]+(?=[.\]])', stripped), reason)
-            if re.match(r'\[projects(?=[.\]])', stripped):
-                match = re.fullmatch(r'\[projects\.("(?:[^"\\]|\\.)*")\]', stripped)
-                require(match is not None, reason)
+    table = []
+    multiline = None
+    depth = 0
+    projects_inline = False
+
+    def tokens(line):
+        # Only lex strings/comments and punctuation; do not validate unrelated values.
+        nonlocal multiline
+        result = []
+        balance = 0
+        pos = 0
+        while pos < len(line):
+            if multiline is not None:
+                end = line.find(multiline, pos)
+                while end >= 0 and multiline == '"' * 3 and (len(line[:end]) - len(line[:end].rstrip("\\"))) % 2:
+                    end = line.find(multiline, end + 1)
+                if end < 0:
+                    return result, balance
+                pos, multiline = end + 3, None
+                continue
+            char = line[pos]
+            if char.isspace():
+                pos += 1
+            elif char == '#':
+                break
+            elif line[pos:pos + 3] in ('"' * 3, "'" * 3):
+                multiline = line[pos:pos + 3]
+                result.append('<multiline>')
+                pos += 3
+            elif char in ('"', "'"):
+                match = re.match(r"\"(?:[^\"\\]|\\.)*\"|'[^']*'", line[pos:])
+                if match is None:
+                    # Unrelated malformed content is not ours to repair.
+                    result.append('<unparseable>')
+                    break
+                raw = match[0]
                 try:
-                    project_path = json.loads(match[1])
+                    result.append(json.loads(raw) if char == '"' else raw[1:-1])
                 except ValueError:
-                    raise Refusal(reason)
-                require(stripped == '[projects.' + json.dumps(project_path, ensure_ascii=False) + ']', reason)
-            if stripped == header:
-                require(target is None, reason)
-                target, in_target = i, True
+                    result.append('<unparseable>')
+                pos += len(raw)
+            elif char in '[]=.,{}':
+                balance += (char in '[{') - (char in ']}')
+                result.append(char)
+                pos += 1
+            else:
+                match = re.match(r"[^\s\[\]=.,{}#\"']+", line[pos:])
+                if match is None:
+                    result.append('<unparseable>')
+                    break
+                result.append(match[0])
+                pos += len(match[0])
+        return result, balance
+
+    for i, line in enumerate(lines):
+        was_multiline = multiline is not None
+        parts, balance = tokens(line)
+        if not parts:
             continue
-        assignment = re.fullmatch(r'([^=]+)=(.*)', stripped)
-        require(assignment is not None, reason)
-        key, value = (part.strip() for part in assignment.groups())
-        require(re.fullmatch(r'[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*', key), reason)
-        require(not re.match(r'projects(?=[.]|$)', key), reason)
-        # Collections spanning lines can disguise a header as their content.
-        require(value and not value.startswith(('[', '{')), reason)
-        require(re.fullmatch(r'''(?:"(?:[^"\\]|\\.)*"|'[^']*'|[^\s"'\[\]{}#]+)(?:\s*#.*)?''', value), reason)
-        if in_target and re.match(r'trust_level(?=[.]|$)', key):
-            require(key == 'trust_level' and trust is None, reason)
-            require(re.fullmatch(r'''("[^"\\]*"|'[^']*')(?:\s*#.*)?''', value), reason)
-            trust = i
+        if not was_multiline and depth == 0 and line.lstrip().startswith('['):
+            table = parts[1:-1:2] if parts[-1] == ']' else []
+            if 'projects' in parts and cwd in parts:
+                require(line.strip() == header and target is None, reason)
+                target, in_target = i, True
+            else:
+                in_target = False
+            projects_inline = False
+            continue
+        if not was_multiline and depth == 0:
+            equal = parts.index('=') if '=' in parts else -1
+            keys = parts[:equal:2] if equal >= 0 else []
+            if table == [] and keys[:1] == ['projects']:
+                require(cwd not in keys[1:], reason)
+                projects_inline = keys == ['projects']
+            elif table == ['projects']:
+                require(keys[:1] != [cwd], reason)
+            if in_target:
+                require(equal >= 1 and '<unparseable>' not in parts, reason)
+                if keys[:1] == ['trust_level']:
+                    require(keys == ['trust_level'] and trust is None, reason)
+                    require(re.fullmatch(r"trust_level\s*=\s*(\"[^\"\\]*\"|'[^']*')(?:\s*#.*)?", line.strip()), reason)
+                    trust = i
+        if projects_inline:
+            require(not any(value == cwd and parts[j + 1:j + 2] == ['='] for j, value in enumerate(parts)), reason)
+        depth += balance
+        if depth == 0:
+            projects_inline = False
+    require(not in_target or (multiline is None and depth == 0), reason)
     if trust is not None:
         value = lines[trust].split('=', 1)[1].strip()
         if re.fullmatch(r'''(?:"trusted"|'trusted')(?:\s*#.*)?''', value):

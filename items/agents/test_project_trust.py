@@ -145,11 +145,35 @@ class ProjectTrustFallbackTest(unittest.TestCase):
         self.ensure()
         self.assertEqual(self.path.read_text(), self.header() + '\ntrust_level = "trusted"\n')
 
+    def test_realistic_config_preserves_unrelated_content(self):
+        before = ('# user settings\r\nmodel = "example"\r\n'
+                  'features = ["one", "two"]\r\n'
+                  'options = { enabled = true, retries = 3 }\r\n'
+                  'instructions = """\n' + self.header() + '\n'
+                  'trust_level = "trusted"\n"""\r\n'
+                  '[mcp_servers.local]\r\nargs = [\n  "--stdio",\n  "[literal]",\n]\r\n'
+                  "[projects.'/other']\r\ntrust_level = \"trusted\"\r\n")
+        after = ('keep = ["a", "b"] # keep this\r\n'
+                 '[profiles.work]\r\nsettings = { mode = "local" }\r\n')
+        for existing in (False, True):
+            with self.subTest(existing=existing):
+                raw = before + (self.header() + '\r\n' if existing else '') + after
+                self.path.write_bytes(raw.encode())
+                self.ensure()
+                expected = (before + self.header() + '\r\ntrust_level = "trusted"\n' + after
+                            if existing else raw + '\n' + self.header() + '\ntrust_level = "trusted"\n')
+                self.assertEqual(self.path.read_bytes(), expected.encode())
+                initial = self.path.stat()
+                self.ensure()
+                self.assertEqual(self.path.stat().st_ino, initial.st_ino)
+                if tomllib is not None:
+                    self.assertEqual(tomllib.loads(expected)['projects'][str(self.root)]['trust_level'], 'trusted')
+
     def test_unsupported_forms_refuse_before_lock(self):
-        for raw in ('projects = {}\n', 'projects.' + json.dumps(str(self.root)) + '.trust_level = "untrusted"\n',
-                    '[projects.' + repr(str(self.root)) + ']\n', '["projects"."other"]\n',
-                    '["pro\\u006aects"."other"]\n', 'note = "unterminated\n',
-                    'note = """\n' + self.header() + '\n"""\n',
+        for raw in ('projects = {' + json.dumps(str(self.root)) + ' = {trust_level = \"untrusted\"}}\n', 'projects.' + json.dumps(str(self.root)) + '.trust_level = "untrusted"\n',
+                    '[projects.' + repr(str(self.root)) + ']\n',
+                    '["pro\\u006aects".' + json.dumps(str(self.root)) + ']\n', self.header() + '\nnote = "unterminated\n',
+                    self.header() + '\nnote = """\nunterminated\n',
                     self.header() + '\ntrust_level = "trusted"\ntrust_level = "untrusted"\n'):
             with self.subTest(raw=raw):
                 self.path.write_text(raw)
