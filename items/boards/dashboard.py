@@ -181,10 +181,10 @@ def summary(row, now):
     record = min(records, key=lambda r: r.get('age_ms') if r.get('age_ms') is not None else float('inf')) if records else {}
     state = record.get('state') or report.get('state') or 'idle'
     observed = (row.get('agent_state') or {}).get('state')
-    if observed == 'working':
-        state = 'working'
-    elif observed in ('awaiting_choice', 'awaiting_text'):
+    if row.get('question') or any(r.get('state') == 'blocked' for r in records) or report.get('state') == 'waiting_on_operator':
         state = 'blocked'
+    elif observed == 'working':
+        state = 'working'
     elif observed == 'error':
         state = 'error'
     elif observed == 'unknown' and state == 'idle' and not pad.get('now'):

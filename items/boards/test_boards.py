@@ -702,6 +702,26 @@ class CallsTest(unittest.TestCase):
 
 
 class CompactFleetTest(unittest.TestCase):
+    def test_waiting_requires_declared_state(self):
+        module = runpy.run_path(str(ROOT / 'items/boards/dashboard.py'))
+        summary = module['summary']
+        row = dict(observation=dict(label='agent'), agent_state=dict(state='awaiting_text'))
+        for observed in ('awaiting_text', 'awaiting_choice', 'idle'):
+            with self.subTest(observed=observed):
+                row['agent_state']['state'] = observed
+                self.assertEqual(summary(row, 0)['state'], 'idle')
+                self.assertNotIn('waiting on you', summary(row, 0)['message'])
+        for observed in ('awaiting_text', 'awaiting_choice', 'working', 'error'):
+            for declared in (
+                dict(program_status=dict(records=[dict(state='blocked', age_ms=10), dict(state='idle', age_ms=0)])),
+                dict(question='Proceed with the change?'),
+                dict(report=dict(state='waiting_on_operator')),
+            ):
+                with self.subTest(observed=observed, declared=declared):
+                    waiting = dict(row, agent_state=dict(state=observed), **declared)
+                    self.assertEqual(summary(waiting, 0)['state'], 'blocked')
+                    self.assertIn('waiting on you', summary(waiting, 0)['message'])
+
     def test_state_order_and_history(self):
         import importlib.util
         spec = importlib.util.spec_from_file_location('dashboard', ROOT / 'items/boards/dashboard.py')
