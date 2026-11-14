@@ -1489,7 +1489,8 @@ with ThreadPoolExecutor() as pool:
         self.assertIn("Messaging protocol (not a task brief):", inputs[0])
         self.assertNotIn("TASK β", inputs[0])
         self.assertIn(CONTRACT_PROTOCOL, inputs[0])
-        self.assertEqual(inputs[1], "FROM probe: " + self.brief.read_text())
+        # The starter pane is not a registered agent, so the brief carries the launcher label.
+        self.assertEqual(inputs[1], "FROM teerex-launcher: " + self.brief.read_text())
         self.assertEqual([v["code"] for v in worker if v["event"] == "ack"], [0])
         env = worker[0]["env"]
         scratch = Path(state["scratchpad"])
@@ -1518,6 +1519,51 @@ with ThreadPoolExecutor() as pool:
         p, again = self.run_cli("deliver", "--registry", str(self.registry), "--launch-id", state["launch_id"])
         self.assertEqual(p.returncode, 1)
         self.assertIn("brief_already_attempted", again["failure_reason"])
+
+    def register_starter(self, name="lead"):
+        """The starter pane is itself a registered agent, as when a lead runs agent-spawn."""
+        address = dict(host="disposable", server="unix://" + str(self.socket), session_id=self.session, block_id=self.starter)
+        record = dict(schema_version=1, launch_id="f" * 32, name=name, target=address, human=False)
+        path = self.registry / ("agents-" + "f" * 32 + ".json")
+        path.write_text(json.dumps(record))
+        path.chmod(0o600)
+        return address
+
+    def pane_text(self, block):
+        return self.rpc("com.superlogical.terminal.format", {"session_id": self.session, "block_id": block,
+                        "args": {"format": "text", "max_bytes": 65536}})["content"]
+
+    def brief_case(self, harness, agent_starter):
+        """A plain launch delivers the brief, attributed to its starter, for every harness."""
+        address = self.register_starter("lead") if agent_starter else None
+        self.settings["profiles"]["probe"].update(harness=harness, hook_events=True)
+        p, packet = self.launch(ack_timeout=10000)
+        self.assertEqual(p.returncode, 0, p.stderr + p.stdout)
+        state = self.record(packet["launch_id"])
+        if address:
+            self.assertEqual(state["starter"], address)
+        self.assertEqual(state["phase"], "brief_submitted", json.dumps(state.get("brief_receipt")))
+        inputs = wait_for(lambda: [v["payload"] for v in events(self.worker_log) if v["event"] == "input"] or None)
+        self.assertEqual(inputs, ["FROM " + ("lead" if agent_starter else "teerex-launcher") + ": " + self.brief.read_text()])
+        self.assertNotIn("refused", self.pane_text(state["target"]["block_id"]))
+
+    def test_agent_started_claude_worker_gets_brief(self):
+        self.brief_case("claude", True)
+
+    def test_agent_started_codex_worker_gets_brief(self):
+        self.brief_case("codex", True)
+
+    def test_agent_started_pi_worker_gets_brief(self):
+        self.brief_case("pi", True)
+
+    def test_seat_started_claude_worker_gets_brief(self):
+        self.brief_case("claude", False)
+
+    def test_seat_started_codex_worker_gets_brief(self):
+        self.brief_case("codex", False)
+
+    def test_seat_started_pi_worker_gets_brief(self):
+        self.brief_case("pi", False)
 
     def test_timeout_never_sends_before_ack_and_supervisor_continues(self):
         p, packet = self.launch("noack", ack_timeout=250)

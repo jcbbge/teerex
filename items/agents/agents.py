@@ -1911,7 +1911,9 @@ def deliver(root, launch_id):
     code, packet = invoke(["send", "--socket", state["socket"], "--session", state["target"]["session_id"],
                            "--block", state["target"]["block_id"], "--from", starter_name(root, state), "--message-file", state["brief_file"]],
                           client_path=state["client_path"], rex_executable=state["rex_executable"],
-                          generated_sender=starter_name(root, state))
+                          generated_sender=starter_name(root, state),
+                          # The brief is the starter's speech; the supervisor only carries it.
+                          creator=state["starter"])
     def delivered(s):
         s["brief_receipt"] = packet
         s["brief_outcome"] = "events_acknowledged" if transport_ack(code, packet) else "uncertain"
