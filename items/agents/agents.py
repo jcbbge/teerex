@@ -309,7 +309,7 @@ def detached_operation(state, operation, argv=None):
     request = dict(operation=operation, session_id=target['session_id'], block_id=target.get('block_id'),
                    cwd=state.get('cwd'), name=state.get('name'), argv=argv)
     command = [state.get('rex_executable') or 'rex', '--autostart=false', '--server', 'unix://' + state['socket'],
-               '--timeout', '3s', '--color', 'never', 'do', '-e', __import__('teerex_pane_guard').prelude('unix://' + state['socket'], human_launch=state.get('human', False)) + DETACHED_LUA, '--args', json.dumps(request)]
+               '--timeout', '3s', '--color', 'never', 'do', '-e', __import__('teerex_pane_guard').prelude('unix://' + state['socket'], human_launch=state.get('human', False), creator=state.get('starter') if operation == 'create' else None) + DETACHED_LUA, '--args', json.dumps(request)]
     env = dict(os.environ, PATH=state.get('client_path') or os.defpath)
     with tempfile.TemporaryFile() as output, tempfile.TemporaryFile() as errors:
         result = subprocess.run(command, env=env, stdin=subprocess.DEVNULL, stdout=output, stderr=errors, timeout=5)
@@ -525,7 +525,7 @@ def receipt(state, outcome, **extra):
     return result
 
 
-def invoke(arguments, timeout=10, client_path=None, rex_executable=None, input_bytes=None, human_launch=False):
+def invoke(arguments, timeout=10, client_path=None, rex_executable=None, input_bytes=None, human_launch=False, creator=None):
     """Bounded foreground client, never the agent. Retain diagnostics without treating exit as ACK."""
     import tempfile
     if arguments and arguments[0] == "send":
@@ -537,6 +537,11 @@ def invoke(arguments, timeout=10, client_path=None, rex_executable=None, input_b
     # Output sinks are private regular files, not pipes that a failed descendant can hold open.
     with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err, tempfile.TemporaryFile() as source:
         environment = dict(os.environ)
+        if creator is not None:
+            # Managed launch ownership is its explicit starter, even without caller env.
+            import socket
+            environment['TEEREX_CALLER_IDENTITY'] = json.dumps(dict(
+                host=socket.gethostname(), session_id=creator['session_id'], block_id=creator['block_id']))
         if human_launch:
             environment["TEEREX_HUMAN_LAUNCH"] = "1"
         if client_path is not None:
@@ -1682,7 +1687,7 @@ def launch_agent(o):
                                "--label", name, "--cwd", cwd, "--", *command], human_launch=human)
     else:
         code, packet = invoke(["spawn", "--socket", socket, "--session", session, "--name", name, "--cwd", cwd,
-                               "--report-to-session", rs, "--report-to-block", rb, "--", *command])
+                               "--report-to-session", rs, "--report-to-block", rb, "--", *command], creator=starter)
     def created(s):
         s["spawn_receipt"] = packet
         s["placement"] = packet.get("placement", "placed") if isinstance(packet, dict) and code == 0 else "unknown"
@@ -1704,7 +1709,7 @@ def launch_agent(o):
             side_code, side_packet = invoke(["surfaces", "open", "--socket", socket, "--session", session,
                                             "--layout", "tiled", "--anchor", block, "--label", name + " scratchpad",
                                             "--", RUNTIME, *(["--rex", state["rex_executable"]] if state.get("rex_executable") else []),
-                                            "scratch", "watch", "--socket", socket, "--session", session, "--block", block, "--registry", root], human_launch=human)
+                                            "scratch", "watch", "--socket", socket, "--session", session, "--block", block, "--registry", root], human_launch=human, creator=starter)
             state = update(root, launch_id, lambda s: s.update(scratch_pane_receipt=side_packet,
                             scratch_pane_opened=succeeded(side_code, side_packet, "created_and_verified")))
         code, packet = invoke(["jobs", "track", "--registry", root, "--socket", socket, "--session", session, "--block", block,

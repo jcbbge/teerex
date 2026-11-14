@@ -69,16 +69,19 @@ def snapshot(server, human_launch=False):
         if canonical_server(target.get('server')) != server:
             continue
         starter = record.get('starter') or {}
+        report_to = {k: (record.get('report_to') or {}).get(k) for k in ('session_id', 'block_id')}
         spawner = {k: starter.get(k) for k in ('session_id', 'block_id')}
         if target.get('block_id') and not record.get('human'):
-            report_to = {k: (record.get('report_to') or {}).get(k) for k in ('session_id', 'block_id')}
             supervisor = {k: target.get(k) for k in ('session_id', 'block_id')}
-            creators.setdefault(target['block_id'], dict(spawner=spawner, allowed=[spawner, report_to, supervisor]))
+            existing = creators.get(target['block_id'], {})
+            owner = existing.get('spawner') or {}
+            if not owner.get('session_id') or not owner.get('block_id'):
+                creators[target['block_id']] = dict(existing, spawner=spawner, allowed=[spawner, report_to, supervisor])
         side = (record.get('scratch_pane_receipt') or {}).get('created') or {}
         if side.get('block_id') and (record.get('scratch_pane_receipt') or {}).get('outcome') == 'created_and_verified':
             supervisor = {k: target.get(k) for k in ('session_id', 'block_id')}
             existing = creators.get(side['block_id'], {})
-            creators[side['block_id']] = dict(existing, spawner=spawner, allowed=[spawner, supervisor], viewer=True)
+            creators[side['block_id']] = dict(existing, spawner=spawner, allowed=[spawner, supervisor, report_to], viewer=True)
     seats = [s['target'] for s in boards['seats'] if canonical_server(s['target']['server']) == server and not s.get('inherited_to')]
     operator = (os.environ.get('TEEREX_OPERATOR') == '1' and
                 os.environ.get('TEEREX_OPERATOR_ACTIVE') in (str(os.getpid()), str(os.getppid())) and
@@ -236,8 +239,11 @@ end
 '''
 
 
-def prelude(server, message=False, human_launch=False):
-    data = json.dumps(json.dumps(snapshot(server, human_launch=human_launch), separators=(',', ':')))
+def prelude(server, message=False, human_launch=False, creator=None):
+    policy = snapshot(server, human_launch=human_launch)
+    if creator is not None:
+        policy['actor'] = dict(host=policy['local_host'], session_id=creator['session_id'], block_id=creator['block_id'])
+    data = json.dumps(json.dumps(policy, separators=(',', ':')))
     return 'do\nlocal GUARD_DATA=' + data + '\nlocal GUARD_MESSAGE=' + ('true' if message else 'false') + '\n' + LUA + '\nend\n'
 
 

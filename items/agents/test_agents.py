@@ -3614,6 +3614,38 @@ await handlers.agent_settled({}, {sessionManager:{getBranch:()=>[]}});
         os.kill(started["pid"], signal.SIGTERM)
         wait_for(lambda: not extension.parent.exists())
 
+    def test_explicit_starter_owns_panes_without_caller_environment(self):
+        import hashlib
+        for key in list(self.env):
+            if key.startswith(('AGENT_', 'LC_AGENT_', 'REX_', 'LC_REX_', 'TEEREX_CALLER_')):
+                self.env.pop(key)
+        self.settings['profiles']['probe']['scratch_pane'] = True
+        proc, packet = self.launch()
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        state = self.record(packet['launch_id'])
+        endpoint = 'unix://' + os.path.realpath(self.socket)
+        directory = Path(self.env['XDG_STATE_HOME']) / 'teerex/pane-creators' / hashlib.sha256(endpoint.encode()).hexdigest()
+        blocks = [state['target']['block_id']]
+        if state.get('scratch_pane_receipt'):
+            blocks.append(state['scratch_pane_receipt']['created']['block_id'])
+        for block in blocks:
+            record = json.loads((directory / (block.replace(':', '-') + '.json')).read_text())
+            self.assertEqual(record['spawner']['session_id'], self.session)
+            self.assertEqual(record['spawner']['block_id'], self.starter)
+        if state.get('layout') == 'detached':
+            # surfaces close requires placement; fixture server teardown reaps detached panes.
+            return
+        self.env.update(REX_SESSION=self.session, REX_BLOCK=self.starter)
+        for block in reversed(blocks):
+            proc = subprocess.run([BIN, 'surfaces', 'close', '--socket', str(self.socket),
+                                   '--session', self.session, '--pane', block],
+                                  env=self.env, capture_output=True, text=True, timeout=15)
+            self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+
+    def test_detached_explicit_starter_owns_pane_without_caller_environment(self):
+        self.settings['profiles']['probe']['layout'] = 'detached'
+        self.test_explicit_starter_owns_panes_without_caller_environment()
+
     def test_human_shell_replaces_function_tracks_without_starter_or_prompt(self):
         self.settings["profiles"]["probe"]["argv"][-1] = "human-exit"
         for key in ("starter_session", "starter_block"):

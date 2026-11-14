@@ -266,6 +266,38 @@ class GuardTest(_fixtures.SurfacesTest):
         self.env['REX_BLOCK'] = self.anchor
         self.assertEqual(self.control('close', worker).returncode, 0)
 
+    def test_empty_receipt_managed_registry_fallback(self):
+        worker = self.open('tab', label='legacy worker')['actual']['block_id']
+        viewer = self.open('tab', label='legacy scratch')['actual']['block_id']
+        bystander = self.open('tab', label='bystander')['actual']['block_id']
+        report = self.open('tab', label='report destination')['actual']['block_id']
+        key = hashlib.sha256(('unix://' + os.path.realpath(self.socket)).encode()).hexdigest()
+        directory = Path(self.env['XDG_STATE_HOME']) / 'teerex/pane-creators' / key
+        for block in (worker, viewer):
+            path = directory / (block.replace(':', '-') + '.json')
+            record = json.loads(path.read_text())
+            record.update(spawner={}, allowed=[{}])
+            path.write_text(json.dumps(record))
+        registry = self.work / 'registry'
+        registry.mkdir(mode=0o700)
+        target = dict(server='unix://' + str(self.socket), session_id=self.session, block_id=worker)
+        starter = dict(session_id=self.session, block_id=self.anchor)
+        report_to = dict(session_id=self.session, block_id=report)
+        (registry / ('agents-' + 'c' * 32 + '.json')).write_text(json.dumps(dict(
+            target=target, starter=starter, report_to=report_to,
+            scratch_pane_receipt=dict(outcome='created_and_verified', created=dict(block_id=viewer)))))
+        self.env['REX_BLOCK'] = bystander
+        for block in (worker, viewer):
+            self.refused(self.control('close', block), 'recorded spawner: ' + self.session + ' ' + self.anchor)
+        # All registry principals can control the legacy worker; outsiders cannot.
+        for actor in (self.anchor, report, worker):
+            self.env['REX_BLOCK'] = actor
+            self.assertEqual(self.control('rename', worker, '--label', 'legacy owned').returncode, 0)
+        self.env['REX_BLOCK'] = report
+        self.assertEqual(self.control('close', viewer).returncode, 0)
+        self.env['REX_BLOCK'] = self.anchor
+        self.assertEqual(self.control('close', worker).returncode, 0)
+
     def test_session_spawner(self):
         result = self.cli('surfaces', 'session', 'ensure', '--socket', str(self.socket), '--label', 'owned empty session')
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
