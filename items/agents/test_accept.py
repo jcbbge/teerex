@@ -92,6 +92,30 @@ class ReportAcceptanceTest(unittest.TestCase):
                 self.assertEqual(packet['failure_reason'], 'no_pending_report')
                 self.assertEqual(path.read_bytes(), before)
 
+    def test_completion_is_acceptable_before_transport_and_after_input(self):
+        for harness in ("claude", "codex", "pi"):
+            for evidence in ("turn_report", "hook", "scratch"):
+                with self.subTest(harness=harness, evidence=evidence):
+                    self.record('a' * 32)
+                    state = json.loads(self.path.read_text())
+                    state['harness'] = harness
+                    state['contract']['awaiting_starter'] = None
+                    if evidence == 'turn_report':
+                        state['contract']['turn_reports'] = {'starter': dict(at=10, answer=dict(outcome='done'))}
+                        state['last_hook'] = dict(state='working', at=11)
+                    elif evidence == 'hook':
+                        state['last_hook'] = dict(state='done', at=10)
+                    else:
+                        pad = self.root / 'scratch.md'
+                        pad.write_text('## Now\n\n## To-do\n\n## Done\n- [x] Finished\n')
+                        state.update(scratchpad=str(pad), brief_attempted=True)
+                    self.path.write_text(json.dumps(state))
+                    code, packet = self.run_accept('--launch-id', 'a' * 32)
+                    self.assertEqual(code, 0, packet)
+                    code, packet = self.run_accept('--launch-id', 'a' * 32)
+                    self.assertEqual(code, 1, packet)
+                    self.assertEqual(packet['failure_reason'], 'no_pending_report')
+
     def test_stranger_refused_without_write(self):
         self.actor(self.address('3'))
         before = self.path.read_bytes()

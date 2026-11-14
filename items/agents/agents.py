@@ -2591,13 +2591,33 @@ def accept(o):
             candidates.append((path, state, actor, policy["operator"]))
         require(len(candidates) == 1, "agent_name_ambiguous" if candidates else "agent_not_found_for_caller")
         path, state, actor, operator = candidates[0]
-        pending = (state.get("contract") or {}).get("awaiting_starter")
-        require(pending and pending.get("kind") in ("done", "flag"), "no_pending_report")
+        contract = state.get("contract") or {}
+        accepted_at = (state.get("starter_acceptance") or {}).get("accepted_at", -1)
+        reports = [contract.get("awaiting_starter")]
+        # Completion is recorded before notification transport finishes. Input can
+        # answer a reminder without erasing the starter's right to accept that report.
+        reports += [dict(kind="done", at=report["at"])
+                    for report in contract.get("turn_reports", {}).values()
+                    if report.get("answer", {}).get("outcome") == "done"]
+        hook = state.get("last_hook") or {}
+        if hook.get("state") == "done":
+            reports.append(dict(kind="done", at=hook["at"]))
+        if state.get("scratchpad") and contract_active(state):
+            try:
+                if contract_snapshot(state)["declared"] == "done":
+                    reports.append(dict(kind="done", at=Path(state["scratchpad"]).stat().st_mtime_ns // 1000000))
+            except (OSError, ValueError):
+                pass
+        reports = [report for report in reports if report and report.get("kind") in ("done", "flag")
+                   and report["at"] > accepted_at]
+        pending = max(reports, key=lambda report: report["at"], default=None)
+        require(pending, "no_pending_report")
         require(o.note is None or isinstance(o.note, str), "invalid_acceptance_note")
         acceptance = dict(accepted_by=dict(actor, operator=operator), accepted_at=now(), note=o.note, report=pending)
         state["starter_acceptance"] = acceptance
-        state["contract"].update(awaiting_starter=None, starter_lapses=0)
-        state["contract"].pop("starter_reminded_at", None)
+        if state.get("contract"):
+            state["contract"].update(awaiting_starter=None, starter_lapses=0)
+            state["contract"].pop("starter_reminded_at", None)
         with (contextlib.nullcontext(registry) if path.parent == Path(registry.root) else Registry(str(path.parent))) as records:
             records.save(state, name=path.name)
         return 0, receipt(state, "report_accepted", acceptance=acceptance)
