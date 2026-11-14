@@ -115,17 +115,19 @@ def ledger(socket, write=False):
                 info = os.fstat(stream.fileno())
                 if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o600 or info.st_nlink != 1:
                     raise ValueError('private_ask_file_required')
-                raw = stream.read(262145)
-                if len(raw) > 262144:
-                    raise ValueError('ask_ledger_too_large')
+                raw = stream.read()
                 rows = json.loads(raw)
-                if not isinstance(rows, list) or len(rows) > 512:
+                if not isinstance(rows, list):
                     raise ValueError('invalid_ask_ledger')
         yield rows
         if write:
+            # Resolved cards normally leave in resolve(); retain every open card.
+            while len(rows) > 512:
+                resolved = [r for r in rows if r.get('resolved') or r.get('state') == 'resolved']
+                if not resolved:
+                    break
+                rows.remove(min(resolved, key=lambda r: r.get('expires', 0)))
             raw = json.dumps(rows).encode()
-            if len(raw) > 262144 or len(rows) > 512:
-                raise ValueError('ask_ledger_full')
             fd, path = tempfile.mkstemp(dir=str(root), prefix='.ask-')
             try:
                 with os.fdopen(fd, 'wb') as stream:
