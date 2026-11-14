@@ -2320,7 +2320,7 @@ def supervise_child(o):
         s.update(turn_started_at=now(), scratch_reminded=False, contract_reminded=False)
     update(o.registry, o.launch_id, claim)
     env = dict(os.environ)
-    for key in ("AGENT_CHANNEL", "LC_AGENT_CHANNEL"):
+    for key in ("AGENT_CHANNEL", "LC_AGENT_CHANNEL", "TEEREX_OPERATOR", "LC_TEEREX_OPERATOR", "TEEREX_OPERATOR_ACTIVE", "LC_TEEREX_OPERATOR_ACTIVE"):
         env.pop(key, None)  # A new launch never inherits its parent's capability implicitly.
     metadata = dict(AGENT_SESSION=sid, AGENT_PANE=bid, REX_SESSION=sid, REX_BLOCK=bid, AGENT_NAME=state["name"],
                     AGENT_STARTER=(state["starter"]["session_id"] + " " + state["starter"]["block_id"]) if state["starter"] else "",

@@ -22,6 +22,37 @@ Operators and agents placing an actual terminal program in an explicitly selecte
 
 Open never asks for focus, retries creation, falls back to a different layout, or automatically closes a pane. Rex can activate the first window of an empty session; `focus_requested:false` is a request fact, not a promise that focus never changes. A split ends an existing zoom according to Rex's API contract. Floating layers can cover other panes even without requesting keyboard focus.
 
+## Pane authority
+
+Control dispatch protects the active registered seat and every pane in its tab,
+including its tasks and board companions. Close, rename, move, resize, focus,
+clutch takeover and raw input refuse there after label/suffix resolution. Splits
+and floating layers anchored in that tab also refuse. Plain `send`/`ask` messages
+retain the draft guard; `send --draft ignore` refuses on the protected tab.
+Historical seat registrations marked `inherited_to` do not protect dead tabs.
+
+Close, rename, move and empty-session close require the caller's `REX_SESSION` /
+`REX_BLOCK` (or `LC_REX_SESSION` / `LC_REX_BLOCK`) to match the recorded creator.
+Creation receipts are stored under `$XDG_STATE_HOME/teerex/pane-creators` (default
+`~/.local/state/teerex/pane-creators`), separated by server. Existing managed panes
+without a receipt fall back to the agents registry: starter, report-to and the
+pane's own supervisor can close them. A managed scratchpad viewer admits its
+starter and supervisor; its watcher can close only itself after its owner is gone.
+No authority record means `no_recorded_spawner`; a foreign caller's refusal names
+the recorded spawner. `AGENT_REGISTRY` selects a custom managed-agent registry.
+
+The explicit `--operator` flag requires `TEEREX_OPERATOR=1`, interactive stdin and
+stderr, and a human terminal without managed-agent markers. The registered seat
+pane is an agent, never that human terminal. Managed launches strip the operator
+markers. The flag permits protected control only for that interactive invocation.
+These are cooperative teerex checks, not an OS boundary against another program
+running as the same user. Python 3.9+ is required for guarded Rex transports.
+
+Seat registration defaults to `$XDG_STATE_HOME/teerex-boards` (default
+`~/.local/state/teerex-boards`); `TEEREX_BOARDS_STORE` selects a different store.
+The focused checks in `src/test_pane_guard.py` use disposable Rex servers and
+throwaway stores only, on Linux and macOS.
+
 ## When
 
 Use open for visible terminal tools such as an inbox, fleet board, log reader, editor or agent program. Use inspect before deciding whether an uncertain creation should be retried. Use explicit focus and close when the operator wants to act on a returned pane ID. Palette install changes selected configuration only after a plan/apply approval; preparation and planning do not register or launch the program.

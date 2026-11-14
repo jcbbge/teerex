@@ -18,6 +18,21 @@ spec.loader.exec_module(_fixtures)
 
 
 class GuardTest(_fixtures.SurfacesTest):
+    @classmethod
+    def setUpClass(cls):
+        # A server inherited from a human shell must not lend its marker to workers.
+        keys = ('TEEREX_OPERATOR', 'LC_TEEREX_OPERATOR', 'TEEREX_OPERATOR_ACTIVE', 'LC_TEEREX_OPERATOR_ACTIVE')
+        saved = {key: os.environ.get(key) for key in keys}
+        try:
+            os.environ.update({key: '1' for key in keys})
+            super().setUpClass()
+        finally:
+            for key, value in saved.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+
     def setUp(self):
         self.work = self.root / str(time.monotonic_ns())
         self.work.mkdir()
@@ -98,7 +113,7 @@ class GuardTest(_fixtures.SurfacesTest):
         self.assertEqual(self.control('close', viewer).returncode, 0)
 
     def remove_creator(self, block):
-        key = hashlib.sha256(('unix://' + str(self.socket)).encode()).hexdigest()
+        key = hashlib.sha256(('unix://' + os.path.realpath(self.socket)).encode()).hexdigest()
         (Path(self.env['XDG_STATE_HOME']) / 'teerex/pane-creators' / key / (block.replace(':', '-') + '.json')).unlink()
 
     def test_registry_only_managed_agent(self):
@@ -148,6 +163,90 @@ class GuardTest(_fixtures.SurfacesTest):
         finally:
             os.close(slave)
             os.close(master)
+
+    def test_seat_message_guard(self):
+        pane = self.open('tab', '/bin/sh', '-c', 'printf "\\n❯ "; exec cat', label='message target')['actual']['block_id']
+        self.register(pane)
+        message = self.work / 'message.txt'
+        message.write_text('disposable guarded message')
+        command = ('send', '--socket', str(self.socket), '--session', self.session, '--block', pane,
+                   '--from', 'guard-test', '--message-file', str(message), '--draft-wait-ms', '3000', '--timeout-ms', '7000')
+        result = self.cli(*command)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(json.loads(result.stdout)['outcome'], 'events_acknowledged')
+        result = self.cli(*command, '--draft', 'ignore')
+        self.assertNotEqual(result.returncode, 0)
+
+    def test_inherited_registration_and_missing_spawner(self):
+        pane = self.open('tab', label='ordinary owned pane')['actual']['block_id']
+        target = dict(host='test', server='unix://' + str(self.socket), session_id=self.session,
+                      block_id='block:00000000-0000-0000-0000-000000000002')
+        (self.store / 'state.json').write_text(json.dumps(dict(seats=[dict(target=target, inherited_to=dict(target, block_id=self.anchor))])))
+        self.assertEqual(self.control('rename', pane, '--label', 'still ordinary').returncode, 0)
+        self.remove_creator(pane)
+        result = self.control('close', pane)
+        self.refused(result, 'no_recorded_spawner')
+        self.assertEqual(json.loads(result.stdout)['failure_reason'], 'no_recorded_spawner')
+
+    def test_tab_rename_and_suffix_resolution(self):
+        neighbour = self.open('tiled', label='protected neighbour')['actual']['block_id']
+        self.register(self.anchor)
+        window = self.inspect(neighbour)['window_id']
+        self.refused(self.cli('surfaces', 'rename', '--socket', str(self.socket), '--session', self.session,
+                             '--window', window, '--label', 'changed tab'), 'registered_seat_tab')
+        self.refused(self.control('close', neighbour[-12:]), 'registered_seat_tab')
+
+    def test_spawn_receipt_and_operator_environment(self):
+        proof = self.work / 'worker-environment.txt'
+        script = ('test -z "$TEEREX_OPERATOR$LC_TEEREX_OPERATOR$TEEREX_OPERATOR_ACTIVE$LC_TEEREX_OPERATOR_ACTIVE" '
+                  '&& printf cleaned > "$1"; sleep 60')
+        result = self.cli('spawn', '--socket', str(self.socket), '--session', self.session,
+                          '--name', 'guard spawned worker', '--cwd', str(self.work),
+                          '--report-to-session', self.session, '--report-to-block', self.anchor,
+                          '--', '/bin/sh', '-c', script, 'guard-test', str(proof))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        pane = json.loads(result.stdout)['created']['block_id']
+        # Observe actual child output completion, without touching any live pane.
+        end = time.monotonic() + 3
+        while not proof.exists() and time.monotonic() < end:
+            time.sleep(.01)
+        self.assertEqual(proof.read_text(), 'cleaned')
+        self.assertEqual(self.control('close', pane).returncode, 0)
+
+    def test_resize_raw_keys_and_relative_focus(self):
+        neighbour = self.open('tiled', label='resize neighbour')['actual']['block_id']
+        self.register(self.anchor)
+        actual = self.inspect(self.anchor)
+        endpoint = 'unix://' + str(self.socket)
+        generated = subprocess.run([sys.executable, str(ROOT / 'src/pane_guard.py'), endpoint],
+                                   env=self.env, capture_output=True, text=True, timeout=10)
+        self.assertEqual(generated.returncode, 0, generated.stderr)
+        script = generated.stdout + '\nreturn rex.call(rex.args.method,rex.args.params)'
+        cases = [
+            ('session.resize_pane', dict(before_block_id=self.anchor, after_block_id=neighbour, direction='horizontal', ratio=.5)),
+            ('session.resize_layer', dict(layer_id=actual['layer_id'], bounds=[0, 0, .5, .5])),
+            ('session.zoom_block', dict(block_id=self.anchor)),
+            ('session.close_window', dict(window_id=actual['window_id'])),
+            ('session.close_layer', dict(layer_id=actual['layer_id'])),
+            ('session.focus_next_window', {}),
+            ('block.event', dict(block_id=self.anchor, event=dict(type='key', payload=dict(key='c', mods='ctrl')))),
+        ]
+        for method, params in cases:
+            with self.subTest(method=method):
+                params['session_id'] = self.session
+                result = subprocess.run(self.base + ['do', '-e', script, '--args', json.dumps(dict(method=method, params=params)), '--json'],
+                                        capture_output=True, text=True, timeout=10)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('registered_seat_tab', result.stderr)
+
+    def test_socket_alias_protects_same_seat(self):
+        self.register(self.anchor)
+        alias = self.work / 'socket-alias'
+        alias.symlink_to(self.socket)
+        self.refused(self.cli('clutch', 'take', '--socket', str(alias), '--session', self.session, '--pane', self.anchor),
+                     'registered_seat_tab')
+        self.refused(self.cli('surfaces', 'focus', '--socket', str(alias), '--session', self.session, '--pane', self.anchor),
+                     'registered_seat_tab')
 
 
 if __name__ == '__main__':

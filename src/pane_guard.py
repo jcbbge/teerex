@@ -9,6 +9,7 @@ from pathlib import Path
 import stat
 import sys
 import hashlib
+import urllib.parse
 
 
 def read(path, default=None):
@@ -27,7 +28,19 @@ def state_root():
     return Path(os.environ.get('XDG_STATE_HOME', str(Path.home() / '.local/state')))
 
 
+def canonical_server(value):
+    if not isinstance(value, str) or not value.startswith('unix://'):
+        return None
+    path = urllib.parse.unquote(value[7:])
+    if not os.path.isabs(path):
+        return None
+    return 'unix://' + os.path.realpath(path)
+
+
 def snapshot(server):
+    server = canonical_server(server)
+    if server is None:
+        raise ValueError('pane_guard_absolute_unix_socket_required')
     root = state_root()
     store = Path(os.environ.get('TEEREX_BOARDS_STORE', str(root / 'teerex-boards')))
     boards = read(store / 'state.json', {'seats': []})
@@ -41,13 +54,13 @@ def snapshot(server):
     creators = {}
     for path in directory.glob('*.json'):
         record = read(path)
-        if record['server'] == server:
+        if canonical_server(record['server']) == server:
             creators[record['id']] = record
     registry = Path(os.environ.get('AGENT_REGISTRY') or os.environ.get('LC_AGENT_REGISTRY') or root / 'teerex-agents')
     for path in registry.glob('agents-*.json'):
         record = read(path)
         target = record.get('target') or {}
-        if target.get('server') != server:
+        if canonical_server(target.get('server')) != server:
             continue
         starter = record.get('starter') or {}
         spawner = {k: starter.get(k) for k in ('session_id', 'block_id')}
@@ -59,7 +72,7 @@ def snapshot(server):
         if side.get('block_id') and (record.get('scratch_pane_receipt') or {}).get('outcome') == 'created_and_verified':
             supervisor = {k: target.get(k) for k in ('session_id', 'block_id')}
             creators[side['block_id']] = dict(spawner=spawner, allowed=[spawner, supervisor], viewer=True)
-    seats = [s['target'] for s in boards['seats'] if s['target']['server'] == server and not s.get('inherited_to')]
+    seats = [s['target'] for s in boards['seats'] if canonical_server(s['target']['server']) == server and not s.get('inherited_to')]
     operator = (os.environ.get('TEEREX_OPERATOR') == '1' and
                 os.environ.get('TEEREX_OPERATOR_ACTIVE') in (str(os.getpid()), str(os.getppid())) and
                 not any(os.environ.get(k) for k in ('AGENT_LAUNCH_ID', 'LC_AGENT_LAUNCH_ID', 'AGENT_NAME', 'LC_AGENT_NAME')))
@@ -90,7 +103,10 @@ local function guard_owner(id)
  local spawner=r and r.spawner or {}
  local allowed=false
  for _,who in ipairs(r and r.allowed or {}) do
-  if who.block_id and who.session_id and who.block_id==guard_policy.actor.block_id and who.session_id==guard_policy.actor.session_id then allowed=true end
+  if type(who.block_id)=='string' and type(who.session_id)=='string' and
+   who.block_id:match('^block:[0-9a-f%-]+$') and #who.block_id==42 and
+   who.session_id:match('^session:[0-9a-f%-]+$') and #who.session_id==44 and
+   who.block_id==guard_policy.actor.block_id and who.session_id==guard_policy.actor.session_id then allowed=true end
  end
  if not allowed then error('pane control refused; recorded spawner: '..(spawner.session_id or 'unknown')..' '..(spawner.block_id or 'unknown'),0) end
 end
@@ -98,16 +114,25 @@ local function guard_record(id,sid)
  if type(id)~='string' or not id:match('^[a-z]+:[0-9a-f%-]+$') then error('invalid_creator_receipt_id',0) end
  local record={id=id,session_id=sid,server=guard_policy.server,spawner=guard_policy.actor,allowed={guard_policy.actor}}
  guard_policy.creators[id]=record
- local file,err=io.open(guard_policy.directory..'/'..id:gsub(':','-')..'.json','w')
+ local path=guard_policy.directory..'/'..id:gsub(':','-')..'.json'
+ local file,err=io.open(path..'.next','w')
  if not file then io.stderr:write('pane creator recording failed: '..tostring(err)..'\n'); return end
- file:write(rex.json.encode(record)); file:close()
+ local written,write_err=file:write(rex.json.encode(record)); local closed,close_err=file:close()
+ if not written or not closed then
+  io.stderr:write('pane creator recording failed: '..tostring(write_err or close_err)..'\n'); os.remove(path..'.next'); return
+ end
+ local renamed,rename_err=os.rename(path..'.next',path)
+ if not renamed then io.stderr:write('pane creator recording failed: '..tostring(rename_err)..'\n'); os.remove(path..'.next') end
 end
 local guard_controls={['block.close']=true,['session.destroy']=true,
  ['session.set_window_label']=true,['session.set_block_label']=true,
  ['session.move_block']=true,['session.focus_block']=true,
- ['session.resize_pane']=true,['session.set_layer_bounds']=true,
- ['session.zoom_block']=true,['session.toggle_zoom']=true,
- ['session.detach_block']=true,['session.set_split_ratio']=true,
+ ['session.resize_pane']=true,['session.resize_layer']=true,
+ ['session.zoom_block']=true,['session.detach_block']=true,
+ ['session.close_window']=true,['session.close_layer']=true,
+ ['session.focus_window']=true,['session.focus_direction']=true,
+ ['session.focus_next_pane']=true,['session.focus_previous_pane']=true,
+ ['session.focus_next_window']=true,['session.focus_previous_window']=true,
  ['session.new_split']=true,['session.new_layer']=true,
  ['com.superlogical.terminal.resize']=true,['com.superlogical.terminal.key']=true,
  ['com.superlogical.terminal.write']=true,['com.superlogical.terminal.paste']=true}
@@ -125,6 +150,15 @@ rex.call=function(method,p)
     local sw=guard_window(v,seat.block_id)
     if not sw then error('registered_seat_tab_unavailable',0) end
     local tw=p.window_id or guard_window(v,p.block_id) or guard_window(v,p.anchor_id)
+    if p.layer_id then
+     for _,w in ipairs(v.windows or {}) do for _,l in ipairs(w.layers or {}) do
+      if l.layer_id==p.layer_id then tw=w.window_id end
+     end end
+    end
+    if method:match('^session%.focus_') and not tw then
+     -- Relative focus can select the protected tab without naming its pane.
+     protected=true
+    end
     protected=protected or tw==sw or guard_window(v,p.anchor_block_id)==sw
       or guard_window(v,p.before_block_id)==sw or guard_window(v,p.after_block_id)==sw
     if protected and raw then
@@ -230,11 +264,18 @@ def record_created(server, method, payload, result):
     policy = snapshot(server)
     for id in ids:
         path = Path(policy['directory']) / (id.replace(':', '-') + '.json')
-        record = dict(id=id, session_id=payload.get('session_id', id), server=server,
+        record = dict(id=id, session_id=payload.get('session_id', id), server=policy['server'],
                       spawner=policy['actor'], allowed=[policy['actor']])
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
-        with os.fdopen(fd, 'w') as f:
-            json.dump(record, f)
+        temporary = path.with_name(path.name + '.next')
+        try:
+            fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+            with os.fdopen(fd, 'w') as f:
+                json.dump(record, f)
+            os.link(temporary, path)
+        except OSError as exc:
+            print('pane creator recording failed: ' + str(exc), file=sys.stderr)
+        finally:
+            temporary.unlink(missing_ok=True)
 
 
 if __name__ == '__main__':

@@ -46,7 +46,7 @@ const usage =
     \\Why: report actual activity/results and unknowns, not infer readiness or completion.
     \\How: explicit config/host or socket/full IDs; no retries, fallback or autostart.
     \\Python3.9+ is required for targets, boards, agents, recovery, records, scratch, fleet, cartridges, replay, mcp and palette install.
-    \\Legacy direct-socket native tools do not require Python. SSH trust/key are explicit.
+    \\Guarded Rex transports require Python3.9+ for seat and creator authority. SSH trust/key are explicit.
     \\Native call history adds no runtime dependency; missing end records stay unknown.
     \\Personal install/restart/close/config actions need their own authorization.
     \\Guides: docs/alpha5.md and items/{surfaces,boards,agents,recovery,records}/README.md.

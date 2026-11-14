@@ -32,6 +32,7 @@ if not report_found then refuse("report_target_not_attached_terminal"); return e
 -- Positional parameters preserve argv, quotes, empty arguments and Unicode.
 -- The cwd is on the terminal host; never validate it on the CLI host instead.
 local shim = [[
+unset TEEREX_OPERATOR LC_TEEREX_OPERATOR TEEREX_OPERATOR_ACTIVE LC_TEEREX_OPERATOR_ACTIVE
 if [ -n "$1" ]; then cd -- "$1" || exit 125
 else cd -- "$HOME" || exit 125; fi
 export AGENT_SESSION="$REX_SESSION" AGENT_PANE="$REX_BLOCK"
