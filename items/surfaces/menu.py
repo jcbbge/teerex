@@ -106,10 +106,11 @@ def generate(o):
             body = "local state=invoke(" + literal([binary, "boards", "state", "inspect", "--store", absolute(o.board_store)]) + ")\n"
             body += 'local matches={}\nfor _,s in ipairs(state.state.seats or {}) do if s.target.server==' + quote("unix://" + absolute(o.socket)) + ' then matches[#matches+1]=s.target end end\n'
             body += 'if #matches~=1 then error("registered seat absent or ambiguous",0) end\nlocal t=matches[1]\n'
-            body += 'local r=surface({operation="resolve",session_id=t.session_id,block_id=t.block_id})\n'
+            body += 'local r=surface({operation="resolve",session_id="any",block_id=t.block_id})\n'
         else:
             body = 'local r=surface({operation="resolve",session_id="any",block_id=' + quote(o.label) + '})\n'
         if not o.host:
+            body += 'if r.failure_reason=="target_not_found" then error("Pane to focus was not found",0) end\nif (r.failure_reason=="ambiguous_label" or r.failure_reason=="ambiguous_target") then error("More than one pane matches the focus target",0) end\n'
             body += 'if r.outcome~="resolved" then error(rex.json.encode(r),0) end\nlocal f=surface({operation="focus",session_id=r.resolved.session_id,block_id=r.resolved.block_id,focus=true})\nif f.outcome~="focused_and_verified" then error(rex.json.encode(f),0) end\nreturn f'
         actions.append((o.name, action(o.name, o.title, body)))
     elif o.operation == "agents":
