@@ -121,7 +121,7 @@ while True:
         raw,buf=buf.split(b"\x1b[201~\r",1)
         payload=raw.removeprefix(b"\x1b[200~").decode()
         with out.open("a") as f: f.write(json.dumps({"event":"input","payload":payload})+"\n")
-        if "TASK β asymmetric" in payload and behavior in ("codex-hook", "pi-hook"):
+        if "RUN SYNTHETIC HOOKS" in payload and behavior in ("codex-hook", "pi-hook"):
             harness_hooks()
         if "TASK β asymmetric" in payload and behavior == "scratch-three":
             binary=shlex.split(protocol.split("Acknowledge this protocol now by running:\n",1)[1].split("\n",1)[0])[0]
@@ -257,6 +257,20 @@ class ContractHelpersTest(unittest.TestCase):
             pad.write_text("# Worker\nWaiting: review\nCheck: 2099-01-01T00:00:00Z\n")
             self.assertEqual(self.ns["contract_snapshot"](state)["declared"], "waiting")
 
+    def test_first_zero_step_turn_refuses_even_if_waiting_and_ambiguous_declarations_refuse(self):
+        with tempfile.TemporaryDirectory() as directory:
+            pad = Path(directory) / "pad.md"
+            pad.write_text("# Worker\nWaiting: review\nCheck: 2099-01-01T00:00:00Z\n")
+            state = dict(scratchpad=str(pad), contract={})
+            first = self.ns["contract_turn"](state)
+            self.assertEqual(first["action"], "block")
+            self.assertIn("write your steps first", first["reason"])
+            self.assertEqual(self.ns["contract_turn"](state)["declared"], "waiting")
+            pad.write_text("# Worker\n## Done\n- [x] Finished\nBlocked: stuck; tried; need\n")
+            state["contract_reminded"] = False
+            self.assertIsNone(self.ns["contract_snapshot"](state)["declared"])
+            self.assertEqual(self.ns["contract_turn"](state)["action"], "block")
+
     def test_tell_deduplicates_and_records_contact(self):
         destination = dict(session_id="s", block_id="b")
         state = dict(name="worker", starter=destination, report_to=destination, target=destination, contract={})
@@ -270,6 +284,30 @@ class ContractHelpersTest(unittest.TestCase):
         self.assertEqual(sent[0][1]["name"], "teerex-contract")
         self.assertEqual(state["contract"]["awaiting_starter"]["kind"], "done")
         self.assertFalse(state["contract"]["stalled"])
+    def test_failed_contact_does_not_clear_lapse_and_timestamp_precedes_send(self):
+        destination = dict(session_id="s", block_id="b")
+        state = dict(name="worker", starter=destination, report_to=destination, contract=dict(last_contact_at=1, lapses=2, stalled=True))
+        self.ns["load"] = lambda *_: state
+        self.ns["update"] = lambda root, launch, change: change(state)
+        self.ns["now"] = lambda: 10
+        def failed(*args):
+            self.ns["now"] = lambda: 20
+            return 1, {"outcome": "uncertain"}
+        self.ns["send"] = failed
+        code, _ = self.ns["contract_tell"]("root", "id", "done", "DONE worker: proof")
+        self.assertEqual(code, 1)
+        self.assertEqual((state["contract"]["last_contact_at"], state["contract"]["lapses"], state["contract"]["stalled"]), (1, 2, True))
+        self.assertNotIn("awaiting_starter", state["contract"])
+        self.assertEqual(state["contract"]["last_contact_failed"]["at"], 10)
+        def acknowledged(*args):
+            self.ns["now"] = lambda: 30
+            return 0, {"outcome": "events_acknowledged"}
+        self.ns["send"] = acknowledged
+        code, _ = self.ns["contract_tell"]("root", "id", "done", "DONE worker: proof")
+        self.assertEqual(code, 0)
+        self.assertEqual(state["contract"]["last_contact_at"], 20)
+        self.assertEqual(state["contract"]["awaiting_starter"]["at"], 20)
+
     def test_flag_claim_is_atomic_and_not_retried(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -358,11 +396,25 @@ class AgentsTest(unittest.TestCase):
         p = subprocess.run([BIN, "agents", *args], text=True, capture_output=True, env=self.env, timeout=timeout, **kwargs)
         return p, json.loads(p.stdout) if p.stdout.strip().startswith("{") else None
 
-    def launch(self, behavior="ack", ack_timeout=2000):
+    def launch(self, behavior="ack", ack_timeout=2000, contract=False):
         self.settings["profiles"]["probe"]["argv"][-1] = behavior
         self.config.write_text(json.dumps(self.settings))
-        return self.run_cli("launch", "--config", str(self.config), "--profile", "probe", "--brief-file", str(self.brief),
-                            "--ack-timeout-ms", str(ack_timeout))
+        result = self.run_cli("launch", "--config", str(self.config), "--profile", "probe", "--brief-file", str(self.brief),
+                              "--ack-timeout-ms", str(ack_timeout))
+        if not contract and result[1] and result[1].get("launch_id"):
+            # Preserve regression coverage for records created before contract enforcement.
+            launch_id = result[1]["launch_id"]
+            state = self.record(launch_id)
+            state.pop("contract", None)
+            (self.registry / ("agents-" + launch_id + ".json")).write_text(json.dumps(state))
+        if behavior in ("codex-hook", "pi-hook") and result[0].returncode == 0:
+            trigger = self.work / "run-hooks.txt"
+            trigger.write_text("RUN SYNTHETIC HOOKS")
+            sent = subprocess.run([BIN, "send", "--socket", str(self.socket), "--session", self.session,
+                                   "--block", result[1]["target"]["block_id"], "--from", "fixture", "--message-file", str(trigger)],
+                                  env=self.env, capture_output=True, text=True, timeout=15)
+            self.assertEqual(sent.returncode, 0, sent.stdout + sent.stderr)
+        return result
 
     def record(self, launch_id):
         return json.loads((self.registry / ("agents-" + launch_id + ".json")).read_text())
@@ -395,6 +447,11 @@ class AgentsTest(unittest.TestCase):
         target = dict(session_id=self.session, block_id=block, args={})
         child = self.rpc('com.superlogical.terminal.process', target)['child']
         before = self.rpc('session.view', dict(session_id=self.session))
+        # This is a new contract launch, so finishing the work is explicit.
+        for arguments in (("now", "Detached work"), ("done",)):
+            finished = subprocess.run([BIN, "scratch", *arguments, "--session", self.session, "--block", block],
+                                      env=self.env, capture_output=True, text=True)
+            self.assertEqual(finished.returncode, 0, finished.stdout + finished.stderr)
         event = self.work / 'stop.json'
         event.write_text(json.dumps(dict(hook_event_name='Stop', last_assistant_message='Detached work finished')))
         process, packet = self.run_cli('stop', '--registry', str(self.registry), '--launch-id', launch_id, '--event-file', str(event))
@@ -617,7 +674,7 @@ class AgentsTest(unittest.TestCase):
         self.assertEqual(state["contract"]["interval_s"], 30)
         self.assertEqual(state["contract"]["starter"], state["starter"])
         self.assertIn("Done-when: explicit proof", Path(state["scratchpad"]).read_text())
-        p, packet = self.launch()
+        p, packet = self.launch(contract=True)
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
         self.assertEqual(self.record(packet["launch_id"])["contract"]["done_when"], "proof complete")
         self.assertEqual(self.record(packet["launch_id"])["contract"]["interval_s"], 25)
@@ -2084,6 +2141,107 @@ Path('/work/network-harness').touch()
                            input=None if notify else json.dumps(event), text=True, capture_output=True, env=env, timeout=15)
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
         return json.loads(p.stdout)
+
+    def test_contract_turn_declarations_across_all_adapters(self):
+        for harness in ("claude", "codex", "pi"):
+            with self.subTest(harness=harness):
+                p, launched = self.launch(contract=True)
+                self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+                launch_id = launched["launch_id"]
+                state = self.record(launch_id)
+                pad = Path(state["scratchpad"])
+                target = state["target"]
+                def scratch(*args):
+                    result = subprocess.run([BIN, "scratch", *args, "--session", target["session_id"], "--block", target["block_id"]],
+                                            env=self.env, capture_output=True, text=True)
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                input_start = sum(v["event"] == "input" for v in events(self.starter_log))
+                counter = 0
+                latest_refusal = ""
+                def start():
+                    nonlocal counter
+                    counter += 1
+                    self.enforcement_hook(launch_id, harness, dict(hook_event_name="UserPromptSubmit"))
+                def end(reminder=False):
+                    if harness == "codex":
+                        return self.enforcement_hook(launch_id, harness, dict(type="agent-turn-complete", **{
+                            "last-assistant-message": "proof " + "x" * 400, "turn-id": f"{counter}-{'reminder' if reminder else 'real'}",
+                            "input-messages": [latest_refusal if reminder else 'work']}), notify=True)
+                    return self.enforcement_hook(launch_id, harness, dict(hook_event_name="ScratchCheck" if harness == "pi" else "Stop",
+                                                                          last_assistant_message="proof"))
+                def settle(result):
+                    if harness == "pi":
+                        return self.enforcement_hook(launch_id, harness, dict(hook_event_name="Stop", last_assistant_message="proof"))
+                    return result
+                def blocked(result):
+                    nonlocal latest_refusal
+                    if harness == "claude":
+                        self.assertEqual(result["decision"], "block")
+                        latest_refusal = result["reason"]
+                        return latest_refusal
+                    self.assertEqual(result["scratchpad_check"]["action"], "reminded" if harness == "codex" else "block")
+                    latest_refusal = result["scratchpad_check"]["reason"]
+                    return latest_refusal
+                def messages():
+                    return [v["payload"] for v in events(self.starter_log) if v["event"] == "input"][input_start:]
+                start()
+                # Fresh but empty is still an undeclared first turn.
+                scratch("flag", "")
+                reason = blocked(end())
+                self.assertIn("write your steps first", reason)
+                settle(end(reminder=True))
+                wait_for(lambda: any("NO ANSWER probe:" in text for text in messages()))
+                start()
+                scratch("now", "Implement")
+                blocked(end())
+                settle(end(reminder=True))
+                start()
+                scratch("done")
+                result = settle(end())
+                self.assertEqual(result["delivery_rule"], "contract_done")
+                wait_for(lambda: any("DONE probe: TASK β asymmetric — proof" in text for text in messages()))
+                start()
+                scratch("now", "Review")
+                scratch("flag", "stuck; tried tests; need review")
+                result = settle(end())
+                self.assertEqual(result["delivery_rule"], "contract_blocked")
+                settle(end(reminder=True))
+                exact = "FLAG probe step 2/2: stuck; tried tests; need review"
+                self.assertEqual(sum(exact in text for text in messages()), 1)
+                start()
+                scratch("now", "Review", "--waiting", "reviewer", "--check", "10m")
+                result = settle(end())
+                self.assertEqual(result["delivery_rule"], "contract_waiting")
+                wait_for(lambda: any("WAITING probe step 2/2: reviewer; checks again " in text for text in messages()))
+                start()
+                scratch("now", "Review", "--waiting", "reviewer", "--check", "2000-01-01T00:00:00Z")
+                blocked(end())
+
+    def test_contract_pi_generated_extension_continues_once(self):
+        self.settings["profiles"]["probe"].update(harness="pi", hook_events=True)
+        p, launched = self.launch(contract=True)
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        state = self.record(launched["launch_id"])
+        started = next(v for v in events(self.worker_log) if v["event"] == "started")
+        extension = Path(started["argv"][started["argv"].index("--extension") + 1])
+        script = r"""
+import {readFileSync,writeFileSync} from 'node:fs';
+const handlers={};
+const mod=await import('data:text/javascript;base64,'+Buffer.from(readFileSync(process.argv[1])).toString('base64'));
+mod.default({on:(name,handler)=>handlers[name]=handler});
+await handlers.before_agent_start({prompt:'work'});
+const pad=process.argv[2];
+writeFileSync(pad,readFileSync(pad,'utf8').replace(/^Updated:.*$/m,'Updated: '+new Date().toISOString()));
+const first=await handlers.agent_before_settle({outcome:'completed',entries:[]});
+if (!first?.continue || !first.entries[0].content.startsWith('Turn not ended: declare one')) throw new Error('contract did not continue');
+const second=await handlers.agent_before_settle({outcome:'completed'});
+if (second?.continue) throw new Error('contract refused twice');
+await handlers.agent_settled({}, {sessionManager:{getBranch:()=>[]}});
+"""
+        result = subprocess.run(["node", "--input-type=module", "-e", script, str(extension), state["scratchpad"]],
+                                env=dict(self.env, AGENT_SCRATCHPAD=state["scratchpad"]), text=True, capture_output=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        wait_for(lambda: any("NO ANSWER probe:" in v.get("payload", "") for v in events(self.starter_log)))
 
     def test_claude_scratch_stop_blocks_once_fresh_turn_passes_and_no_env_skips(self):
         p, launched = self.launch()

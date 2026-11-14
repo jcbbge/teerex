@@ -37,7 +37,7 @@ Updated: 2026-11-13T00:00:00Z
 
 Reads tolerate extra blank lines, missing sections and hand-written checkbox capitalization. Extra Now entries become To-do items. Writes normalize the supported fields and sections; arbitrary Markdown outside this format is not preserved. A stable per-file advisory lock protects cooperating writers across atomic replacements. Writes flush the new file and directory; files are bounded to 256 KiB. Symlink files/locks and unowned/nonregular files refuse. Hand editors that ignore the lock can still race a write.
 
-`show --json` returns exactly `{purpose, intent, now, todo, done, updated}`; empty Now is null. Plain `show` and `watch` use ▶, ☐ and ✓ and `updated N min ago`. Watch polls in the foreground, redraws when content or age changes, wraps to at most 40 columns, and exits on interruption. `watch --once` prints one frame. A missing/archived file shows a waiting message.
+`show --json` returns `{purpose, intent, now, todo, done, updated, waiting, done_when, check, blocked}`; empty Now is null. Plain `show` and `watch` use ▶, ☐ and ✓ and `updated N min ago`. Watch polls in the foreground, redraws when content or age changes, wraps to at most 40 columns, and exits on interruption. `watch --once` prints one frame. A missing/archived file shows a waiting message.
 
 Managed and human launches initialize the file and export `AGENT_SCRATCHPAD` and `LC_AGENT_SCRATCHPAD`. Profiles accept `intent` and `scratch_pane` (boolean, default true). Intent defaults to the brief's first nonblank line, then Purpose. The protocol names the path and requires updates before and after every step. A tiled watch opens beside the agent through `surfaces open`. A failed/uncertain side-pane creation is retained in the launch receipt, never retried automatically. It does not claim the harness followed the protocol.
 
@@ -57,3 +57,11 @@ Prompt submit records a private turn-start time. First stale Stop returns Claude
 Seat enforcement state is `<scratchpad>.turn.json`, mode0600, atomically replaced under the existing scratchpad lock. It records the start time, whether the reminder has been issued, and the last check. Managed agents keep equivalent state in their existing private launch record, described in [agents](../agents/README.md#scratchpad-enforcement-at-turn-end). Neither path installs a daemon or changes project task lists.
 
 `teerex scratch now TASK --waiting TEXT` writes an optional `Waiting: TEXT` line. An empty `--waiting ""` clears it. Other writes preserve it; `show`, `show --json` and `watch` expose it. Managed agents publish `blocked` with this text while the line exists and restore their current turn state when it is removed. Hand-written Waiting lines work too.
+
+
+Contract headers survive every scratchpad write. `Done-when: TEXT` is supplied by launch.
+`scratch now STEP --waiting "on what" --check 10m` sets Waiting and an ISO UTC Check;
+`--check` also accepts an ISO timestamp with timezone. `--waiting ""` clears both fields.
+`scratch flag "stuck; tried; need"` sets Blocked; `scratch flag ""` or the next `now` clears it.
+`show --json` uses empty strings for absent contract headers. A managed worker may end a turn
+only with all steps done, a flag, or Waiting with a future Check (exactly one of these).

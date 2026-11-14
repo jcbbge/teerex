@@ -530,6 +530,26 @@ def send_options(state):
 
 # Contract
 
+CONTRACT_REFUSE = 'Turn not ended: declare one — teerex scratch done (finished) | teerex scratch flag "stuck; tried; need" | teerex scratch now STEP --waiting "on what" --check 10m'
+
+
+def contract_turn(state):
+    c = state["contract"]
+    try:
+        snapshot = contract_snapshot(state)
+    except (OSError, ValueError):
+        snapshot = dict(steps_total=0, step_n=0, now=None, declared=None, check_at=None, flag=None)
+    c.update(snapshot)
+    needs_steps = snapshot["steps_total"] == 0 and not state.get("contract_turn_reported") and not state.get("contract_reminded")
+    if snapshot["declared"] and not needs_steps:
+        c["declared_at"] = now()
+        return dict(status="declared", action="allow", declared=snapshot["declared"])
+    previous = state.get("contract_reminded", False)
+    state["contract_reminded"] = True
+    reason = CONTRACT_REFUSE + ("; write your steps first" if snapshot["steps_total"] == 0 else "")
+    return dict(status="undeclared", action="allow" if previous else "block", already_reminded=previous, reason=reason, contract=True)
+
+
 def contract_init(state, profile, brief_text, done_when_arg, interval_arg):
     interval = interval_arg if interval_arg is not None else profile.get("contract_interval_s", 600)
     require(type(interval) is int and interval > 0, "invalid_contract_interval_s")
@@ -591,6 +611,7 @@ def contract_tell(root, launch_id, kind, line, to="starter"):
     if to == "seat":
         destinations = [contract_seat(state)]
     destinations = [d for i, d in enumerate(destinations) if d and d not in destinations[:i]]
+    sent_at = now()
     results = []
     for i, destination in enumerate(destinations):
         sender = dict(state, name="teerex-contract")
@@ -600,11 +621,14 @@ def contract_tell(root, launch_id, kind, line, to="starter"):
     if to == "starter":
         def told(s):
             c = s["contract"]
-            c.update(last_contact_at=now(), last_contact=line, lapses=0, stalled=False)
+            if ok:
+                c.update(last_contact_at=sent_at, last_contact=line, lapses=0, stalled=False)
+            else:
+                c["last_contact_failed"] = dict(at=sent_at, line=line, receipt=results)
             if kind == "flag" and c.get("flag", {}).get("sha") == flag["sha"]:
                 c["flag"].update(delivered_at=now() if ok else None, receipt=results)
-            if kind in ("done", "flag"):
-                c.update(awaiting_starter=dict(kind=kind, at=now()), starter_lapses=0)
+            if ok and kind in ("done", "flag"):
+                c.update(awaiting_starter=dict(kind=kind, at=sent_at), starter_lapses=0)
         update(root, launch_id, told)
     return (0 if ok else 1), dict(outcome="transport_acknowledged" if ok else "uncertain", results=results)
 
@@ -672,7 +696,7 @@ export default function(pi) {
     outcome = event.outcome;
     if (event.outcome !== 'completed') return;
     const result = call({hook_event_name: 'ScratchCheck'});
-    if (result.scratchpad_check?.action === 'block') return {continue: true, entries: [...(event.entries ?? []), {type: 'custom_message', customType: 'teerex-scratchpad', content: REMINDER, display: true}]};
+    if (result.scratchpad_check?.action === 'block') return {continue: true, entries: [...(event.entries ?? []), {type: 'custom_message', customType: 'teerex-scratchpad', content: result.scratchpad_check?.contract ? result.scratchpad_check.reason : REMINDER, display: true}]};
   });
   pi.on('agent_settled', async (event, ctx) => {
     const messages = ctx.sessionManager.getBranch().filter(e => e.type === 'message').map(e => e.message);
@@ -720,7 +744,7 @@ def hook(o):
             turn_id = event.get("turn-id")
             require(turn_id is None or isinstance(turn_id, str) and 0 < len(turn_id) <= 128, "invalid_codex_turn_id")
             normalized.update(codex_notify=True, codex_turn_id=turn_id,
-                              scratch_reminder_turn=any(SCRATCH_REMINDER in v for v in inputs))
+                              scratch_reminder_turn=any(SCRATCH_REMINDER in v or CONTRACT_REFUSE in v for v in inputs))
         event = normalized
     else:
         validate_hook_event(event)
@@ -742,7 +766,7 @@ def hook(o):
     require(isinstance(packet, dict), "hook_callback_invalid_receipt")
     check = packet.get("scratchpad_check", {})
     if o.harness == "claude" and check.get("action") == "block":
-        print(json.dumps(dict(decision="block", reason=SCRATCH_REMINDER)))
+        print(json.dumps(dict(decision="block", reason=check["reason"] if check.get("contract") else SCRATCH_REMINDER)))
         return 0, None
     return 0, packet
 
@@ -1421,7 +1445,7 @@ def delivered_input(root, launch_id, event):
         if event["at_ns"] <= previous.get("at_ns", previous.get("at", 0) * 1000000):
             return
         if not event.get("reminder"):
-            s.update(turn_started_at=event["at_ns"] // 1000000, scratch_reminded=False, scratch_reminder_pending=False)
+            s.update(turn_started_at=event["at_ns"] // 1000000, scratch_reminded=False, scratch_reminder_pending=False, contract_reminded=False)
         s["last_hook"] = dict(kind="UserPromptSubmit", state="working", at=event["at_ns"] // 1000000,
                               at_ns=event["at_ns"], text="acknowledged input delivered", evidence="send_paste_and_enter_acknowledged")
     return update(root, launch_id, started)
@@ -1437,6 +1461,7 @@ def report_stop(root, launch_id, event_id, event, allow_transcript=True):
             if event_at_ns < previous.get("at_ns", previous.get("at", 0) * 1000000):
                 return
             scratch_turn(s, event, s.get("scratchpad"))
+            s["contract_reminded"] = False
             s["last_hook"] = dict(kind=kind, state="working", at=now(), at_ns=event_at_ns, text="turn started")
         state = update(root, launch_id, started)
         return 0, receipt(state, "turn_started")
@@ -1450,12 +1475,17 @@ def report_stop(root, launch_id, event_id, event, allow_transcript=True):
                 continuation = s.get("scratch_reminder_pending") and event.get("scratch_reminder_turn")
                 turn = event.get("codex_turn_id")
                 if turn and turn != s.get("codex_turn_id") and not continuation:
-                    s.update(turn_started_at=s.get("codex_last_notify_at", s.get("turn_started_at", now())), scratch_reminded=False)
+                    s.update(turn_started_at=s.get("codex_last_notify_at", s.get("turn_started_at", now())), scratch_reminded=False, contract_reminded=False)
                     s["scratch_reminder_pending"] = False
                 s["codex_turn_id"] = turn
                 s["codex_last_notify_at"] = now()
                 basis = "previous_notify_or_initial_child_start_actual_turn_start_unknown"
             s["scratchpad_check"] = dict(scratch_turn(s, event, s.get("scratchpad")), basis=basis)
+            if s.get("contract") and s["scratchpad_check"]["action"] == "allow":
+                contract_check = contract_turn(s)
+                s["contract_check"] = contract_check
+                if contract_check["action"] == "block":
+                    s["scratchpad_check"].update(action="block", reason=contract_check["reason"], contract=True)
             if event["scratch_harness"] == "codex" and s["scratchpad_check"]["action"] == "block":
                 s["scratch_reminder_pending"] = True
         state = update(root, launch_id, checked)
@@ -1465,9 +1495,10 @@ def report_stop(root, launch_id, event_id, event, allow_transcript=True):
             code, packet = invoke(["send", "--socket", state["socket"], "--session", target["session_id"],
                                    "--block", target["block_id"], "--from", "teerex-scratchpad", "--message-file", "-"],
                                   timeout=45, client_path=state["client_path"], rex_executable=state["rex_executable"],
-                                  input_bytes=SCRATCH_REMINDER.encode())
+                                  input_bytes=(check["reason"] if check.get("contract") else SCRATCH_REMINDER).encode())
             check = dict(check, action="reminded", reminder_exit=code, reminder_receipt=packet)
-            update(root, launch_id, lambda s: s.update(scratchpad_check=check))
+            state = update(root, launch_id, lambda s: s.update(scratchpad_check=check))
+            return 0, receipt(state, "scratchpad_blocked", scratchpad_check=check)
         elif check["action"] == "block" or kind == "ScratchCheck":
             return 0, receipt(state, "scratchpad_blocked" if check["action"] == "block" else "scratchpad_checked", scratchpad_check=check)
     if kind == "ScratchCheck":
@@ -1486,16 +1517,52 @@ def report_stop(root, launch_id, event_id, event, allow_transcript=True):
     body = f"{title}: {state['name']}\n{details}"
     if check and check["status"] == "stale":
         body += "\nScratchpad: stale; " + check["action"]
-    delivery_rule = turn_report_rule(root, state, kind)
-    turn_state = "error" if kind == "StopFailure" else "done" if delivery_rule in ("finished_now_empty", "finished_now_done") else "idle"
+    if state.get("contract") and kind == "Stop":
+        # All adapters have passed freshness first. Direct stop callbacks also enforce declaration.
+        if not event.get("scratch_harness"):
+            state = update(root, launch_id, lambda s: s.update(contract_check=contract_turn(s)))
+            if state["contract_check"]["action"] == "block":
+                return 0, receipt(state, "scratchpad_blocked", scratchpad_check=state["contract_check"])
+        c = state["contract"]
+        declared = c.get("declared")
+        if declared == "done":
+            body = f"DONE {state['name']}: {c['done_when']} — " + " ".join(details.split())[:300]
+        elif declared == "blocked":
+            body = f"FLAG {state['name']} step {c['step_n']}/{c['steps_total']}: {c['flag']['text']}"
+        elif declared == "waiting":
+            waiting = scratch_read(Path(state["scratchpad"]))["waiting"]
+            clock = datetime.datetime.fromtimestamp(c["check_at"] / 1000, datetime.timezone.utc).strftime("%H:%MZ")
+            body = f"WAITING {state['name']} step {c['step_n']}/{c['steps_total']}: {waiting}; checks again {clock}"
+        else:
+            body = f"NO ANSWER {state['name']}: ended its turn without declaring done, blocked or waiting"
+        delivery_rule = "contract_" + (declared or "no_answer")
+    else:
+        delivery_rule = turn_report_rule(root, state, kind)
+    turn_state = "error" if kind == "StopFailure" else "done" if delivery_rule in ("finished_now_empty", "finished_now_done", "contract_done") else "idle"
     def remembered(s):
         previous = s.get("last_hook") or {}
         if event_at_ns < previous.get("at_ns", previous.get("at", 0) * 1000000):
             return
         s["last_hook"] = dict(kind=kind, state=turn_state, at=now(), at_ns=event_at_ns, text=details, event_id=event_id, evidence="harness_report_not_process_death", scratchpad_check=check, delivery_rule=delivery_rule)
     update(root, launch_id, remembered)
-    code, packet = notify(root, launch_id, event_id, body, "harness_report_not_process_death",
-                          reported_state=("completed" if turn_state == "done" else "idle") if kind == "Stop" else "unknown", delivery_rule=delivery_rule)
+    if delivery_rule.startswith("contract_"):
+        update(root, launch_id, lambda s: s.update(contract_turn_reported=True))
+        declared = state["contract"].get("declared")
+        def reporting(s):
+            require(event_id not in s["notifications"], "notification_already_attempted")
+            require(len(s["notifications"]) < 64, "notification_history_full")
+            s["notifications"][event_id] = dict(outcome="uncertain", attempted_at=now(), delivery_rule=delivery_rule,
+                                                 evidence="harness_report_not_process_death")
+        update(root, launch_id, reporting)
+        code, delivery = contract_tell(root, launch_id, "flag" if declared == "blocked" else declared or "no_answer", body)
+        update(root, launch_id, lambda s: s["notifications"][event_id].update(outcome="transport_acknowledged" if code == 0 else "uncertain", receipt=delivery))
+        state = load(root, launch_id)
+        fleet_code = publish_fleet(root, state, event_id, "completed" if declared == "done" else "blocked" if declared in ("blocked", "waiting") else "idle", body)
+        packet = receipt(state, "notification_acknowledged" if code == fleet_code == 0 else "notification_uncertain", delivery_rule=delivery_rule, contract_delivery=delivery)
+        code = 0 if code == fleet_code == 0 else 1
+    else:
+        code, packet = notify(root, launch_id, event_id, body, "harness_report_not_process_death",
+                              reported_state=("completed" if turn_state == "done" else "idle") if kind == "Stop" else "unknown", delivery_rule=delivery_rule)
     if check is not None:
         packet["scratchpad_check"] = check
     packet["turn_state"] = turn_state
@@ -1548,7 +1615,7 @@ def supervise_child(o):
         require(s["immediate_child_term"] is None, "child_already_exited")
         s["supervisor_claimed"] = True
         s["supervisor_pid"] = os.getpid()
-        s.update(turn_started_at=now(), scratch_reminded=False)
+        s.update(turn_started_at=now(), scratch_reminded=False, contract_reminded=False)
     update(o.registry, o.launch_id, claim)
     env = dict(os.environ)
     for key in ("AGENT_CHANNEL", "LC_AGENT_CHANNEL"):

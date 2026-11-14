@@ -398,3 +398,20 @@ Managed `agents stop` records every completed turn in the registry and timeline.
 The in-pane supervisor publishes `app=teerex-agent` program status for every managed harness: turn start is `working`, a progress turn end is `idle`, a scratchpad-finished turn is `done`, and StopFailure is `error`. `agents stop` receipts include `turn_state`; the registry's `last_hook.state` records the same transition.
 
 Codex needs no per-launch start hook. After `send` acknowledges paste and Enter (including brief, ask and queue delivery), it records a private input event keyed by canonical socket/session/block under `~/.local/state/teerex/agent-input`. The supervisor consumes that event and emits its own OSC 7501 status. Nanosecond event ordering prevents delayed input bookkeeping or an older stop callback from overwriting a newer state. Input events contain no message text and are removed when the supervisor exits. No watcher process or daemon is added.
+
+
+## Worker contracts
+
+Managed launches record a contract with their starter, purpose, done-when and contact interval.
+`--done-when TEXT` overrides the brief's first `Done when` / `done-when` line, then Intent.
+`--contract-interval-s N` overrides profile `contract_interval_s` (default 600 seconds).
+Launch writes `Done-when` to the scratchpad. Human launches have no worker contract.
+
+After the existing freshness check, a worker turn must declare exactly one state:
+all steps finished, `scratch flag "stuck; tried; need"`, or Waiting with a future Check.
+An empty first turn also needs steps. Claude blocks, Codex sends itself a reminder, and
+Pi continues settlement once; a second undeclared end reports `NO ANSWER` to the starter.
+Declared turns send `DONE`, `FLAG` or `WAITING` lines to the starter and distinct report-to.
+Flag sends claim their content hash before dispatch so concurrent checks send once.
+Only acknowledged sends count as contact; an uncertain flag attempt is retained without retry.
+Legacy launch records without a contract retain the previous turn-report rules.
