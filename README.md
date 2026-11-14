@@ -31,15 +31,21 @@ Managed workers report each turn end with one `DONE` or `NOT DONE` answer. Full 
 
 An empty session attached only by app clients may be closed by its recorded creator or the operator; see the [session close contract](items/surfaces/README.md).
 
-Every result is JSON. It states what was verified and labels the rest `unknown`, `uncertain` or `not_assessed`. teerex never starts a hidden process, never retries on its own, never closes a pane you did not ask it to close, and never infers that work is done. Exact flags: `teerex COMMAND --help`. Full contracts: each `items/*/README.md`.
+Command receipts are JSON; help and interactive tour output are text, and `mcp --print-config` emits the selected client’s registration format. It states what was verified and labels the rest `unknown`, `uncertain` or `not_assessed`. teerex never starts a hidden process, never retries on its own, never closes a pane you did not ask it to close, and never infers that work is done. Exact flags: `teerex COMMAND --help`. For `clutch take` and `clutch release`, use `teerex clutch --help`; their subcommand help currently prints usage with exit 2. Full contracts: each `items/*/README.md`.
 
 ## Build, test, install
+
+From the checkout root, with Python 3 and `uv` installed and on `PATH` (check
+`python3 --version` and `uv --version`), run the build below. It obtains the pinned
+Zig toolchain; the first run needs network access. Alternatively, with Zig 0.15.2
+already installed, replace `uv run --with ziglang==0.15.2 python -m ziglang` with
+`zig`.
 
 ```sh
 uv run --with ziglang==0.15.2 python -m ziglang build -Doptimize=ReleaseSmall -Dtarget=x86_64-linux-musl   # or aarch64-macos
 ```
 
-- **Tests** are the Python suites under `items/` and `tools/`. They run against disposable Rex servers only. [docs/ci.md](docs/ci.md) lists them and the four hosted lanes (Linux API13, Mac API10/12/13).
+- **Tests** are the Python suites under `items/` and `tools/`. They run against disposable Rex servers only. [docs/ci.md](docs/ci.md) lists them and the two current hosted lanes (Linux API13 and Mac API13).
 - **Install:** `tools/install/teerex-install upgrade|rollback|list` installs a verified build into `~/.local/opt/teerex-managed`, keeping earlier versions for rollback ([docs/install.md](docs/install.md)).
 - **Cartridges:** `tools/cartridges/package.py` builds the catalogs that `teerex cartridges` installs ([docs/cartridges.md](docs/cartridges.md)).
 
@@ -51,4 +57,4 @@ uv run --with ziglang==0.15.2 python -m ziglang build -Doptimize=ReleaseSmall -D
 - [research/](research/README.md): the original Rex research and its provenance.
 - Older long-form guides ([docs/alpha5.md](docs/alpha5.md), [docs/concierge/](docs/concierge/README.md), [docs/direction.md](docs/direction.md)) are kept as history. Where they disagree with this page or an item's README, the newer document wins.
 
-Python-backed command help uses public `teerex …` names, including `teerex targets`; `python3 src/test_help.py -v` checks the embedded CLI help without contacting Rex.
+Python-backed command help uses public `teerex …` names, including `teerex targets`; after building `zig-out/bin/teerex` above, `python3 src/test_help.py -v` checks the embedded CLI help without contacting Rex. To check an existing executable instead, use `TEEREX_BIN=/absolute/path/to/teerex python3 src/test_help.py -v`.
