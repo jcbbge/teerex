@@ -63,6 +63,11 @@ already installed, replace `uv run --with ziglang==0.15.2 python -m ziglang` wit
 uv run --with ziglang==0.15.2 python -m ziglang build -Doptimize=ReleaseSmall -Dtarget=x86_64-linux-musl   # or aarch64-macos
 ```
 
+Local Git builds report `0.1.0-alpha.6.main.<12-character HEAD>`. Package them
+under the matching `v`-prefixed build ID. Release packaging can set an exact
+identity with `-Dversion=0.1.0-alpha.6`; without Git, the default is
+`0.1.0-alpha.6`. The same option applies when cross-compiling.
+
 - **Tests** are the Python suites under `items/` and `tools/`. They run against disposable Rex servers only. [docs/ci.md](docs/ci.md) lists them and the two current hosted lanes (Linux API13 and Mac API13).
 - **Install:** `tools/install/teerex-install upgrade|rollback|list` installs a verified build into `~/.local/opt/teerex-managed`, keeping earlier versions for rollback ([docs/install.md](docs/install.md)).
 - **Cartridges:** `tools/cartridges/package.py` builds the catalogs that `teerex cartridges` installs ([docs/cartridges.md](docs/cartridges.md)).

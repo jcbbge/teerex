@@ -12,7 +12,7 @@ pub fn build(b: *std.Build) void {
         }),
     });
     const build_version = b.addOptions();
-    build_version.addOption([]const u8, "version", "0.1.0-alpha.6");
+    build_version.addOption([]const u8, "version", b.option([]const u8, "version", "Release/build identity without the leading v") orelse localVersion(b));
     exe.root_module.addOptions("build_version", build_version);
     const docs_sources = b.addOptions();
     var item_dir = b.build_root.handle.openDir("items", .{ .iterate = true }) catch @panic("items unavailable");
@@ -196,4 +196,17 @@ pub fn build(b: *std.Build) void {
     const run = b.addRunArtifact(exe);
     if (b.args) |args| run.addArgs(args);
     b.step("run", "Run teerex").dependOn(&run.step);
+}
+
+fn localVersion(b: *std.Build) []const u8 {
+    const base = "0.1.0-alpha.6";
+    const result = std.process.Child.run(.{
+        .allocator = b.allocator,
+        .argv = &.{ "git", "rev-parse", "--short=12", "HEAD" },
+        .cwd = b.build_root.path orelse ".",
+    }) catch return base;
+    if (result.term != .Exited or result.term.Exited != 0) return base;
+    const revision = std.mem.trim(u8, result.stdout, "\r\n");
+    if (revision.len == 0) return base;
+    return b.fmt("{s}.main.{s}", .{ base, revision });
 }
