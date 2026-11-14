@@ -115,6 +115,16 @@ fn run(allocator: std.mem.Allocator) !void {
         try std.fs.File.stdout().writeAll(usage);
         return;
     }
+    if (eq(args[0], "doctor") and hasOption(args, "--all")) {
+        const source = @embedFile("doctor_all.py");
+        const resolver = try std.json.Stringify.valueAlloc(allocator, @embedFile("targets.py"), .{});
+        const worker = try std.json.Stringify.valueAlloc(allocator, source, .{});
+        const script = try std.fmt.allocPrint(allocator, "import types,sys\ntargets=types.ModuleType('targets')\nexec({s},targets.__dict__)\nWORKER_SOURCE={s}\n{s}\nsys.exit(main())", .{ resolver, worker, source });
+        var forwarded: std.ArrayList([]const u8) = .empty;
+        try forwarded.appendSlice(allocator, &.{ "python3", "-I", "-c", script });
+        try forwarded.appendSlice(allocator, args[1..]);
+        return std.process.execv(allocator, forwarded.items);
+    }
     if (std.mem.eql(u8, args[0], "targets")) return python(allocator, args[1..]);
     if (std.mem.eql(u8, args[0], "--config") or std.mem.eql(u8, args[0], "--host")) {
         var config: ?[]const u8 = null;

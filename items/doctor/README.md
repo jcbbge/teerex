@@ -101,3 +101,20 @@ Source mapping: [original Phase 3 #8/C25–C28 and V02/V03/V08](../../docs/plann
 ## Linux and executable receipt update
 
 The current source executes the full doctor suite on a private Linux Rex server as well as macOS. The historical matrix above records earlier Mac-only source; it does not describe the current Linux gate. Client/server build mismatch is an explicit diagnostic flag, independent of advertised compatibility. Missing identity stays unknown. No new macOS-only probe is attempted on Linux; the existing fixed descriptor and binding queries are portable, while run's platform applicability is reported separately.
+
+## Configured-host health
+
+`teerex doctor --all [--config ~/.config/teerex/hosts.json] [--json]`
+checks each configured host independently. It reports the installed managed build
+against `<home>/rexconfig/<host_id>/teerex/build-pin.txt`, the selected Rex server
+version/API, `rexconfig/install --check`, and enabled Claude/Codex per-launch hook
+profiles plus the installed hook adapter. It does not inspect private transcripts
+or require global harness hooks; teerex injects these adapters at launch.
+
+Each failed check includes a suggested command; nothing is repaired automatically.
+An unreachable or invalid host produces one red host check and does not suppress
+other hosts. JSON emits `kind: fleet_doctor`, `ok`, and `hosts[].checks[]` with
+`check`, `ok`, `detail`, and `fix`. Exit 1 means at least one red check.
+A host may set an absolute `rexconfig` path to check a separate configuration
+checkout; the default is `<home>/rexconfig`. Pin-only drift appears once, under
+the build check. Configuration drift is reported separately.
