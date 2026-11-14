@@ -43,6 +43,19 @@ class ScratchTest(unittest.TestCase):
         return subprocess.run([BIN, "scratch", "hook"], env=self.env, input=json.dumps(dict(hook_event_name=kind, **fields)),
                               text=True, capture_output=True, timeout=15)
 
+    def test_done_clears_closed_work_flags_only_when_no_steps_open(self):
+        self.init()
+        self.cli("now", "First", "--waiting", "review", "--check", "10m")
+        self.cli("todo", "Second")
+        self.cli("flag", "stuck; tried; need")
+        self.cli("done")
+        data = self.data()
+        self.assertTrue(all(data[k] for k in ("waiting", "check", "blocked")))
+        self.cli("now", "Second")
+        self.cli("flag", "stuck; tried; need")
+        self.cli("done")
+        self.assertTrue(all(not self.data()[k] for k in ("waiting", "check", "blocked")))
+
     def test_seat_hook_stale_blocks_once_per_turn_and_records_second_stop(self):
         self.init()
         self.env["AGENT_SCRATCHPAD"] = str(self.path)

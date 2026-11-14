@@ -340,7 +340,7 @@ class ContractHelpersTest(unittest.TestCase):
             pad.write_text("# Worker\nWaiting: review\nCheck: 2099-01-01T00:00:00Z\n")
             self.assertEqual(self.ns["contract_snapshot"](state)["declared"], "waiting")
 
-    def test_zero_step_turn_after_ack_refuses_even_if_waiting_and_ambiguous_declarations_refuse(self):
+    def test_zero_step_turn_after_ack_refuses_but_finished_ignores_stale_flags(self):
         with tempfile.TemporaryDirectory() as directory:
             pad = Path(directory) / "pad.md"
             pad.write_text("# Worker\nWaiting: review\nCheck: 2099-01-01T00:00:00Z\n")
@@ -351,8 +351,10 @@ class ContractHelpersTest(unittest.TestCase):
             self.assertEqual(self.ns["contract_turn"](state)["declared"], "waiting")
             pad.write_text("# Worker\n## Done\n- [x] Finished\nBlocked: stuck; tried; need\n")
             state["contract_reminded"] = False
-            self.assertIsNone(self.ns["contract_snapshot"](state)["declared"])
-            self.assertEqual(self.ns["contract_turn"](state)["action"], "block")
+            self.assertEqual(self.ns["contract_snapshot"](state)["declared"], "done")
+            self.assertEqual(self.ns["contract_turn"](state)["action"], "allow")
+            pad.write_text("# Worker\n## Done\n- [x] Finished\nWaiting: review\nCheck: 2099-01-01T00:00:00Z\n")
+            self.assertEqual(self.ns["contract_turn"](state)["declared"], "done")
 
     def test_tell_deduplicates_and_records_contact(self):
         destination = dict(session_id="s", block_id="b")
@@ -3383,10 +3385,14 @@ Path('/work/network-harness').touch()
                 self.assertTrue(self.record(launch_id)["contract_turn_ended"])
                 start()
                 scratch("flag", "")
+                current_words = last_words
+                last_words = "Earlier unique report β"
                 reason = blocked(end())
+                last_words = current_words
                 self.assertEqual(reason, CONTRACT_REFUSAL + "; write your steps first")
                 settle(end(reminder=True))
-                wait_for(lambda: any("NOT DONE probe step" in text for text in messages()))
+                wait_for(lambda: any("Earlier message (turn end refused):\nEarlier unique report β" in text for text in messages()))
+                self.assertEqual(sum(text.count("Earlier unique report β") for text in messages()), 1)
                 start()
                 scratch("now", "Implement")
                 blocked(end())
@@ -3424,6 +3430,7 @@ Path('/work/network-harness').touch()
                 scratch("now", "Review", "--waiting", "maintainer", "--check", "20m")
                 settle(end())
                 wait_for(lambda: any("NOT DONE probe step 2/2: maintainer;" in text for text in messages()))
+                self.assertEqual(sum(text.count("Earlier unique report β") for text in messages()), 1)
                 dones = [text for text in messages() if "DONE probe: TASK" in text]
                 self.assertTrue(any(text.endswith(last_words) for text in dones))
                 self.assertTrue(any(text.endswith(last_words) for text in reports))

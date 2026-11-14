@@ -446,6 +446,8 @@ def scratch_main(argv=None):
                 elif data["now"]:
                     data["done"].insert(0, data["now"] + completion)
                     data["now"] = None
+                if o.operation == "done" and not data["now"] and not data["todo"]:
+                    data.update(waiting="", check="", blocked="")
                 scratch_write(path, data)
         return 0
     except (OSError, ValueError) as exc:

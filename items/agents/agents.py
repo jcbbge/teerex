@@ -726,7 +726,7 @@ def contract_snapshot(state):
     declarations = [name for name, holds in (("done", not data["now"] and not data["todo"] and bool(data["done"])),
                     ("blocked", bool(flag)), ("waiting", bool(data.get("waiting")) and check_at is not None and check_at > now())) if holds]
     return dict(steps_total=int(total), step_n=len(data["done"]) + bool(data["now"]), now=data["now"],
-                declared=declarations[0] if len(declarations) == 1 else None, check_at=check_at, flag=flag)
+                declared="done" if "done" in declarations else declarations[0] if len(declarations) == 1 else None, check_at=check_at, flag=flag)
 
 
 def contract_seat(state):
@@ -774,7 +774,7 @@ def contract_tell(root, launch_id, kind, line, to="starter", last_message=None, 
                 key = destination["session_id"] + "/" + destination["block_id"]
                 previous = reports.get(key)
                 expired = previous and previous.get("check_at") is not None and previous["at"] < previous["check_at"] <= sent_at
-                if previous and previous["answer"] == turn_report and not expired and kind != "done":
+                if previous and previous["answer"] == turn_report and not expired and kind != "done" and not last_message:
                     return
                 # Claim before input: an uncertain attempt must never be retried.
                 reports[key] = dict(answer=turn_report, line=line, at=sent_at,
@@ -2006,6 +2006,17 @@ def report_stop(root, launch_id, event_id, event, allow_transcript=True):
             s["last_hook"] = dict(kind=kind, state="working", at=now(), at_ns=event_at_ns, text="turn started")
         state = update(root, launch_id, started)
         return 0, receipt(state, "turn_started")
+    last = event.get("last_assistant_message", "") or ""
+    if allow_transcript and kind == "Stop" and not last:
+        try:
+            last = transcript_last_text(event.get("transcript_path"))
+        except (OSError, Refusal, ValueError):
+            last = "(last words unavailable: transcript could not be read)"
+    def retain_refused(s):
+        if kind in ("Stop", "ScratchCheck") and last:
+            messages = s.setdefault("refused_turn_messages", [])
+            if not any(message["event_id"] == event_id for message in messages):
+                messages.append(dict(event_id=event_id, text=last))
     check = None
     if kind != "StopFailure" and event.get("scratch_harness") in ("claude", "codex", "pi"):
         def checked(s):
@@ -2031,6 +2042,8 @@ def report_stop(root, launch_id, event_id, event, allow_transcript=True):
                 s["scratch_reminder_pending"] = True
         state = update(root, launch_id, checked)
         check = state["scratchpad_check"]
+        if check["action"] == "block":
+            state = update(root, launch_id, retain_refused)
         if check["action"] == "block" and event["scratch_harness"] == "codex":
             target = state["target"]
             code, packet = invoke(["send", "--socket", state["socket"], "--session", target["session_id"],
@@ -2044,12 +2057,6 @@ def report_stop(root, launch_id, event_id, event, allow_transcript=True):
             return 0, receipt(state, "scratchpad_blocked" if check["action"] == "block" else "scratchpad_checked", scratchpad_check=check)
     if kind == "ScratchCheck":
         return 0, receipt(load(root, launch_id), "scratchpad_not_checked", scratchpad_check=dict(status="not_checked", action="allow"))
-    last = event.get("last_assistant_message", "") or ""
-    if allow_transcript and kind == "Stop" and not last:
-        try:
-            last = transcript_last_text(event.get("transcript_path"))
-        except (OSError, Refusal, ValueError):
-            last = "(last words unavailable: transcript could not be read)"
     error = str(event.get("error") or event.get("error_details") or event.get("message") or "unknown error")
     details = (last or "(no last words supplied)") if kind == "Stop" else error[:600]
     state = load(root, launch_id)
@@ -2062,6 +2069,7 @@ def report_stop(root, launch_id, event_id, event, allow_transcript=True):
         # Direct stop callbacks also enforce declaration after the brief.
         state = update(root, launch_id, lambda s: s.update(contract_check=contract_turn(s)))
         if state["contract_check"]["action"] == "block":
+            state = update(root, launch_id, retain_refused)
             return 0, receipt(state, "scratchpad_blocked", scratchpad_check=state["contract_check"])
     if (state.get("contract") and contract_active(state) and kind == "Stop"
             and (state.get("contract_check") or {}).get("status") != "protocol_ack"):
@@ -2110,6 +2118,11 @@ def report_stop(root, launch_id, event_id, event, allow_transcript=True):
                         dict(outcome="uncertain", attempted_at=now(), delivery_rule=delivery_rule,
                              evidence="harness_report_not_process_death"), 64, "notification_already_attempted")
         update(root, launch_id, reporting)
+        # Claim retained words before delivery; uncertain input must never be retried.
+        earlier = []
+        def take_refused(s):
+            earlier.extend(message["text"] for message in s.pop("refused_turn_messages", []))
+        update(root, launch_id, take_refused)
         last_message = details if declared == "done" else None
         if declared == "blocked":
             # The supervisor may already have sent FLAG. Attach last words once per
@@ -2121,6 +2134,8 @@ def report_stop(root, launch_id, event_id, event, allow_transcript=True):
                     flag["last_message_attempted"] = now()
                     last_message = details
                     registry.save(current)
+        if earlier:
+            last_message = "\n\n".join("Earlier message (turn end refused):\n" + text for text in earlier) + ("\n\n" + last_message if last_message else "")
         turn_report = dict(outcome="done", step_n=c["step_n"], steps_total=c["steps_total"], reason=c["done_when"])
         if declared != "done":
             reason = c["flag"]["text"] if declared == "blocked" else waiting if declared == "waiting" else "ended its turn without declaring done, blocked or waiting"
