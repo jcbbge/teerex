@@ -159,7 +159,7 @@ def execute(host, command, *, tty=False):
 class ActionParser(argparse.ArgumentParser):
     def error(self, message):
         self.print_usage(sys.stderr)
-        self.exit(2, f"{self.prog}: error: {message}\nnext: {self.prog} --help\n")
+        self.exit(2, f"{self.prog}: error: {message}\n" + (f"next: {self.prog} --help\n" if (sys.stdin.isatty() and sys.stderr.isatty()) else ""))
 
 
 def main(argv=None):
@@ -190,7 +190,7 @@ def main(argv=None):
         return 0
     except (OSError, ValueError, UnicodeError) as exc:
         print(json.dumps({"schema_version": 1, "kind": "target_error", "error": str(exc), "retry": False}), file=sys.stderr)
-        print("next: Check the selected host and configuration file; run teerex targets resolve --help for the required flags.", file=sys.stderr)
+        if (sys.stdin.isatty() and sys.stderr.isatty()): print("next: Check the selected host and configuration file; run teerex targets resolve --help for the required flags.", file=sys.stderr)
         return 1
 
 

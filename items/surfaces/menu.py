@@ -13,7 +13,7 @@ class ActionParser(argparse.ArgumentParser):
     def error(self, message):
         self.print_usage(sys.stderr)
         operation = sys.argv[1] if sys.argv[1:2] and sys.argv[1] in ("agents", "hosts", "focus") else "focus"
-        self.exit(2, f"{self.prog}: error: {message}\nnext: {self.prog} {operation} --help\n")
+        self.exit(2, f"{self.prog}: error: {message}\n" + (f"next: {self.prog} {operation} --help\n" if (os.environ.get('TEEREX_INTERACTIVE') == '1' or (sys.stdin.isatty() and sys.stderr.isatty())) else ""))
 
 
 def read_config(path):
@@ -212,7 +212,7 @@ def main():
         result = dict(schema_version=1, kind="surface_palette_result", outcome="refused", failure_reason=str(e), registered_in_running_server=False)
         code = 1
     if code:
-        print("next: teerex surfaces palette " + o.operation + " --help", file=sys.stderr)
+        if (os.environ.get('TEEREX_INTERACTIVE') == '1' or (sys.stdin.isatty() and sys.stderr.isatty())): print("next: teerex surfaces palette " + o.operation + " --help", file=sys.stderr)
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return code
 

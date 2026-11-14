@@ -56,6 +56,9 @@ const usage =
 var active_command: []const u8 = "";
 
 fn nextAction(code: u8) void {
+    // Hints are for a person at a terminal. A hook, supervisor or agent tool
+    // inherits a pane it does not own; writing there paints the harness input row.
+    if (!std.posix.isatty(std.posix.STDIN_FILENO) or !std.posix.isatty(std.posix.STDERR_FILENO)) return;
     if (eq(active_command, "surfaces palette")) {
         // Argument errors already include the selected palette command's help.
         if (code != 2) std.debug.print("next: Inspect the selected configuration and action file before planning the palette installation again.\n", .{});

@@ -20,7 +20,7 @@ import time
 class ActionParser(argparse.ArgumentParser):
     def error(self, message):
         self.print_usage(sys.stderr)
-        self.exit(2, f"{self.prog}: error: {message}\nnext: {self.prog} --help\n")
+        self.exit(2, f"{self.prog}: error: {message}\n" + (f"next: {self.prog} --help\n" if (sys.stdin.isatty() and sys.stderr.isatty()) else ""))
 
 
 class ScratchError(ValueError):
@@ -441,7 +441,7 @@ def scratch_main(argv=None):
             action = "Use --check 10m or an ISO UTC time on the scratch now command."
         else:
             action = "teerex scratch " + o.operation + " --help"
-        print("next: " + action, file=sys.stderr)
+        if (sys.stdin.isatty() and sys.stderr.isatty()): print("next: " + action, file=sys.stderr)
         return 1
     except KeyboardInterrupt:
         return 130

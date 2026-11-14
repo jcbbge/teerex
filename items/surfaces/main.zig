@@ -231,6 +231,9 @@ fn paletteController(allocator: std.mem.Allocator, args: []const []const u8, scr
     try argv.appendSlice(allocator, args);
     var env = try std.process.getEnvMap(allocator);
     for ([_][]const u8{ "REX_SERVER", "REX_SESSION", "REX_BLOCK", "REX_CLIENT" }) |key| env.remove(key);
+    // The child's output is collected; it can only learn from us whether a person is at the terminal.
+    env.remove("TEEREX_INTERACTIVE");
+    if (std.posix.isatty(std.posix.STDIN_FILENO) and std.posix.isatty(std.posix.STDERR_FILENO)) try env.put("TEEREX_INTERACTIVE", "1");
     const signals = supervised.Signals.init();
     defer signals.deinit();
     var output: RawOutput = .{ .allocator = allocator };
@@ -330,7 +333,8 @@ fn publisherDeadline(done: *std.Thread.ResetEvent, milliseconds: u64) void {
     done.timedWait(milliseconds * std.time.ns_per_ms) catch {
         // Covers publication too, after the owned RPC's normal deadline/cleanup.
         // Never turn a watchdog exit into verified absence: the prepared file stays unknown.
-        std.debug.print("next: Inspect the saved completion file and selected pane before changing it again.\n", .{});
+        if (std.posix.isatty(std.posix.STDIN_FILENO) and std.posix.isatty(std.posix.STDERR_FILENO))
+            std.debug.print("next: Inspect the saved completion file and selected pane before changing it again.\n", .{});
         std.process.exit(124);
     };
 }

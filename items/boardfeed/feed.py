@@ -24,7 +24,7 @@ CHILDREN = []
 class ActionParser(argparse.ArgumentParser):
     def error(self, message):
         self.print_usage(sys.stderr)
-        self.exit(2, f"{self.prog}: error: {message}\nnext: {self.prog} --help\n")
+        self.exit(2, f"{self.prog}: error: {message}\n" + (f"next: {self.prog} --help\n" if (sys.stdin.isatty() and sys.stderr.isatty()) else ""))
 
 
 def tracked_output(command, timeout=None, text=False):
@@ -43,7 +43,7 @@ def tracked_output(command, timeout=None, text=False):
 
 def emit(host, kind, **fields):
     if fields.get('error'):
-        print('next: teerex doctor --all', file=sys.stderr)
+        if (sys.stdin.isatty() and sys.stderr.isatty()): print('next: teerex doctor --all', file=sys.stderr)
     with LOCK:
         print(json.dumps(dict(v=1, t=time.time_ns() // 1000000, host=host, kind=kind, **fields), separators=(',', ':')), flush=True)
 
@@ -724,7 +724,7 @@ def main(argv=None):
         try:open_held(args)
         except (OSError,ValueError,KeyError,EOFError,subprocess.SubprocessError):
             print('Held work unavailable',file=sys.stderr)
-            print('next: teerex doctor --all',file=sys.stderr)
+            if (sys.stdin.isatty() and sys.stderr.isatty()): print('next: teerex doctor --all',file=sys.stderr)
             raise SystemExit(1)
         return
     def stop(signum,frame):

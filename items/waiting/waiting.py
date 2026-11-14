@@ -56,7 +56,7 @@ print(json.dumps(rows))
 class ActionParser(argparse.ArgumentParser):
     def error(self, message):
         self.print_usage(sys.stderr)
-        self.exit(2, f"{self.prog}: error: {message}\nnext: {self.prog} --help\n")
+        self.exit(2, f"{self.prog}: error: {message}\n" + (f"next: {self.prog} --help\n" if (sys.stdin.isatty() and sys.stderr.isatty()) else ""))
 
 
 SCAN = r'''
@@ -282,7 +282,7 @@ def main(argv=None):
                 os.replace(temporary, state_path)
         print(json.dumps(result))
         if not complete:
-            print("next: teerex doctor --all", file=sys.stderr)
+            if (sys.stdin.isatty() and sys.stderr.isatty()): print("next: teerex doctor --all", file=sys.stderr)
         return 0 if complete else 1
 
 
@@ -291,5 +291,5 @@ if __name__ == '__main__':
         sys.exit(main())
     except (OSError, ValueError, KeyError, subprocess.TimeoutExpired) as exc:
         print(json.dumps(dict(kind='waiting_error', error=str(exc))), file=sys.stderr)
-        print("next: teerex doctor --all", file=sys.stderr)
+        if (sys.stdin.isatty() and sys.stderr.isatty()): print("next: teerex doctor --all", file=sys.stderr)
         sys.exit(1)

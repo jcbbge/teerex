@@ -29,7 +29,7 @@ HOST = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$")
 class ActionParser(argparse.ArgumentParser):
     def error(self, message):
         self.print_usage(sys.stderr)
-        self.exit(2, f"{self.prog}: error: {message}\nnext: {self.prog} --help\n")
+        self.exit(2, f"{self.prog}: error: {message}\n" + (f"next: {self.prog} --help\n" if (sys.stdin.isatty() and sys.stderr.isatty()) else ""))
 
 
 class Refused(Exception):
@@ -344,9 +344,9 @@ def socket_receipt(fields):
 
 def result(**fields):
     if fields.get("kind") == "ask_result" and fields.get("outcome") in ("cancelled", "refused_or_unknown", "delivered_history_failed"):
-        print("next: Confirm delivery with the target pane owner and inspect the saved decision before sending again.", file=sys.stderr)
+        if (sys.stdin.isatty() and sys.stderr.isatty()): print("next: Confirm delivery with the target pane owner and inspect the saved decision before sending again.", file=sys.stderr)
     elif fields.get("kind") == "boards_error":
-        print("next: teerex ask --help" if "ask" in sys.argv else "next: teerex boards --help", file=sys.stderr)
+        if (sys.stdin.isatty() and sys.stderr.isatty()): print("next: teerex ask --help" if "ask" in sys.argv else "next: teerex boards --help", file=sys.stderr)
     print(json.dumps(dict(schema_version=1, **fields), ensure_ascii=False), flush=True)
 
 

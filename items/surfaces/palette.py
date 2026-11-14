@@ -17,7 +17,7 @@ LIMIT = 262144
 class ActionParser(argparse.ArgumentParser):
     def error(self, message):
         self.print_usage(sys.stderr)
-        self.exit(2, f"{self.prog}: error: {message}\nnext: {self.prog} --help\n")
+        self.exit(2, f"{self.prog}: error: {message}\n" + (f"next: {self.prog} --help\n" if (os.environ.get('TEEREX_INTERACTIVE') == '1' or (sys.stdin.isatty() and sys.stderr.isatty())) else ""))
 
 
 def digest(data):
@@ -172,7 +172,7 @@ def main():
         result["outcome"] = "uncertain" if result["config_updated"] else "refused"
         code = 1
     if code:
-        print("next: Inspect the selected configuration and action file before planning the palette installation again.", file=sys.stderr)
+        if (os.environ.get('TEEREX_INTERACTIVE') == '1' or (sys.stdin.isatty() and sys.stderr.isatty())): print("next: Inspect the selected configuration and action file before planning the palette installation again.", file=sys.stderr)
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return code
 

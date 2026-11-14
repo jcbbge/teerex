@@ -26,7 +26,7 @@ import tempfile
 class ActionParser(argparse.ArgumentParser):
     def error(self, message):
         self.print_usage(sys.stderr)
-        self.exit(2, f"{self.prog}: error: {message}\nnext: {self.prog} --help\n")
+        self.exit(2, f"{self.prog}: error: {message}\n" + (f"next: {self.prog} --help\n" if (sys.stdin.isatty() and sys.stderr.isatty()) else ""))
 
 
 LIMIT = 262144
@@ -2488,7 +2488,7 @@ def main():
         if result is not None and o.operation != "supervise":
             print(json.dumps(result, ensure_ascii=False))
         if code:
-            print("next: " + refusal_next(o), file=sys.stderr)
+            if (sys.stdin.isatty() and sys.stderr.isatty()): print("next: " + refusal_next(o), file=sys.stderr)
         return code
     except (KeyboardInterrupt, Cancelled) as exc:
         sig = exc.args[0] if isinstance(exc, Cancelled) else signal.SIGINT
@@ -2496,7 +2496,7 @@ def main():
             supervisor_error(o, "last_supervisor_error", exc)
         else:
             print(json.dumps(dict(schema_version=1, kind="agents_result", outcome="cancelled_uncertain", retry_safe=False)))
-        print("next: " + refusal_next(o), file=sys.stderr)
+        if (sys.stdin.isatty() and sys.stderr.isatty()): print("next: " + refusal_next(o), file=sys.stderr)
         return 128 + sig
     except (Refusal, OSError, ValueError, KeyError, TypeError, RecursionError, subprocess.SubprocessError) as exc:
         result = dict(schema_version=1, kind="agents_result", outcome="refused_or_uncertain",
@@ -2505,7 +2505,7 @@ def main():
             supervisor_error(o, "last_supervisor_error", exc)
         else:
             print(json.dumps(result))
-        print("next: " + refusal_next(o, str(exc)), file=sys.stderr)
+        if (sys.stdin.isatty() and sys.stderr.isatty()): print("next: " + refusal_next(o, str(exc)), file=sys.stderr)
         return 1
 
 

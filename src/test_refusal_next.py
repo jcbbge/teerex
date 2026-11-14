@@ -12,6 +12,13 @@ BLOCK = 'block:22222222-2222-2222-2222-222222222222'
 
 
 class RefusalNextTest(unittest.TestCase):
+    def test_no_hint_without_a_terminal(self):
+        # Hooks and supervisors inherit agent panes; a hint there paints the harness input row.
+        p = subprocess.run([BIN, 'send', '--bogus'], env=self.env, stdin=subprocess.DEVNULL,
+                           capture_output=True, text=True, timeout=15)
+        self.assertNotEqual(p.returncode, 0)
+        self.assertNotIn('next: ', p.stderr)
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix='teerex-refusal-next-')
         self.addCleanup(self.temp.cleanup)
@@ -19,8 +26,31 @@ class RefusalNextTest(unittest.TestCase):
         self.env = dict(os.environ, HOME=str(self.root), REX_SESSION=SESSION, REX_BLOCK=BLOCK,
                         TEEREX_CALL_LOG_DIR=str(self.root / 'calls'))
 
+    def run_at_terminal(self, *args):
+        # Hints are for a person at a terminal: stdin and stderr are a pty here.
+        master, slave = os.openpty()
+        try:
+            p = subprocess.run([BIN, *map(str, args)], env=self.env, stdin=slave, stdout=subprocess.PIPE,
+                               stderr=slave, text=True, timeout=15)
+            os.close(slave); slave = None
+            chunks = []
+            while True:
+                try:
+                    chunk = os.read(master, 65536)
+                except OSError:
+                    break
+                if not chunk:
+                    break
+                chunks.append(chunk)
+            p.stderr = b''.join(chunks).decode(errors='replace').replace('\r\n', '\n')
+            return p
+        finally:
+            if slave is not None:
+                os.close(slave)
+            os.close(master)
+
     def refusal(self, *args, expected=None):
-        p = subprocess.run([BIN, *map(str, args)], env=self.env, capture_output=True, text=True, timeout=15)
+        p = self.run_at_terminal(*args)
         self.assertNotEqual(p.returncode, 0, p.stdout + p.stderr)
         lines = [line for line in p.stderr.splitlines() if line.startswith('next: ')]
         self.assertTrue(lines, p.stdout + p.stderr)

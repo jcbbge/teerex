@@ -11,7 +11,7 @@ import sys
 class ActionParser(argparse.ArgumentParser):
     def error(self, message):
         self.print_usage(sys.stderr)
-        self.exit(2, f"{self.prog}: error: {message}\nnext: {self.prog} --help\n")
+        self.exit(2, f"{self.prog}: error: {message}\n" + (f"next: {self.prog} --help\n" if (sys.stdin.isatty() and sys.stderr.isatty()) else ""))
 
 
 def run_command(argv):
@@ -111,5 +111,5 @@ def main(argv=None):
     for host in results:
         for check in host['checks']:
             if not check['ok']:
-                print("next: " + check['fix'], file=sys.stderr)
+                if (sys.stdin.isatty() and sys.stderr.isatty()): print("next: " + check['fix'], file=sys.stderr)
     return 0 if packet['ok'] else 1
