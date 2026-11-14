@@ -46,7 +46,9 @@ without a receipt fall back to the agents registry: starter, report-to and the
 pane's own supervisor can close them. A managed scratchpad viewer admits its
 starter and supervisor; its watcher can close only itself after its owner is gone.
 Human launches additionally record `human_launch:true` and `human_creator`
-(host, OS user, and SSH client host when present); a missing pane is never replaced with a fake address.
+(host, OS user, and SSH client host when present); named-host routes preserve
+that originating identity rather than replacing it with the destination's SSH
+login. A missing pane is never replaced with a fake address.
 For these receipts, close and rename also admit a human in the same tab, or
 that OS user on that host from a terminal with no pane identity. Managed-agent
 markers never acquire this human authority; seat protection still wins. Old

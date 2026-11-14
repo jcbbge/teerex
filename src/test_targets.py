@@ -474,7 +474,7 @@ class TargetsTest(unittest.TestCase):
     def test_route_preserves_host_qualified_caller(self):
         import socket
         self.host['teerex'] = str(self.root / 'caller')
-        Path(self.host['teerex']).write_text("#!/usr/bin/env python3\nimport json,os\nfrom pathlib import Path\nPath(" + repr(str(self.output)) + ").write_text(os.environ['TEEREX_CALLER_IDENTITY'])\n")
+        Path(self.host['teerex']).write_text("#!/usr/bin/env python3\nimport json,os\nfrom pathlib import Path\nPath(" + repr(str(self.output)) + ").write_text(json.dumps({key:os.environ.get(key) for key in ('TEEREX_CALLER_IDENTITY','TEEREX_CALLER_HUMAN')}))\n")
         Path(self.host['teerex']).chmod(0o700)
         self.save()
         ssh = self.root / 'ssh'
@@ -493,7 +493,21 @@ class TargetsTest(unittest.TestCase):
                 result = subprocess.run([str(BIN), '--config', str(self.config), '--host', 'hive', 'surfaces', 'inspect'],
                                         env=dict(env, PATH=str(self.root) + os.pathsep + os.environ['PATH']), capture_output=True, text=True, timeout=10)
                 self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertEqual(json.loads(self.output.read_text()), dict(actor, host=socket.gethostname()))
+                forwarded = json.loads(self.output.read_text())
+                self.assertEqual(json.loads(forwarded['TEEREX_CALLER_IDENTITY']), dict(actor, host=socket.gethostname()))
+                import pwd
+                human = json.loads(forwarded['TEEREX_CALLER_HUMAN'])
+                self.assertEqual(human['host'], socket.gethostname())
+                self.assertEqual(human['user'], pwd.getpwuid(os.getuid()).pw_name)
+
+    def test_forwarded_human_identity_is_validated(self):
+        import caller_identity
+        for value in ('null', '[]', '{}', '{"host":"mac","user":"operator","extra":"value"}',
+                      '{"host":"mac","user":3}'):
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, 'invalid_forwarded_human_identity'):
+                caller_identity.human_identity({'TEEREX_CALLER_HUMAN': value})
+        human = dict(host='source-mac', user='operator', ssh_client_host='192.0.2.8')
+        self.assertEqual(caller_identity.human_identity({'TEEREX_CALLER_HUMAN': json.dumps(human)}), human)
 
     def test_tty_on_local_transport_does_not_allocate_or_parse_program_options(self):
         result = self.call("targets", "exec", "--config", str(self.config), "--host", "hive", "--tty",

@@ -47,6 +47,7 @@ with out.open("a") as f:
     f.write(json.dumps({"event":"started", "pid":os.getpid(), "argv":args[:-1] if protocol else args,
                         "cwd":os.getcwd(), "stdin_tty":os.isatty(0),
                         "registry_present":Path(os.environ.get("AGENT_REGISTRY","/nonexistent")).exists(),
+                        "forwarded_caller":any(k in os.environ for k in ('TEEREX_CALLER_IDENTITY','TEEREX_CALLER_MANAGED','TEEREX_CALLER_HUMAN')),
                         "env":{k:v for k,v in os.environ.items() if k.startswith(("AGENT_", "LC_"))}}) + "\n"); f.flush()
 if protocol:
     with out.open("a") as f: f.write(json.dumps({"event":"protocol_argument","payload":protocol})+"\n")
@@ -3808,6 +3809,32 @@ await handlers.agent_settled({}, {sessionManager:{getBranch:()=>[]}});
         closed = control('close', human)
         self.assertEqual(closed.returncode, 0, closed.stdout + closed.stderr)
 
+    def test_routed_human_creator_closes_both_panes_and_bystanders_fail(self):
+        for key in list(self.env):
+            if key.startswith(('AGENT_', 'LC_AGENT_', 'REX_', 'LC_REX_', 'TEEREX_CALLER_')):
+                self.env.pop(key)
+        owner = dict(host='source-mac', user='operator', ssh_client_host='192.0.2.4')
+        actor = dict(host='source-mac', session_id=None, block_id=None)
+        self.env.update(TEEREX_CALLER_IDENTITY=json.dumps(actor), TEEREX_CALLER_HUMAN=json.dumps(owner),
+                        TEEREX_CALLER_MANAGED='0')
+        self.settings['profiles']['probe']['scratch_pane'] = True
+        self.config.write_text(json.dumps(self.settings))
+        launched, packet = self.run_cli('human', '--config', str(self.config), '--profile', 'probe', '--routed')
+        self.assertEqual(launched.returncode, 0, launched.stdout + launched.stderr)
+        self.assertEqual(packet['human_creator'], owner)
+        started = wait_for(lambda: next((v for v in events(self.worker_log) if v['event'] == 'started'), None))
+        self.assertFalse(started['forwarded_caller'])
+        panes = [packet['scratch_pane_receipt']['created']['block_id'], packet['target']['block_id']]
+        for pane in panes:
+            args = [BIN, 'surfaces', 'close', '--socket', str(self.socket), '--session', self.session, '--pane', pane]
+            for stranger in (dict(self.env, TEEREX_CALLER_HUMAN=json.dumps(dict(owner, user='bystander'))),
+                             dict(self.env, TEEREX_CALLER_HUMAN=json.dumps(dict(owner, host='other-mac'))),
+                             dict(self.env, AGENT_NAME='managed')):
+                refused = subprocess.run(args, env=stranger, capture_output=True, text=True, timeout=10)
+                self.assertNotEqual(refused.returncode, 0, refused.stdout + refused.stderr)
+            closed = subprocess.run(args, env=self.env, capture_output=True, text=True, timeout=10)
+            self.assertEqual(closed.returncode, 0, closed.stdout + closed.stderr)
+
     def test_human_remote_route_quotes_config_and_runs_once(self):
         ssh = self.work / "ssh"
         log = self.work / "ssh.json"
@@ -3827,7 +3854,10 @@ await handlers.agent_settled({}, {sessionManager:{getBranch:()=>[]}});
         self.assertIn("-tt", argv)
         self.assertEqual(argv[-2], "jrg@hive")
         self.assertIn("StrictHostKeyChecking=yes", argv)
-        self.assertEqual(shlex.split(argv[-1]), ["/remote/teerex", "--rex", "/remote/rex", "agents", "human", "--config", "/remote/config 'quoted'.json", "--profile", "probe", "--routed"])
+        routed = shlex.split(argv[-1])
+        self.assertEqual(routed[0], 'env')
+        self.assertTrue(any(v.startswith('TEEREX_CALLER_IDENTITY=') for v in routed))
+        self.assertEqual(routed[routed.index('/remote/teerex'):], ["/remote/teerex", "--rex", "/remote/rex", "agents", "human", "--config", "/remote/config 'quoted'.json", "--profile", "probe", "--routed"])
         self.assertEqual(list(self.registry.glob("agents-*.json")), [])
 
     def test_profiles_shell_and_refusals_leave_personal_settings_untouched(self):

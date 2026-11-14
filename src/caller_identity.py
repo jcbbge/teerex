@@ -29,6 +29,13 @@ def human_identity(environment=None):
     import pwd
     import socket
     env = os.environ if environment is None else environment
+    if env.get('TEEREX_CALLER_HUMAN'):
+        identity = json.loads(env['TEEREX_CALLER_HUMAN'])
+        if (not isinstance(identity, dict) or not {'host', 'user'} <= set(identity)
+                or set(identity) - {'host', 'user', 'ssh_client_host'}
+                or any(not isinstance(value, str) or not value for value in identity.values())):
+            raise ValueError('invalid_forwarded_human_identity')
+        return identity
     identity = dict(host=socket.gethostname(), user=pwd.getpwuid(os.getuid()).pw_name)
     client = (env.get('SSH_CONNECTION') or env.get('SSH_CLIENT') or '').split()
     if client:

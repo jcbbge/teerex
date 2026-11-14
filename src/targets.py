@@ -15,7 +15,7 @@ if "caller_identity" not in globals():
     _identity_spec = importlib.util.spec_from_file_location('teerex_caller_identity', Path(__file__).with_name('caller_identity.py'))
     _identity = importlib.util.module_from_spec(_identity_spec)
     _identity_spec.loader.exec_module(_identity)
-    caller_identity, managed_agent = _identity.caller_identity, _identity.managed_agent
+    caller_identity, managed_agent, human_identity = _identity.caller_identity, _identity.managed_agent, _identity.human_identity
 
 MAX_CONFIG = 1024 * 1024
 NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}\Z")
@@ -161,6 +161,8 @@ def execute(host, command, *, tty=False):
     import socket
     forwarded = {'TEEREX_CALLER_IDENTITY': json.dumps(dict(actor, host=actor.get('host') or socket.gethostname()), separators=(',', ':'))}
     forwarded['TEEREX_CALLER_MANAGED'] = '1' if managed_agent() else '0'
+    if not managed_agent():
+        forwarded['TEEREX_CALLER_HUMAN'] = json.dumps(human_identity(), separators=(',', ':'))
     if host["transport"] == "ssh":
         argv = ['env', *[key + '=' + value for key, value in forwarded.items()], *argv]
         # SSH's remote interface is a shell string; quote each literal argument exactly once.
