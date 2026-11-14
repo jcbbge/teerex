@@ -359,7 +359,7 @@ class State:
                         self.update_status(block,status)
                     except (OSError,ValueError,subprocess.SubprocessError):pass
                 record=records.get(block)
-                agent_reports=[r for r in self.reports.get(block,{}).values() if r.get('app') in ('teerex-agent',)]
+                agent_reports=[r for r in self.reports.get(block,{}).values() if (r.get('id') in ('teerex', 'teerex/tint') or r.get('app') == 'teerex-agent')]
                 matched=next((value for role in ('child','foreground')
                               for field in ('argv0','path')
                               for value in [(self.processes.get(block,{}).get(role) or {}).get(field)]
@@ -459,8 +459,8 @@ class State:
             for identifier in payload['ids']:reports.pop(identifier,None)
         elif 'state' in payload:reports[payload.get('id','')]=payload
         priority={'error':5,'blocked':4,'waiting':4,'working':3,'done':2,'idle':1}
-        agent_reports=[r for r in reports.values() if r.get('app') in ('teerex-agent',)]
-        managed=[r for r in agent_reports if r.get('app')=='teerex-agent']
+        agent_reports=[r for r in reports.values() if (r.get('id') in ('teerex', 'teerex/tint') or r.get('app') == 'teerex-agent')]
+        managed=[r for r in agent_reports if (r.get('id') in ('teerex', 'teerex/tint') or r.get('app') == 'teerex-agent')]
         record=managed[-1] if managed else agent_reports[-1] if agent_reports else max(reports.values(),key=lambda r:priority.get(r.get('state'),0),default={})
         state=record.get('state')
         if state in ('working','waiting','blocked','error','idle','done'):self.status[block]=state

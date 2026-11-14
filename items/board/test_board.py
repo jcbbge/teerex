@@ -636,7 +636,7 @@ class BoardTest(unittest.TestCase):
                 print(json.dumps([dict(block_id=b) for b in ([{kept!r},{gone!r}] if first else [{kept!r}])])); sys.exit()
             block=a[a.index('--block')+1]
             if block=={gone!r}: sys.exit(1)
-            if 'program_status' in a: print(json.dumps(dict(records=[dict(app='teerex-agent',state='working')]))); sys.exit()
+            if 'program_status' in a: print(json.dumps(dict(records=[dict(id='teerex/tint',app='codex',state='working')]))); sys.exit()
             print(json.dumps(dict()))
         '''))
         fake.chmod(0o755)

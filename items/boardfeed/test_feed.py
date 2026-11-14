@@ -185,6 +185,24 @@ class FeedTests(unittest.TestCase):
             self.assertEqual(len(agents),3);self.assertEqual(agents[0]['total'],3);self.assertEqual(agents[-1]['state'],'gone')
             self.assertIn('message delivered',out.getvalue());self.assertNotIn('SECRET',out.getvalue());self.assertNotIn('DO NOT PRINT',out.getvalue())
 
+    def test_supervisor_status_ids_and_legacy_classify_panes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)
+            a=SimpleNamespace(host='fixture',rex='/not-found',socket=str(root/'none'))
+            for field in ('agents_registry','jobs_registry','scratch','calls'):
+                setattr(a,field,root/field);getattr(a,field).mkdir()
+            state=feed.State(a);state.refresh_inventory=lambda:True
+            block='block:worker'
+            state.live={block:dict(session='session:fixture',label='worker')}
+            for identifier,app in [('teerex','codex'),('teerex/tint','claude'),('legacy','teerex-agent')]:
+                with self.subTest(identifier=identifier):
+                    state.update_status(block,dict(records=[dict(id=identifier,app=app,state='working'),dict(id='other',app='other',state='error')]))
+                    with mock.patch.object(feed,'emit'):state.scan()
+                    self.assertEqual(state.rows[block]['state'],'working')
+            state.update_status(block,dict(records=[dict(id='other',app='codex',state='working')]))
+            with mock.patch.object(feed,'emit'):state.scan()
+            self.assertNotIn(block,state.rows)
+
     def test_decision_projection_folds_resolved_cards_without_push(self):
         card=dict(id='open',title='Choice',ask='Choose?',context='Context',options=[],recommend='Wait')
         records=[dict(kind='decision',at=1,body=dict(card,id='closed')),dict(kind='resolution',at=2,body=dict(id='closed')),dict(kind='decision',at=3,body=card)]

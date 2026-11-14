@@ -62,7 +62,7 @@ for session in call('api','call','session.list','{}').get('sessions',[]):
             # A pane closed mid-read is absent; the bracketing reads mark it in flux.
             if block in blocks():raise
             continue
-        managed=[r for r in reports if r.get('app')=='teerex-agent']
+        managed=[r for r in reports if (r.get('id') in ('teerex', 'teerex/tint') or r.get('app') == 'teerex-agent')]
         matched=any(canonical((process.get(role) or {}).get(field)) in executables
                     for role in ('child','foreground') for field in ('argv0','path'))
         if block not in launches and not managed and not matched:continue
