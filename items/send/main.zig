@@ -115,13 +115,15 @@ const Collector = struct {
                     self.paste_attempted = true;
                 } else if (std.mem.eql(u8, f.stage orelse "", "enter") and self.paste_acknowledged and !self.enter_attempted) {
                     self.enter_attempted = true;
+                    // The turn cannot start before Enter; stamp it here so a turn that ends
+                    // before the Enter acknowledgement still orders after this input.
+                    self.input_at_ns = std.time.nanoTimestamp();
                 } else return error.InvalidSendFrame;
             } else if (std.mem.eql(u8, f.event, "ack")) {
                 if (std.mem.eql(u8, f.stage orelse "", "paste") and self.paste_attempted and !self.paste_acknowledged) {
                     self.paste_acknowledged = true;
                 } else if (std.mem.eql(u8, f.stage orelse "", "enter") and self.enter_attempted and !self.enter_acknowledged) {
                     self.enter_acknowledged = true;
-                    self.input_at_ns = std.time.nanoTimestamp();
                 } else return error.InvalidSendFrame;
             } else if (std.mem.eql(u8, f.event, "warning") and self.enter_acknowledged and self.draft_warning == null) {
                 self.draft_warning = f.reason orelse return error.InvalidSendFrame;
