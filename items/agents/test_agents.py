@@ -3,6 +3,7 @@
 TEEREX_BIN must dispatch agents/spawn/jobs/send. REX_BIN selects the fixture's exact executable.
 """
 import errno
+import types
 import fcntl
 from concurrent.futures import ThreadPoolExecutor
 import json
@@ -18,6 +19,7 @@ import tempfile
 import time
 import threading
 import unittest
+from unittest.mock import patch
 
 BIN = str(Path(os.environ.get("TEEREX_BIN", "zig-out/bin/teerex")).resolve())
 REX = os.environ.get("REX_BIN")
@@ -725,6 +727,46 @@ class AgentsTest(unittest.TestCase):
         self.assertGreater(result["draft"]["waited_ms"], 10000)
         self.assertTrue(result["draft"]["restore_verified"])
         self.assertNotIn(text, process.stdout + process.stderr)
+
+    def test_launch_phase_measurement(self):
+        """Measure the real launch path without adding production timing machinery."""
+        agents = types.ModuleType("measured_agents")
+        base = Path(__file__).resolve().parents[1]
+        sources = [base / "scratch/scratch.py", base.parent / "src/scoped_channel.py",
+                   base / "agents/input_events.py", base / "agents/agents.py"]
+        agents.__dict__.update(SCRATCH_LIBRARY=True, __file__=str(sources[-1]))
+        for source in sources:
+            exec(compile(source.read_text(), str(source), "exec"), agents.__dict__)
+        agents.RUNTIME = BIN
+        options = agents.parser().parse_args(["launch", "--config", str(self.config), "--profile", "probe",
+                                             "--brief-file", str(self.brief), "--ack-timeout-ms", "10000"])
+        spans, active = [], {}
+        origin = time.monotonic()
+        def profile(frame, event, unused):
+            if frame.f_code.co_filename != agents.__file__:
+                return
+            name = frame.f_code.co_name
+            if name not in ("__enter__", "__exit__", "invoke", "prune_records", "scratch_init", "publish_fleet", "deliver"):
+                return
+            if event == "call":
+                label = name
+                if name in ("__enter__", "__exit__"):
+                    label += ":" + frame.f_locals["self"].lock_name
+                elif name == "invoke":
+                    label += ":" + " ".join(frame.f_locals["arguments"][:2])
+                active[id(frame)] = (label, time.monotonic() - origin)
+            elif event == "return" and id(frame) in active:
+                label, start = active.pop(id(frame))
+                spans.append(dict(phase=label, start_s=round(start, 4), end_s=round(time.monotonic() - origin, 4)))
+        with patch.dict(os.environ, self.env):
+            sys.setprofile(profile)
+            try:
+                code, receipt = agents.launch(options)
+            finally:
+                sys.setprofile(None)
+        print("LAUNCH_PHASES " + json.dumps(dict(wall_s=round(time.monotonic() - origin, 4), spans=spans)), flush=True)
+        self.assertEqual(code, 0, receipt)
+        self.assertEqual(receipt["outcome"], "brief_submitted")
 
     def test_four_concurrent_launches_are_all_tracked_and_delivered(self):
         with ThreadPoolExecutor(max_workers=4) as pool:
@@ -2725,7 +2767,7 @@ Path('/work/network-harness').touch()
             stop("progress")
             wait_for(lambda: self.program_state(block) == "idle")
             # An input event can reach bookkeeping after its turn already stopped.
-            import importlib.util
+            import types
             spec = importlib.util.spec_from_file_location("input_events", Path(__file__).with_name("input_events.py"))
             inputs = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(inputs)
