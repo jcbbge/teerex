@@ -30,6 +30,9 @@ class ActionParser(argparse.ArgumentParser):
 
 
 LIMIT = 262144
+# Set in a process whose stderr is the visible agent terminal (supervisor, remote exec):
+# a client's diagnostics are never painted into the harness's input line.
+SHARED_TERMINAL = False
 RUNTIME = sys.argv[1] if __name__ == "__main__" else None
 
 
@@ -596,7 +599,7 @@ def invoke(arguments, timeout=10, client_path=None, rex_executable=None, input_b
         require(len(raw) <= LIMIT, "child_receipt_too_large")
         err.seek(0)
         diagnostics = err.read(4096)
-        if diagnostics:
+        if diagnostics and not SHARED_TERMINAL:
             sys.stderr.buffer.write(diagnostics)
             sys.stderr.buffer.flush()
     try:
@@ -1084,6 +1087,8 @@ def program_status(state, status, detail, starting=False):
 
 
 def remote_exec(o):
+    global SHARED_TERMINAL
+    SHARED_TERMINAL = True
     # Trusted operator argv, not a channel method. All SSH serialization belongs to targets exec.
     require(len(o.payload) <= 98304, "compute_payload_too_large")
     payload = json.loads(base64.b64decode(o.payload, validate=True))
@@ -2489,6 +2494,8 @@ def supervise(o):
 
 def supervise_child(o):
     # This command is launched ONLY as the actual retained visible Rex terminal program.
+    global SHARED_TERMINAL
+    SHARED_TERMINAL = True
     os.environ['AGENT_REGISTRY'] = o.registry
     state = load(o.registry, o.launch_id)
     sid, bid = os.environ.get("REX_SESSION"), os.environ.get("REX_BLOCK")
@@ -2599,6 +2606,7 @@ def supervise_child(o):
                         latest = load(o.registry, o.launch_id)
                         if not latest["brief_attempted"]:
                             raise
+                        supervisor_error(o, "last_brief_delivery_error", exc)
                     except Exception as exc:
                         supervisor_error(o, "last_brief_delivery_error", exc)
                 if broker is not None and broker.closed and not channel_closed_reported:

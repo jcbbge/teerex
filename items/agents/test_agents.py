@@ -250,6 +250,27 @@ class ContractHelpersTest(unittest.TestCase):
         exec(compile((base / "agents/input_events.py").read_text(), "input_events.py", "exec"), self.ns)
         exec(compile((base / "agents/agents.py").read_text(), "agents.py", "exec"), self.ns)
 
+    def test_shared_terminal_never_receives_client_diagnostics(self):
+        import io
+        with resources.temporary_directory(prefix="shared-terminal-") as folder:
+            client = Path(folder) / "client"
+            client.write_text("#!/bin/sh\nprintf 'send refused: your registered name is w; use --from w\\n' >&2\n"
+                              "printf '{\"outcome\":\"refused\"}\\n'\nexit 1\n")
+            client.chmod(0o700)
+            self.ns["RUNTIME"] = str(client)
+            for shared, expected in ((True, b""), (False, b"send refused: your registered name is w; use --from w\n")):
+                self.ns["SHARED_TERMINAL"] = shared
+                captured = io.BytesIO()
+                original, sys.stderr = sys.stderr, io.TextIOWrapper(captured)
+                try:
+                    code, packet = self.ns["invoke"](["status"])
+                finally:
+                    sys.stderr.flush()
+                    sys.stderr.detach()
+                    sys.stderr = original
+                self.assertEqual((code, packet), (1, {"outcome": "refused"}))
+                self.assertEqual(captured.getvalue(), expected)
+
     def test_forget_job_reads_metadata_without_observing_unrelated_jobs(self):
         with resources.temporary_directory(prefix="forget-job-") as folder:
             root = Path(folder)
@@ -1564,6 +1585,29 @@ with ThreadPoolExecutor() as pool:
 
     def test_seat_started_pi_worker_gets_brief(self):
         self.brief_case("pi", False)
+
+    def test_refused_brief_leaves_worker_terminal_byte_identical(self):
+        # Force a genuine refusal on the supervisor's real path: the starter pane is registered
+        # under a host spelling the launch does not share, so the brief falls back to the
+        # launcher label, which another registered agent on this server holds.
+        address = self.register_starter("lead")
+        path = self.registry / ("agents-" + "f" * 32 + ".json")
+        record = json.loads(path.read_text())
+        record["target"] = dict(address, host="elsewhere")
+        path.write_text(json.dumps(record))
+        other = self.registry / ("agents-" + "e" * 32 + ".json")
+        other.write_text(json.dumps(dict(schema_version=1, launch_id="e" * 32, name="teerex-launcher", human=False,
+                                         target=dict(address, block_id="block:" + "0" * 26))))
+        other.chmod(0o600)
+        p, packet = self.launch(ack_timeout=10000)
+        state = wait_for(lambda: (lambda s: s if s["phase"] != "brief_attempt_uncertain" else None)(self.record(packet["launch_id"])))
+        self.assertEqual(state["phase"], "brief_uncertain")
+        self.assertEqual(state["brief_receipt"]["outcome"], "refused", json.dumps(state["brief_receipt"]))
+        self.assertFalse(state["brief_receipt"]["paste"]["attempted"])
+        block = state["target"]["block_id"]
+        time.sleep(.5)  # Any painted diagnostic would have reached the screen by now.
+        self.assertEqual(self.pane_text(block), "")
+        self.assertEqual([v for v in events(self.worker_log) if v["event"] == "input"], [])
 
     def test_timeout_never_sends_before_ack_and_supervisor_continues(self):
         p, packet = self.launch("noack", ack_timeout=250)
