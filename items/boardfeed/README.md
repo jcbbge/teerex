@@ -81,3 +81,5 @@ Example additions to an existing hive entry (retain its transport/path fields):
   "held_open": ["/home/jrg/.local/bin/rv", "show", "{id}"]
 }
 ```
+
+Agent rows expose starter display name, contract step_n/step_total, last_contact_at (milliseconds) and stalled. Older launches use scratchpad steps, starter metadata and the last hook contact; absent contact is zero.

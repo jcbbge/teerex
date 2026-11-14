@@ -185,6 +185,35 @@ class FeedTests(unittest.TestCase):
             self.assertEqual(len(agents),3);self.assertEqual(agents[0]['total'],3);self.assertEqual(agents[-1]['state'],'gone')
             self.assertIn('message delivered',out.getvalue());self.assertNotIn('SECRET',out.getvalue());self.assertNotIn('DO NOT PRINT',out.getvalue())
 
+    def test_contract_and_legacy_worker_rows(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)
+            a=SimpleNamespace(host='fixture',rex='/not-found',socket=str(root/'none'))
+            for field in ('agents_registry','jobs_registry','scratch','calls'):
+                setattr(a,field,root/field);getattr(a,field).mkdir()
+            session='session:test';block='block:worker';parent='block:123456789'
+            (a.scratch/session).mkdir()
+            (a.scratch/session/(block+'.md')).write_text('## Now\n- Build\n## To-do\n- Test\n## Done\n- Read\n')
+            address=dict(session_id=session,block_id=parent)
+            record=dict(name='worker',target=dict(session_id=session,block_id=block),starter=address,last_hook=dict(at=123))
+            path=a.agents_registry/'worker.json'
+            path.write_text(json.dumps(record))
+            state=feed.State(a);state.refresh_inventory=lambda:True
+            state.live={block:dict(session=session,label='worker'),parent:dict(session=session,label='parent pane')}
+            with mock.patch.object(feed,'emit'):
+                state.scan()
+                row=state.rows[block]
+                self.assertEqual((row['starter'],row['step_n'],row['step_total'],row['last_contact_at'],row['stalled']),('parent pane',2,3,123,False))
+                (a.agents_registry/'parent.json').write_text(json.dumps(dict(name='starter agent',target=address)))
+                record['contract']=dict(starter=address,step_n=4,steps_total=7,last_contact_at=456,stalled=True)
+                path.write_text(json.dumps(record));state.scan()
+                row=state.rows[block]
+                self.assertEqual((row['starter'],row['step_n'],row['step_total'],row['last_contact_at'],row['stalled']),('starter agent',4,7,456,True))
+                (a.agents_registry/'parent.json').unlink();state.live.pop(parent);state.scan()
+                self.assertEqual(state.rows[block]['starter'],'12345678')
+                record['contract']['starter']=None;path.write_text(json.dumps(record));state.scan()
+                self.assertEqual(state.rows[block]['starter'],'')
+
     def test_profile_process_changes_and_unclassified_rescan(self):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp);profiles=root/'profiles.json'

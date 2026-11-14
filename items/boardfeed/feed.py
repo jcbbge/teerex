@@ -319,7 +319,7 @@ class State:
                             if not isinstance(record,dict):continue
                             target=record.get('target') or {}
                             block=target.get('block_id') or record.get('block_id')
-                            if block not in self.live:continue
+                            if not block:continue
                             # Prefer named managed launches; duplicates can never add rows.
                             if block not in records:records[block]=dict(record,_managed=registry==self.a.agents_registry)
                     except (OSError,ValueError,UnicodeError,TypeError):continue
@@ -353,11 +353,21 @@ class State:
                             sections[section].append(line[6:] if line.startswith(('- [ ] ','- [x] ')) else line[2:])
                 except (OSError,ValueError,UnicodeError):pass
                 hook=record.get('last_hook') or {}
+                contract=record.get('contract') or {}
+                starter=contract.get('starter',record.get('starter')) or {}
+                starter_block=starter.get('block_id','')
+                starter_session=starter.get('session_id')
+                starter_record=records.get(starter_block,{})
+                starter_pane=self.live.get(starter_block,{})
+                if (starter_record.get('target') or {}).get('session_id')!=starter_session:starter_record={}
+                if starter_pane.get('session')!=starter_session:starter_pane={}
+                starter_name=starter_record.get('name') or starter_pane.get('label') or starter_block.split(':')[-1][:8]
                 if not record.get('_managed') and not agent_reports:
                     name=pane.get('label') or os.path.basename(matched)
                 else:
                     name=record.get('name') or pane.get('label') or (agent_reports[0].get('app') if agent_reports else None) or 'agent'
                 row=dict(id=block,name=name,session=session,block=block,state=self.status.get(block,'unknown'),placement=pane.get('placement','placed'),now=next(iter(sections['Now']),None),done=len(sections['Done']),total=sum(map(len,sections.values())),question=self.questions.get(block),since=hook.get('at') or record.get('created_at') or record.get('registered_at_unix_ms') or 0,cpu=None,rss=None)
+                row.update(starter=starter_name,step_n=contract.get('step_n',len(sections['Done'])+bool(sections['Now'])),step_total=contract.get('steps_total',row['total']),last_contact_at=contract.get('last_contact_at',hook.get('at') or 0),stalled=contract.get('stalled',False))
                 rows[block]=row
             for block,row in rows.items():
                 if self.rows.get(block)!=row:emit(self.a.host,'agent',**row)

@@ -145,6 +145,21 @@ class BoardTest(unittest.TestCase):
         p.until(lambda: b'Which sound' in p.output)
         p.settle()
         return p
+    def test_contract_stalled_row_contact_and_width(self):
+        path=self.root/'contract.jsonl'
+        event=dict(v=1,t=200000,host='hive',kind='agent',id='worker',name='worker',state='working',now='Build',done=1,total=3,starter='starter界'*12,step_n=2,step_total=3,last_contact_at=80000,since=1,stalled=True)
+        path.write_text(json.dumps(event)+'\n')
+        for width in (40,60,120):
+            with self.subTest(width=width):
+                p=Pane(self.root,width=width,fixture=path);self.addCleanup(p.close)
+                p.until(lambda:b'stalled:' in p.output);p.settle()
+                self.assertIn('2/3',p.view());self.assertIn('starter',p.view())
+                self.assertIn('2m',next(line for line in p.view().splitlines() if 'worker' in line))
+                self.assertEqual(screen(p.output,width)[1],0)
+                p.key(b'\x1b]10;rgb:ffff/ffff/ffff\x1b\\\x1b]11;rgb:0000/0000/0000\x1b\\\x1b]4;1;rgb:ffff/aaaa/aaaa\x1b\\')
+                self.assertRegex(p.output,rb'\x1b\[31m[^\x1b]*worker')
+                self.assertRegex(p.output,rb'\x1b\[31m[^\x1b]*stalled:')
+
     def test_held_section_order_count_broken_colour_and_no_attention(self):
         now=200000000
         rows=[dict(id='new',text='ship? newer',since=now-3600000,broken=False),dict(id='old',text='ship? older',since=now-51*3600000,broken=True)]
