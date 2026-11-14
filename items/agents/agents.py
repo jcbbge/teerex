@@ -1452,6 +1452,11 @@ def validate_hook_event(event, allow_transcript=True):
 def delivered_input(root, launch_id, event):
     def started(s):
         s["last_input_at_ns"] = event["at_ns"]
+        c = s.get("contract")
+        pending = (c or {}).get("awaiting_starter")
+        if pending and event["at_ns"] >= pending["at"] * 1000000:
+            c.update(awaiting_starter=None, starter_lapses=0)
+            c.pop("starter_reminded_at", None)
         previous = s.get("last_hook") or {}
         if event["at_ns"] <= previous.get("at_ns", previous.get("at", 0) * 1000000):
             return
@@ -1657,6 +1662,26 @@ def contract_lapse(root, launch_id):
         update(root, launch_id, lapsed)
 
 
+def contract_starter(root, launch_id):
+    state = load(root, launch_id)
+    c = state.get("contract") or {}
+    pending = c.get("awaiting_starter")
+    if not pending:
+        return
+    timestamp = now()
+    if timestamp - max(pending["at"], c.get("starter_reminded_at", 0)) <= c["interval_s"] * 1000:
+        return
+    lapses = c["starter_lapses"] + 1
+    line = f"UNANSWERED {state['name']} {pending['kind']} from {(timestamp - pending['at']) // 60000} min ago: accept it or send it back"
+    def reminded(s):
+        if s["contract"].get("awaiting_starter") == pending:
+            s["contract"].update(starter_lapses=lapses, starter_reminded_at=timestamp)
+    update(root, launch_id, reminded)
+    contract_tell(root, launch_id, "unanswered", line)
+    if lapses == 2:
+        contract_tell(root, launch_id, "unanswered", line, to="seat")
+
+
 def supervise(o):
     state = None
     try:
@@ -1753,6 +1778,7 @@ def supervise_child(o):
         channel_closed_reported = False
         previous_steps = (None, [])
         while True:
+
             try:
                 if child.poll() is not None:
                     break
@@ -1772,6 +1798,7 @@ def supervise_child(o):
                     delivered_input(o.registry, o.launch_id, incoming)
                     last_input_ns = incoming["at_ns"]
                 previous_steps = contract_steps(o.registry, o.launch_id, previous_steps)
+                contract_starter(o.registry, o.launch_id)
                 contract_lapse(o.registry, o.launch_id)
                 live = load(o.registry, o.launch_id)
                 current = live.get("last_hook")
@@ -1806,7 +1833,11 @@ def supervise_child(o):
             broker.close()
             update(o.registry, o.launch_id, lambda s: s.update(channel_status="revoked"))
         if term is not None:
-            update(o.registry, o.launch_id, lambda s: s.update(immediate_child_term=term, immediate_child_ended_at=now()))
+            def ended(s):
+                s.update(immediate_child_term=term, immediate_child_ended_at=now())
+                if s.get("contract"):
+                    s["contract"].update(awaiting_starter=None, starter_lapses=0)
+            update(o.registry, o.launch_id, ended)
         program_status(state, "done" if term == {"Exited": 0} else "error",
                        "immediate child terminated; descendants not verified" if term is not None else
                        "supervision failed; immediate child termination unknown")

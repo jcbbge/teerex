@@ -345,9 +345,6 @@ class ContractHelpersTest(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIsNone(state["contract"]["awaiting_starter"])
 
-
-
-
     def test_seat_lookup_is_limited_to_registered_host_and_server(self):
         state = dict(store="/tmp/boards", client_path="/bin", rex_executable="/bin/rex",
                      socket="/tmp/private.sock", target=dict(host="worker-host"))
@@ -361,6 +358,14 @@ class ContractHelpersTest(unittest.TestCase):
         with self.assertRaises(self.ns["Refusal"]):
             self.ns["contract_seat"](state)
 
+    def test_input_older_than_report_does_not_clear_pending_answer(self):
+        state = dict(contract=dict(awaiting_starter=dict(kind="flag", at=10), starter_lapses=1))
+        self.ns["update"] = lambda root, launch, change: change(state)
+        self.ns["delivered_input"]("root", "id", dict(at_ns=9_000_000))
+        self.assertIsNotNone(state["contract"]["awaiting_starter"])
+        self.ns["delivered_input"]("root", "id", dict(at_ns=11_000_000))
+        self.assertIsNone(state["contract"]["awaiting_starter"])
+        self.assertEqual(state["contract"]["starter_lapses"], 0)
 
     def test_failed_lapse_delivery_still_starts_a_fresh_window(self):
         state = dict(name="worker", contract=dict(declared=None, last_contact_at=0,
@@ -1997,10 +2002,8 @@ Path('/work/network-harness').touch()
             "## To-do\n" + "".join("- [ ] " + text + "\n" for text in todo) +
             "## Done\n" + "".join("- [x] " + text + "\n" for text in done))
 
-
     def starter_messages(self):
         return [v["payload"] for v in events(self.starter_log) if v["event"] == "input"]
-
 
     def test_contract_steps_and_flag_are_delivered_once(self):
         p, launched = self.launch(contract=True)
@@ -2020,7 +2023,6 @@ Path('/work/network-harness').touch()
                                 "--event-file", "-", input=json.dumps(dict(hook_event_name="Stop", last_assistant_message="blocked")))
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
         self.assertEqual(sum("FLAG probe step 2/2:" in text for text in self.starter_messages()), 1)
-
 
     def contract_seat_fixture(self):
         store = self.work / "boards"
@@ -2043,7 +2045,6 @@ Path('/work/network-harness').touch()
             return json.loads(p.stdout)["state"]["seats"][0]["records"]
         return records, seat_log
 
-
     def test_contract_lapse_wakes_worker_and_second_lapse_reaches_seat(self):
         seat_records, seat_log = self.contract_seat_fixture()
         p, launched = self.launch(contract=True)
@@ -2063,7 +2064,6 @@ Path('/work/network-harness').touch()
         wait_for(lambda: not self.record(launch_id)["contract"]["stalled"])
         self.assertEqual(self.record(launch_id)["contract"]["lapses"], 0)
 
-
     def test_contract_expired_wait_check_wakes_before_interval(self):
         import datetime
         self.settings["profiles"]["probe"]["contract_interval_s"] = 60
@@ -2076,6 +2076,40 @@ Path('/work/network-harness').touch()
         time.sleep(.3)
         self.assertEqual(sum("LAPSE probe" in text for text in self.starter_messages()), 1)
 
+    def test_contract_unanswered_done_escalates_and_acknowledged_input_clears(self):
+        seat_records, seat_log = self.contract_seat_fixture()
+        p, launched = self.launch(contract=True)
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        launch_id = launched["launch_id"]
+        state = self.record(launch_id)
+        self.scratch_contract(state, done=["Finished"])
+        event = json.dumps(dict(hook_event_name="Stop", last_assistant_message="done yes"))
+        p, packet = self.run_cli("stop", "--registry", str(self.registry), "--launch-id", launch_id,
+                                "--event-file", "-", input=event)
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        wait_for(lambda: (self.record(launch_id)["contract"].get("awaiting_starter") or {}).get("kind") == "done")
+        wait_for(lambda: any("UNANSWERED probe done" in r["body"] for r in seat_records()), timeout=12)
+        self.assertEqual(sum("UNANSWERED probe done" in text for text in self.starter_messages()), 2)
+        p = subprocess.run([BIN, "send", "--socket", str(self.socket), "--session", self.session,
+                            "--block", state["target"]["block_id"], "--from", "starter", "--message-file", "-"],
+                           input="accepted", env=self.env, capture_output=True, text=True)
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        wait_for(lambda: self.record(launch_id)["contract"]["awaiting_starter"] is None)
+        self.assertEqual(self.record(launch_id)["contract"]["starter_lapses"], 0)
+        self.assertFalse([v for v in events(seat_log) if v["event"] == "input"])
+
+    def test_contract_flag_awaits_answer_and_child_exit_ends_it(self):
+        self.settings["profiles"]["probe"]["contract_interval_s"] = 2
+        p, launched = self.launch(contract=True)
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        launch_id = launched["launch_id"]
+        state = self.record(launch_id)
+        self.scratch_contract(state, "Work", blocked="cannot proceed; checked inputs; need source")
+        wait_for(lambda: (self.record(launch_id)["contract"].get("awaiting_starter") or {}).get("kind") == "flag")
+        wait_for(lambda: any("UNANSWERED probe flag" in text for text in self.starter_messages()))
+        os.kill(events(self.worker_log)[0]["pid"], signal.SIGTERM)
+        wait_for(lambda: self.record(launch_id)["immediate_child_term"] is not None)
+        self.assertIsNone(self.record(launch_id)["contract"]["awaiting_starter"])
 
     def test_scratch_waiting_blocks_with_text_and_clears_for_all_harnesses(self):
         for harness in ("claude", "codex", "pi"):
