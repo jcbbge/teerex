@@ -929,9 +929,17 @@ class RexBoardsTest(unittest.TestCase):
         old, new = pane(), pane()
         command = [BIN, '--rex', self.rex]
         common = ['--store', str(store), '--host', 'fixture', '--socket', str(self.socket)]
-        def register(target):
-            return json.loads(subprocess.check_output(command + ['seat', 'register', *common, '--session', target['session_id'],
-                '--block', target['block_id'], '--owner', 'test', '--agents-registry', str(registry)]))
+        fixture_bin = root / 'bin'
+        fixture_bin.mkdir()
+        (fixture_bin / 'rex').symlink_to(self.rex)
+        def register(target, default_rex=False):
+            env = dict(os.environ)
+            if default_rex:
+                env.pop('TEEREX_INTERNAL_REX', None)
+                env['PATH'] = str(fixture_bin) + os.pathsep + env.get('PATH', '')
+            prefix = [BIN] if default_rex else command
+            return json.loads(subprocess.check_output(prefix + ['seat', 'register', *common, '--session', target['session_id'],
+                '--block', target['block_id'], '--owner', 'test', '--agents-registry', str(registry)], env=env))
         register(old)
         record = registry / ('agents-' + 'a' * 32 + '.json')
         record.write_text(json.dumps(dict(schema_version=1, launch_id='a' * 32, target=new, starter=old, report_to=old,
@@ -962,7 +970,7 @@ class RexBoardsTest(unittest.TestCase):
         dashboard = runpy.run_path(str(ROOT / 'items/boards/dashboard.py'))
         rendered = '\n'.join(dashboard['fleet_lines'](snapshot, [], 1, 90, color=True))
         self.assertIn('\x1b[31mNO SEAT', rendered)
-        register(new)
+        register(new, default_rex=True)
         rebound = json.loads(record.read_text())
         self.assertEqual(rebound['starter'], new)
         self.assertEqual(rebound['report_to'], new)

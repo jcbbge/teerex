@@ -549,6 +549,15 @@ class ContractHelpersTest(unittest.TestCase):
         self.assertFalse(state["contract"]["stalled"])
         self.assertEqual(sent[0][0][2], "starter_absent")
 
+    def test_recorded_seat_role_survives_old_registration_removal(self):
+        old = dict(host="fixture", server="unix:///tmp/test", session_id="s", block_id="old")
+        state = dict(target=dict(host="fixture"), socket="/tmp/test", report_to=old, destination_roles=dict(report_to="seat"))
+        self.ns["invoke"] = lambda *a, **kw: self.fail("stored seat role must not depend on its old registration or pane")
+        destination = self.ns["delivery_destination"]("unused", state, old)
+        self.assertEqual(destination["role"], "seat")
+        self.assertEqual(destination["session_id"], "seat")
+        self.assertEqual(destination["block_id"], "seat")
+
     def test_unknown_presence_never_authorizes_fall_up(self):
         state = dict(socket="/tmp/test", client_path="/bin", rex_executable="/bin/rex")
         self.ns["invoke"] = lambda *a, **kw: (1, dict(reason="unreachable"))
@@ -588,6 +597,19 @@ class ContractHelpersTest(unittest.TestCase):
         self.ns["contract_lapse"]("root", "id")
         self.assertFalse(state["contract"]["stalled"])
         self.assertEqual(state["contract"]["lapses"], 0)
+
+    def test_seat_rebind_without_explicit_rex_preserves_path_lookup(self):
+        with tempfile.TemporaryDirectory() as root, patch.dict(os.environ):
+            os.environ.pop("TEEREX_INTERNAL_REX", None)
+            old = dict(host="fixture", server="unix:///tmp/rex.sock", session_id="session:" + "0" * 8 + "-0000-0000-0000-000000000000", block_id="block:" + "0" * 8 + "-0000-0000-0000-000000000000")
+            new = dict(old, block_id="block:11111111-1111-1111-1111-111111111111")
+            def presence(transport, address):
+                self.assertIsNone(transport["rex_executable"])
+                return address == new
+            self.ns["pane_presence"] = presence
+            code, packet = self.ns["rebind_seat"](types.SimpleNamespace(registry=root, old_target=[json.dumps(old)], new_target=json.dumps(new)))
+            self.assertEqual(code, 0)
+            self.assertEqual(packet["outcome"], "rebound")
 
     def test_named_program_working_overrides_an_idle_screen(self):
         state = dict(socket="/tmp/test", target=dict(session_id="s", block_id="b"), client_path="/bin", rex_executable="/bin/rex")
@@ -1223,6 +1245,20 @@ with ThreadPoolExecutor() as pool:
             observed = subprocess.run(base, env=self.env, capture_output=True, text=True, timeout=10)
             return observed.stdout if "✓ Run gates" in observed.stdout else None
         self.assertIn("Read contracts", wait_for(displayed))
+
+    def test_launch_records_seat_role_for_starter_and_report_to(self):
+        store = self.work / 'role-store'
+        store.mkdir(mode=0o700)
+        registered = subprocess.run([BIN, 'seat', 'register', '--store', str(store), '--host', 'disposable',
+            '--socket', str(self.socket), '--session', self.session, '--block', self.starter, '--owner', 'fixture',
+            '--agents-registry', str(self.registry)], env=self.env, capture_output=True, text=True, timeout=10)
+        self.assertEqual(registered.returncode, 0, registered.stdout + registered.stderr)
+        self.settings['defaults']['store'] = str(store)
+        p, launched = self.launch(contract=True)
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        state = self.record(launched['launch_id'])
+        self.assertEqual(state['destination_roles'], dict(starter='seat', report_to='seat'))
+        self.assertNotIn('role_lookup_failure', state)
 
     def test_contract_launch_options_and_scratch_done_when(self):
         self.settings["profiles"]["probe"]["contract_interval_s"] = 25

@@ -587,6 +587,9 @@ def pane_presence(state, destination):
 def registered_seat(state, destination):
     if destination.get("role") == "seat":
         return True
+    if any(state.get(field) == destination and role == "seat"
+           for field, role in state.get("destination_roles", {}).items()):
+        return True
     if not state.get("store"):
         return False
     code, packet = invoke(["boards", "state", "inspect", "--store", absolute(state["store"])],
@@ -1635,6 +1638,12 @@ def launch_agent(o):
                  rex_executable=os.environ.get("TEEREX_INTERNAL_REX"), delivery=delivery, execution=execution,
                  callbacks=callbacks, cost=accounting, remote_child_term=None, human=human, scratch_pane=profile.get("scratch_pane", True), tint=tint, layout=layout, come_forward=profile.get("come_forward", False))
     if not human:
+        if state.get("store"):
+            try:
+                state["destination_roles"] = {field: "seat" for field in ("starter", "report_to")
+                    if registered_seat(state, state[field])}
+            except (Refusal, OSError, ValueError, KeyError, subprocess.SubprocessError) as exc:
+                state["role_lookup_failure"] = str(exc)
         state["intent"] = intent
         state["contract"] = contract_init(state, profile, brief, o.done_when, o.contract_interval_s)
     # Maintenance is independent of creation. One caller prunes; concurrent launches
@@ -2567,7 +2576,7 @@ def rebind_seat(o):
                 for address in old), "seat_inheritance_same_server_required")
     require(isinstance(new.get("server"), str) and new["server"].startswith("unix:///"), "absolute_seat_server_required")
     transport = dict(socket=new["server"][7:], client_path=os.environ.get("PATH", os.defpath),
-                     rex_executable=os.environ.get("TEEREX_INTERNAL_REX") or "rex")
+                     rex_executable=os.environ.get("TEEREX_INTERNAL_REX"))
     require(pane_presence(transport, new), "new_seat_not_live")
     require(all(not pane_presence(transport, address) for address in old), "previous_seat_still_live")
     rebound = []
@@ -2581,6 +2590,7 @@ def rebind_seat(o):
                 continue
             for field in fields:
                 state[field] = new
+                state.setdefault("destination_roles", {})[field] = "seat"
             c = state.get("contract")
             if c:
                 if c.get("starter") in old:
