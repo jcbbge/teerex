@@ -100,8 +100,8 @@ class OldSupervisorTest(unittest.TestCase):
                 '--session', self.session, '--pane', state['target']['block_id']],
                 env=self.env, capture_output=True, text=True, timeout=10)
             self.assertEqual(closed.returncode, 0, closed.stdout + closed.stderr)
-            pad.unlink(missing_ok=True)
-            Path(str(pad) + '.events').unlink(missing_ok=True)
+            for suffix in ('', '.events', '.lock', '.delivery.lock', '.turn.json'):
+                Path(str(pad) + suffix).unlink(missing_ok=True)
             if pad.parent.exists() and not any(pad.parent.iterdir()):
                 pad.parent.rmdir()
             projects = Path(real_home) / '.claude/projects'
