@@ -257,6 +257,37 @@ class BoardTest(unittest.TestCase):
         os.write(writer,(json.dumps(dict(v=1,t=int(time.time()*1000),kind='host',host='m5',reachable=False))+'\n').encode())
         expect('🔴 fixture')
         pane.key(b'q');pane.proc.wait(timeout=5);self.assertEqual(label(),'fixture')
+        # A tasks view in the same tab leaves the tab label to the board.
+        settled=len(renames())
+        tasks=Pane(self.root,fixture=fifo,extra_args=('--tasks',str(self.root)),extra_env=dict(creator,REX_SERVER='unix://'+str(socket),LC_REX_SESSION=sid,LC_REX_BLOCK=opened['block_id']))
+        self.addCleanup(tasks.close)
+        emit(state='error',stalled=True);tasks.settle()
+        tasks.key(b'q');tasks.proc.wait(timeout=5)
+        self.assertEqual(len(renames()),settled);self.assertEqual(label(),'fixture')
+
+    def test_tab_label_failure_is_status_not_stderr(self):
+        # stderr inside the alternate screen sat behind the row-diff renderer forever.
+        pane=Pane(self.root,extra_env=dict(LC_REX_SESSION='session:00000000-0000-0000-0000-000000000000',LC_REX_BLOCK='block:00000000-0000-0000-0000-000000000000'))
+        self.addCleanup(pane.close)
+        pane.until(lambda:'Tab label unavailable' in pane.view())
+        pane.settle()  # drain: a full macOS PTY buffer blocks the board's next write
+        self.assertNotIn(b'board: tab label',pane.output)
+
+    def test_every_agent_is_counted(self):
+        # No made-up cap: the model kept only the first 256 agents and undercounted silently.
+        path=self.root/'many.jsonl'
+        path.write_text(''.join(json.dumps(dict(v=1,t=1,host='hive',kind='agent',id='a%d'%i,name='a%d'%i,state='working'))+'\n' for i in range(300)))
+        result=json.loads(subprocess.run([BIN,'board','--replay',str(path),'--json','--hosts','hive'],capture_output=True,text=True,check=True).stdout)
+        self.assertEqual(result['hosts'][0]['counts']['total'],300)
+
+    def test_height_change_and_focus_repaint_every_row(self):
+        # Rows the diff renderer skipped kept whatever the terminal showed before.
+        pane=Pane(self.root)
+        self.addCleanup(pane.close)
+        pane.settle()
+        for trigger in (lambda:pane.resize(60,24),lambda:os.write(pane.master,b'\x1b[I')):
+            mark=len(pane.output);trigger()
+            pane.until(lambda:b'\x1b[1;1H' in pane.output[mark:] and b'jump' in pane.output[mark:])
 
     def test_replaced_events_release_memory(self):
         # A command-lifetime arena retained every superseded JSON allocation.

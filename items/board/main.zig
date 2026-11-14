@@ -180,7 +180,7 @@ const Model = struct {
                     return true;
                 }
             }
-            if (!eq(state, "gone") and self.agents.items.len < 256) {
+            if (!eq(state, "gone")) {
                 try self.agents.append(self.allocator, parsed);
                 retained = true;
             }
@@ -1232,8 +1232,12 @@ pub fn run(_: A, args: []const []const u8) !u8 {
     defer std.fs.File.stdout().writeAll(ESC ++ "[?2026l" ++ ESC ++ "_Ga=d,d=I,i=197845,q=2" ++ ESC ++ "\\" ++ ESC ++ "[0m" ++ ESC ++ "[?1000l" ++ ESC ++ "[?1006l" ++ ESC ++ "[?1004l" ++ ESC ++ "[?25h" ++ ESC ++ "[?1049l" ++ ESC ++ "]7501;state=clear:id=teerex/board:app=teerex-board" ++ ESC ++ "\\") catch {};
     const self = try std.fs.selfExePathAlloc(allocator);
     defer allocator.free(self);
-    var tab = TabLabel.init(allocator, self) catch |err| blk: {
-        std.debug.print("board: tab label unavailable: {s}\n", .{@errorName(err)});
+    // The tasks view shares a tab with the board; only the board owns the tab's health label.
+    // Tab-label failures go to the status line: stderr would land in the alternate
+    // screen behind the row-diff renderer and never be repainted away.
+    var tab_note: [96]u8 = undefined;
+    var tab = if (opts.tasks != null) null else TabLabel.init(allocator, self) catch |err| blk: {
+        ui.status = std.fmt.bufPrint(&tab_note, "Tab label unavailable: {s}", .{@errorName(err)}) catch "Tab label unavailable";
         break :blk null;
     };
     defer if (tab) |*label| label.deinit();
@@ -1274,11 +1278,17 @@ pub fn run(_: A, args: []const []const u8) !u8 {
         if (resized) {
             resized = false;
             size = dimensions();
+            renderer.width = 0; // any size change repaints every row, height included
             dirty = true;
             try query();
         }
         if (dirty) {
-            if (tab) |*label| label.update(health(&model)) catch |err| std.debug.print("board: tab label: {s}\n", .{@errorName(err)});
+            if (tab) |*label| label.update(health(&model)) catch |err| {
+                // Said once; the board keeps running and stops renaming this tab.
+                ui.status = std.fmt.bufPrint(&tab_note, "Tab label not changed: {s}", .{@errorName(err)}) catch "Tab label not changed";
+                label.deinit();
+                tab = null;
+            };
             if (!ui.tasks_view) try ui.visible(&model);
             // Reuse only the last frame's scratch storage; no event history.
             _ = frame_arena.reset(.retain_capacity);
@@ -1360,6 +1370,7 @@ pub fn run(_: A, args: []const []const u8) !u8 {
                         }
                         if (key == 'I') {
                             try query();
+                            renderer.width = 0; // focus-in repaints every row
                             dirty = true;
                         }
                         if (input.len > 3 and input[2] == '<' and (key == 'M' or key == 'm')) {
