@@ -156,7 +156,9 @@ class BoardsTest(unittest.TestCase):
             self.invoke("ask", store=None, code=1, **{"from": "worker", "card_file": self.card})
         self.card.write_text(json.dumps(self.decision))
         self.ask()
-        self.invoke("ask", store=None, code=1, **{"from": "worker", "card_file": self.card})
+        self.invoke("ask", code=1, **{"from": "worker", "card_file": self.card})
+        # Without a store, ask cannot consult that store's decision history.
+        self.invoke("ask", store=None, **{"from": "worker", "card_file": self.card})
         self.invoke("ask", code=1, **{"from": "operator", "resolve": "missing", "answer": "no"})
         self.assertEqual(len(self.inspect()["seats"][0]["records"]), 1)
         self.message.write_text("DECISION-JSON:" + json.dumps(self.decision))
