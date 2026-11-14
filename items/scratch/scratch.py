@@ -316,7 +316,7 @@ rex.call('session.attach_all',{event_scope='session'})
 local blocks=rex.call('session.list_blocks',{session_id=a.session})
 if type(blocks)~='table' or type(blocks.blocks)~='table' then error('block_list_unavailable') end
 for _,b in ipairs(blocks.blocks) do if b.block_id==a.owner then io.write('live'); return end end
-if a.viewer then rex.call('block.close',{session_id=a.session,block_id=a.viewer,keep_last=false}) end
+if a.viewer then rex.call('teerex.guard.viewerclose',{session_id=a.session,block_id=a.viewer,keep_last=false}) end
 io.write('gone')
 """
 
@@ -364,6 +364,7 @@ def scratch_main(argv=None):
         if op == "show":
             p.add_argument("--json", action="store_true")
         if op == "watch":
+            p.add_argument("--registry", help="agent registry containing this viewer's creation receipt")
             p.add_argument("--once", action="store_true", help="render one frame and exit")
             p.add_argument("--socket", help="owner Rex socket; close this viewer when its exact owner block disappears")
     subs.add_parser("hook", help="Claude seat UserPromptSubmit/Stop stdin hook; stale scratchpad blocks once per turn; AGENT_SCRATCHPAD required")
@@ -389,6 +390,8 @@ def scratch_main(argv=None):
             else:
                 print(scratch_render(data), end="")
         elif o.operation == "watch":
+            if o.registry:
+                os.environ['AGENT_REGISTRY'] = o.registry
             if o.socket and not os.path.isabs(o.socket):
                 raise ScratchError('absolute_socket_required')
             previous = None

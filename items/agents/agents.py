@@ -1693,7 +1693,7 @@ def launch_agent(o):
             side_code, side_packet = invoke(["surfaces", "open", "--socket", socket, "--session", session,
                                             "--layout", "tiled", "--anchor", block, "--label", name + " scratchpad",
                                             "--", RUNTIME, *(["--rex", state["rex_executable"]] if state.get("rex_executable") else []),
-                                            "scratch", "watch", "--socket", socket, "--session", session, "--block", block])
+                                            "scratch", "watch", "--socket", socket, "--session", session, "--block", block, "--registry", root])
             state = update(root, launch_id, lambda s: s.update(scratch_pane_receipt=side_packet,
                             scratch_pane_opened=succeeded(side_code, side_packet, "created_and_verified")))
         code, packet = invoke(["jobs", "track", "--registry", root, "--socket", socket, "--session", session, "--block", block,
@@ -2297,6 +2297,7 @@ def supervise(o):
 
 def supervise_child(o):
     # This command is launched ONLY as the actual retained visible Rex terminal program.
+    os.environ['AGENT_REGISTRY'] = o.registry
     state = load(o.registry, o.launch_id)
     sid, bid = os.environ.get("REX_SESSION"), os.environ.get("REX_BLOCK")
     address_id(sid, "session")

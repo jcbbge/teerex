@@ -308,7 +308,9 @@ class Runner:
         raw_call = self.control.call
         def guarded_call(method, payload):
             __import__('teerex_pane_guard').authorize('unix://' + self.args.socket, method, payload, raw_call)
-            return raw_call(method, payload)
+            value = raw_call(method, payload)
+            __import__('teerex_pane_guard').record_created('unix://' + self.args.socket, method, payload, value)
+            return value
         self.control.call = guarded_call
         self.version = self.control.call("server.version", {})
         self.packet["rex"] = self.version

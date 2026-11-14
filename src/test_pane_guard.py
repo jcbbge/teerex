@@ -58,6 +58,42 @@ class GuardTest(_fixtures.SurfacesTest):
         self.refused(self.cli('clutch', 'take', '--socket', str(self.socket), '--session', self.session, '--pane', neighbour), 'registered_seat_tab')
         self.assertEqual({self.anchor, neighbour, other}, {b['block_id'] for b in self.rpc('session.list_blocks', {'session_id': self.session})['blocks']})
 
+    def test_spawner_ownership(self):
+        own = self.open('tab', label='owned pane')['actual']['block_id']
+        self.assertEqual(self.control('rename', own, '--label', 'owned rename').returncode, 0)
+        foreign_actor = self.open('tab', label='other agent')['actual']['block_id']
+        self.env['REX_BLOCK'] = foreign_actor
+        foreign = self.open('tab', label='foreign pane')['actual']['block_id']
+        self.env['REX_BLOCK'] = self.anchor
+        for op, extra in (('close', ()), ('rename', ('--label', 'stolen')),
+                          ('move', ('--anchor', self.anchor, '--focus', 'yes'))):
+            self.refused(self.control(op, foreign, *extra), 'recorded spawner: ' + self.session + ' ' + foreign_actor)
+        self.assertEqual(self.control('close', own).returncode, 0)
+        self.env['REX_BLOCK'] = foreign_actor
+        self.assertEqual(self.control('close', foreign).returncode, 0)
+
+    def test_supervisor_closes_viewer(self):
+        worker = self.open('tab', label='worker')['actual']['block_id']
+        viewer = self.open('tab', label='viewer')['actual']['block_id']
+        registry = self.work / 'registry'
+        registry.mkdir(mode=0o700)
+        self.env['AGENT_REGISTRY'] = str(registry)
+        target = dict(server='unix://' + str(self.socket), session_id=self.session, block_id=worker)
+        starter = dict(session_id=self.session, block_id=self.anchor)
+        (registry / ('agents-' + 'a' * 32 + '.json')).write_text(json.dumps(dict(
+            target=target, starter=starter, scratch_pane_receipt=dict(outcome='created_and_verified', created=dict(block_id=viewer)))))
+        self.env['REX_BLOCK'] = worker
+        self.assertEqual(self.control('close', viewer).returncode, 0)
+
+    def test_session_spawner(self):
+        result = self.cli('surfaces', 'session', 'ensure', '--socket', str(self.socket), '--label', 'owned empty session')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        sid = json.loads(result.stdout)['resolved']['session_id']
+        env = dict(self.env, REX_BLOCK='block:00000000-0000-0000-0000-000000000001')
+        command = ('surfaces', 'session', 'close', '--socket', str(self.socket), '--session', sid)
+        self.refused(self.cli(*command, env=env), 'recorded spawner: ' + self.session + ' ' + self.anchor)
+        self.assertEqual(self.cli(*command).returncode, 0)
+
 
 if __name__ == '__main__':
     # This file reuses fixture helpers, never the unrelated surfaces suite.

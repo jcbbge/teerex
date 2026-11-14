@@ -31,8 +31,34 @@ def snapshot(server):
     root = state_root()
     store = Path(os.environ.get('TEEREX_BOARDS_STORE', str(root / 'teerex-boards')))
     boards = read(store / 'state.json', {'seats': []})
-    return dict(server=server, seats=[s['target'] for s in boards['seats']
-                if s['target']['server'] == server])
+    actor = dict(session_id=os.environ.get('REX_SESSION') or os.environ.get('LC_REX_SESSION'),
+                 block_id=os.environ.get('REX_BLOCK') or os.environ.get('LC_REX_BLOCK'))
+    directory = root / 'teerex/pane-creators' / hashlib.sha256(server.encode()).hexdigest()
+    directory.mkdir(parents=True, mode=0o700, exist_ok=True)
+    s = directory.lstat()
+    if not stat.S_ISDIR(s.st_mode) or s.st_uid != os.getuid() or stat.S_IMODE(s.st_mode) != 0o700:
+        raise ValueError('pane_creator_directory_requires_private_owned_directory')
+    creators = {}
+    for path in directory.glob('*.json'):
+        record = read(path)
+        if record['server'] == server:
+            creators[record['id']] = record
+    registry = Path(os.environ.get('AGENT_REGISTRY') or os.environ.get('LC_AGENT_REGISTRY') or root / 'teerex-agents')
+    for path in registry.glob('agents-*.json'):
+        record = read(path)
+        target = record.get('target') or {}
+        if target.get('server') != server:
+            continue
+        starter = record.get('starter') or {}
+        spawner = {k: starter.get(k) for k in ('session_id', 'block_id')}
+        if target.get('block_id') and not record.get('human'):
+            creators[target['block_id']] = dict(spawner=spawner, allowed=[spawner])
+        side = (record.get('scratch_pane_receipt') or {}).get('created') or {}
+        if side.get('block_id') and (record.get('scratch_pane_receipt') or {}).get('outcome') == 'created_and_verified':
+            supervisor = {k: target.get(k) for k in ('session_id', 'block_id')}
+            creators[side['block_id']] = dict(spawner=spawner, allowed=[spawner, supervisor], viewer=True)
+    return dict(server=server, actor=actor, creators=creators, directory=str(directory),
+                seats=[s['target'] for s in boards['seats'] if s['target']['server'] == server])
 
 
 LUA = r'''
@@ -51,16 +77,36 @@ local function guard_window(view,bid)
   end end
  end
 end
+local function guard_owner(id)
+ local r=guard_policy.creators[id]
+ local spawner=r and r.spawner or {}
+ local allowed=false
+ for _,who in ipairs(r and r.allowed or {}) do
+  if who.block_id and who.session_id and who.block_id==guard_policy.actor.block_id and who.session_id==guard_policy.actor.session_id then allowed=true end
+ end
+ if not allowed then error('pane control refused; recorded spawner: '..(spawner.session_id or 'unknown')..' '..(spawner.block_id or 'unknown'),0) end
+end
+local function guard_record(id,sid)
+ if type(id)~='string' or not id:match('^[a-z]+:[0-9a-f%-]+$') then error('invalid_creator_receipt_id',0) end
+ local record={id=id,session_id=sid,server=guard_policy.server,spawner=guard_policy.actor,allowed={guard_policy.actor}}
+ guard_policy.creators[id]=record
+ local file,err=io.open(guard_policy.directory..'/'..id:gsub(':','-')..'.json','w')
+ if not file then io.stderr:write('pane creator recording failed: '..tostring(err)..'\n'); return end
+ file:write(rex.json.encode(record)); file:close()
+end
 local guard_controls={['block.close']=true,['session.destroy']=true,
  ['session.set_window_label']=true,['session.set_block_label']=true,
  ['session.move_block']=true,['session.focus_block']=true,
  ['session.resize_pane']=true,['session.set_layer_bounds']=true,
  ['session.zoom_block']=true,['session.toggle_zoom']=true,
  ['session.detach_block']=true,['session.set_split_ratio']=true,
+ ['session.new_split']=true,['session.new_layer']=true,
  ['com.superlogical.terminal.resize']=true,['com.superlogical.terminal.key']=true,
  ['com.superlogical.terminal.write']=true,['com.superlogical.terminal.paste']=true}
 rex.call=function(method,p)
  p=p or {}
+ local viewer_cleanup=method=='teerex.guard.viewerclose'
+ if viewer_cleanup then method='block.close' end
  local control=guard_controls[method] or method=='teerex.guard.take'
  local raw=method=='block.event'
  if control or raw then
@@ -70,12 +116,12 @@ rex.call=function(method,p)
     local v=guard_view(p.session_id)
     local sw=guard_window(v,seat.block_id)
     if not sw then error('registered_seat_tab_unavailable',0) end
-    local tw=p.window_id or guard_window(v,p.block_id)
+    local tw=p.window_id or guard_window(v,p.block_id) or guard_window(v,p.anchor_id)
     protected=protected or tw==sw or guard_window(v,p.anchor_block_id)==sw
       or guard_window(v,p.before_block_id)==sw or guard_window(v,p.after_block_id)==sw
     if protected and raw then
      local event=p.event or {}; local key=event.payload or {}
-     local allowed=GUARD_MESSAGE and (event.type=='paste' or
+     local allowed=GUARD_MESSAGE and rex.args.draft_mode=='guard' and (event.type=='paste' or
        (event.type=='key' and (key.key=='enter' and (key.mods or '')=='' or
          key.key=='u' and key.mods=='ctrl')))
      if not allowed then error('registered_seat_tab_refuses_raw_input',0) end
@@ -83,8 +129,36 @@ rex.call=function(method,p)
    end
   end
  end
+ local owned=method=='block.close' or method=='session.destroy' or method=='session.move_block'
+   or method=='session.set_block_label' or method=='session.set_window_label' or method=='session.detach_block'
+ if owned then
+  if method=='session.destroy' then guard_owner(p.session_id)
+  elseif p.window_id then
+   local v=guard_view(p.session_id)
+   for _,w in ipairs(v.windows or {}) do if w.window_id==p.window_id then
+    for _,l in ipairs(w.layers or {}) do for _,b in ipairs(l.blocks or {}) do guard_owner(b.block_id) end end
+   end end
+  elseif viewer_cleanup and p.block_id==guard_policy.actor.block_id and
+   guard_policy.creators[p.block_id] and guard_policy.creators[p.block_id].viewer then
+   -- The watcher may close only itself after its recorded owner disappears.
+   local owner_present=false
+   local blocks=guard_call('session.list_blocks',{session_id=p.session_id})
+   if type(blocks)~='table' then error('viewer_owner_check_unavailable',0) end
+   local record=guard_policy.creators[p.block_id]
+   local supervisor=record.allowed[2]
+   for _,b in ipairs(blocks.blocks or {}) do if b.block_id==supervisor.block_id then owner_present=true end end
+   if owner_present then error('viewer_owner_still_live',0) end
+  else guard_owner(p.block_id) end
+ end
  if method=='teerex.guard.take' then return {allowed=true} end
- return guard_call(method,p)
+ local value,err=guard_call(method,p)
+ if type(value)=='table' then
+  if method=='session.create' then guard_record(value.session_id,value.session_id) end
+  if method=='session.new_window' or method=='session.new_split' or method=='session.new_layer' then
+   for _,bid in ipairs(value.block_ids or {}) do guard_record(bid,p.session_id) end
+  elseif method=='session.new_block' then guard_record(value.block_id,p.session_id) end
+ end
+ return value,err
 end
 '''
 
@@ -108,7 +182,8 @@ def authorize(server, method, payload, rpc):
             for layer in w.get('layers', []):
                 if any(b['block_id'] == bid for b in layer.get('blocks', [])):
                     return w['window_id']
-    for seat in snapshot(server)['seats']:
+    policy = snapshot(server)
+    for seat in policy['seats']:
         if seat['session_id'] != payload.get('session_id'):
             continue
         view = rpc('session.view', {'session_id': seat['session_id']})
@@ -117,6 +192,37 @@ def authorize(server, method, payload, rpc):
             raise ValueError('registered_seat_tab_unavailable')
         if method == 'session.destroy' or (payload.get('window_id') or window(view, payload.get('block_id'))) == sw:
             raise ValueError('registered_seat_tab_is_operator_only')
+    if method in {'block.close', 'session.destroy', 'session.move_block', 'session.set_block_label', 'session.set_window_label'}:
+        ids = [payload.get('session_id') if method == 'session.destroy' else payload.get('block_id')]
+        if payload.get('window_id'):
+            view = rpc('session.view', {'session_id': payload['session_id']})
+            ids = [b['block_id'] for w in view['windows'] if w['window_id'] == payload['window_id']
+                   for layer in w.get('layers', []) for b in layer.get('blocks', [])]
+        for id in ids:
+            creator = policy['creators'].get(id, {})
+            if not policy['actor'].get('block_id') or policy['actor'] not in creator.get('allowed', []):
+                spawner = creator.get('spawner', {})
+                raise ValueError('pane control refused; recorded spawner: ' + str(spawner.get('session_id', 'unknown')) + ' ' + str(spawner.get('block_id', 'unknown')))
+
+
+def record_created(server, method, payload, result):
+    ids = []
+    if method in {'session.new_window', 'session.new_split', 'session.new_layer'}:
+        ids = result.get('block_ids', [])
+    elif method == 'session.new_block':
+        ids = [result['block_id']]
+    elif method == 'session.create':
+        ids = [result['session_id']]
+    if not ids:
+        return
+    policy = snapshot(server)
+    for id in ids:
+        path = Path(policy['directory']) / (id.replace(':', '-') + '.json')
+        record = dict(id=id, session_id=payload.get('session_id', id), server=server,
+                      spawner=policy['actor'], allowed=[policy['actor']])
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(fd, 'w') as f:
+            json.dump(record, f)
 
 
 if __name__ == '__main__':
