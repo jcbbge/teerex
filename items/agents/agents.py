@@ -114,6 +114,8 @@ def lifecycle_events(state):
         add(hook.get("at"), hook["kind"], text=line, event_id=hook.get("event_id"), **({"delivery_rule": hook["delivery_rule"]} if hook.get("delivery_rule") else {}))
     if state.get("immediate_child_term") is not None:
         add(state.get("immediate_child_ended_at"), "child_exit", term=state["immediate_child_term"])
+    acceptance = state.get("starter_acceptance") or {}
+    add(acceptance.get("accepted_at"), "report_accepted", **acceptance)
     retired = state.get("retired") or {}
     add(retired.get("at"), "pruned", reason=retired.get("reason"))
     return rows
@@ -199,17 +201,17 @@ class Registry:
     def name(self, launch_id):
         return "agents-" + identifier(launch_id) + ".json"
 
-    def read(self, launch_id):
-        data = read_file(str(Path(self.root) / self.name(launch_id)), limit=None, private=True)
+    def read(self, launch_id, name=None):
+        data = read_file(str(Path(self.root) / (name or self.name(launch_id))), limit=None, private=True)
         state = json.loads(data)
         require(state["schema_version"] == 1 and state["launch_id"] == launch_id, "invalid_lifecycle_record")
         return state
 
-    def save(self, state, new=False):
-        name = self.name(state["launch_id"])
+    def save(self, state, new=False, name=None):
+        name = name or self.name(state["launch_id"])
         if new:
             require(not os.path.lexists(str(Path(self.root) / name)), "launch_already_exists")
-        previous = {} if new else self.read(state["launch_id"])
+        previous = {} if new else self.read(state["launch_id"], name)
         old_events = lifecycle_events(previous)
         state["timeline_partial"] = not new and ("timeline" not in previous or previous.get("timeline_partial", False))
         state["timeline"] = list(previous.get("timeline", old_events))
@@ -2244,7 +2246,7 @@ def contract_starter(root, launch_id):
     if timestamp - max(pending["at"], c.get("starter_reminded_at", 0)) <= c["interval_s"] * 1000:
         return
     lapses = c["starter_lapses"] + 1
-    line = f"UNANSWERED {state['name']} {pending['kind']} from {(timestamp - pending['at']) // 60000} min ago: accept it or send it back"
+    line = f"UNANSWERED {state['name']} {pending['kind']} from {(timestamp - pending['at']) // 60000} min ago: accept it or send it back; accept: teerex agents accept --launch-id {launch_id}"
     def reminded(s):
         if s["contract"].get("awaiting_starter") == pending:
             s["contract"].update(starter_lapses=lapses, starter_reminded_at=timestamp)
@@ -2446,8 +2448,7 @@ def supervise_child(o):
         if term is not None:
             def ended(s):
                 s.update(immediate_child_term=term, immediate_child_ended_at=now())
-                if s.get("contract"):
-                    s["contract"].update(awaiting_starter=None, starter_lapses=0)
+                # Exit does not answer a pending report; only the starter can accept it.
             update(o.registry, o.launch_id, ended)
             try:
                 cleanup = close_scratch_viewer(load(o.registry, o.launch_id))
@@ -2497,6 +2498,63 @@ def present(o):
         outcome="verified" if succeeded(code, packet, "verified") else "uncertain_or_refused", receipt=packet))
     return code, receipt(state, "presentation_verified" if succeeded(code, packet, "verified") else "presentation_uncertain_or_refused",
                          presentation=state["presentations"][event_id])
+
+
+def accept(o):
+    """Accept report state under the same lock as reports, input and pruning."""
+    import teerex_pane_guard
+    with Registry(o.registry) as registry:
+        candidates = []
+        history = Path(registry.root) / "archive"
+        if history.exists():
+            with Registry(str(history)):
+                pass
+        if o.launch_id:
+            launch_id = identifier(o.launch_id)
+            live = Path(registry.root) / registry.name(launch_id)
+            paths = [live] if live.exists() else [Path(registry.root) / "archive" / launch_id / "retired.json"]
+            if not paths[0].exists():
+                paths = [Path(registry.root) / "archive" / launch_id / registry.name(launch_id)]
+        else:
+            paths = list(Path(registry.root).glob("agents-*.json"))
+            history = Path(registry.root) / "archive"
+            if history.exists():
+                require(not history.is_symlink(), "private_owned_archive_required")
+                for directory in history.iterdir():
+                    if re.fullmatch(r"[0-9a-f]{32}", directory.name):
+                        path = directory / "retired.json"
+                        paths.append(path if path.exists() else directory / registry.name(directory.name))
+        for path in paths:
+            # Registry validates ownership/modes and refuses symlink directories.
+            with (contextlib.nullcontext(registry) if path.parent == Path(registry.root) else Registry(str(path.parent))) as records:
+                launch_id = o.launch_id or (path.parent.name if path.name == "retired.json" else path.stem[7:])
+                state = records.read(launch_id, path.name)
+            if o.name is not None and state.get("name") != o.name:
+                continue
+            policy = teerex_pane_guard.snapshot("unix://" + state["socket"])
+            actor = policy["actor"]
+            same = lambda address: bool(address) and all(actor.get(k) and actor[k] == address.get(k) for k in ("session_id", "block_id"))
+            responsible = same(state.get("starter")) or same(state.get("report_to"))
+            allowed = responsible or policy["operator"] or any(same(seat) for seat in policy["seats"])
+            if o.name is not None:
+                # Names select only this caller's own agents, including archives.
+                if not responsible:
+                    continue
+            else:
+                require(allowed, "report_acceptance_requires_starter_report_to_seat_or_operator")
+            candidates.append((path, state, actor, policy["operator"]))
+        require(len(candidates) == 1, "agent_name_ambiguous" if candidates else "agent_not_found_for_caller")
+        path, state, actor, operator = candidates[0]
+        pending = (state.get("contract") or {}).get("awaiting_starter")
+        require(pending and pending.get("kind") in ("done", "flag"), "no_pending_report")
+        require(o.note is None or isinstance(o.note, str), "invalid_acceptance_note")
+        acceptance = dict(accepted_by=dict(actor, operator=operator), accepted_at=now(), note=o.note, report=pending)
+        state["starter_acceptance"] = acceptance
+        state["contract"].update(awaiting_starter=None, starter_lapses=0)
+        state["contract"].pop("starter_reminded_at", None)
+        with (contextlib.nullcontext(registry) if path.parent == Path(registry.root) else Registry(str(path.parent))) as records:
+            records.save(state, name=path.name)
+        return 0, receipt(state, "report_accepted", acceptance=acceptance)
 
 
 def since_timestamp(value):
@@ -2693,6 +2751,12 @@ def parser():
     q.add_argument("--name", help="exact agent name")
     q.add_argument("--since", help="inclusive ISO timestamp with timezone or Unix milliseconds")
     q.add_argument("--json", action="store_true", help="structured events and legacy-history limitations")
+    q = sub.add_parser("accept", help="accept a pending DONE/FLAG from a live or archived worker; never sends input")
+    q.add_argument("--registry", default=str(Path.home() / ".local/state/teerex-agents"))
+    selection = q.add_mutually_exclusive_group(required=True)
+    selection.add_argument("--launch-id")
+    selection.add_argument("--name", help="unambiguous exact name among caller's own agents")
+    q.add_argument("--note", help="optional acceptance note retained in timeline")
     q = sub.add_parser("prune", help="archive records whose agent exited, never started, or whose pane is gone; plan unless --apply")
     q.add_argument("--registry", required=True)
     q.add_argument("--apply", action="store_true", help="move retired records to REGISTRY/archive/<launch_id>/ (never deleted)")

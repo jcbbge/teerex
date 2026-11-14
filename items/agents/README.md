@@ -487,3 +487,16 @@ items/agents/test_cost.py CostLiveTests -v`.
 
 Held-pane turn reports and contract contacts accept native durable queue acknowledgment as `queued` / `notification_queued`. They retain the queue ID and distinguish stored messages from acknowledged terminal events. Repeated unchanged turn reports keep their existing suppression; release performs the guarded delivery.
 Managed status retains record id `teerex/tint` (or `teerex` with tint disabled), while `app` is the profile `harness` (falling back to its profile name). The first launch report uses title `✦ <name>` and message `starting`; the next working report restores the normal title. Set profile `launch_flourish` to a custom prefix string or `false` to disable it.
+
+### Accepting a worker report
+
+`teerex agents accept [--registry DIR] (--launch-id ID | --name NAME) [--note TEXT]`
+accepts a pending DONE or FLAG without sending input to the worker. It works after
+exit and pruning, including archived records. The registry defaults to
+`~/.local/state/teerex-agents`. The caller must be the recorded starter or
+report-to, a registered seat on the worker's server, or use the explicit
+interactive `--operator` path. Names must be unambiguous among the caller's own
+agents, including archives. Acceptance clears the unanswered reminder and records
+who accepted, when, the pending report and optional note in `agents timeline`.
+A second acceptance refuses because nothing is pending. To send a live worker
+back for changes, send it a message as before.

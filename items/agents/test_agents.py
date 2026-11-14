@@ -494,6 +494,20 @@ class ContractHelpersTest(unittest.TestCase):
         self.assertEqual(check["action"], "block")
         self.assertEqual(check["reason"], CONTRACT_REFUSAL + "; write your steps first")
 
+    def test_unanswered_includes_accept_command_and_stops_after_acceptance(self):
+        state = dict(name="worker", brief_attempted=True, contract=dict(
+            awaiting_starter=dict(kind="done", at=1), starter_lapses=0, interval_s=1))
+        self.ns["load"] = lambda *_: state
+        self.ns["now"] = lambda: 10000
+        self.ns["update"] = lambda root, launch, change: change(state)
+        sent = []
+        self.ns["contract_tell"] = lambda *args, **kwargs: sent.append(args)
+        self.ns["contract_starter"]("root", "a" * 32)
+        self.assertIn("accept: teerex agents accept --launch-id " + "a" * 32, sent[0][3])
+        state["contract"]["awaiting_starter"] = None
+        self.ns["contract_starter"]("root", "a" * 32)
+        self.assertEqual(len(sent), 1)
+
     def test_supervisor_contract_is_quiet_before_brief_attempt(self):
         state = dict(brief_attempted=False, brief_attempt_at=10, turn_started_at=9,
                      contract=dict(awaiting_starter=dict(kind="done", at=1)))
@@ -3059,7 +3073,7 @@ Path('/work/network-harness').touch()
         self.assertEqual(self.record(launch_id)["contract"]["starter_lapses"], 0)
         self.assertFalse([v for v in events(seat_log) if v["event"] == "input"])
 
-    def test_contract_flag_awaits_answer_and_child_exit_ends_it(self):
+    def test_contract_flag_survives_child_exit_and_starter_accepts(self):
         self.settings["profiles"]["probe"]["contract_interval_s"] = 2
         p, launched = self.launch(contract=True)
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
@@ -3070,7 +3084,20 @@ Path('/work/network-harness').touch()
         wait_for(lambda: any("UNANSWERED probe flag" in text for text in self.starter_messages()))
         os.kill(events(self.worker_log)[0]["pid"], signal.SIGTERM)
         wait_for(lambda: self.record(launch_id)["immediate_child_term"] is not None)
-        self.assertIsNone(self.record(launch_id)["contract"]["awaiting_starter"])
+        self.assertEqual(self.record(launch_id)["contract"]["awaiting_starter"]["kind"], "flag")
+        env = dict(self.env, REX_SESSION=self.session, REX_BLOCK=self.starter,
+                   LC_REX_SESSION=self.session, LC_REX_BLOCK=self.starter)
+        p = subprocess.run([BIN, "surfaces", "close", "--socket", str(self.socket), "--session", self.session,
+                            "--pane", state["target"]["block_id"]], env=self.env, capture_output=True, text=True, timeout=10)
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        p, packet = self.run_cli("prune", "--registry", str(self.registry), "--apply")
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        archived = self.registry / "archive" / launch_id / "retired.json"
+        self.assertEqual(json.loads(archived.read_text())["contract"]["awaiting_starter"]["kind"], "flag")
+        p = subprocess.run([BIN, "agents", "accept", "--registry", str(self.registry),
+                            "--launch-id", launch_id], env=env, capture_output=True, text=True, timeout=10)
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertIsNone(json.loads(archived.read_text())["contract"]["awaiting_starter"])
 
     def test_scratch_waiting_blocks_with_text_and_clears_for_all_harnesses(self):
         for harness in ("claude", "codex", "pi"):
