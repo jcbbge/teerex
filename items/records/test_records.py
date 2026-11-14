@@ -27,6 +27,34 @@ class RecordsFixture(unittest.TestCase):
         self.fields = dict(question=QUESTION, next_action=dict(actor="worker", step="run the asymmetric cache check", stop_when="twenty iterations complete"), notes=NOTES)
         self.call("init")
 
+    def test_record_retains_history_past_count_and_byte_caps(self):
+        self.new()
+        record = self.read()
+        record['history'] = [dict(generation=1, field='question', previous='x' * 4096, replaced_at=record['written_at'], by='worker') for _ in range(300)]
+        path = self.store / 'records/a/record.json'
+        path.write_text(json.dumps(record))
+        self.assertGreater(path.stat().st_size, 1048576)
+        self.call('set', '--id', 'a', '--by', 'worker', '--expect-generation', 1, fields=dict(question='updated'))
+        self.assertEqual(len(self.read()['history']), 301)
+
+    def test_full_store_archives_oldest_record_and_accepts_new(self):
+        import shutil
+        self.new('oldest')
+        first = self.store / 'records/oldest'
+        os.utime(first, ns=(1, 1))
+        for n in range(4095):
+            destination = first.parent / ('entry-' + str(n))
+            shutil.copytree(first, destination)
+            os.utime(destination, None)
+        os.utime(first, ns=(1, 1))
+        self.new('incoming')
+        self.assertEqual(len(list(first.parent.iterdir())), 4096)
+        self.assertFalse(first.exists())
+        archived = list((self.store / 'archive').iterdir())
+        self.assertEqual(len(archived), 1)
+        self.assertEqual(json.loads((archived[0] / 'record.json').read_text())['id'], 'oldest')
+        self.show('incoming')
+
     def call(self, operation, *args, fields=None, code=0, stdin=None):
         cmd = [BIN, "records", operation, "--store", str(self.store), *map(str, args)]
         if fields is not None:

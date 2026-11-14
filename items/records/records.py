@@ -104,8 +104,8 @@ def read_file(path, cap=LIMIT, store=False):
             if store:
                 private(fd)
             with os.fdopen(fd, "rb", closefd=False) as f:
-                raw = f.read(cap + 1)
-            require(len(raw) <= cap, "record_oversize" if store else "evidence_oversize")
+                raw = f.read() if store else f.read(cap + 1)
+            require(store or len(raw) <= cap, "evidence_oversize")
             return raw
         finally:
             os.close(fd)
@@ -158,7 +158,6 @@ class Store:
                     pass
             self.records = self.directory(self.path / "records")
             names = os.listdir(self.records)
-            require(len(names) <= 4096, "store_full")
             require(all(SLUG.fullmatch(n) for n in names), "store_hazard")
         except BaseException:
             self.close()
@@ -210,11 +209,20 @@ class Store:
         for data in packets.values():
             require(not credential_present(loads(data)), "secret_in_evidence")
         raw = encoded(r)
-        require(len(raw) <= LIMIT, "record_oversize")
         p = self.path / "records" / r["id"]
         if new:
-            require(len(os.listdir(self.records)) < 4096, "store_full")
             require(not p.exists() and not p.is_symlink(), "record_exists")
+            names = os.listdir(self.records)
+            if len(names) >= 4096:
+                oldest = min(names, key=lambda name: (os.stat(name, dir_fd=self.records, follow_symlinks=False).st_mtime_ns, name))
+                self.folder(oldest)  # Validate before moving anything out of the active store.
+                archive = self.path / "archive"
+                archive.mkdir(mode=0o700, exist_ok=True)
+                archive_fd = self.directory(archive)
+                destination = oldest + "-" + secrets.token_hex(8)
+                os.rename(oldest, destination, src_dir_fd=self.records, dst_dir_fd=archive_fd)
+                os.fsync(archive_fd)
+                os.fsync(self.records)
             p.mkdir(mode=0o700)
             (p / "evidence").mkdir(mode=0o700)
         else:
@@ -363,7 +371,6 @@ def directory_info(path):
     try:
         require(os.fstat(fd).st_uid == os.getuid(), "evidence_hazard")
         names = sorted(os.listdir(fd))
-        require(len(names) <= 256, "evidence_oversize")
         return {name: {"digest": file_hash(Path(path) / name)[0]} if name in ("stdout.full", "stderr.full") else {"private_contents_not_read": True} for name in names}
     finally:
         os.close(fd)
@@ -374,7 +381,6 @@ def attach_inputs(r, o, packets):
     specs = o.inputs or []
     require(len(o.labels or []) <= len(specs) and len(o.exportable or []) <= len(specs), "invalid_field:evidence_labels", 2)
     for i, (flag, values) in enumerate(specs):
-        require(len(r["evidence"]) < 256, "evidence_limit")
         eid = "e" + str(max([int(e["id"][1:]) for e in r["evidence"]] or [0]) + 1)
         e = dict(id=eid, type=None, label=(o.labels or [])[i] if i < len(o.labels or []) else eid,
                  locator=values[0], digest=None, bytes=None, recorded_at=now(), attached_by=o.by or o.writer,
@@ -395,7 +401,6 @@ def attach_inputs(r, o, packets):
                     looking = isinstance(p, dict) and ("schema_version" in p or "observation_id" in p or p.get("kind") in PACKETS)
                     if looking:
                         e["type"], e["teerex"] = packet_info(p)
-                        require(sum(x["copy"] is not None for x in r["evidence"]) < 64, "evidence_limit")
                         e["copy"] = "evidence/" + eid + ".json"
                         packets[eid + ".json"] = raw
                 if e["type"] is None:
@@ -473,7 +478,6 @@ def append_elements(r, field, values):
     require(isinstance(values, list), "invalid_field:" + field)
     prefix, cap = {"claims": ("k", 128), "checks": ("c", 128), "omissions": ("o", 128), "items": ("u", 64)}[field]
     target = r["cleanup"]["items"] if field == "items" else r[field]
-    require(len(target) + len(values) <= cap, "cap_exceeded:" + field)
     assigned = []
     for value in values:
         require(isinstance(value, dict) and "id" not in value, "invalid_field:" + field)
@@ -505,7 +509,7 @@ def validate(r):
     for field in ("question", "discriminating_experiment", "notes"):
         require(r[field] is None or isinstance(r[field], str), "invalid_field:" + field)
     require(type(r["generation"]) is int and r["generation"] >= 0 and (r["state"] in ("open", "parked", "concluded", "abandoned") or r["state"].startswith("superseded_by:")), "invalid_field:state_or_generation")
-    require(isinstance(r["evidence"], list) and len(r["evidence"]) <= 256 and sum(bool(e.get("copy")) for e in r["evidence"]) <= 64, "evidence_limit")
+    require(isinstance(r["evidence"], list), "evidence_limit")
     if r["subject"] is not None:
         subject = r["subject"]
         allowed = {"repo", "commit", "dirty", "untracked", "untracked_truncated", "artifact", "digest", "basis"}
@@ -517,7 +521,7 @@ def validate(r):
         subject.setdefault("untracked", [])
         subject.setdefault("untracked_truncated", False)
         subject.setdefault("basis", "supplied")
-        require(subject["dirty"] in ("true", "false", "unknown") and subject["basis"] in ("observed", "supplied") and isinstance(subject["untracked"], list) and len(subject["untracked"]) <= 256, "invalid_field:subject")
+        require(subject["dirty"] in ("true", "false", "unknown") and subject["basis"] in ("observed", "supplied") and isinstance(subject["untracked"], list), "invalid_field:subject")
     if r["next_action"] is not None:
         require(isinstance(r["next_action"], dict) and set(r["next_action"]) == {"actor", "step", "stop_when"}, "invalid_field:next_action")
     if r["next_action"] is not None:
@@ -531,7 +535,6 @@ def validate(r):
     if r["uncertainty"] is not None:
         require(isinstance(r["uncertainty"]["text"], str), "invalid_field:uncertainty")
     require(isinstance(r["cleanup"], dict) and set(r["cleanup"]) == {"status", "items"} and r["cleanup"]["status"] in ("none_needed", "done", "partial", "not_started", "unknown"), "invalid_field:cleanup")
-    require(len(r["cleanup"]["items"]) <= 64 and len(r["history"]) <= 64, "cap_exceeded:history_or_cleanup")
     for evidence in r["evidence"]:
         require(isinstance(evidence, dict) and type(evidence.get("private")) is bool and isinstance(evidence.get("label"), str), "invalid_field:evidence")
         require(re.fullmatch(r"e[1-9][0-9]*", evidence.get("id", "")), "invalid_field:evidence.id")
@@ -563,7 +566,7 @@ def validate(r):
         ("claims", {"id", "text", "basis", "evidence", "supplied_by", "scope", "status", "depends_on", "contradicts", "supersedes", "status_history", "original"}, {"text", "basis"}, 128),
         ("checks", {"id", "command", "ran", "process_exit", "assertion", "establishes", "does_not_establish", "evidence"}, {"command", "ran", "process_exit", "assertion", "establishes", "does_not_establish"}, 128),
         ("omissions", {"id", "what", "reason"}, {"what", "reason"}, 128)):
-        require(isinstance(r[field], list) and len(r[field]) <= cap, "cap_exceeded:" + field)
+        require(isinstance(r[field], list), "cap_exceeded:" + field)
         for v in r[field]:
             require(isinstance(v, dict) and set(v) <= allowed and needed <= set(v), "invalid_field:" + field)
             for key in needed - {"basis", "ran", "assertion"}:
@@ -607,7 +610,6 @@ def validate(r):
 
 def replace(r, field, value, by):
     if field in ("question", "next_action", "hypothesis", "uncertainty") or field == "cleanup" and r["cleanup"]["items"]:
-        require(len(r["history"]) < 64, "cap_exceeded:history")
         r["history"].append(dict(generation=r["generation"], field=field, previous=copy.deepcopy(r[field]), replaced_at=now(), by=by))
     r[field] = copy.deepcopy(value)
 
@@ -904,10 +906,9 @@ def erase_file(path, expected=None):
     try:
         private(fd)
         remaining = os.fstat(fd).st_size
-        require(remaining <= LIMIT, "record_oversize")
         if expected is not None:
             with os.fdopen(os.dup(fd), "rb") as source:
-                raw = source.read(LIMIT + 1)
+                raw = source.read()
             require(hashlib.sha256(raw).hexdigest() == expected.removeprefix("sha256:"), "scratchpad_digest_mismatch")
             os.lseek(fd, 0, os.SEEK_SET)
         while remaining:
@@ -1026,7 +1027,7 @@ PIN_TYPES = ("git_ref", "file_sha256", "program_version", "gh_issue_state", "sup
 
 def decision_validate(r):
     pins = r.get("pins", [])
-    require(isinstance(pins, list) and len(pins) <= 64, "cap_exceeded:pins")
+    require(isinstance(pins, list), "cap_exceeded:pins")
     ids = set()
     for p in pins:
         require(isinstance(p, dict) and set(p) == {"id", "type", "target", "recorded_value", "recorded_at", "basis", "last_value", "last_checked", "last_result"}, "invalid_field:pin")
@@ -1045,7 +1046,7 @@ def decision_validate(r):
         require(c["status"] in ("provisional", "accepted", "stale", "withdrawn"), "invalid_field:claim.status")
         require(all(isinstance(c[k], list) and all(isinstance(x, str) for x in c[k]) for k in ("depends_on", "contradicts")), "invalid_field:claim.links")
         require(all(x in claims and x != c["id"] for x in c["contradicts"]) and (c["supersedes"] is None or c["supersedes"] in claims and c["supersedes"] != c["id"]), "invalid_field:claim.links")
-        require(isinstance(c["status_history"], list) and len(c["status_history"]) <= 128, "cap_exceeded:claim_history")
+        require(isinstance(c["status_history"], list), "cap_exceeded:claim_history")
         for h in c["status_history"]:
             require(isinstance(h, dict) and set(h) == {"status", "at", "by", "reason"} and h["status"] in ("provisional", "accepted", "stale", "withdrawn") and all(isinstance(x, str) for x in h.values()), "invalid_field:claim_history")
     if r["kind"] != "decision":
@@ -1061,7 +1062,7 @@ def decision_validate(r):
     require(isinstance(k["because"], list) and all(x in claims for x in k["because"]), "invalid_field:because")
     require(k["card_id"] is None or isinstance(k["card_id"], str), "invalid_field:card_id")
     for field, prefix, allowed, needed in (("options", "o", {"id", "label", "status", "why", "revisit_when", "revisit_text", "history"}, {"id", "label", "status", "why"}), ("invalidators", "v", {"id", "text", "pin", "condition"}, {"id", "text"})):
-        require(isinstance(k[field], list) and len(k[field]) <= 64, "invalid_field:" + field)
+        require(isinstance(k[field], list), "invalid_field:" + field)
         seen = set()
         for x in k[field]:
             require(isinstance(x, dict) and needed <= set(x) <= allowed and re.fullmatch(prefix + r"[1-9][0-9]*", x["id"]) and x["id"] not in seen, "invalid_field:" + field)
@@ -1168,7 +1169,6 @@ def decision_mutate(r, o):
     if o.operation == "pin":
         require(o.entries == ["add"] and o.type in PIN_TYPES and o.target, "pin_fields_required", 2)
         pins = r.setdefault("pins", [])
-        require(len(pins) < 64, "cap_exceeded:pins")
         p = dict(id="p" + str(len(pins) + 1), type=o.type, target=o.target, recorded_at=now(), basis="supplied" if o.value is not None else "observed", last_value=None, last_checked=None, last_result="unchecked")
         require(o.type != "supplied" or o.value is not None, "pin_probe_failed")
         p["recorded_value"] = o.value if o.value is not None else pin_probe(p, o.gh)
@@ -1457,7 +1457,6 @@ def execute(o):
                     raw = encoded(packet)
                     e = dict(id=eid, type=typ, label="park observation", locator="-", digest=sha(raw), bytes=len(raw), recorded_at=now(), attached_by=actor,
                              availability_at_attach="present", moved_from=[], copy="evidence/" + eid + ".json", supplied_by=None, private=True, teerex=info)
-                    require(len(r["evidence"]) < 256 and sum(x["copy"] is not None for x in r["evidence"]) < 64 and len(raw) <= LIMIT, "evidence_limit")
                     r["evidence"].append(e)
                     packets[eid + ".json"] = raw
                     assigned.append(eid)
@@ -1532,7 +1531,6 @@ def execute(o):
             old["state"] = "superseded_by:" + r["id"]
             old["generation"] += 1
             old["updated_at"] = now()
-            require(len(encoded(old)) <= LIMIT, "record_oversize")
         r["generation"] += 1
         r["updated_at"] = now()
         dg = store.save(r, packets, creating)
