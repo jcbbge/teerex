@@ -21,6 +21,20 @@ STOP = threading.Event()
 CHILDREN = []
 
 
+def tracked_output(command, timeout=None, text=False):
+    """check_output, but registered in CHILDREN so a stopping feed terminates and reaps it."""
+    if STOP.is_set():raise subprocess.SubprocessError('feed stopping')
+    p=subprocess.Popen(command,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,text=text);CHILDREN.append(p)
+    try:
+        try:out,_=p.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:p.kill();p.communicate();raise
+    finally:
+        try:CHILDREN.remove(p)
+        except ValueError:pass
+    if p.returncode:raise subprocess.CalledProcessError(p.returncode,command,out)
+    return out
+
+
 def emit(host, kind, **fields):
     with LOCK:
         print(json.dumps(dict(v=1, t=time.time_ns() // 1000000, host=host, kind=kind, **fields), separators=(',', ':')), flush=True)
@@ -209,24 +223,24 @@ class MacVitals:
         old = self.previous or values
         cpu = [100*(sum(v)-sum(p)-v[2]+p[2])/max(1,sum(v)-sum(p)) for v,p in zip(values,old)]
         self.previous = values
-        total = int(subprocess.check_output(['sysctl','-n','hw.memsize'], text=True))
-        vm = subprocess.check_output(['vm_stat'], text=True)
+        total = int(tracked_output(['sysctl','-n','hw.memsize'],text=True))
+        vm = tracked_output(['vm_stat'],text=True)
         page = int(re.search(r'page size of (\d+)',vm)[1])
         stats = {k:int(v) for k,v in re.findall(r'([^\n:]+):\s+(\d+)\.',vm)}
         available = page*sum(stats.get(k,0) for k in ('Pages free','Pages inactive','Pages speculative'))
-        swap = subprocess.check_output(['sysctl','-n','vm.swapusage'], text=True)
+        swap = tracked_output(['sysctl','-n','vm.swapusage'],text=True)
         def byte_value(key):
             m = re.search(key+r' = ([0-9.]+)([KMG])',swap)
             return int(float(m[1])*{'K':1024,'M':1024**2,'G':1024**3}[m[2]]) if m else 0
         disks = []
-        for line in subprocess.check_output(['mount'],text=True).splitlines():
+        for line in tracked_output(['mount'],text=True).splitlines():
             if not line.startswith('/dev/'):
                 continue
             mount = line.split(' on ',1)[1].rsplit(' (',1)[0]
             v = os.statvfs(mount)
             disks.append(dict(mount=mount,total=v.f_blocks*v.f_frsize,used=(v.f_blocks-v.f_bfree)*v.f_frsize))
         rx=tx=0
-        output = subprocess.check_output(['netstat','-ibn'],text=True).splitlines()
+        output = tracked_output(['netstat','-ibn'],text=True).splitlines()
         seen=set()
         if output:
             header=output[0].split(); ri=header.index('Ibytes'); ti=header.index('Obytes')
@@ -238,7 +252,7 @@ class MacVitals:
         net=dict(rx_bps=max(0,rx-old[0])/elapsed,tx_bps=max(0,tx-old[1])/elapsed)
         self.at=now;self.net=(rx,tx)
         processes={}
-        for line in subprocess.check_output(['ps','-axo','pid=,ppid=,%cpu=,rss=,comm='],text=True).splitlines():
+        for line in tracked_output(['ps','-axo','pid=,ppid=,%cpu=,rss=,comm='],text=True).splitlines():
             f=line.split(None,4)
             if len(f)==5:
                 pid=int(f[0]);processes[pid]=dict(pid=pid,ppid=int(f[1]),cpu=float(f[2]),rss=int(f[3])*1024,cmd=os.path.basename(f[4]))
@@ -268,7 +282,7 @@ class State:
 
     def rex_json(self, *args):
         command=[self.a.rex,'--autostart=false','--server','unix://'+self.a.socket,'--timeout','2s',*args]
-        return json.loads(subprocess.check_output(command,stderr=subprocess.DEVNULL,timeout=3))
+        return json.loads(tracked_output(command,timeout=3))
 
     def refresh_inventory(self):
         live={}
@@ -646,7 +660,7 @@ def main(argv=None):
         return
     def stop(signum,frame):
         STOP.set()
-        for p in CHILDREN:
+        for p in list(CHILDREN):
             if p.poll() is None:p.terminate()
     signal.signal(signal.SIGTERM,stop);signal.signal(signal.SIGINT,stop)
     try:
@@ -654,7 +668,7 @@ def main(argv=None):
     except BrokenPipeError:STOP.set()
     finally:
         stop(0,None)
-        for p in CHILDREN:
+        for p in list(CHILDREN):
             try:p.wait(timeout=3)
             except subprocess.TimeoutExpired:p.kill();p.wait()
 
