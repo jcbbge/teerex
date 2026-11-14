@@ -317,12 +317,35 @@ class ContractHelpersTest(unittest.TestCase):
                 registry.save(record, new=True)
                 self.assertEqual(registry.read(record["launch_id"])["purpose"], record["purpose"])
 
+    def test_done_refusal_retries_only_before_input_and_clock_starts_on_delivery(self):
+        with resources.temporary_directory() as directory:
+            destination = dict(session_id="s", block_id="lead")
+            state = dict(name="worker", target={}, starter=destination, report_to=destination, contract={})
+            self.ns["load"] = lambda *a: state
+            self.ns["update"] = lambda r, i, f: f(state)
+            safe = dict(outcome="refused", paste=dict(attempted=False), enter=dict(attempted=False), draft=dict(cleared=None))
+            sent = []
+            self.ns["send"] = lambda *a: (sent.append(a) or (1, safe))
+            code, packet = self.ns["contract_tell"](directory, "id", "done", "DONE worker: proof", last_message="last words")
+            self.assertEqual((code, packet["outcome"]), (0, "queued"))
+            self.assertIsNone(state["contract"].get("awaiting_starter"))
+            item = next(iter(state["contract"]["pending_delivery"].values()))
+            self.assertIn("last words", item["body"])
+            item["next_at"] = 0
+            self.ns["send"] = lambda *a: (sent.append(a) or (0, dict(outcome="events_acknowledged")))
+            self.ns["contract_retry"](directory, "id")
+            self.assertEqual(state["contract"]["pending_delivery"], {})
+            self.assertEqual(state["contract"]["awaiting_starter"]["kind"], "done")
+            self.assertEqual(len(sent), 2)
+            self.assertFalse(self.ns["delivery_refused_safely"](dict(paste=dict(attempted=True),
+                                                                    enter=dict(attempted=False), draft=dict(cleared=None))))
+
     def test_explicit_starter_requires_receiver_and_records_new_assignment(self):
         import types
         with resources.temporary_directory() as directory:
             target = dict(host="hive", server="unix:///tmp/test", session_id="s", block_id="child")
             owner = dict(target=dict(target, block_id="lead"))
-            state = dict(human=True, socket="/tmp/test", target=target, purpose="work", starter=None)
+            state = dict(human=False, socket="/tmp/test", target=target, purpose="work", starter=None)
             self.ns["load"] = lambda r, i: owner if i == "lead" else state
             self.ns["update"] = lambda r, i, f: (f(state) or state)
             self.ns["pane_presence"] = lambda *a: True
@@ -509,7 +532,7 @@ class ContractHelpersTest(unittest.TestCase):
         code, _ = self.ns["contract_tell"]("root", "id", "done", "DONE worker: proof")
         self.assertEqual(code, 1)
         self.assertEqual((state["contract"]["last_contact_at"], state["contract"]["lapses"], state["contract"]["stalled"]), (1, 2, True))
-        self.assertNotIn("awaiting_starter", state["contract"])
+        self.assertIsNone(state["contract"].get("awaiting_starter"))
         self.assertEqual(state["contract"]["last_contact_failed"]["at"], 10)
         def acknowledged(*args):
             self.ns["now"] = lambda: 30
@@ -1059,12 +1082,15 @@ class AgentsTest(unittest.TestCase):
                 notice = self.record(launch_id)["notifications"][identity]
                 self.assertEqual(notice["outcome"], "queued")
                 native = (notice["receipt"] if contract else notice)["results"][0]["receipt"]
-                self.assertFalse(native["paste"]["attempted"] or native["enter"]["attempted"])
+                refusal = native.get("refusal", native)
+                self.assertFalse(refusal["paste"]["attempted"] or refusal["enter"]["attempted"])
+                if contract:
+                    self.assertIsNone(self.record(launch_id)["contract"].get("awaiting_starter"))
                 self.assertEqual([v for v in events(self.starter_log) if v["event"] == "input"], before)
                 command[2] = "release"
                 released = subprocess.run(command, env=self.env, capture_output=True, text=True, timeout=15)
                 self.assertEqual(released.returncode, 0, released.stdout + released.stderr)
-                self.assertEqual(json.loads(released.stdout)["queue"]["delivered"], [native["queue_id"]])
+                self.assertEqual(json.loads(released.stdout)["queue"]["delivered"], [] if contract else [native["queue_id"]])
                 expected = len(before) + 1
                 wait_for(lambda: sum(v["event"] == "input" for v in events(self.starter_log)) == expected)
                 released = subprocess.run(command, env=self.env, capture_output=True, text=True, timeout=15)
@@ -3120,6 +3146,45 @@ Path('/work/network-harness').touch()
         path.chmod(0o600)
         return target
 
+    def test_contract_done_reaches_busy_registered_seat_across_adapters(self):
+        records, seat_log = self.contract_seat_fixture()
+        seat = json.loads((self.work / "boards/state.json").read_text())["seats"][0]["target"]
+        self.settings["defaults"].update(starter_session=self.session, starter_block=seat["block_id"])
+        self.settings["profiles"]["probe"]["contract_interval_s"] = 600
+        for harness in ("claude", "codex", "pi"):
+            p, launched = self.launch(contract=True)
+            self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+            launch_id = launched["launch_id"]
+            state = self.record(launch_id)
+            self.scratch_contract(state, done=["done " + harness])
+            fresh = subprocess.run([BIN, "scratch", "flag", "", "--session", self.session,
+                                    "--block", state["target"]["block_id"]], env=self.env, capture_output=True, text=True)
+            self.assertEqual(fresh.returncode, 0, fresh.stdout + fresh.stderr)
+            target = ("--socket", str(self.socket), "--session", self.session, "--pane", seat["block_id"])
+            if harness == "claude":
+                p = subprocess.run([BIN, "clutch", "take", *target], env=self.env, capture_output=True, text=True)
+                self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+            words = "last words from " + harness
+            if harness == "codex":
+                packet = self.enforcement_hook(launch_id, harness, dict(type="agent-turn-complete", **{
+                    "last-assistant-message": words, "turn-id": "done-seat", "input-messages": ["work"]}), notify=True)
+            else:
+                if harness == "pi":
+                    self.enforcement_hook(launch_id, harness, dict(hook_event_name="ScratchCheck", last_assistant_message=words))
+                packet = self.enforcement_hook(launch_id, harness, dict(hook_event_name="Stop", last_assistant_message=words))
+            if harness == "claude":
+                self.assertTrue(self.record(launch_id)["contract"].get("pending_delivery"), json.dumps(packet))
+                self.assertIsNone(self.record(launch_id)["contract"]["awaiting_starter"])
+                p = subprocess.run([BIN, "clutch", "release", *target], env=self.env, capture_output=True, text=True)
+                self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+            def messages():
+                return [v["payload"] for v in events(seat_log) if v["event"] == "input"]
+            wait_for(lambda: any("DONE probe:" in v and words in v for v in messages()), timeout=15)
+            self.assertEqual(sum("DONE probe:" in v and words in v for v in messages()), 1)
+            wait_for(lambda: (self.record(launch_id)["contract"].get("awaiting_starter") or {}).get("kind") == "done")
+            self.assertFalse(any(v.startswith("FROM teerex-contract: STEP ") for v in messages()))
+            self.assertTrue(any("STEP probe" in r["body"] for r in records()))
+
     def test_contract_routes_rapid_sequence_retains_flag_in_order(self):
         self.register_starter_identity()
         p, launched = self.launch(contract=True)
@@ -3143,6 +3208,13 @@ Path('/work/network-harness').touch()
         wait_for(lambda: any(v["event"] == "input" and "TASK β" in v["payload"] for v in events(self.worker_log)))
         brief = next(v["payload"] for v in events(self.worker_log) if v["event"] == "input" and "TASK β" in v["payload"])
         self.assertTrue(brief.startswith("FROM lead:"), brief)
+        p, packet = self.run_cli("stop", "--registry", str(self.registry), "--launch-id", launched["launch_id"],
+                                "--event-file", "-", input=json.dumps(dict(hook_event_name="Stop",
+                                                       last_assistant_message="rapid report")))
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        messages = [v for v in self.starter_messages() if "STEP probe" in v or "FLAG probe" in v or "DONE probe:" in v]
+        self.assertEqual(len(messages), 6, messages)
+        self.assertIn("DONE probe:", messages[-1])
 
     def test_contract_routes_human_adopts_sender_and_routes_stop(self):
         target = self.register_starter_identity()

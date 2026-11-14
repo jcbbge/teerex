@@ -667,8 +667,9 @@ def send(root, state, destination, body, label):
     with Registry(root) as registry:
         path = registry.write_message(state["launch_id"], label, body)
     return invoke(["send", "--socket", state["socket"], "--session", destination["session_id"],
-                   "--block", destination["block_id"], "--from", state["name"], "--message-file", path, *send_options(state)],
-                  client_path=state["client_path"], rex_executable=state["rex_executable"])
+                   "--block", destination["block_id"], "--from", state["name"], "--message-file", path, *send_options(state),
+                   *(["--no-queue", "--draft-wait-ms", "1000", "--timeout-ms", "11000"] if state.get("require_delivery") else [])],
+                  timeout=45, client_path=state["client_path"], rex_executable=state["rex_executable"])
 
 
 def transport_ack(code, packet):
@@ -758,6 +759,54 @@ def contract_seat(state):
     return packet.get("target")
 
 
+def delivery_refused_safely(packet):
+    return (isinstance(packet, dict) and packet.get("paste", {}).get("attempted") is False and
+            packet.get("enter", {}).get("attempted") is False and
+            packet.get("draft", {}).get("cleared") is None)
+
+
+def contract_retry(root, launch_id):
+    state = load(root, launch_id)
+    for key, pending in list((state.get("contract") or {}).get("pending_delivery", {}).items()):
+        if pending.get("phase") != "pending" or pending.get("next_at", 0) > now():
+            continue
+        claimed = False
+        def claim(s):
+            nonlocal claimed
+            item = s["contract"].get("pending_delivery", {}).get(key)
+            if item and item.get("phase") == "pending":
+                item["phase"] = "inflight"
+                claimed = True
+        update(root, launch_id, claim)
+        if not claimed:
+            continue
+        sender = dict(state, name="teerex-contract", require_delivery=True)
+        code, packet = send(root, sender, pending["destination"], pending["body"], "retry-" + secrets.token_hex(16))
+        at = now()
+        def finish(s):
+            c = s["contract"]
+            item = c["pending_delivery"][key]
+            item.update(receipt=packet, attempted_at=at)
+            if transport_ack(code, packet):
+                del c["pending_delivery"][key]
+                for notice in s.get("notifications", {}).values():
+                    delivery = notice.get("receipt") or {}
+                    results = delivery.get("results", [])
+                    for result in results:
+                        if (result.get("receipt") or {}).get("pending_id") == key:
+                            result.update(client_exit=code, receipt=packet)
+                    if results and all(transport_ack(r["client_exit"], r["receipt"]) for r in results):
+                        delivery["outcome"] = "transport_acknowledged"
+                        notice["outcome"] = "transport_acknowledged"
+                if not c["pending_delivery"] and s.get("last_input_at_ns", 0) < at * 1000000:
+                    c.update(awaiting_starter=dict(kind="done", at=at), starter_lapses=0)
+            elif delivery_refused_safely(packet):
+                item.update(phase="pending", next_at=at + 1000)
+            else:
+                item["phase"] = "uncertain"
+        update(root, launch_id, finish)
+
+
 def contract_tell(root, launch_id, kind, line, to="starter", last_message=None, turn_report=None):
     state = load(root, launch_id)
     if kind == "flag" and to == "starter":
@@ -800,14 +849,24 @@ def contract_tell(root, launch_id, kind, line, to="starter", last_message=None, 
             update(root, launch_id, claim)
             if not claimed:
                 continue
-        sender = dict(state, name="teerex-scratchpad" if to == "self" else "teerex-contract")
-        code, packet = send(root, sender, destination, line + ("\n" + last_message if last_message else ""), "contract-" + secrets.token_hex(16) + "-" + str(i))
+        sender = dict(state, name="teerex-scratchpad" if to == "self" else "teerex-contract",
+                      require_delivery=kind == "done")
+        body = line + ("\n" + last_message if last_message else "")
+        code, packet = send(root, sender, destination, body, "contract-" + secrets.token_hex(16) + "-" + str(i))
+        if kind == "done" and delivery_refused_safely(packet):
+            key = secrets.token_hex(16)
+            pending = dict(destination=destination, body=body, phase="pending", next_at=now() + 1000,
+                           receipt=packet)
+            update(root, launch_id, lambda s: s["contract"].setdefault("pending_delivery", {}).update({key: pending}))
+            packet = dict(outcome="pending_delivery", pending_id=key, refusal=packet)
+            code = 0
         results.append(dict(client_exit=code, receipt=packet))
     if turn_report is not None and not results and destinations:
         return 0, dict(outcome="unchanged_turn_suppressed", results=[])
-    queued = any(succeeded(r["client_exit"], r["receipt"], "queued") for r in results)
+    queued = any(succeeded(r["client_exit"], r["receipt"], "queued", "pending_delivery") for r in results)
+    delivered = bool(results) and all(transport_ack(r["client_exit"], r["receipt"]) for r in results)
     ok = bool(results) and all(transport_ack(r["client_exit"], r["receipt"]) or
-                               succeeded(r["client_exit"], r["receipt"], "queued") for r in results)
+                               succeeded(r["client_exit"], r["receipt"], "queued", "pending_delivery") for r in results)
     if to == "starter":
         def told(s):
             c = s["contract"]
@@ -817,7 +876,9 @@ def contract_tell(root, launch_id, kind, line, to="starter", last_message=None, 
                 c["last_contact_failed"] = dict(at=sent_at, line=line, receipt=results)
             if kind == "flag" and c.get("flag", {}).get("sha") == flag["sha"]:
                 c["flag"].update(delivered_at=now() if ok else None, receipt=results)
-            if ok and kind in ("done", "flag", "scratch_flag") and s.get("last_input_at_ns", 0) < sent_at * 1000000:
+            if kind == "done" and queued:
+                c.update(awaiting_starter=None, starter_lapses=0)
+            if delivered and kind in ("done", "flag", "scratch_flag") and s.get("last_input_at_ns", 0) < sent_at * 1000000:
                 c.update(awaiting_starter=dict(kind="flag" if kind == "scratch_flag" else kind, at=sent_at), starter_lapses=0)
         update(root, launch_id, told)
     return (0 if ok else 1), dict(outcome=("queued" if queued else "transport_acknowledged") if ok else "uncertain", results=results)
@@ -2173,6 +2234,8 @@ def report_stop(root, launch_id, event_id, event, allow_transcript=True):
             reason = c["flag"]["text"] if declared == "blocked" else waiting if declared == "waiting" else "ended its turn without declaring done, blocked or waiting"
             turn_report = dict(outcome=declared or "no_answer", step_n=c["step_n"],
                                steps_total=c["steps_total"], reason=reason)
+        # A Stop cannot overtake transitions already written by this turn.
+        contract_steps(root, launch_id, (None, []))
         code, delivery = contract_tell(root, launch_id, declared or "no_answer", body,
                                        last_message=last_message, turn_report=turn_report)
         update(root, launch_id, lambda s: s["notifications"][event_id].update(outcome=("queued" if delivery.get("outcome") == "queued" else "transport_acknowledged") if code == 0 else "uncertain", receipt=delivery))
@@ -2199,6 +2262,23 @@ def supervisor_error(o, field, exc):
 
 
 def contract_steps(root, launch_id, previous):
+    state = load(root, launch_id)
+    if not state.get("contract") or not contract_active(state):
+        return previous
+    import fcntl
+    lock = os.open(state["scratchpad"] + ".delivery.lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        state = load(root, launch_id)
+        previous = state.get("scratch_previous", previous)
+        result = contract_steps_locked(root, launch_id, previous)
+        update(root, launch_id, lambda s: s.update(scratch_previous=result))
+        return result
+    finally:
+        os.close(lock)
+
+
+def contract_steps_locked(root, launch_id, previous):
     state = load(root, launch_id)
     if not state.get("contract") or not contract_active(state):
         return previous
@@ -2469,7 +2549,12 @@ def supervise_child(o):
 
             try:
                 if child.poll() is not None:
-                    break
+                    contract_retry(o.registry, o.launch_id)
+                    pending = (load(o.registry, o.launch_id).get("contract") or {}).get("pending_delivery", {})
+                    if not any(item.get("phase") in ("pending", "inflight") for item in pending.values()):
+                        break
+                    time.sleep(.05)
+                    continue
                 if broker is not None:
                     broker.service()
                 else:
@@ -2500,6 +2585,7 @@ def supervise_child(o):
                     delivered_input(o.registry, o.launch_id, incoming)
                     last_input_ns = incoming["at_ns"]
                 previous_steps = contract_steps(o.registry, o.launch_id, previous_steps)
+                contract_retry(o.registry, o.launch_id)
                 contract_starter(o.registry, o.launch_id)
                 contract_lapse(o.registry, o.launch_id)
                 live = load(o.registry, o.launch_id)
@@ -2757,7 +2843,6 @@ def starter(o):
             owner["target"] != state["target"], "starter_same_server_other_agent_required")
     require(pane_presence(state, owner["target"]), "new_starter_not_live")
     def bind(s):
-        require(s.get("human"), "starter_change_requires_human_launch")
         previous = s.get("starter")
         s.update(starter=owner["target"], report_to=owner["target"], work_sender_adopted=True)
         s["contract"] = contract_init(s, {}, "", None, None)
@@ -2840,7 +2925,7 @@ def parser():
         "Profiles accept layout: tab|detached and opt-in come_forward: true (place on Stop/StopFailure/exit without focus). "
         "No readiness claim, input lease, untracked agent, daemon, automatic retry/close or whole-tree death guarantee."))
     sub = p.add_subparsers(dest="operation", required=True)
-    q = sub.add_parser("starter", help="explicit new work: receiving human-launched agent assigns its starter")
+    q = sub.add_parser("starter", help="explicit new work: receiving agent assigns its starter")
     for field in ("registry", "launch-id", "starter-launch-id"):
         q.add_argument("--" + field, required=True)
     q = sub.add_parser("rebind_seat", help="registry-locked inheritance after boards verifies the previous seat absent")
