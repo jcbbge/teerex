@@ -719,6 +719,7 @@ class BoardTest(unittest.TestCase):
         live=Pane(self.root,fixture=None,config=config,extra_env=dict(TEEREX_ASK_STATE_DIR=str(self.root/'asks')))
         self.addCleanup(live.close)
         live.until(lambda:b'disk ' in live.output,seconds=8)
+        live.until(lambda:'agents' in live.view())
         self.assertIn('agents',live.view())
         live.key(b'm');live.until(lambda:live.view().splitlines()[0].strip().startswith('m5  '),seconds=5)
         live.key(b'm')
@@ -726,6 +727,7 @@ class BoardTest(unittest.TestCase):
         self.assertNotIn('Pick the release time?',live.view())
         live.key(b'd');live.until(lambda:'Pick the release time?' in live.view())
         live.key(b'2');live.until(lambda:b'Answer recorded' in live.output,seconds=10)
+        live.until(lambda:'asks' not in live.view())
         self.assertNotIn('asks',live.view())
         history=subprocess.run(decision_base+['boards','state','inspect'],env=private_env,capture_output=True,text=True,check=True,timeout=10)
         resolutions=[r for seat in json.loads(history.stdout)['state']['seats'] for r in seat['records'] if r['kind']=='resolution']
