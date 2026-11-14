@@ -3125,13 +3125,18 @@ Path('/work/network-harness').touch()
     def test_contract_expired_wait_check_wakes_before_interval(self):
         import datetime
         self.settings["profiles"]["probe"]["contract_interval_s"] = 60
-        p, launched = self.launch(contract=True)
+        p, launched = self.launch(behavior="quiet", contract=True)
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
         state = self.record(launched["launch_id"])
-        check = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=1)).isoformat()
+        check = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=2)).isoformat()
         self.scratch_contract(state, "Wait", waiting="dependency", check=check)
+        wait_for(lambda: self.record(launched["launch_id"])["contract"].get("declared") == "waiting")
+        event = json.dumps(dict(hook_event_name="Stop", last_assistant_message="waiting for dependency"))
+        result, _ = self.run_cli("stop", "--registry", str(self.registry), "--launch-id", launched["launch_id"],
+                                 "--event-file", "-", input=event)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         wait_for(lambda: self.record(launched["launch_id"])["contract"]["lapses"] == 1)
-        time.sleep(.3)
+        wait_for(lambda: sum("LAPSE probe" in text for text in self.starter_messages()) == 1)
         self.assertEqual(sum("LAPSE probe" in text for text in self.starter_messages()), 1)
 
     def test_contract_future_wait_check_suppresses_interval_until_due(self):
@@ -3161,6 +3166,7 @@ Path('/work/network-harness').touch()
         wait_for(lambda: sum("LAPSE probe" in text for text in self.starter_messages()) == 1, timeout=3)
         wait_for(lambda: len(nudges()) == 1)
         self.assertEqual(self.record(launch_id)["contract"]["lapses"], 1)
+        self.assertGreaterEqual(self.record(launch_id)["contract"]["last_lapse_at"], int(check_at * 1000))
         time.sleep(.3)
         self.assertEqual(sum("LAPSE probe" in text for text in self.starter_messages()), 1)
         self.assertEqual(len(nudges()), 1)
