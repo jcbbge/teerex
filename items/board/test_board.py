@@ -163,6 +163,17 @@ class BoardTest(unittest.TestCase):
             finally:pane.close()
         self.assertLessEqual(resident[1],resident[0]+2048,
                              'replaced events retained RSS (KiB): %r'%resident)
+    def test_expanded_state_path_marks_current_step_and_outcomes(self):
+        path=self.root/'steps.jsonl'
+        row=dict(v=1,t=200000,host='hive',kind='agent',id='worker',name='worker',state='working',now='Build',done=1,total=3,executor='model',steps=[dict(state='done',text='Read',by='computer',outcome='checked'),dict(state='now',text='Build',by='model',handoff='reviewer'),dict(state='todo',text='Verify',by='computer')])
+        path.write_text(json.dumps(row)+'\n')
+        p=Pane(self.root,fixture=path);self.addCleanup(p.close)
+        p.settle();self.assertNotIn('← now',p.view())
+        p.key(b' ')
+        for label in ('✓ Read','■ checked','▶ Build','← now','⇥ reviewer','Verify','computer','end: —'):
+            self.assertIn(label,p.view())
+        self.assertLess(p.view().index('✓ Read'),p.view().index('▶ Build'))
+        self.assertLess(p.view().index('▶ Build'),p.view().index('Verify'))
 
     def test_contract_stalled_row_contact_and_width(self):
         path=self.root/'contract.jsonl'

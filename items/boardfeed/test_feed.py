@@ -185,6 +185,13 @@ class FeedTests(unittest.TestCase):
             self.assertEqual(len(agents),3);self.assertEqual(agents[0]['total'],3);self.assertEqual(agents[-1]['state'],'gone')
             self.assertIn('message delivered',out.getvalue());self.assertNotIn('SECRET',out.getvalue());self.assertNotIn('DO NOT PRINT',out.getvalue())
 
+    def test_scratch_step_projection_preserves_annotations(self):
+        steps=feed.scratch_steps({'Done':['Read · computer · ■ checked'],'Now':['Build · model · ⇥ reviewer'],'To-do':['Verify']})
+        self.assertEqual([s['state'] for s in steps],['done','now','todo'])
+        self.assertEqual(steps[0]['outcome'],'checked')
+        self.assertEqual(steps[1]['handoff'],'reviewer')
+        self.assertEqual(steps[2]['text'],'Verify')
+
     def test_contract_and_legacy_worker_rows(self):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp)

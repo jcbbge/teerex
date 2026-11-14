@@ -373,30 +373,8 @@ const UI = struct {
         if (self.inline_pad and self.selected < self.rows.items.len) {
             const r = self.rows.items[self.selected];
             try add(&lines, a, try fmt(a, "Scratchpad · {s}", .{text(r, "name")}), .accent);
-            // Complete Now line is wrapped, never treated as executable text.
             const pad = if (self.pad != null and self.pad_host == self.host and eq(self.pad_id[0..self.pad_len], text(r, "id"))) self.pad.?.value else .null;
-            const now = try clip(a, if (pad == .object) text(pad, "now") else text(r, "now"), 8192);
-            var it = (try std.unicode.Utf8View.init(now)).iterator();
-            var part: std.ArrayList(u8) = .empty;
-            var count: usize = 0;
-            while (it.nextCodepointSlice()) |cp| {
-                const cw = cellWidth(try std.unicode.utf8Decode(cp));
-                if (count + cw > inner and part.items.len > 0) {
-                    try add(&lines, a, try a.dupe(u8, part.items), .words);
-                    part.clearRetainingCapacity();
-                    count = 0;
-                }
-                try part.appendSlice(a, cp);
-                count += cw;
-            }
-            if (part.items.len > 0) try add(&lines, a, try a.dupe(u8, part.items), .words);
-            if (pad == .object) {
-                for ([_][]const u8{ "todo", "done" }, [_][]const u8{ "□", "ok" }) |key, glyph| {
-                    for (arr(get(pad, key))) |item| {
-                        try add(&lines, a, try fmt(a, "{s} {s}", .{ glyph, str(item) }), .secondary);
-                    }
-                }
-            }
+            try self.machine(&lines, a, if (pad == .object) pad else r, r, inner);
             try add(&lines, a, try fmt(a, "{d}/{d} steps done", .{ integer(num(get(r, "done"))), integer(num(get(r, "total"))) }), .secondary);
         }
         if (self.help) {
@@ -441,6 +419,32 @@ const UI = struct {
         const step = get(r, "step_n");
         const contract = if (step == .null) "" else try fmt(a, "{s} {d}/{d}  ", .{ if (starter.len > 0) starter else "—", integer(num(step)), integer(num(get(r, "step_total"))) });
         try add(lines, a, try fmt(a, "  {s}{s}{s}", .{ contract, if (stalled) "stalled: " else "", now }), row_role);
+    }
+    fn machine(_: *UI, lines: *std.ArrayList(Line), a: A, pad: Value, row: Value, width: usize) !void {
+        const executor = if (text(row, "executor").len > 0) text(row, "executor") else "agent";
+        const steps = arr(get(pad, "steps"));
+        var outcome: []const u8 = "—";
+        var unfinished = false;
+        if (steps.len > 0) {
+            for (steps) |step| {
+                const state = text(step, "state");
+                if (!eq(state, "done")) unfinished = true;
+                const by = if (text(step, "by").len > 0) text(step, "by") else executor;
+                const result = text(step, "outcome");
+                if (eq(state, "done") and result.len > 0) outcome = result;
+                const label = try clip(a, text(step, "text"), @max(8, width -| (cells(by) + 15)));
+                try add(lines, a, try fmt(a, "  {s} {s}  {s}{s}{s}{s}{s}{s}", .{ if (eq(state, "done")) "✓" else if (eq(state, "now")) "▶" else " ", label, by, if (eq(state, "now")) " ← now" else "", if (result.len > 0) " ■ " else "", result, if (text(step, "handoff").len > 0) " ⇥ " else "", text(step, "handoff") }), if (eq(state, "now")) .accent else .secondary);
+            }
+        } else {
+            var completed = arr(get(pad, "done")).len;
+            while (completed > 0) {
+                completed -= 1;
+                try add(lines, a, try fmt(a, "  ✓ {s}  {s}", .{ str(arr(get(pad, "done"))[completed]), executor }), .secondary);
+            }
+            if (text(pad, "now").len > 0) try add(lines, a, try fmt(a, "  ▶ {s}  {s} ← now", .{ text(pad, "now"), executor }), .accent);
+            for (arr(get(pad, "todo"))) |item| try add(lines, a, try fmt(a, "    {s}  {s}", .{ str(item), executor }), .secondary);
+        }
+        try add(lines, a, try fmt(a, "  end: {s}", .{if (unfinished) "—" else outcome}), .secondary);
     }
     fn vitals(_: *UI, lines: *std.ArrayList(Line), a: A, host: Host, v: Value, width: usize) !void {
         const mem = get(v, "mem");

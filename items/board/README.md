@@ -40,7 +40,7 @@ retain the last readings with an explicit unavailable notice.
 |---|---|
 | Up/Down, j/k | Select a live agent |
 | Enter | `teerex --config … --host ROW_HOST surfaces focus` on that exact pane |
-| Space | Inline scratchpad via the selected host's `scratch show --json`; the event's Now/progress remain available if the read fails |
+| Space | Expand ordered Done → Now → To-do steps with the current step marked; inline scratchpad via the selected host's `scratch show --json`; the event's Now/progress remain available if the read fails |
 | m | Switch hive / M5 |
 | ? | Keys overlay |
 | q, Ctrl-C, Ctrl-D | Exit and restore terminal settings |
@@ -241,3 +241,5 @@ this check and held Enter; fixture tests cover ordering, colour, availability,
 counts and independent mismatch detection.
 
 Worker rows show the starter, contract step n/m and age since last contact. Stalled contracts use the problem colour on both row lines; labels retain cell-aware clipping at narrow widths.
+
+Expanded agent machines preserve step executor, `■ outcome` and `⇥ handoff` annotations when present. Plain scratchpads remain supported; absent executor evidence is labelled `agent`.

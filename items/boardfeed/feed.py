@@ -282,6 +282,21 @@ def profile_executables(path):
     except (OSError,ValueError,UnicodeError,TypeError,AttributeError,RuntimeError):return set()
 
 
+def scratch_steps(sections):
+    steps=[]
+    for section,state in (('Done','done'),('Now','now'),('To-do','todo')):
+        for value in (reversed(sections[section]) if state=='done' else sections[section]):
+            parts=value.split(' · ')
+            step=dict(state=state,text=parts[0],by='',outcome='',handoff='')
+            for part in parts[1:]:
+                if part.startswith('■ '):step['outcome']=part[2:]
+                elif part.startswith('⇥ '):step['handoff']=part[2:]
+                elif not step['by']:step['by']=part
+                else:step['text']+=' · '+part
+            steps.append(step)
+    return steps
+
+
 class State:
     def __init__(self, a):
         self.a=a; self.rows={};self.calls={};self.call_starts={};self.roots={};self.pids={};self.status={};self.questions={};self.reports={};self.seeded=set();self.live={};self.reachable=None
@@ -375,7 +390,7 @@ class State:
                 else:
                     name=record.get('name') or pane.get('label') or (agent_reports[0].get('app') if agent_reports else None) or 'agent'
                 row=dict(id=block,name=name,session=session,block=block,state=self.status.get(block,'unknown'),placement=pane.get('placement','placed'),now=next(iter(sections['Now']),None),done=len(sections['Done']),total=sum(map(len,sections.values())),question=self.questions.get(block),since=hook.get('at') or record.get('created_at') or record.get('registered_at_unix_ms') or 0,cpu=None,rss=None)
-                row.update(starter=starter_name,step_n=contract.get('step_n',len(sections['Done'])+bool(sections['Now'])),step_total=contract.get('steps_total',row['total']),last_contact_at=contract.get('last_contact_at',hook.get('at') or 0),stalled=contract.get('stalled',False))
+                row.update(steps=scratch_steps(sections),executor=record.get('profile') or 'agent',starter=starter_name,step_n=contract.get('step_n',len(sections['Done'])+bool(sections['Now'])),step_total=contract.get('steps_total',row['total']),last_contact_at=contract.get('last_contact_at',hook.get('at') or 0),stalled=contract.get('stalled',False))
                 rows[block]=row
             for block,row in rows.items():
                 if self.rows.get(block)!=row:emit(self.a.host,'agent',**row)
