@@ -932,6 +932,7 @@ class AgentsTest(unittest.TestCase):
         exited = self.launch("exit7")[1]["launch_id"]
         gone = self.launch("ack")[1]["launch_id"]
         wait_for(lambda: self.record(exited)["immediate_child_term"])
+        recent = self.launch("ack")[1]["launch_id"]  # still inside the settle window
         gone_block = self.record(gone)["target"]["block_id"]
         closed = subprocess.run([BIN, "surfaces", "close", "--socket", str(self.socket), "--session", self.session, "--pane", gone_block],
                                 capture_output=True, text=True, env=self.env)
@@ -946,7 +947,6 @@ class AgentsTest(unittest.TestCase):
         orphan = self.registry / ("agents-" + "f" * 32 + "-brief.txt")
         orphan.write_text("old brief")
         os.utime(orphan, (time.time() - 600, time.time() - 600))
-        recent = self.launch("ack")[1]["launch_id"]  # inside the settle window: never judged
 
         before = sorted(p.name for p in self.registry.iterdir())
         p, plan = self.run_cli("prune", "--registry", str(self.registry), timeout=60)
@@ -1165,6 +1165,39 @@ class AgentsTest(unittest.TestCase):
         block_ids = [b["block_id"] for layer in after["windows"][0]["layers"] for b in layer["blocks"]]
         self.assertEqual(set(block_ids), {self.starter, state["target"]["block_id"]})
         self.assertEqual(after["windows"][0]["focused_block_id"], state["target"]["block_id"])
+
+    def test_launch_archives_fresh_absent_records_even_below_old_threshold(self):
+        launch_id = self.launch()[1]["launch_id"]
+        original = self.record(launch_id)
+        for i in range(32):
+            clone = dict(original, launch_id="%032x" % (i + 1), scratchpad=None)
+            clone["target"] = dict(original["target"], block_id="block:00000000-0000-0000-0000-%012d" % i)
+            path = self.registry / ("agents-" + clone["launch_id"] + ".json")
+            path.write_text(json.dumps(clone))
+            path.chmod(0o600)
+        p, result = self.launch()
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertEqual(result["auto_prune"]["retired"], 32)
+        # Launch must also prune a single new absent entry, below the old 24-entry threshold.
+        clone["launch_id"] = "a" * 32
+        path = self.registry / ("agents-" + clone["launch_id"] + ".json")
+        path.write_text(json.dumps(clone))
+        path.chmod(0o600)
+        p, result = self.launch()
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertEqual(result["auto_prune"]["retired"], 1)
+
+    def test_registry_of_live_panes_grows_past_old_count_limit(self):
+        original = self.record(self.launch()[1]["launch_id"])
+        for i in range(31):
+            clone = dict(original, launch_id="%032x" % (i + 1))
+            path = self.registry / ("agents-" + clone["launch_id"] + ".json")
+            path.write_text(json.dumps(clone))
+            path.chmod(0o600)
+        p, result = self.launch()
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertEqual(result["auto_prune"]["retired"], 0)
+        self.assertEqual(len(list(self.registry.glob("agents-*.json"))), 33)
 
     def test_failed_fleet_store_still_starts_harness_and_submits_brief(self):
         store = self.work / "not-private-boards"

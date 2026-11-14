@@ -169,8 +169,6 @@ class Registry:
     def save(self, state, new=False):
         name = self.name(state["launch_id"])
         if new:
-            require(len([n for n in os.listdir(self.fd) if re.fullmatch(r"agents-[0-9a-f]{32}\.json", n)]) < 32,
-                    "registry_full")
             require(not os.path.lexists(str(Path(self.root) / name)), "launch_already_exists")
         previous = {} if new else self.read(state["launch_id"])
         old_events = lifecycle_events(previous)
@@ -219,7 +217,6 @@ def load(root, launch_id):
 
 
 RECORD = re.compile(r"agents-([0-9a-f]{32})\.json")
-AUTO_PRUNE_AT = 24
 SETTLE_MS = 120000  # A launch still inside its queue/spawn/track window is never judged.
 
 
@@ -303,6 +300,8 @@ def pane_absent(state):
 
 def retirement(state, check_panes=True):
     """Why a record may leave the live registry, or None. Evidence first from the record, then one live pane read."""
+    if check_panes and pane_absent(state) is True:
+        return "pane_gone", dict(pane=state["target"]["block_id"], basis="session_list_blocks_absent")
     age = now() - int(state.get("created_at") or 0)
     if age < SETTLE_MS:
         return None, None
@@ -310,10 +309,6 @@ def retirement(state, check_panes=True):
         return "agent_exited", dict(immediate_child_term=state["immediate_child_term"])
     if state.get("phase") in ("creation_uncertain", "tracking_uncertain"):
         return "never_started", dict(phase=state["phase"])
-    if check_panes:
-        absent = pane_absent(state)
-        if absent:
-            return "pane_gone", dict(pane=state["target"]["block_id"], basis="session_list_blocks_absent")
     return None, None
 
 
@@ -361,15 +356,12 @@ def forget_fleet(state):
     return dict(outcome="cleared" if code == 0 else "uncertain", client_exit=code, receipt=packet)
 
 
-def prune_records(root, apply, at_least=0):
+def prune_records(root, apply):
     """Move retired launch records (and their message files) to ROOT/archive/<launch_id>/; history is kept, never deleted."""
     with Registry(root) as registry:
         names = sorted(n for n in os.listdir(registry.fd))
     ids = [m.group(1) for m in map(RECORD.fullmatch, names) if m]
     result = dict(live_before=len(ids), retired=[], kept=0, unknown=0, orphans=[], applied=apply)
-    if len(ids) < at_least:
-        result["skipped"] = "below_auto_prune_threshold"
-        return result
     for launch_id in ids:
         try:
             state = load(root, launch_id)
@@ -1221,8 +1213,8 @@ def launch(o):
         if not human:
             state["intent"] = intent
             state["contract"] = contract_init(state, profile, brief, o.done_when, o.contract_interval_s)
-        # Retire exited/never-started/pane-gone records before the cap can refuse a launch; history is archived.
-        pruned = prune_records(root, apply=True, at_least=AUTO_PRUNE_AT)
+        # Every launch archives closed panes, regardless of registry size or record age.
+        pruned = prune_records(root, apply=True)
         state["auto_prune"] = dict(retired=len(pruned["retired"]), live_before=pruned["live_before"])
         with Registry(root) as registry:
             if brief is not None:
