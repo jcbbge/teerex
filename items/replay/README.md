@@ -14,7 +14,12 @@ another Rex build. Tickets and reconnect tokens are never logged.
 
 All modes require `--socket ABS --session session:UUID`; no environment target,
 focus selection, automatic retry or server autostart. Python3.9+ is required.
-The command host and selected Rex must share the local filesystem and Python.
+The command host and selected Rex must share the local filesystem and Python,
+including the same writable `/tmp`: replay creates its gate and player files
+there. A sandbox with a private `/tmp` cannot drive a Rex server outside that
+mount namespace, even if its socket, cwd and `TMPDIR` are shared. Run the private
+Rex server inside the same sandbox, or provide a dedicated `/tmp` shared by
+both processes; do not expose a live server or unrelated host files.
 
 ```
 teerex replay record --socket ABS --session session:UUID --out NEW_ABS_DIR \
@@ -138,19 +143,25 @@ named status record. Live expect uses the same fact-list shape, directly in the
 step; it does not take an `at` envelope. With no `--facts`, play loads the fixture's
 `facts.json` if present, otherwise checks stream fidelity without display facts.
 
-The earlier cold-reader fixture failures (confirm play deadline, zero-byte echo
-record and live echo divergence) did not reproduce on a fresh private API13
-Linux server, Rex `0.0.1794460237-g348d75`: default-tab `/bin/echo cold-replay`
-recorded 13 bytes and `child_exited`; committed `fixtures/confirm` replayed all
-33 bytes with `--timeout-ms 5000`; live `/bin/echo cold-live` satisfied the script
-above within 1000 ms with `--allow-attached-viewers`. These are fixture-specific
-failures, not evidence that an app client is required or that five seconds is
-too short. For a comparable fixture, use a fresh private server with
-`--config /dev/null --restore=false` and a fresh session, as the verification
-harness below does. The original fixture's cause remains unknown; do not mask a
-repeated deadline by claiming success or increasing the timeout without evidence.
+The cold-reader failures (zero-byte echo record, live echo divergence and confirm
+play deadline) reproduced with the docs checker's bubblewrap mounts: its Rex
+server ran outside the sandbox, while `--tmpfs /tmp` hid the controller's gate
+and player files from Rex. With the same installed teerex, Rex API13 build
+`0.0.1794460237-g348d75`, session and commands, changing only `/tmp` to a shared
+mount changed record/live/play exits from 124/3/124 to 0/0/0. Record captured
+13 bytes and `child_exited`; confirm compared all 33 bytes equally. A shared
+`TMPDIR` did not help because replay explicitly uses `/tmp`. The checker must
+put its disposable Rex and controller in the same filesystem namespace (including
+`/tmp`), or arrange a dedicated shared `/tmp` for both. Increasing deadlines or
+updating only the installed binary does not correct this namespace mismatch.
 
 ## Verification
+
+Run from the repository root. `test_terms.py` requires a built combined CLI at
+`zig-out/bin/teerex` (see the [root build instructions](../../README.md)), or set
+`TEEREX_BIN=/absolute/path/to/teerex` to select an existing build. This applies
+to `OfflineTerms` too: its comparisons invoke the CLI. Use a build from the
+revision being checked when validating that revision.
 
 ```
 REX_BIN=/absolute/rex python3 items/replay/test_wire.py -v
