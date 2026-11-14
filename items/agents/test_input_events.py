@@ -101,7 +101,7 @@ class InputEventsTest(unittest.TestCase):
         state = dict(schema_version=1, launch_id=launch, socket=self.target[0], target=dict(session_id=SID, block_id=BID),
                      tracked=True, protocol_file=str(protocol), immediate_child_term=None, name='fake', starter=None,
                      report_to=None, scratchpad=str(Path(self.temp.name) / 'scratch'), argv=['fake'], cwd=self.temp.name,
-                     hook_events=False)
+                     hook_events=False, phase='brief_submitted')
         with agents.Registry(str(root)) as registry:
             registry.save(state, new=True)
         child = types.SimpleNamespace(returncode=0)
@@ -115,6 +115,7 @@ class InputEventsTest(unittest.TestCase):
             stack.enter_context(patch.object(agents.signal, 'signal'))
             stack.enter_context(patch.object(agents, 'program_status'))
             stack.enter_context(patch.object(agents, 'come_forward'))
+            stack.enter_context(patch.object(agents, 'pane_absent', return_value=False))
             stack.enter_context(patch.object(agents, 'notify', return_value=(1, {'failure': 'notice'})))
             out, err = io.StringIO(), io.StringIO()
             stack.enter_context(contextlib.redirect_stdout(out))
