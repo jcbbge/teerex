@@ -191,7 +191,7 @@ class TargetsTest(unittest.TestCase):
         cases += [(["recovery", op], (["--root", self.host["home"] + "/.local/state/teerex-recovery"] if op != "update" else []) + ([] if op == "inspect" else socket))
                   for op in ("inspect", "snapshot", "restore", "update")]
         cases += [([op], (["--root", self.host["home"] + "/.local/state/teerex-recovery"] if op != "update" else []) + socket) for op in ("snapshot", "restore", "update")]
-        cases += [(["clutch", op], socket) for op in ("take", "release", "status", "palette")]
+        cases += [(["clutch", op], socket) for op in ("take", "release", "status", "queue", "palette")]
         cases += [(["run-visible", "receipt"], [])]
         cases += [(["adapters", op], socket) for op in ("generate", "call")]
         cases += [(["agents", op], target if op == "launch" else []) for op in

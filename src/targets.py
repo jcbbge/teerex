@@ -27,7 +27,7 @@ SELECTORS = {("board", "feed"): ("socket",), **{(verb,): ("socket",) for verb in
              **{(verb, op): ("socket", "host", "store") for verb, operations in
                 (("seat", ("register", "inspect", "clear")), ("inbox", ("append", "inspect", "clear")),
                  ("fleet", ("report", "forget"))) for op in operations},
-             **{("clutch", op): ("socket",) for op in ("take", "release", "status", "palette")},
+             **{("clutch", op): ("socket",) for op in ("take", "release", "status", "queue", "palette")},
              **{("records", op): (("socket", "host", "records_store") if op in ("park", "resume", "navigate") else ("records_store",)) for op in
                 ("init", "new", "park", "add", "attach", "set", "close", "show", "resume", "navigate", "list", "lint", "export", "forget", "pin", "decide", "claim-status", "revalidate")},
              ("agents", "launch"): ("socket", "host", "store")}
