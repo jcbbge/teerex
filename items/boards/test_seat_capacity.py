@@ -21,4 +21,3 @@ class SeatCapacityTest(unittest.TestCase):
             with module.ledger('/tmp/disposable-capacity.sock') as rows:
                 self.assertEqual(len(rows), 512)
                 self.assertNotIn('0', [r['id'] for r in rows])
-
