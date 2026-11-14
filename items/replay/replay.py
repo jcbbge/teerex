@@ -506,7 +506,7 @@ def parse(argv):
     parser.add_argument("--session", required=True)
     for name in ("out", "id", "fixture", "facts", "observations-out", "script", "record-out", "cwd", "teerex"):
         parser.add_argument("--" + name)
-    parser.add_argument("--layout", choices=["tab", "offstage"], default="tab")
+    parser.add_argument("--layout", choices=["tab", "offstage"])
     parser.add_argument("--label", default="teerex replay")
     parser.add_argument("--columns", type=int, default=80)
     parser.add_argument("--rows", type=int, default=24)
@@ -552,8 +552,8 @@ def parse(argv):
         parser.error("play requires --fixture and takes no argv")
     if args.mode == "live" and (not args.script or (args.record_out and not args.allow_sensitive_capture)):
         parser.error("live requires --script; --record-out requires --allow-sensitive-capture")
-    if args.mode != "record":
-        args.layout = "offstage"
+    if args.layout is None:
+        args.layout = "tab" if args.mode == "record" else "offstage"
     return args
 
 

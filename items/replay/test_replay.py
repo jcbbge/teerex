@@ -1,5 +1,6 @@
 """Replay/live public-CLI acceptance. All integration runs use a private Rex."""
 import copy
+from contextlib import closing
 import hashlib
 import json
 import os
@@ -96,6 +97,53 @@ class Replay(unittest.TestCase):
         path = self.path("facts.json")
         path.write_text(json.dumps(dict(schema_version=1, kind="teerex_display_facts", id="manual", authored_by="manual", at=facts)))
         return self.invoke("play", ["--fixture", fixture, "--facts", path, "--observations-out", self.path("observations"), *extra], code=code)
+
+    def test_live_layout_and_creator_close(self):
+        script = self.path("script.json")
+        script.write_text(json.dumps(dict(schema_version=1, kind="teerex_live_script",
+                                         id="layout", model_turns=0, steps=[])))
+        env = dict(os.environ, XDG_STATE_HOME=str(self.work / "state"),
+                   TEEREX_BOARDS_STORE=str(self.work / "boards"),
+                   AGENT_REGISTRY=str(self.work / "agents"),
+                   TEEREX_CLUTCH_DIR=str(self.work / "clutch"),
+                   TEEREX_INTERNAL_REX=self.rex,
+                   PATH=str(Path(self.rex).parent) + os.pathsep + os.environ.get("PATH", ""),
+                   REX_SESSION=self.session,
+                   REX_BLOCK="block:00000000-0000-0000-0000-000000000001")
+        for layout in (None, "offstage", "tab"):
+            with self.subTest(layout=layout):
+                command = [BIN, "replay", "live", "--socket", str(self.sock),
+                           "--session", self.session, "--timeout-ms", "7000",
+                           "--script", str(script), "--observations-out", str(self.path("obs")),
+                           "--keep-open"]
+                if layout:
+                    command += ["--layout", layout]
+                result = subprocess.run(command + ["--", "/bin/cat"], env=env,
+                                        capture_output=True, text=True, timeout=15)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                packet = json.loads(result.stdout)
+                self.assertEqual(packet["outcome"], "live_pass")
+                self.assertFalse(packet["cleanup"]["block_absence_verified"])
+                block = packet["target"]["block_id"]
+                with closing(Control(self.sock)) as viewer:
+                    viewer.call("session.attach", dict(session_id=self.session))
+                    view = viewer.call("session.view", dict(session_id=self.session))
+                    attached = any(b["block_id"] == block for w in view.get("windows", [])
+                                   for layer in w.get("layers", []) for b in layer.get("blocks", []))
+                    self.assertEqual(attached, layout == "tab")
+                    if layout == "tab":
+                        close = [BIN, "surfaces", "close", "--socket", str(self.sock),
+                                 "--session", self.session, "--pane", block]
+                        stranger = dict(env, REX_BLOCK="block:00000000-0000-0000-0000-000000000002")
+                        refused = subprocess.run(close, env=stranger, capture_output=True, text=True, timeout=15)
+                        self.assertNotEqual(refused.returncode, 0, refused.stdout)
+                        self.assertIn("recorded spawner", refused.stdout + refused.stderr)
+                        closed = subprocess.run(close, env=env, capture_output=True, text=True, timeout=15)
+                        self.assertEqual(closed.returncode, 0, closed.stdout + closed.stderr)
+                        self.assertNotIn(block, [b["block_id"] for b in viewer.call(
+                            "session.list_blocks", dict(session_id=self.session))["blocks"]])
+                    else:
+                        viewer.call("block.close", dict(session_id=self.session, block_id=block))
 
     def test_split_utf8_fidelity_and_corrupt_display(self):
         fixture = self.record("utf8-split")

@@ -27,7 +27,7 @@ teerex replay play --socket ABS --session session:UUID --fixture ABS_DIR \
 teerex replay live --socket ABS --session session:UUID --script ABS_FILE \
   --observations-out NEW_ABS_DIR [--cwd ABS] [--timeout-ms 300000] \
   [--record-out NEW_ABS_DIR --allow-sensitive-capture] \
-  [--allow-attached-viewers] [--keep-open] -- ARGV...
+  [--allow-attached-viewers] [--layout tab|offstage] [--keep-open] -- ARGV...
 ```
 
 Record starts a blank gated command (visible tab by default, detached with
@@ -48,6 +48,9 @@ not the player's process. No libghostty or terminal emulator is embedded. A
 checkpoint is not an atomic read tied to a server stream offset; Rex exposes no
 such offset today. `--pace recorded` keeps gaps capped at 60 seconds total.
 
+Live defaults to an offstage terminal; `--layout tab` creates a visible tab.
+Its creation receipt records the caller, so that caller can close a kept-open
+tab through `surfaces close`; other callers are refused.
 Live drives only its newly created block. It refuses another attached client
 unless `--allow-attached-viewers` explicitly accepts that contamination risk.
 There is no exclusive-input claim. Steps are `write`, `paste`, `key`, `resize`,
