@@ -240,3 +240,38 @@ failures retain the archive plan for inspection; never blindly retry an apply.
 The regression `RecoveryTest.test_reconcile_restart_read_only_confirmed_archive_and_lock`
 uses a disposable server restart, proves preview byte preservation, stale-plan
 refusal and lock contention, and checks the archived record bytes.
+
+### Issue 24/25 verification — 14 November 2026
+
+Both behaviors were already implemented in base `2961d7a`. The issue-specific
+regressions now exercise the actual locked agents registry, named-host capture,
+private root/child/file modes, skipping unfinished captures, newest selection,
+and confirmed restore through `--root` into an empty disposable server.
+
+Run only these checks from the checkout (select absolute tested binary paths):
+
+```sh
+REX_BIN=/ABS/rex TEEREX_BIN=/ABS/teerex python3 items/recovery/test_recovery.py \
+  RecoveryTest.test_absent_registry_launch_is_omitted_but_identity_contradiction_refuses \
+  RecoveryTest.test_root_creates_private_snapshots_and_selects_newest -v
+TEEREX_BIN=/ABS/teerex python3 src/test_targets.py \
+  TargetsTest.test_recovery_store_default_and_explicit_directory -v
+```
+
+| Machine | Disposable Rex | Recovery checks | Routing check |
+| --- | --- | --- | --- |
+| hive | API13, commit `348d751870eae7162873898d361b58eae4ce1984` | 2 passed | 1 passed |
+| M5 | preview.16/API13, commit `aa2db1b21261b479a550559fb70e2c3a66c07ba2` | 2 passed | 1 passed |
+
+The Mac binary was cross-built on hive with
+`uv run --with ziglang==0.15.2 python -m ziglang build -Doptimize=ReleaseSmall -Dtarget=aarch64-macos --prefix zig-out/mac`.
+Only that binary and required Python fixtures were copied to
+`~/teerex-work-m5/recovery-root`; the copy was removed after testing and its
+absence checked. Test cleanup terminates/waits for each disposable server and
+removes its temporary directory, including restored sessions/panes and private
+snapshots. No live Rex server was restored, restarted, or installed.
+
+The first added root-apply check failed with a transport refusal because its
+controller had no caller identity. The fixture now retains its disposable
+controller identity across restart, so newly created surfaces record their
+spawner and guarded label/input operations can proceed. The guard is unchanged.
