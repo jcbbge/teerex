@@ -149,7 +149,7 @@ def brief(hosts, since):
                     latest = max(steps, key=lambda item: item['at'])
                     proven = [item for item in steps if 'proof:' in item['text']]
                     proof = max(proven, key=lambda item: item['at'])['text'].partition('proof:')[2].strip() if proven else 'no proof supplied'
-                    items.append(owner + ': ' + str(len(steps)) + ' reported steps finished. Latest: ' + latest['text'].split(' — ')[0] + '. Proof sample: ' + proof)
+                    items.append(owner + ': ' + str(len(steps)) + ' reported steps finished. Latest: ' + latest['text'].split(' — ')[0] + '. Sample proof: ' + proof)
             for item in items:
                 if isinstance(item, dict):
                     if item['at'] < since:
