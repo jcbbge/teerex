@@ -122,6 +122,42 @@ class GuardTest(_fixtures.SurfacesTest):
         self.assertIn(other, blocks)
         self.assertIn(self.anchor, blocks)
 
+    def test_human_launch_wire_authority_and_seat_priority(self):
+        import pane_guard
+        from unittest.mock import patch
+        human = {k: v for k, v in self.env.items() if not k.startswith(('AGENT_', 'LC_AGENT_', 'REX_', 'LC_REX_'))}
+        human['TEEREX_HUMAN_LAUNCH'] = '1'
+        self.env = human
+        own = self.open('tab', label='human wire')['actual']['block_id']
+        payload = dict(session_id=self.session, block_id=own)
+        endpoint = 'unix://' + str(self.socket)
+        with patch.dict(os.environ, human, clear=True):
+            pane_guard.authorize(endpoint, 'block.close', payload, self.rpc)
+            pane_guard.authorize(endpoint, 'session.set_block_label', payload, self.rpc)
+        for key in ('AGENT_NAME', 'LC_AGENT_LAUNCH_ID', 'AGENT_CHANNEL', 'AGENT_SESSION'):
+            with self.subTest(marker=key), patch.dict(os.environ, dict(human, **{key: 'managed'}), clear=True):
+                with self.assertRaisesRegex(ValueError, 'recorded spawner:'):
+                    pane_guard.authorize(endpoint, 'block.close', payload, self.rpc)
+        # Neither a different host nor a different OS user inherits a human receipt.
+        with patch.dict(os.environ, human, clear=True):
+            policy = pane_guard.snapshot(endpoint)
+        for field in ('host', 'user'):
+            original = policy['human_actor'][field]
+            policy['human_actor'][field] = 'stranger'
+            with patch.object(pane_guard, 'snapshot', return_value=policy):
+                with self.assertRaisesRegex(ValueError, 'recorded spawner:'):
+                    pane_guard.authorize(endpoint, 'block.close', payload, self.rpc)
+            policy['human_actor'][field] = original
+        inside = dict(human, REX_SESSION=self.session, REX_BLOCK=own)
+        with patch.dict(os.environ, inside, clear=True):
+            pane_guard.authorize(endpoint, 'session.set_block_label', payload, self.rpc)
+        self.register(own)
+        self.refused(self.control('rename', own, '--label', 'seat cannot rename'), 'registered_seat_tab')
+        self.refused(self.control('close', own), 'registered_seat_tab')
+        with patch.dict(os.environ, inside, clear=True):
+            with self.assertRaisesRegex(ValueError, 'registered_seat_tab'):
+                pane_guard.authorize(endpoint, 'block.close', payload, self.rpc)
+
     def test_forwarded_only_creator_and_seat_authority(self):
         for key in ('AGENT_SESSION', 'AGENT_PANE', 'REX_SESSION', 'REX_BLOCK', 'LC_REX_SESSION', 'LC_REX_BLOCK'):
             self.env.pop(key, None)

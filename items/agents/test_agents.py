@@ -3620,6 +3620,63 @@ await handlers.agent_settled({}, {sessionManager:{getBranch:()=>[]}});
         self.assertIn(state["target"]["block_id"], p.stdout)
         self.assertFalse(any(v["event"] == "input" for v in events(self.starter_log)))
 
+    def test_human_creator_receipt_and_control_without_pane_identity(self):
+        import hashlib
+        import pwd
+        for key in list(self.env):
+            if key.startswith(('AGENT_', 'LC_AGENT_', 'REX_', 'LC_REX_')):
+                self.env.pop(key)
+        self.env['SSH_CONNECTION'] = '192.0.2.23 12345 192.0.2.1 22'
+        self.settings['profiles']['probe']['scratch_pane'] = True
+        self.config.write_text(json.dumps(self.settings))
+        launched, receipt = self.run_cli('human', '--config', str(self.config), '--profile', 'probe')
+        self.assertEqual(launched.returncode, 0, launched.stdout + launched.stderr)
+        self.assertTrue(receipt['human'])
+        owner = dict(host=socket.gethostname(), user=pwd.getpwuid(os.getuid()).pw_name, ssh_client_host='192.0.2.23')
+        self.assertEqual(receipt['human_creator'], owner)
+        pane = receipt['target']['block_id']
+        endpoint = 'unix://' + os.path.realpath(self.socket)
+        directory = Path(self.env['XDG_STATE_HOME']) / 'teerex/pane-creators' / hashlib.sha256(endpoint.encode()).hexdigest()
+        record = json.loads((directory / (pane.replace(':', '-') + '.json')).read_text())
+        self.assertIsNone(record['spawner'].get('session_id'))
+        self.assertIsNone(record['spawner'].get('block_id'))
+        self.assertTrue(record['human_launch'])
+        self.assertEqual(record['human_creator'], owner)
+        wait_for(lambda: events(self.worker_log))
+        # The human launch still runs an agent: its managed markers cannot rename through human ownership.
+        def control(operation, environment, **options):
+            target = ['--window', options.pop('window')] if 'window' in options else ['--pane', pane]
+            args = [BIN, 'surfaces', operation, '--socket', str(self.socket), '--session', self.session, *target]
+            if operation == 'rename':
+                args += ['--label', 'human renamed']
+            return subprocess.run(args, env=environment, capture_output=True, text=True, timeout=10)
+        human = dict(self.env, REX_SESSION=self.session, REX_BLOCK=pane)
+        managed = dict(human, AGENT_NAME='managed')
+        self.assertNotEqual(control('rename', managed).returncode, 0)
+        stranger = dict(self.env, REX_SESSION=self.session, REX_BLOCK=self.starter)
+        self.assertNotEqual(control('close', stranger).returncode, 0)
+        renamed = control('rename', human)
+        self.assertEqual(renamed.returncode, 0, renamed.stdout + renamed.stderr)
+        view = self.rpc('session.view', dict(session_id=self.session))
+        window = next(w['window_id'] for w in view['windows'] for layer in w['layers']
+                      for block in layer['blocks'] if block['block_id'] == pane)
+        renamed = control('rename', human, window=window)
+        self.assertEqual(renamed.returncode, 0, renamed.stdout + renamed.stderr)
+        # Same OS owner may rename/close from an ordinary no-pane terminal.
+        renamed = control('rename', self.env)
+        self.assertEqual(renamed.returncode, 0, renamed.stdout + renamed.stderr)
+        managed_no_pane = dict(self.env, LC_AGENT_LAUNCH_ID='a' * 32, TEEREX_HUMAN_LAUNCH='1')
+        self.assertNotEqual(control('close', managed_no_pane).returncode, 0)
+        closed = control('close', self.env)
+        self.assertEqual(closed.returncode, 0, closed.stdout + closed.stderr)
+        # A second launch proves self-close without relying on no-pane authority.
+        launched, receipt = self.run_cli('human', '--config', str(self.config), '--profile', 'probe')
+        self.assertEqual(launched.returncode, 0, launched.stdout + launched.stderr)
+        pane = receipt['target']['block_id']
+        human['REX_BLOCK'] = pane
+        closed = control('close', human)
+        self.assertEqual(closed.returncode, 0, closed.stdout + closed.stderr)
+
     def test_human_remote_route_quotes_config_and_runs_once(self):
         ssh = self.work / "ssh"
         log = self.work / "ssh.json"

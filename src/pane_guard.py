@@ -12,7 +12,7 @@ import hashlib
 import urllib.parse
 
 if "caller_identity" not in globals():
-    from caller_identity import caller_identity
+    from caller_identity import caller_identity, managed_agent, human_identity
 
 
 def read(path, default=None):
@@ -40,7 +40,7 @@ def canonical_server(value):
     return 'unix://' + os.path.realpath(path)
 
 
-def snapshot(server):
+def snapshot(server, human_launch=False):
     server = canonical_server(server)
     if server is None:
         raise ValueError('pane_guard_absolute_unix_socket_required')
@@ -48,6 +48,9 @@ def snapshot(server):
     store = Path(os.environ.get('TEEREX_BOARDS_STORE', str(root / 'teerex-boards')))
     boards = read(store / 'state.json', {'seats': []})
     actor = caller_identity()
+    human = not managed_agent()
+    human_creator = human_identity() if human else None
+    human_launch = human and (human_launch or os.environ.get('TEEREX_HUMAN_LAUNCH') == '1')
     directory = root / 'teerex/pane-creators' / hashlib.sha256(server.encode()).hexdigest()
     directory.mkdir(parents=True, mode=0o700, exist_ok=True)
     s = directory.lstat()
@@ -73,14 +76,16 @@ def snapshot(server):
         side = (record.get('scratch_pane_receipt') or {}).get('created') or {}
         if side.get('block_id') and (record.get('scratch_pane_receipt') or {}).get('outcome') == 'created_and_verified':
             supervisor = {k: target.get(k) for k in ('session_id', 'block_id')}
-            creators[side['block_id']] = dict(spawner=spawner, allowed=[spawner, supervisor], viewer=True)
+            existing = creators.get(side['block_id'], {})
+            creators[side['block_id']] = dict(existing, spawner=spawner, allowed=[spawner, supervisor], viewer=True)
     seats = [s['target'] for s in boards['seats'] if canonical_server(s['target']['server']) == server and not s.get('inherited_to')]
     operator = (os.environ.get('TEEREX_OPERATOR') == '1' and
                 os.environ.get('TEEREX_OPERATOR_ACTIVE') in (str(os.getpid()), str(os.getppid())) and
                 not any(os.environ.get(k) for k in ('AGENT_LAUNCH_ID', 'LC_AGENT_LAUNCH_ID', 'AGENT_NAME', 'LC_AGENT_NAME')))
     if operator and any(actor['block_id'] == seat['block_id'] and actor['session_id'] == seat['session_id'] for seat in seats):
         raise ValueError('registered_seat_pane_is_not_the_operator_terminal')
-    return dict(server=server, actor=actor, creators=creators, directory=str(directory), operator=operator, seats=seats)
+    return dict(server=server, actor=actor, creators=creators, directory=str(directory), operator=operator, seats=seats, human_actor=human_creator,
+                human_launch=human_launch)
 
 
 LUA = r'''
@@ -99,8 +104,20 @@ local function guard_window(view,bid)
   end end
  end
 end
-local function guard_owner(id)
+local function guard_owner(id,method,sid)
  local r=guard_policy.creators[id]
+ if r and r.human_launch and guard_policy.human_actor and
+  (method=='block.close' or method=='session.set_block_label' or method=='session.set_window_label') then
+  local actor=guard_policy.actor
+  local creator=r.human_creator or {}
+  local human=guard_policy.human_actor
+  if actor.session_id==sid and actor.block_id then
+   if actor.block_id==id then return end
+   local view=guard_view(sid)
+   local own_window=guard_window(view,actor.block_id)
+   if own_window and own_window==guard_window(view,id) then return end
+  elseif not actor.session_id and not actor.block_id and creator.host==human.host and creator.user==human.user then return end
+ end
  if not r then error('no_recorded_spawner',0) end
  local spawner=r and r.spawner or {}
  local allowed=false
@@ -114,7 +131,7 @@ local function guard_owner(id)
 end
 local function guard_record(id,sid)
  if type(id)~='string' or not id:match('^[a-z]+:[0-9a-f%-]+$') then error('invalid_creator_receipt_id',0) end
- local record={id=id,session_id=sid,server=guard_policy.server,spawner=guard_policy.actor,allowed={guard_policy.actor}}
+ local record={id=id,session_id=sid,server=guard_policy.server,spawner=guard_policy.actor,allowed={guard_policy.actor},human_launch=guard_policy.human_launch,human_creator=guard_policy.human_launch and guard_policy.human_actor or nil}
  guard_policy.creators[id]=record
  local path=guard_policy.directory..'/'..id:gsub(':','-')..'.json'
  local file,err=io.open(path..'.next','w')
@@ -186,7 +203,7 @@ rex.call=function(method,p)
   elseif p.window_id then
    local v=guard_view(p.session_id)
    for _,w in ipairs(v.windows or {}) do if w.window_id==p.window_id then
-    for _,l in ipairs(w.layers or {}) do for _,b in ipairs(l.blocks or {}) do guard_owner(b.block_id) end end
+    for _,l in ipairs(w.layers or {}) do for _,b in ipairs(l.blocks or {}) do guard_owner(b.block_id,method,p.session_id) end end
    end end
   elseif viewer_cleanup and p.block_id==guard_policy.actor.block_id and
    guard_policy.creators[p.block_id] and guard_policy.creators[p.block_id].viewer then
@@ -202,7 +219,7 @@ rex.call=function(method,p)
    p.block_id==guard_policy.actor.block_id and guard_policy.creators[p.block_id] and
    not guard_policy.creators[p.block_id].viewer then
    -- A recorded pane's supervisor may close its own pane, never another pane.
-  else guard_owner(p.block_id) end
+  else guard_owner(p.block_id,method,p.session_id) end
  end
  if method=='teerex.guard.take' then return {allowed=true} end
  local value,err=guard_call(method,p)
@@ -217,8 +234,8 @@ end
 '''
 
 
-def prelude(server, message=False):
-    data = json.dumps(json.dumps(snapshot(server), separators=(',', ':')))
+def prelude(server, message=False, human_launch=False):
+    data = json.dumps(json.dumps(snapshot(server, human_launch=human_launch), separators=(',', ':')))
     return 'do\nlocal GUARD_DATA=' + data + '\nlocal GUARD_MESSAGE=' + ('true' if message else 'false') + '\n' + LUA + '\nend\n'
 
 
@@ -260,6 +277,21 @@ def authorize(server, method, payload, rpc):
             creator = policy['creators'].get(id)
             if creator is None:
                 raise ValueError('no_recorded_spawner')
+            actor = policy['actor']
+            human = policy['human_actor']
+            owner = creator.get('human_creator') or {}
+            if (creator.get('human_launch') and human and
+                    method in {'block.close', 'session.set_block_label', 'session.set_window_label'}):
+                if actor.get('session_id') == payload.get('session_id') and actor.get('block_id'):
+                    if actor['block_id'] == id:
+                        continue
+                    view = rpc('session.view', {'session_id': payload['session_id']})
+                    own_window = window(view, actor['block_id'])
+                    if own_window and own_window == window(view, id):
+                        continue
+                elif (not actor.get('session_id') and not actor.get('block_id') and
+                      owner.get('host') == human['host'] and owner.get('user') == human['user']):
+                    continue
             if (method == 'block.close' and not creator.get('viewer') and
                     policy['actor'] == dict(session_id=payload.get('session_id'), block_id=id)):
                 continue
@@ -282,7 +314,8 @@ def record_created(server, method, payload, result):
     for id in ids:
         path = Path(policy['directory']) / (id.replace(':', '-') + '.json')
         record = dict(id=id, session_id=payload.get('session_id', id), server=policy['server'],
-                      spawner=policy['actor'], allowed=[policy['actor']])
+                      spawner=policy['actor'], allowed=[policy['actor']], human_launch=policy['human_launch'],
+                      **({'human_creator': policy['human_actor']} if policy['human_launch'] else {}))
         temporary = path.with_name(path.name + '.next')
         try:
             fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)

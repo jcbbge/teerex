@@ -309,7 +309,7 @@ def detached_operation(state, operation, argv=None):
     request = dict(operation=operation, session_id=target['session_id'], block_id=target.get('block_id'),
                    cwd=state.get('cwd'), name=state.get('name'), argv=argv)
     command = [state.get('rex_executable') or 'rex', '--autostart=false', '--server', 'unix://' + state['socket'],
-               '--timeout', '3s', '--color', 'never', 'do', '-e', __import__('teerex_pane_guard').prelude('unix://' + state['socket']) + DETACHED_LUA, '--args', json.dumps(request)]
+               '--timeout', '3s', '--color', 'never', 'do', '-e', __import__('teerex_pane_guard').prelude('unix://' + state['socket'], human_launch=state.get('human', False)) + DETACHED_LUA, '--args', json.dumps(request)]
     env = dict(os.environ, PATH=state.get('client_path') or os.defpath)
     with tempfile.TemporaryFile() as output, tempfile.TemporaryFile() as errors:
         result = subprocess.run(command, env=env, stdin=subprocess.DEVNULL, stdout=output, stderr=errors, timeout=5)
@@ -514,7 +514,7 @@ def prune(o):
 def receipt(state, outcome, **extra):
     # Tokens, full argv, briefs and reports stay private; state files are the recovery interface.
     result = {k: state.get(k) for k in ("launch_id", "name", "owner", "purpose", "review_at", "profile", "target",
-                                        "starter", "report_to", "phase", "tracked", "protocol_acknowledged",
+                                        "starter", "report_to", "human", "human_creator", "phase", "tracked", "protocol_acknowledged",
                                         "brief_attempted", "brief_outcome", "immediate_child_term", "remote_child_term", "notifications",
                                         "auto_prune", "failure_reason", "scratchpad_failure_reason", "fleet_report", "layout", "placement", "come_forward", "come_forward_last", "scratchpad", "scratch_pane_opened", "scratch_pane_receipt")}
     result["execution_host"] = state.get("execution", {}).get("host") if state.get("execution") else None
@@ -525,7 +525,7 @@ def receipt(state, outcome, **extra):
     return result
 
 
-def invoke(arguments, timeout=10, client_path=None, rex_executable=None, input_bytes=None):
+def invoke(arguments, timeout=10, client_path=None, rex_executable=None, input_bytes=None, human_launch=False):
     """Bounded foreground client, never the agent. Retain diagnostics without treating exit as ACK."""
     import tempfile
     if arguments and arguments[0] == "send":
@@ -537,6 +537,8 @@ def invoke(arguments, timeout=10, client_path=None, rex_executable=None, input_b
     # Output sinks are private regular files, not pipes that a failed descendant can hold open.
     with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err, tempfile.TemporaryFile() as source:
         environment = dict(os.environ)
+        if human_launch:
+            environment["TEEREX_HUMAN_LAUNCH"] = "1"
         if client_path is not None:
             environment["PATH"] = client_path
         if rex_executable is not None:
@@ -1642,6 +1644,10 @@ def launch_agent(o):
                  hook_events=profile.get("hook_events", False), client_path=os.environ.get("PATH", os.defpath),
                  rex_executable=os.environ.get("TEEREX_INTERNAL_REX"), delivery=delivery, execution=execution,
                  callbacks=callbacks, cost=accounting, remote_child_term=None, human=human, scratch_pane=profile.get("scratch_pane", True), tint=tint, layout=layout, come_forward=profile.get("come_forward", False))
+    if human:
+        guard = __import__("teerex_pane_guard")
+        if not guard.managed_agent():
+            state["human_creator"] = guard.human_identity()
     if not human:
         if state.get("store"):
             try:
@@ -1673,7 +1679,7 @@ def launch_agent(o):
             code, packet = 1, dict(outcome='creation_uncertain')
     elif human:
         code, packet = invoke(["surfaces", "open", "--socket", socket, "--session", session, "--layout", "tab",
-                               "--label", name, "--cwd", cwd, "--", *command])
+                               "--label", name, "--cwd", cwd, "--", *command], human_launch=human)
     else:
         code, packet = invoke(["spawn", "--socket", socket, "--session", session, "--name", name, "--cwd", cwd,
                                "--report-to-session", rs, "--report-to-block", rb, "--", *command])
@@ -1698,7 +1704,7 @@ def launch_agent(o):
             side_code, side_packet = invoke(["surfaces", "open", "--socket", socket, "--session", session,
                                             "--layout", "tiled", "--anchor", block, "--label", name + " scratchpad",
                                             "--", RUNTIME, *(["--rex", state["rex_executable"]] if state.get("rex_executable") else []),
-                                            "scratch", "watch", "--socket", socket, "--session", session, "--block", block, "--registry", root])
+                                            "scratch", "watch", "--socket", socket, "--session", session, "--block", block, "--registry", root], human_launch=human)
             state = update(root, launch_id, lambda s: s.update(scratch_pane_receipt=side_packet,
                             scratch_pane_opened=succeeded(side_code, side_packet, "created_and_verified")))
         code, packet = invoke(["jobs", "track", "--registry", root, "--socket", socket, "--session", session, "--block", block,

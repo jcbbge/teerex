@@ -45,6 +45,13 @@ Creation receipts are stored under `$XDG_STATE_HOME/teerex/pane-creators` (defau
 without a receipt fall back to the agents registry: starter, report-to and the
 pane's own supervisor can close them. A managed scratchpad viewer admits its
 starter and supervisor; its watcher can close only itself after its owner is gone.
+Human launches additionally record `human_launch:true` and `human_creator`
+(host, OS user, and SSH client host when present); a missing pane is never replaced with a fake address.
+For these receipts, close and rename also admit a human in the same tab, or
+that OS user on that host from a terminal with no pane identity. Managed-agent
+markers never acquire this human authority; seat protection still wins. Old
+receipts with an unknown spawner remain unchanged: outside that pane they
+require `--operator`; the existing supervisor self-close rule still applies.
 No authority record means `no_recorded_spawner`; a foreign caller's refusal names
 the recorded spawner. `AGENT_REGISTRY` selects a custom managed-agent registry.
 
