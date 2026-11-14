@@ -75,6 +75,19 @@ class TargetsTest(unittest.TestCase):
         return subprocess.run([str(BIN), *args], capture_output=True, text=True, timeout=10,
                               env=dict(isolated_environment(), REX_SERVER="unix:///poisoned", REX_SESSION="wrong"))
 
+    def test_identity_import_in_path_module_and_embedded_loads(self):
+        root = Path(__file__).resolve().parent
+        path = root / 'targets.py'
+        loader = "import importlib.util; spec=importlib.util.spec_from_file_location('isolated_targets', " + repr(str(path)) + "); targets=importlib.util.module_from_spec(spec); spec.loader.exec_module(targets)"
+        module = "import sys; sys.path.insert(0, " + repr(str(root)) + "); import targets"
+        embedded = "import types; targets=types.ModuleType('embedded_targets'); exec(" + repr((root / 'caller_identity.py').read_text() + '\n' + path.read_text()) + ", targets.__dict__)"
+        for mode, source in (('path', loader), ('module', module), ('embedded', embedded)):
+            with self.subTest(mode=mode):
+                source += "; assert targets.caller_identity({'REX_SESSION':'s','REX_BLOCK':'b'}) == {'session_id':'s','block_id':'b'}; assert targets.managed_agent({'AGENT_NAME':'probe'})"
+                proc = subprocess.run([sys.executable, '-I', '-c', source], cwd=self.root,
+                                      capture_output=True, text=True, timeout=10)
+                self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+
     def test_recovery_store_default_and_explicit_directory(self):
         self.host["recovery_store"] = str(self.root / "snapshots")
         self.save()

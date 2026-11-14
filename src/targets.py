@@ -9,7 +9,13 @@ import shlex
 import sys
 
 if "caller_identity" not in globals():
-    from caller_identity import caller_identity, managed_agent
+    # Path-loaded board checks do not put src on sys.path. Embedded callers
+    # supply this shared source first and never need a filesystem import.
+    import importlib.util
+    _identity_spec = importlib.util.spec_from_file_location('teerex_caller_identity', Path(__file__).with_name('caller_identity.py'))
+    _identity = importlib.util.module_from_spec(_identity_spec)
+    _identity_spec.loader.exec_module(_identity)
+    caller_identity, managed_agent = _identity.caller_identity, _identity.managed_agent
 
 MAX_CONFIG = 1024 * 1024
 NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}\Z")
