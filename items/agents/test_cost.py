@@ -108,6 +108,27 @@ class CostTests(unittest.TestCase):
         self.assertEqual(len(sent), 1)
         self.assertEqual(state['cost_flag']['outcome'], 'acknowledged')
 
+    def test_threshold_claim_is_per_turn_and_stale_polls_do_not_claim(self):
+        state = dict(launch_id='a' * 32, name='test', starter={'block_id': 'test'}, turn_started_at=100)
+        row = dict(threshold=dict(turn_seconds=7200, turn_tokens=100), current_turn_seconds=1,
+                   turn_tokens=101, turn_active=True, turn_started_at=100)
+        sent = []
+        with patch.dict(NS, update=lambda root, launch, change: change(state), now=lambda: 1000,
+                        send=lambda *args: (sent.append(args) or (1, {})), transport_ack=lambda *args: False):
+            stale_state = dict(state)
+            NS['cost_flag']('root', stale_state, row)
+            NS['cost_flag']('root', stale_state, row)
+            self.assertEqual(len(sent), 1)
+            self.assertEqual(state['cost_flag']['outcome'], 'uncertain_not_retried')
+            state['turn_started_at'] = 200
+            NS['cost_flag']('root', stale_state, row)
+            self.assertEqual(len(sent), 1)
+            row['turn_started_at'] = 200
+            NS['cost_flag']('root', state, row)
+            NS['cost_flag']('root', state, row)
+            self.assertEqual(len(sent), 2)
+            self.assertEqual(state['cost_flag']['turn_started_at'], 200)
+
     def test_idle_does_not_warn_and_invalid_settings_rejected(self):
         NS['cost_flag']('root', dict(starter=True), dict(threshold=dict(turn_seconds=1, turn_tokens=1),
                         current_turn_seconds=0, turn_tokens=100, turn_active=False))

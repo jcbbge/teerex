@@ -187,7 +187,7 @@ def cost_row(state, paths):
     settings = state.get('cost') or cost_settings({})
     row = dict(name=state['name'], launch_id=state['launch_id'], harness=state.get('harness'), target=state.get('target'),
                wall_seconds=max(0, end - start) / 1000, current_turn_seconds=max(0, end - turn_at) / 1000 if active else 0,
-               turn_active=active, transcript=paths[0] if len(paths) == 1 else None,
+               turn_active=active, turn_started_at=turn_at, transcript=paths[0] if len(paths) == 1 else None,
                tokens_in=None, tokens_out=None, turn_tokens=None, dollars=None, dollar_source='unknown_not_recorded',
                match='exact_protocol_launch_id' if len(paths) == 1 else ('ambiguous' if paths else 'not_found'),
                threshold=settings, flag=state.get('cost_flag'))
@@ -202,19 +202,25 @@ def cost_row(state, paths):
 def cost_flag(root, state, row):
     settings = row['threshold']
     exceeded = row['current_turn_seconds'] >= settings['turn_seconds'] or (row.get('turn_tokens') or 0) >= settings['turn_tokens']
-    if not row['turn_active'] or not exceeded or not state.get('starter') or state.get('cost_flag'):
+    turn = row.get('turn_started_at', state.get('turn_started_at', state.get('created_at')))
+    if not row['turn_active'] or not exceeded or not state.get('starter'):
         return
     claimed = []
     def claim(s):
-        if not s.get('cost_flag'):
-            s['cost_flag'] = dict(at=now(), outcome='attempted_not_retried', turn_seconds=row['current_turn_seconds'], turn_tokens=row.get('turn_tokens'))
+        flag = s.get('cost_flag') or {}
+        live_turn = s.get('turn_started_at', s.get('created_at'))
+        if live_turn == turn and (not flag or flag.get('turn_started_at') != turn):
+            s['cost_flag'] = dict(at=now(), turn_started_at=turn, outcome='attempted_not_retried', turn_seconds=row['current_turn_seconds'], turn_tokens=row.get('turn_tokens'))
             claimed.append(True)
     update(root, state['launch_id'], claim)
     if not claimed:
         return
     body = f"COST {state['name']}: current turn {row['current_turn_seconds'] / 3600:.2f} hours, {row.get('turn_tokens')} tokens. Threshold exceeded; agent continues."
     code, packet = send(root, state, state['starter'], body, 'cost-threshold')
-    update(root, state['launch_id'], lambda s: s['cost_flag'].update(outcome='acknowledged' if transport_ack(code, packet) else 'uncertain_not_retried'))
+    def finish(s):
+        if (s.get('cost_flag') or {}).get('turn_started_at') == turn:
+            s['cost_flag'].update(outcome='acknowledged' if transport_ack(code, packet) else 'uncertain_not_retried')
+    update(root, state['launch_id'], finish)
 
 
 def cost(o):
