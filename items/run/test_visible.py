@@ -37,7 +37,7 @@ class VisibleTest(unittest.TestCase):
         cls.addClassCleanup(cls.log.close)
         cls.server = subprocess.Popen([cls.rex, "server", "run", "--listen", "unix://" + str(cls.socket),
                                       "--restore=false", "--config", "/dev/null", "--state-dir", str(cls.root / "state")],
-                                     stdout=cls.log, stderr=cls.log)
+                                     stdout=cls.log, stderr=cls.log, env=dict(os.environ, HOME=str(cls.root)))
         cls.addClassCleanup(cls.stop_server)
         for _ in range(100):
             if cls.server.poll() is not None:
@@ -72,7 +72,7 @@ class VisibleTest(unittest.TestCase):
         self.stdin.write_bytes(b"input\x00\xff\n\n")
         self.session = self.rpc("session.create", {"label": "run-visible disposable"})["session_id"]
         self.addCleanup(lambda: self.rpc("session.destroy", {"session_id": self.session}))
-        self.runtime_env = dict(os.environ, REX_SERVER="unix:///tmp/wrong.sock", REX_BLOCK="block:wrong",
+        self.runtime_env = dict(os.environ, HOME=str(self.root), REX_SERVER="unix:///tmp/wrong.sock", REX_BLOCK="block:wrong",
                                 PATH=str(Path(self.rex).parent) + os.pathsep + os.environ.get("PATH", ""))
         self.anchor = None
 
@@ -401,30 +401,30 @@ if {fenced!r}:
         self.assertIsNotNone(shutil.which("bwrap"))
         self.channel_round_trip(True, detached=True)
 
-    def test_channel_receipt_cap_and_cancellation_cleanup(self):
+    def test_channel_continues_past_old_count_limit_and_cancellation_cleans_up(self):
         block = self.anchor_pane()
         directory = self.work / "capped"
         directory.mkdir(mode=0o700)
         script = """import json,os,socket
 from pathlib import Path
 h=json.loads(Path(os.environ['AGENT_CHANNEL']).read_text())
-for i in range(256):
+for i in range(260):
  r=dict(launch_id=h['launch_id'],token='wrong',request_id=format(i,'032x'),operation='send',to='report-to',body='never delivered')
  with socket.socket(socket.AF_UNIX) as s:
   s.settimeout(5);s.connect(h['socket']);s.sendall(json.dumps(r).encode()+b'\\n');data=b''
   while b'\\n' not in data:data+=s.recv(65536)
  assert json.loads(data)['code']==1
-assert json.loads(data)['result']['failure_reason']=='channel_request_limit'
+assert json.loads(data)['result']['failure_reason']=='channel_token_mismatch'
 """
-        # 256 refused requests: allow the command's own 60 s budget on slow hosted Macs.
+        # More than the former 256-request cap: allow the command's own 60 s budget on slow hosted Macs.
         result, packet = self.invoke(script, extra=self.channel_options(directory, block) + ["--timeout-ms", "60000"],
                                      client_timeout=75)
         self.assert_good(result, packet)
         lines = [json.loads(line) for line in (directory / "receipts.jsonl").read_text().splitlines()]
-        self.assertEqual(len(lines), 256)
-        self.assertEqual(lines[-1]["failure_reason"], "channel_request_limit")
+        self.assertEqual(len(lines), 260)
+        self.assertEqual(lines[-1]["failure_reason"], "channel_token_mismatch")
         self.assertEqual(packet["channel"]["count"], len(lines))
-        self.assertEqual(packet["channel"]["outcomes"], {"refused": 256})
+        self.assertEqual(packet["channel"]["outcomes"], {"refused": 260})
         self.assertEqual({p.name for p in directory.iterdir()}, {"receipts.jsonl"})
         directory = self.work / "cancelled-channel"
         directory.mkdir(mode=0o700)

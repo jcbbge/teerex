@@ -76,7 +76,7 @@ class ChannelService:
         if self.closed:
             time.sleep(.05)
             return
-        if time.monotonic() >= self.deadline or self.count >= self.policy["max_requests"]:
+        if time.monotonic() >= self.deadline:
             self.close()
             self.revoked()
             return
@@ -101,13 +101,9 @@ class ChannelService:
                 request = frame_read(connection)
                 # Recheck after the bounded read, not just at accept.
                 channel_require(time.monotonic() < self.deadline, "channel_expired")
-                channel_require(self.count < self.policy["max_requests"] or not self.reserve_refusal, "channel_request_limit")
                 code, result = self.dispatch(request)
             except self.errors as exc:
                 code, result = 1, channel_failure(exc)
-            # Reserve the final log slot for the cap refusal, even for malformed frames.
-            if self.reserve_refusal and self.count >= self.policy["max_requests"]:
-                code, result = 1, channel_failure("channel_request_limit")
             self.record_request(request, code, result)
             response = json.dumps(dict(code=code, result=result), ensure_ascii=False).encode() + b"\n"
             if len(response) > 49152:
