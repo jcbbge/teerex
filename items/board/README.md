@@ -17,7 +17,7 @@ teerex board --hosts hive --json             # only the selected source
 teerex board --no-graphics                    # Unicode only
 ```
 
-`--once` needs `--replay`. The bundled [`fixture.jsonl`](fixture.jsonl) is
+`--once` needs `--replay` unless combined with `--json`. The bundled [`fixture.jsonl`](fixture.jsonl) is
 **SAMPLE DATA**, with no real agent identifiers or operator activity.
 Interactive mode needs terminal stdin/stdout. Python 3.9+ is required for the
 feed and explicit named-host actions; the renderer itself is native Zig.
@@ -32,7 +32,7 @@ that host's existing boards inbox store. `d` pulls the cards, j/k browses and
 own, flash or mark the board blocked. Unknown source availability is `◇ ?`.
 The board owns only its `teerex/board` status record and clears it on exit.
 
-The selected host filters agents. There is no event stream section: it
+The selected host filters agents in every lens, preserving the existing pane and header contract. `m` switches machine vitals, agents and held work. Finite JSON keeps each host’s rows separate. There is no event stream section: it
 repeated low-value events and cost attention (Josh, 2026-11-13). The host key
 switches both panels; both feeds continue receiving events. Host failures
 retain the last readings with an explicit unavailable notice.
@@ -43,7 +43,8 @@ retain the last readings with an explicit unavailable notice.
 | Enter | `teerex --config … --host ROW_HOST surfaces focus` on that exact pane |
 | Space | Expand ordered Done → Now → To-do steps with the current step marked; inline scratchpad via the selected host's `scratch show --json`; the event's Now/progress remain available if the read fails |
 | d | Pull decisions; 1–8 answers; d returns |
-| m | Switch hive / M5 |
+| 1–5 | Agent, project, waiting graph, cost, machine lenses |
+| m | Switch hive / M5 vitals and held work |
 | ? | Keys overlay |
 | q, Ctrl-C, Ctrl-D | Exit and restore terminal settings |
 | Mouse | Click selects, double-click jumps, wheel browses |
@@ -246,6 +247,7 @@ Worker rows show the starter, contract step n/m and age since last contact. Stal
 Expanded agent machines preserve step executor, `■ outcome` and `⇥ handoff` annotations when present. Plain scratchpads remain supported; absent executor evidence is labelled `agent`.
 
 Waiting edges (`⧗`) show the scratchpad Waiting text and its explicit check time. Existing stalled contracts stay red; a known idle/done/error agent target or an idle agent with no Now/Waiting is also shown as stalled. Missing target evidence is not treated as proof of death.
+
 The interactive board decorates its containing tab’s starting label with `○`
 (calm), `🟠` (a stalled agent row), or `🔴` (an agent error, unavailable
 host, invalid event or ended live feed). It considers rows from every host,
@@ -254,3 +256,24 @@ at startup. Only health transitions rename the tab; the existing feed updates
 drive them without a new timer. Exit restores the base label, best effort.
 Missing pane context disables decoration; label failures are reported and leave
 the board running. Held work does not contribute to this agent health signal.
+
+
+## Lenses and evidence
+
+Keys 1–5 change grouping of the same selected-host rows without removing live agents. Waiting edges indent
+under their named target; cycles and unknown targets retain every row. Cost
+shows the existing `agents cost --json` measurements, with unavailable tokens,
+dollars or turn time labelled unknown. Project labels resolve explicit
+`cost.rivet_item` associations and Rivet-owned launch purposes through read-only
+`rv show`; unmatched rows say none. Names and project values are not guessed.
+
+`board --json --once --lens 1` (through `--lens 5`) includes the active `lens`
+and each host’s attention snapshot. `defaults.board_lens` in
+`~/.config/teerex/profiles.json` chooses the initial lens (1 by default);
+`--lens` overrides it. Attention uses `boards attention --json --since 1h`,
+including its profile `attention_messages_per_hour` shares. An exceeded share
+uses the amber terminal slot, never the problem colour.
+
+Space expands steps in every lens: a proven step shows ✓ and its proof;
+legacy or explicitly unproven completion shows unproven. Completion count
+continues to count scratchpad Done entries; a count is not proof verification.

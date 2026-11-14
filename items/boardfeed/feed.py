@@ -286,8 +286,10 @@ def scratch_steps(sections):
     steps=[]
     for section,state in (('Done','done'),('Now','now'),('To-do','todo')):
         for value in (reversed(sections[section]) if state=='done' else sections[section]):
-            parts=value.split(' · ')
-            step=dict(state=state,text=parts[0],by='',outcome='',handoff='')
+            label,mark,proof=value.partition(' — proof: ')
+            if not mark:label=label.removesuffix(' — unproven')
+            parts=label.split(' · ')
+            step=dict(state=state,text=parts[0],by='',outcome='',handoff='',proof=proof if mark else None)
             for part in parts[1:]:
                 if part.startswith('■ '):step['outcome']=part[2:]
                 elif part.startswith('⇥ '):step['handoff']=part[2:]
@@ -302,6 +304,7 @@ class State:
         self.a=a; self.rows={};self.calls={};self.call_starts={};self.roots={};self.pids={};self.status={};self.questions={};self.reports={};self.seeded=set();self.live={};self.reachable=None
         self.lock=threading.RLock()
         self.processes={}
+        self.accounting={};self.projects={}
 
     def rex_json(self, *args):
         command=[self.a.rex,'--autostart=false','--server','unix://'+self.a.socket,'--timeout','2s',*args]
@@ -393,16 +396,43 @@ class State:
                     name=record.get('name') or pane.get('label') or (agent_reports[0].get('app') if agent_reports else None) or 'agent'
                 row=dict(id=block,name=name,session=session,block=block,state=self.status.get(block,'unknown'),placement=pane.get('placement','placed'),now=next(iter(sections['Now']),None),done=len(sections['Done']),total=sum(map(len,sections.values())),question=self.questions.get(block),since=hook.get('at') or record.get('created_at') or record.get('registered_at_unix_ms') or 0,cpu=None,rss=None)
                 row.update(waiting=headers.get('waiting',''),check=headers.get('check',''),updated=headers.get('updated',''),steps=scratch_steps(sections),executor=record.get('profile') or 'agent',starter=starter_name,step_n=contract.get('step_n',len(sections['Done'])+bool(sections['Now'])),step_total=contract.get('steps_total',row['total']),last_contact_at=contract.get('last_contact_at',hook.get('at') or 0),stalled=contract.get('stalled',False))
+                item=(record.get('cost') or {}).get('rivet_item')
+                if not item and record.get('owner')=='rivet':item=(record.get('purpose') or '').split(' · ')[0]
+                row.update(cost=self.accounting.get(block),project=self.project(item),rivet_item=item)
                 rows[block]=row
             for block,row in rows.items():
                 if self.rows.get(block)!=row:emit(self.a.host,'agent',**row)
             for block,row in self.rows.items():
                 if block not in rows:emit(self.a.host,'agent',**dict(row,state='gone'))
+            active_items={r.get('rivet_item') for r in rows.values()}
+            self.projects={k:v for k,v in self.projects.items() if k in active_items}
             self.rows=rows
             self.seeded.intersection_update(self.live)
             self.processes={b:p for b,p in self.processes.items() if b in self.live}
             self.roots={self.pids[row['block']]:row['name'] for row in rows.values() if row['block'] in self.pids}
             self.tail_calls()
+
+    def project(self,item):
+        if not item:return 'none'
+        if item not in self.projects:
+            try:
+                if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.:-]*',item):raise ValueError('invalid item')
+                raw=tracked_output(['rv','show',item],timeout=15,text=True)
+                header=re.sub(r'\x1b\[[0-9;]*m','',raw).splitlines()[0]
+                match=re.search(r'\s'+re.escape(item)+r'\s+(.+?) · ',header)
+                if not match:raise ValueError('no item header')
+                self.projects[item]=match[1]+' / '+item
+            except (OSError,ValueError,IndexError,subprocess.SubprocessError):self.projects[item]='none'
+        return self.projects[item]
+
+    def accounting_snapshot(self):
+        self.projects.clear()
+        try:
+            packet=json.loads(tracked_output([self.a.executable,'agents','cost','--registry',str(self.a.agents_registry),'--json'],timeout=30))
+            # Allow only measured fields; never forward transcript paths or raw launch records.
+            self.accounting={r['target']['block_id']:{k:r.get(k) for k in ('tokens_in','tokens_out','dollars','current_turn_seconds','wall_seconds')}
+                             for r in packet['agents'] if isinstance(r.get('target'),dict) and r['target'].get('block_id')}
+        except (OSError,ValueError,KeyError,TypeError,subprocess.SubprocessError):self.accounting={}
 
     def refresh_process(self,block,session):
         self.processes.pop(block,None)
@@ -626,8 +656,29 @@ class Decisions:
             emit(self.a.host,'decisions',**snapshot);self.previous=snapshot
 
 
+class Attention:
+    def __init__(self,a):self.a=a;self.previous=None;self.signature=None
+
+    def poll(self):
+        path=Path(os.environ.get('TEEREX_ATTENTION_DIR',str(Path.home()/'.local/state/teerex/attention')))/'deliveries.jsonl'
+        def stamp(path):
+            try:
+                info=path.stat();return (info.st_ino,info.st_mtime_ns,info.st_size)
+            except OSError:return None
+        signature=(stamp(path),stamp(self.a.profiles),int(time.time()//30))
+        if signature==self.signature:return
+        self.signature=signature
+        try:
+            packet=json.loads(tracked_output([self.a.executable,'boards','attention','--json','--since','1h','--profiles',str(self.a.profiles),'--agents-registry',str(self.a.agents_registry)],timeout=5))
+            snapshot=dict(available=True,messages=packet['messages'],words=packet['words'],over_share=any(r['over_share'] for r in packet['senders']))
+        except (OSError,ValueError,KeyError,TypeError,subprocess.SubprocessError):snapshot=dict(available=False,messages=None,words=None,over_share=False)
+        if snapshot!=self.previous:emit(self.a.host,'attention',**snapshot);self.previous=snapshot
+
+
 def local(a):
     state=State(a)
+    state.accounting_snapshot()
+    attention=Attention(a);attention.poll()
     decisions=Decisions(a)
     decisions.poll()
     held=Held(a.host,json.loads(a.held_command_json)) if a.held_command_json else None
@@ -635,13 +686,15 @@ def local(a):
         if held:held.poll()
         state.scan()
         return
-    watcher=Watcher([a.agents_registry,a.jobs_registry,a.scratch,a.calls,a.profiles,a.store])
+    watcher=Watcher([a.agents_registry,a.jobs_registry,a.scratch,a.calls,a.profiles,a.store,Path(os.environ.get('TEEREX_ATTENTION_DIR',str(Path.home()/'.local/state/teerex/attention')))])
     sample=LinuxVitals() if sys.platform=='linux' else MacVitals()
     thread=threading.Thread(target=rex_events,args=(a,state),daemon=True);thread.start()
-    state.scan();deadline=time.monotonic();held_deadline=0
+    state.scan();deadline=time.monotonic();held_deadline=0;accounting_deadline=time.monotonic()+30
     try:
         while not STOP.is_set():
             now=time.monotonic()
+            if now>=accounting_deadline:
+                state.accounting_snapshot();state.scan();attention.poll();accounting_deadline=time.monotonic()+30
             if held and now>=held_deadline:
                 held.poll();held_deadline=time.monotonic()+30
             if now>=deadline:
@@ -652,7 +705,7 @@ def local(a):
                     emit(a.host,'stream',agent=None,text='Machine measurements unavailable',role='problem')
                 deadline=now+1
             if watcher.wait(max(0,deadline-time.monotonic())):
-                state.scan();decisions.poll()
+                state.scan();decisions.poll();attention.poll()
     finally:watcher.close()
 
 
@@ -678,7 +731,7 @@ def merge(a):
                 if STOP.is_set():break
                 try:
                     event=json.loads(line)
-                    if event.get('v')!=1 or event.get('kind') not in ('host','agent','stream','vitals','held','decisions'):continue
+                    if event.get('v')!=1 or event.get('kind') not in ('host','agent','stream','vitals','held','decisions','attention'):continue
                     event['host']=host
                     if event['kind']=='held':last_held=event.get('available')
                     with LOCK: print(json.dumps(event,separators=(',',':')),flush=True)

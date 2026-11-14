@@ -87,3 +87,12 @@ Agent rows expose starter display name, contract step_n/step_total, last_contact
 Agent rows project ordered scratchpad steps (Done, Now, To-do), preserving optional executor, outcome and handoff annotations. Pane inventory and row-derived counts are unchanged.
 
 Decision snapshots read each configured host’s existing boards store through `boards state inspect`, fold resolutions and publish only open cards. The feed watches that store with the existing filesystem watcher; unavailable sources are explicit. No decision is sent or opened by the feed.
+
+Board enrichment remains observational: `agents cost --json` supplies only
+allowlisted token, dollar and turn/wall duration fields; transcript paths and
+raw launch records never enter feed events. Attention snapshots use
+`boards attention --json --since 1h`, refresh on log/profile changes and age
+out on the foreground feed’s sampling loop. Accounting refreshes every 30s
+while the board owns the feed; no schedule or service is installed.
+Explicit Rivet item associations are resolved with `rv show`, with none when
+unavailable. Scratch step events carry proof separately from label text.

@@ -229,7 +229,7 @@ class BoardTest(unittest.TestCase):
 
     def test_expanded_state_path_marks_current_step_and_outcomes(self):
         path=self.root/'steps.jsonl'
-        row=dict(v=1,t=200000,host='hive',kind='agent',id='worker',name='worker',state='working',now='Build',done=1,total=3,executor='model',steps=[dict(state='done',text='Read',by='computer',outcome='checked'),dict(state='now',text='Build',by='model',handoff='reviewer'),dict(state='todo',text='Verify',by='computer')])
+        row=dict(v=1,t=200000,host='hive',kind='agent',id='worker',name='worker',state='working',now='Build',done=1,total=3,executor='model',steps=[dict(state='done',text='Read',by='computer',outcome='checked',proof='read contract'),dict(state='now',text='Build',by='model',handoff='reviewer'),dict(state='todo',text='Verify',by='computer')])
         path.write_text(json.dumps(row)+'\n')
         p=Pane(self.root,fixture=path);self.addCleanup(p.close)
         p.settle();self.assertNotIn('← now',p.view())
@@ -238,6 +238,30 @@ class BoardTest(unittest.TestCase):
             self.assertIn(label,p.view())
         self.assertLess(p.view().index('✓ Read'),p.view().index('▶ Build'))
         self.assertLess(p.view().index('▶ Build'),p.view().index('Verify'))
+
+    def test_lenses_preserve_rows_group_waits_and_expose_proof_attention(self):
+        path=self.root/'lenses.jsonl'
+        rows=[dict(v=1,t=200000,host='hive',kind='agent',id='a',name='alpha',state='working',now='Build',done=2,total=3,project='beta / item',waiting='zulu · review',cost=dict(tokens_in=10,tokens_out=20,dollars=None,current_turn_seconds=120),steps=[dict(state='done',text='Read',proof='contract checked'),dict(state='done',text='Guess',proof=None)]),
+              dict(v=1,t=200000,host='hive',kind='agent',id='z',name='zulu',state='working',now='Review',done=0,total=1,project='alpha / item'),
+              dict(v=1,t=200000,host='m5',kind='agent',id='m',name='macworker',state='working',now='Verify',done=0,total=1),
+              dict(v=1,t=200000,host='hive',kind='attention',available=True,messages=7,words=30,over_share=True)]
+        path.write_text('\n'.join(map(json.dumps,rows))+'\n')
+        p=Pane(self.root,width=120,fixture=path);self.addCleanup(p.close);p.settle()
+        self.assertIn(b'\x1b[33m',p.output)
+        for key,lens in enumerate(('agent','project','waiting','cost','machine'),1):
+            p.key(str(key).encode());view=p.view()
+            self.assertIn(lens,view.splitlines()[0]);self.assertIn('7 messages / hour',view)
+            for name in ('alpha','zulu'):self.assertIn(name,view)
+            self.assertNotIn('macworker',view)
+            if lens=='waiting':self.assertLess(view.index('zulu'),view.index('alpha'))
+            if lens=='cost':self.assertIn('tokens 30 · unknown · turn 2m',view)
+            if lens=='machine':
+                self.assertIn('hive',view);p.key(b'm');self.assertIn('macworker',p.view());p.key(b'm')
+            packet=subprocess.run([BIN,'board','--replay',str(path),'--json','--once','--lens',str(key)],capture_output=True,text=True,check=True)
+            result=json.loads(packet.stdout);self.assertEqual(result['lens'],lens)
+            self.assertEqual(result['hosts'][0]['attention']['messages'],7)
+            self.assertEqual({r['id'] for h in result['hosts'] for r in h['rows']},{'a','z','m'})
+        p.key(b'1');p.key(b' ');self.assertIn('✓ Read',p.view());self.assertIn('proof: contract checked',p.view());self.assertIn('unproven Guess',p.view())
 
     def test_waiting_edge_and_idle_target_stalled(self):
         path=self.root/'waiting.jsonl'

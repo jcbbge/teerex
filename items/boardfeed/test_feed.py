@@ -22,6 +22,22 @@ feed=importlib.util.module_from_spec(spec);spec.loader.exec_module(feed)
 REX=os.environ.get('REX_BIN') or shutil.which('rex')
 
 class FeedTests(unittest.TestCase):
+    def test_proof_steps_and_observational_sources(self):
+        steps=feed.scratch_steps({'Done':['Read — proof: contract','Guess — unproven'],'Now':[],'To-do':[]})
+        self.assertEqual([(s['text'],s['proof']) for s in steps],[('Guess',None),('Read','contract')])
+        a=SimpleNamespace(executable='/teerex',agents_registry=Path('/registry'),profiles=Path('/profiles'),host='hive')
+        state=feed.State(a)
+        packet=dict(agents=[dict(target=dict(block_id='b'),tokens_in=10,tokens_out=20,dollars=None,current_turn_seconds=1,wall_seconds=2,transcript='private')])
+        with mock.patch.object(feed,'tracked_output',return_value=json.dumps(packet)):
+            state.accounting_snapshot()
+        self.assertEqual(state.accounting['b']['tokens_in'],10);self.assertNotIn('transcript',state.accounting['b'])
+        with mock.patch.object(feed,'tracked_output',return_value='working item-1  sample · task · level 1\nTitle') as read:
+            self.assertEqual(state.project('item-1'),'sample / item-1');self.assertEqual(state.project('item-1'),'sample / item-1');read.assert_called_once()
+            self.assertEqual(state.project(None),'none')
+        with mock.patch.object(feed,'tracked_output',return_value=json.dumps(dict(messages=7,words=12,senders=[dict(over_share=True)]))),mock.patch.object(feed,'emit') as emit:
+            attention=feed.Attention(a);attention.poll();attention.poll()
+            emit.assert_called_once_with('hive','attention',available=True,messages=7,words=12,over_share=True)
+
     def held_row(self, identifier='item-1', since=1, broken=False):
         return dict(id=identifier,project='fixture',title='Example',waits='ship',text='ship? Example',on='',since=since,broken=broken,broken_why='broken' if broken else '')
 
