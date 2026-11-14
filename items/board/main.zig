@@ -8,15 +8,15 @@ const Parsed = std.json.Parsed(Value);
 const ESC = "\x1b";
 const usage =
     \\Usage: teerex board [--config ABS] [--hosts hive,m5] [--replay FILE]
-    \\                    [--no-graphics] [--once] [--json] [--lens 1-5] [--benchmark N]
+    \\                    [--tasks ABS_DIR] [--width N --height N] [--no-graphics] [--once] [--json] [--lens 1-5] [--benchmark N]
     \\Live Rex/teerex events and machine vitals. Event-driven; no screen timer.
     \\--json prints finite per-host rows and header counts from live feeds or replay.
     \\Feed: teerex board feed --help
     \\Replay is JSONL v1; EOF holds the final frame, q exits. --once prints it and exits.
     \\Keys: j/k or arrows select; Enter jump; Space scratchpad; m machine;
     \\      1–5 lenses; d decisions; ? keys; q quit. Mouse selects; double-click jumps; wheel scrolls.
-    \\Uses ANSI theme slots, queries contrast, and uses kitty charts when supported.
-    \\NO_COLOR disables colour and graphics. --no-graphics forces Unicode marks.
+    \\Uses ANSI theme slots and cell-aware Unicode rows.
+    \\NO_COLOR disables colour. --no-graphics is accepted as a no-op.
     \\--benchmark N measures N changed 60-column frames without terminal output.
     \\
 ;
@@ -77,6 +77,7 @@ const Model = struct {
     allocator: A,
     hosts: [2]Host = .{ .{ .name = "hive" }, .{ .name = "m5" } },
     agents: std.ArrayList(Parsed) = .empty,
+    tasks: std.ArrayList(Parsed) = .empty,
     stream: std.ArrayList(Parsed) = .empty,
     timestamp: i64 = 0,
     replay: bool = false,
@@ -89,6 +90,8 @@ const Model = struct {
         for (&self.hosts) |*h| if (h.attention) |*v| v.deinit();
         for (self.agents.items) |*v| v.deinit();
         for (self.stream.items) |*v| v.deinit();
+        for (self.tasks.items) |*v| v.deinit();
+        self.tasks.deinit(self.allocator);
         self.agents.deinit(self.allocator);
         self.stream.deinit(self.allocator);
     }
@@ -173,6 +176,28 @@ const Model = struct {
             }
             if (!eq(state, "gone") and self.agents.items.len < 256) {
                 try self.agents.append(self.allocator, parsed);
+                retained = true;
+            }
+        } else if (eq(kind, "task")) {
+            const id = text(v, "id");
+            if (id.len == 0 or (!eq(text(v, "state"), "gone") and (get(v, "title") != .string or get(v, "owner") != .string or get(v, "done") != .bool or get(v, "chunks") != .array))) {
+                self.invalid += 1;
+                return false;
+            }
+            for (self.tasks.items, 0..) |*old, i| {
+                if (eq(text(old.value, "id"), id) and eq(text(old.value, "host"), name)) {
+                    old.deinit();
+                    if (eq(text(v, "state"), "gone")) {
+                        _ = self.tasks.orderedRemove(i);
+                    } else {
+                        old.* = parsed;
+                        retained = true;
+                    }
+                    return true;
+                }
+            }
+            if (!eq(text(v, "state"), "gone")) {
+                try self.tasks.append(self.allocator, parsed);
                 retained = true;
             }
         } else if (eq(kind, "stream")) {
@@ -390,6 +415,53 @@ fn waitChildren(a: A, rows: []const Value, out: *std.ArrayList(Value), row: Valu
         try waitChildren(a, rows, out, child);
     };
 }
+fn taskLess(_: void, x: Value, y: Value) bool {
+    const bx = eq(text(x, "state"), "BLOCKED");
+    const by = eq(text(y, "state"), "BLOCKED");
+    if (bx != by) return bx;
+    const nx = std.fmt.parseInt(u64, text(x, "number"), 10) catch 0;
+    const ny = std.fmt.parseInt(u64, text(y, "number"), 10) catch 0;
+    return if (nx != ny) nx < ny else std.mem.lessThan(u8, text(x, "id"), text(y, "id"));
+}
+fn ownerRow(model: *Model, owner: []const u8) ?Value {
+    for (model.agents.items) |entry| if (eq(text(entry.value, "name"), owner)) return entry.value;
+    return null;
+}
+fn normalizeTitle(a: A, input: []const u8) ![]const u8 {
+    var out: std.ArrayList(u8) = .empty;
+    var it = (std.unicode.Utf8View.init(input) catch return "?").iterator();
+    while (it.nextCodepoint()) |cp| {
+        if (cp >= 0x2460 and cp <= 0x2473) {
+            try out.appendSlice(a, try fmt(a, "{d}", .{cp - 0x2460 + 1}));
+        } else if (cp != 0x2501 and cp != 0x2500) {
+            var buf: [4]u8 = undefined;
+            const len = try std.unicode.utf8Encode(cp, &buf);
+            try out.appendSlice(a, buf[0..len]);
+        }
+    }
+    return std.mem.trim(u8, out.items, " ");
+}
+fn wrapTitle(a: A, input: []const u8, width: usize) ![][]const u8 {
+    var out: std.ArrayList([]const u8) = .empty;
+    var words = std.mem.tokenizeAny(u8, input, " \t\r\n");
+    var current: []const u8 = "";
+    while (words.next()) |word| {
+        const trial = if (current.len > 0) try fmt(a, "{s} {s}", .{ current, word }) else word;
+        if (cells(trial) <= width) {
+            current = trial;
+            continue;
+        }
+        if (out.items.len == 1) {
+            try out.append(a, try fit(a, try fmt(a, "{s}{s}{s}", .{ trial, if (words.rest().len > 0) " " else "", words.rest() }), width));
+            return out.toOwnedSlice(a);
+        }
+        try out.append(a, if (current.len > 0) current else try fit(a, word, width));
+        current = if (current.len > 0) word else "";
+    }
+    if (current.len > 0 or out.items.len == 0) try out.append(a, current);
+    return out.toOwnedSlice(a);
+}
+
 const UI = struct {
     lens: usize = 0,
     host: usize = 0,
@@ -410,6 +482,9 @@ const UI = struct {
     rows: std.ArrayList(Value) = .empty,
     held_rows: std.ArrayList(Value) = .empty,
     hit: [256]?usize = @splat(null),
+    tasks_view: bool = false,
+    show_finished: bool = false,
+    task_rows: std.ArrayList(Value) = .empty,
     held_open: bool = false,
     decisions_open: bool = false,
     decision_index: usize = 0,
@@ -461,6 +536,7 @@ const UI = struct {
     }
     fn layout(self: *UI, a: A, model: *Model, width: usize, height: usize) ![]Line {
         self.hit = @splat(null);
+        if (self.tasks_view) return self.tasksLayout(a, model, width, height);
         var lines: std.ArrayList(Line) = .empty;
         const host = model.hosts[self.host];
         const inner = width -| 2;
@@ -583,6 +659,80 @@ const UI = struct {
         while (lines.items.len + 1 < height) try add(&lines, a, "", .words);
         try add(&lines, a, footer, .lines);
         for (lines.items) |*line| line.value = try fit(a, line.value, inner);
+        return lines.toOwnedSlice(a);
+    }
+    fn tasksLayout(self: *UI, a: A, model: *Model, width: usize, height: usize) ![]Line {
+        const content = width -| 2;
+        var lines: std.ArrayList(Line) = .empty;
+        self.task_rows.clearRetainingCapacity();
+        var finished: std.ArrayList(Value) = .empty;
+        var blocked: usize = 0;
+        for (model.tasks.items) |entry| {
+            if (!eq(text(entry.value, "host"), model.hosts[self.host].name)) continue;
+            if (get(entry.value, "done").bool) {
+                try finished.append(a, entry.value);
+            } else {
+                try self.task_rows.append(model.allocator, entry.value);
+                blocked += @intFromBool(eq(text(entry.value, "state"), "BLOCKED"));
+            }
+        }
+        std.mem.sort(Value, self.task_rows.items, {}, taskLess);
+        const open = self.task_rows.items.len;
+        if (self.show_finished) try self.task_rows.appendSlice(model.allocator, finished.items);
+        self.selected = @min(self.selected, self.task_rows.items.len -| 1);
+        const clock: u64 = @intCast(@mod(@divTrunc(model.timestamp, 1000), 86400));
+        try add(&lines, a, try lr(a, try fmt(a, "tasks  {d} open{s}", .{ open, if (blocked > 0) try fmt(a, " · {d} blocked", .{blocked}) else "" }), try fmt(a, "{d:0>2}:{d:0>2}", .{ clock / 3600, clock / 60 % 60 }), content), .words);
+        try add(&lines, a, "", .words);
+        var body: std.ArrayList(Line) = .empty;
+        var starts: std.ArrayList(usize) = .empty;
+        for (self.task_rows.items[0..open], 0..) |t, index| {
+            try starts.append(a, body.items.len);
+            const pre = try fmt(a, "{s}{s}{s} ", .{ if (eq(text(t, "state"), "BLOCKED")) "!" else " ", try repeat(a, " ", 2 -| cells(text(t, "number"))), text(t, "number") });
+            const indent = try repeat(a, " ", cells(pre));
+            const title = try normalizeTitle(a, text(t, "title"));
+            const wrapped = try wrapTitle(a, title, content -| cells(pre));
+            for (wrapped, 0..) |part, i| try add(&body, a, try fmt(a, "{s}{s}", .{ if (i == 0) pre else indent, part }), if (eq(text(t, "state"), "BLOCKED")) .problem else .words);
+            const owner = text(t, "owner");
+            const who = if (ownerRow(model, owner)) |r| try fmt(a, "{s}  {s} {s}{s}", .{ owner, mark(agentKind(r)), try stepLabel(a, r), if (num(get(r, "last_contact_at")) > 0) try fmt(a, " · {s}", .{try age(a, model.timestamp, num(get(r, "last_contact_at")))}) else "" }) else blk: {
+                var done: usize = 0;
+                for (arr(get(t, "chunks"))) |chunk| done += @intFromBool(eq(text(chunk, "mark"), "done"));
+                break :blk try fmt(a, "{s}  ○ not running · {d}/{d}", .{ owner, done, arr(get(t, "chunks")).len });
+            };
+            try add(&body, a, try fmt(a, "{s}{s}", .{ indent, try fit(a, who, content -| cells(indent)) }), .secondary);
+            for (arr(get(t, "chunks"))) |chunk| if (eq(text(chunk, "mark"), "now")) {
+                try add(&body, a, try fmt(a, "{s}▶ {s}", .{ indent, try fit(a, text(chunk, "text"), content -| (cells(indent) + 2)) }), .accent);
+            };
+            if (text(t, "last").len > 0) try add(&body, a, try fmt(a, "{s}{s}", .{ indent, try fit(a, text(t, "last"), content -| cells(indent)) }), .secondary);
+            try add(&body, a, "", .words);
+            for (starts.items[index]..body.items.len) |i| body.items[i].selected = self.selected == index;
+        }
+        var offset: usize = 0;
+        if (self.selected < open and starts.items[self.selected] >= height -| 3) offset = starts.items[self.selected];
+        for (body.items[offset..], offset..) |line, i| {
+            if (lines.items.len >= height -| 1) break;
+            for (starts.items, 0..) |start, index| if (i >= start and (index + 1 == starts.items.len or i < starts.items[index + 1])) {
+                if (lines.items.len < self.hit.len) self.hit[lines.items.len] = index;
+                break;
+            };
+            try lines.append(a, line);
+        }
+        if (finished.items.len > 0) {
+            try add(&lines, a, try fmt(a, "✓ {d} finished{s}", .{ finished.items.len, if (self.show_finished) "" else "  ·  f shows" }), .secondary);
+            if (self.show_finished) for (finished.items, open..) |t, index| {
+                if (lines.items.len < self.hit.len) self.hit[lines.items.len] = index;
+                try lines.append(a, .{ .value = try fmt(a, "  {s}", .{try fit(a, try fmt(a, "{s} {s}", .{ text(t, "number"), try normalizeTitle(a, text(t, "title")) }), content -| 2)}), .selected = self.selected == index });
+            };
+        }
+        if (self.help) {
+            lines.shrinkRetainingCapacity(@min(lines.items.len, 2));
+            try add(&lines, a, "j/k select · Enter jump to owner", .words);
+            try add(&lines, a, "f finished · m host · q quit", .words);
+        }
+        if (self.status.len > 0) try add(&lines, a, self.status, .accent);
+        if (lines.items.len >= height) lines.shrinkRetainingCapacity(height -| 1);
+        while (lines.items.len < height -| 1) try add(&lines, a, "", .words);
+        try add(&lines, a, "⏎ jump to lead  f finished  ? keys", .lines);
+        for (lines.items) |*line| line.value = try fit(a, line.value, content);
         return lines.toOwnedSlice(a);
     }
     fn section(_: *UI, lines: *std.ArrayList(Line), a: A, title: []const u8, width: usize) !void {
@@ -810,6 +960,12 @@ fn jump(allocator: A, self: []const u8, config: []const u8, row: Value) !bool {
 }
 
 fn activate(allocator: A, self: []const u8, config: []const u8, model: *Model, ui: *UI) ![]const u8 {
+    if (ui.tasks_view) {
+        if (ui.selected >= ui.task_rows.items.len) return "Task owner unavailable";
+        const owner = text(ui.task_rows.items[ui.selected], "owner");
+        const row = ownerRow(model, owner) orelse return "Task owner not running";
+        return if (try jump(allocator, self, config, row)) "Jumped to pane" else "Jump unavailable · check host connection";
+    }
     if (ui.selected < ui.rows.items.len) return if (try jump(allocator, self, config, ui.rows.items[ui.selected])) "Jumped to pane" else "Jump unavailable · check host connection";
     const index = ui.selected - ui.rows.items.len;
     if (index >= ui.held_rows.items.len) return "Held work unavailable";
@@ -904,7 +1060,7 @@ const TabLabel = struct {
     }
 };
 
-const Options = struct { config: []const u8, hosts: []const u8 = "hive,m5", replay: ?[]const u8 = null, once: bool = false, json: bool = false, graphics: bool = false, width: usize = 60, height: usize = 30, lens: usize = 0, benchmark: usize = 0 };
+const Options = struct { config: []const u8, hosts: []const u8 = "hive,m5", replay: ?[]const u8 = null, once: bool = false, json: bool = false, graphics: bool = false, tasks: ?[]const u8 = null, width: usize = 60, height: usize = 30, lens: usize = 0, benchmark: usize = 0 };
 fn options(a: A, args: []const []const u8) !Options {
     const home = try std.process.getEnvVarOwned(a, "HOME");
     var result: Options = .{ .config = try std.fs.path.join(a, &.{ home, ".config/teerex/hosts.json" }) };
@@ -921,10 +1077,13 @@ fn options(a: A, args: []const []const u8) !Options {
     var i: usize = 0;
     while (i < args.len) : (i += 1) {
         const s = args[i];
-        if (eq(s, "--json")) result.json = true else if (eq(s, "--once")) result.once = true else if (eq(s, "--no-graphics")) result.graphics = false else if (eq(s, "--config") or eq(s, "--hosts") or eq(s, "--replay") or eq(s, "--benchmark") or eq(s, "--lens") or eq(s, "--width") or eq(s, "--height")) {
+        if (eq(s, "--json")) result.json = true else if (eq(s, "--once")) result.once = true else if (eq(s, "--no-graphics")) result.graphics = false else if (eq(s, "--config") or eq(s, "--hosts") or eq(s, "--replay") or eq(s, "--benchmark") or eq(s, "--lens") or eq(s, "--width") or eq(s, "--height") or eq(s, "--tasks")) {
             i += 1;
             if (i >= args.len) return error.BoardOptionNeedsValue;
-            if (eq(s, "--config")) result.config = args[i] else if (eq(s, "--hosts")) result.hosts = args[i] else if (eq(s, "--replay")) result.replay = args[i] else if (eq(s, "--lens")) {
+            if (eq(s, "--tasks")) {
+                if (!std.fs.path.isAbsolute(args[i])) return error.TasksRequiresAbsoluteDirectory;
+                result.tasks = args[i];
+            } else if (eq(s, "--config")) result.config = args[i] else if (eq(s, "--hosts")) result.hosts = args[i] else if (eq(s, "--replay")) result.replay = args[i] else if (eq(s, "--lens")) {
                 const value = try std.fmt.parseInt(usize, args[i], 10);
                 if (value < 1 or value > 5) return error.InvalidLens;
                 result.lens = value - 1;
@@ -947,7 +1106,8 @@ pub fn run(_: A, args: []const []const u8) !u8 {
     if (opts.benchmark > 0) return benchmark(allocator, opts.benchmark);
     var model: Model = .{ .allocator = allocator, .replay = opts.replay != null };
     defer model.deinit();
-    var ui: UI = .{ .lens = opts.lens };
+    var ui: UI = .{ .lens = opts.lens, .tasks_view = opts.tasks != null };
+    defer ui.task_rows.deinit(allocator);
     defer ui.rows.deinit(allocator);
     defer ui.held_rows.deinit(allocator);
     defer if (ui.pad) |*pad| pad.deinit();
@@ -957,7 +1117,7 @@ pub fn run(_: A, args: []const []const u8) !u8 {
         const bytes = if (opts.replay) |path| try std.fs.cwd().readFileAlloc(allocator, path, 16 * 1024 * 1024) else blk: {
             const self = try std.fs.selfExePathAlloc(allocator);
             defer allocator.free(self);
-            const result = try std.process.Child.run(.{ .allocator = allocator, .argv = &.{ self, "board", "feed", "--config", opts.config, "--hosts", opts.hosts, "--once" }, .max_output_bytes = 16 * 1024 * 1024 });
+            const result = try std.process.Child.run(.{ .allocator = allocator, .argv = if (opts.tasks) |dir| &.{ self, "board", "feed", "--config", opts.config, "--hosts", opts.hosts, "--once", "--tasks", dir } else &.{ self, "board", "feed", "--config", opts.config, "--hosts", opts.hosts, "--once" }, .max_output_bytes = 16 * 1024 * 1024 });
             defer allocator.free(result.stderr);
             feed_failed = result.term != .Exited or result.term.Exited != 0;
             break :blk result.stdout;
@@ -1054,7 +1214,7 @@ pub fn run(_: A, args: []const []const u8) !u8 {
         replay = try std.fs.cwd().openFile(path, .{});
         fd = replay.?.handle;
     } else {
-        child = std.process.Child.init(&.{ self, "board", "feed", "--config", opts.config, "--hosts", opts.hosts }, allocator);
+        child = std.process.Child.init(if (opts.tasks) |dir| &.{ self, "board", "feed", "--config", opts.config, "--hosts", opts.hosts, "--tasks", dir } else &.{ self, "board", "feed", "--config", opts.config, "--hosts", opts.hosts }, allocator);
         child.?.stdin_behavior = .Ignore;
         child.?.stdout_behavior = .Pipe;
         child.?.stderr_behavior = .Ignore;
@@ -1089,7 +1249,7 @@ pub fn run(_: A, args: []const []const u8) !u8 {
         }
         if (dirty) {
             if (tab) |*label| label.update(health(&model)) catch |err| std.debug.print("board: tab label: {s}\n", .{@errorName(err)});
-            try ui.visible(&model);
+            if (!ui.tasks_view) try ui.visible(&model);
             // Reuse only the last frame's scratch storage; no event history.
             _ = frame_arena.reset(.retain_capacity);
             const a = frame_arena.allocator();
@@ -1180,7 +1340,7 @@ pub fn run(_: A, args: []const []const u8) !u8 {
                             if (key == 'M' and button == 0 and row > 0 and row <= ui.hit.len) {
                                 if (ui.hit[row - 1]) |idx| {
                                     ui.selected = idx;
-                                    if (idx == last_click_index and now - last_click < 400 and idx < ui.rows.items.len + ui.held_rows.items.len) {
+                                    if (idx == last_click_index and now - last_click < 400 and idx < (if (ui.tasks_view) ui.task_rows.items.len else ui.rows.items.len + ui.held_rows.items.len)) {
                                         ui.status = try activate(allocator, self, opts.config, &model, &ui);
                                     }
                                     last_click = now;
@@ -1249,6 +1409,10 @@ pub fn run(_: A, args: []const []const u8) !u8 {
                         if (ui.stream_focus) ui.stream_offset += 1 else ui.selected -|= 1;
                         dirty = true;
                     },
+                    'f' => {
+                        ui.show_finished = !ui.show_finished;
+                        dirty = true;
+                    },
                     'h' => {
                         ui.held_open = !ui.held_open;
                         dirty = true;
@@ -1280,7 +1444,7 @@ pub fn run(_: A, args: []const []const u8) !u8 {
                         ui.help = !ui.help;
                         dirty = true;
                     },
-                    '\r', '\n' => if (ui.rows.items.len + ui.held_rows.items.len > 0) {
+                    '\r', '\n' => if ((if (ui.tasks_view) ui.task_rows.items.len else ui.rows.items.len + ui.held_rows.items.len) > 0) {
                         ui.status = try activate(allocator, self, opts.config, &model, &ui);
                         dirty = true;
                     },
