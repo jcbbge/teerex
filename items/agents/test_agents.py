@@ -235,6 +235,23 @@ class ContractHelpersTest(unittest.TestCase):
         exec(compile((base / "agents/input_events.py").read_text(), "input_events.py", "exec"), self.ns)
         exec(compile((base / "agents/agents.py").read_text(), "agents.py", "exec"), self.ns)
 
+    def test_record_compacts_old_history_without_refusing_large_live_metadata(self):
+        record = dict(timeline=[dict(at=i, text="x" * 20000) for i in range(20)],
+                      notifications={str(i): dict(attempted_at=i, text="y" * 20000) for i in range(20)})
+        raw = self.ns["record_bytes"](record)
+        self.assertLessEqual(len(raw), self.ns["LIMIT"])
+        self.assertEqual(record["timeline"][-1]["at"], 19)
+        self.assertIn("19", record["notifications"])
+        self.assertNotIn("0", record["notifications"])
+        # Essential live metadata has no count/size refusal, even above the compaction target.
+        record = dict(purpose="x" * (self.ns["LIMIT"] + 1))
+        with tempfile.TemporaryDirectory() as tmp:
+            os.chmod(tmp, 0o700)
+            record.update(schema_version=1, launch_id="a" * 32)
+            with self.ns["Registry"](tmp) as registry:
+                registry.save(record, new=True)
+                self.assertEqual(registry.read(record["launch_id"])["purpose"], record["purpose"])
+
     def test_init_precedence_and_interval_validation(self):
         state = dict(starter=None, purpose="task", intent="intent")
         init = self.ns["contract_init"]
@@ -1198,6 +1215,38 @@ class AgentsTest(unittest.TestCase):
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
         self.assertEqual(result["auto_prune"]["retired"], 0)
         self.assertEqual(len(list(self.registry.glob("agents-*.json"))), 33)
+
+    def test_full_per_agent_histories_drop_oldest_and_continue_reporting_and_presenting(self):
+        store = self.work / "boards"
+        store.mkdir(mode=0o700)
+        self.settings["defaults"]["store"] = str(store)
+        self.settings["profiles"]["probe"]["scratch_pane"] = False
+        launch_id = self.launch()[1]["launch_id"]
+        record = self.record(launch_id)
+        for field, size in (("notifications", 64), ("fleet_reports", 65), ("presentations", 32)):
+            record[field] = {"old-%03d" % i: dict(attempted_at=i, at=i) for i in range(size)}
+        (self.registry / ("agents-" + launch_id + ".json")).write_text(json.dumps(record))
+        event = self.work / "stop.json"
+        event.write_text(json.dumps(dict(hook_event_name="Stop", last_assistant_message="still working")))
+        p, notice = self.run_cli("stop", "--registry", str(self.registry), "--launch-id", launch_id, "--event-file", str(event))
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        state = self.record(launch_id)
+        for field, size in (("notifications", 64), ("fleet_reports", 65)):
+            self.assertEqual(len(state[field]), size)
+            self.assertNotIn("old-000", state[field])
+            self.assertIn("old-001", state[field])
+        p = subprocess.run([BIN, "jobs", "list", "--registry", str(self.registry)], env=self.env, capture_output=True, text=True)
+        generation = json.loads(p.stdout)["entries"][0]["generation"]
+        args = ("present", "--registry", str(self.registry), "--launch-id", launch_id, "--owner", "operator",
+                "--generation", str(generation), "--reason", "history ring test", "--anchor", self.starter, "--focus", "yes")
+        p, presented = self.run_cli(*args)
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        state = self.record(launch_id)
+        self.assertEqual(len(state["presentations"]), 32)
+        self.assertNotIn("old-000", state["presentations"])
+        p, duplicate = self.run_cli(*args)
+        self.assertEqual(p.returncode, 1)
+        self.assertEqual(duplicate["failure_reason"], "presentation_already_attempted")
 
     def test_failed_fleet_store_still_starts_harness_and_submits_brief(self):
         store = self.work / "not-private-boards"

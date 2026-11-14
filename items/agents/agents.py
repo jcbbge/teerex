@@ -85,8 +85,8 @@ def read_file(path, limit=LIMIT, private=False):
         if private:
             require(s.st_uid == os.getuid() and stat.S_IMODE(s.st_mode) == 0o600 and s.st_nlink == 1,
                     "private_owned_file_required")
-        data = f.read(limit + 1)
-    require(len(data) <= limit, "file_too_large")
+        data = f.read() if limit is None else f.read(limit + 1)
+    require(limit is None or len(data) <= limit, "file_too_large")
     return data
 
 
@@ -111,6 +111,36 @@ def lifecycle_events(state):
     retired = state.get("retired") or {}
     add(retired.get("at"), "pruned", reason=retired.get("reason"))
     return rows
+
+
+def history_add(history, event_id, entry, keep, duplicate_reason):
+    require(event_id not in history, duplicate_reason)
+    while len(history) >= keep:
+        oldest = min(history, key=lambda key: (history[key].get("attempted_at", history[key].get("at", 0)), key))
+        del history[oldest]
+    history[event_id] = entry
+
+
+def record_bytes(state):
+    raw = json.dumps(state, ensure_ascii=False, sort_keys=True).encode()
+    # This is a compaction target, never a limit on live metadata or work.
+    while len(raw) > LIMIT:
+        candidates = []
+        for field in ("timeline", "notifications", "fleet_reports", "presentations"):
+            history = state.get(field, [])
+            if len(history) <= 1:
+                continue
+            if isinstance(history, list):
+                candidates.append((history[0].get("at", 0), field, 0))
+            else:
+                key = min(history, key=lambda k: (history[k].get("attempted_at", history[k].get("at", 0)), k))
+                candidates.append((history[key].get("attempted_at", history[key].get("at", 0)), field, key))
+        if not candidates:
+            break
+        _, field, key = min(candidates)
+        del state[field][key]
+        raw = json.dumps(state, ensure_ascii=False, sort_keys=True).encode()
+    return raw
 
 
 class Registry:
@@ -161,7 +191,7 @@ class Registry:
         return "agents-" + identifier(launch_id) + ".json"
 
     def read(self, launch_id):
-        data = read_file(str(Path(self.root) / self.name(launch_id)), private=True)
+        data = read_file(str(Path(self.root) / self.name(launch_id)), limit=None, private=True)
         state = json.loads(data)
         require(state["schema_version"] == 1 and state["launch_id"] == launch_id, "invalid_lifecycle_record")
         return state
@@ -175,8 +205,7 @@ class Registry:
         state["timeline_partial"] = not new and ("timeline" not in previous or previous.get("timeline_partial", False))
         state["timeline"] = list(previous.get("timeline", old_events))
         state["timeline"].extend(event for event in lifecycle_events(state) if event not in old_events)
-        raw = json.dumps(state, ensure_ascii=False, sort_keys=True).encode()
-        require(len(raw) <= LIMIT, "record_too_large")
+        raw = record_bytes(state)
         stage = name + ".next"
         fd = os.open(stage, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=self.fd)
         renamed = False
@@ -432,7 +461,7 @@ def prune_records(root, apply):
             if not re.fullmatch("[0-9a-f]{32}", entry.name) or entry.is_symlink() or not entry.is_dir():
                 continue
             try:
-                old = json.loads(read_file(str(entry / "retired.json"), private=True))
+                old = json.loads(read_file(str(entry / "retired.json"), limit=None, private=True))
                 pad = old.get("scratchpad")
                 target = old.get("target") or {}
                 if pane_absent(old) is not True:
@@ -1375,9 +1404,7 @@ def publish_fleet_attempt(root, state, event_id, reported_state, detail):
         return 0
     def intent(s):
         history = s.setdefault("fleet_reports", {})
-        require(event_id not in history, "fleet_report_already_attempted")
-        require(len(history) < 65, "fleet_report_history_full")
-        history[event_id] = dict(outcome="uncertain", attempted_at=now())
+        history_add(history, event_id, dict(outcome="uncertain", attempted_at=now()), 65, "fleet_report_already_attempted")
     update(root, state["launch_id"], intent)
     code, packet = invoke(["fleet", "report", "--store", state["store"], "--host", state["target"]["host"],
                            "--socket", state["socket"], "--session", state["target"]["session_id"],
@@ -1431,9 +1458,9 @@ def turn_report_rule(root, state, kind):
 def notify(root, launch_id, event_id, body, evidence, reported_state="unknown", delivery_rule=None):
     with Registry(root) as registry:
         state = registry.read(launch_id)
-        require(event_id not in state["notifications"], "notification_already_attempted")
-        require(len(state["notifications"]) < 64, "notification_history_full")
-        state["notifications"][event_id] = dict(outcome="uncertain", evidence=evidence, attempted_at=now(), delivery_rule=delivery_rule)
+        history_add(state["notifications"], event_id,
+                    dict(outcome="uncertain", evidence=evidence, attempted_at=now(), delivery_rule=delivery_rule),
+                    64, "notification_already_attempted")
         registry.save(state)
     # Starter and report-to can differ; notify both, deduplicating the exact tuple.
     destinations = [state["starter"]] if state["starter"] is not None else []
@@ -1626,10 +1653,9 @@ def report_stop(root, launch_id, event_id, event, allow_transcript=True):
         update(root, launch_id, lambda s: s.update(contract_turn_reported=True))
         declared = state["contract"].get("declared")
         def reporting(s):
-            require(event_id not in s["notifications"], "notification_already_attempted")
-            require(len(s["notifications"]) < 64, "notification_history_full")
-            s["notifications"][event_id] = dict(outcome="uncertain", attempted_at=now(), delivery_rule=delivery_rule,
-                                                 evidence="harness_report_not_process_death")
+            history_add(s["notifications"], event_id,
+                        dict(outcome="uncertain", attempted_at=now(), delivery_rule=delivery_rule,
+                             evidence="harness_report_not_process_death"), 64, "notification_already_attempted")
         update(root, launch_id, reporting)
         code, delivery = contract_tell(root, launch_id, "flag" if declared == "blocked" else declared or "no_answer", body)
         update(root, launch_id, lambda s: s["notifications"][event_id].update(outcome="transport_acknowledged" if code == 0 else "uncertain", receipt=delivery))
@@ -1931,8 +1957,9 @@ def present(o):
     event_id = str(o.generation)
     def intent(s):
         history = s.setdefault("presentations", {})
-        require(event_id not in history and len(history) < 32, "presentation_already_attempted_or_history_full")
-        history[event_id] = dict(outcome="uncertain", owner=o.owner, reason=o.reason, anchor=o.anchor, focus=o.focus, at=now())
+        history_add(history, event_id,
+                    dict(outcome="uncertain", owner=o.owner, reason=o.reason, anchor=o.anchor, focus=o.focus, at=now()),
+                    32, "presentation_already_attempted")
     update(o.registry, o.launch_id, intent)
     # Jobs holds its own owner/generation/identity lock through durable intent and relocation.
     args = ["jobs", "present", "--registry", o.registry, "--socket", state["socket"],
