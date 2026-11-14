@@ -114,6 +114,17 @@ pub const Result = struct {
     group_kill: ?GroupSignal,
 };
 
+pub fn guardFailure(stderr: []const u8) ?[]const u8 {
+    const reasons = [_][]const u8{ "pane control refused; recorded spawner:", "no_recorded_spawner", "registered_seat_tab_", "registered_seat_pane_is_not_the_operator_terminal", "pane_guard_", "viewer_owner_" };
+    for (reasons) |reason| {
+        if (std.mem.indexOf(u8, stderr, reason)) |start| {
+            const end = std.mem.indexOfScalarPos(u8, stderr, start, '\n') orelse stderr.len;
+            return stderr[start..end];
+        }
+    }
+    return null;
+}
+
 // macOS and Linux. Caller owns Signals and the receiver's stdout retention policy.
 // An optional isComplete() requests owned-group cleanup, not command success.
 // EOF stdin by default; a receiver may explicitly opt into inherited stdin.

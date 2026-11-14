@@ -196,6 +196,7 @@ fn run(allocator: std.mem.Allocator) !void {
         std.debug.print("teerex: explicit Rex executable {s}; selected by --rex, not authenticated\n", .{args[1]});
         return std.process.execve(allocator, forwarded.items, &env);
     }
+    args = try withOperator(allocator, args);
     args = try withDefaultSocket(allocator, args);
     const command = args[0];
     const rest = args[1..];
@@ -295,6 +296,35 @@ fn run(allocator: std.mem.Allocator) !void {
 
 fn eq(a: []const u8, b: []const u8) bool {
     return std.mem.eql(u8, a, b);
+}
+
+// Explicit human control is local to this interactive invocation. Managed agents
+// never inherit the marker, and the registered seat is still an agent pane.
+fn withOperator(allocator: std.mem.Allocator, args: []const []const u8) ![]const []const u8 {
+    var clean: std.ArrayList([]const u8) = .empty;
+    var requested = false;
+    var program = false;
+    for (args) |arg| {
+        if (eq(arg, "--")) program = true;
+        if (!program and eq(arg, "--operator")) {
+            if (requested) return error.RepeatedOperatorFlag;
+            requested = true;
+        } else try clean.append(allocator, arg);
+    }
+    if (!requested) return args;
+    var env = try std.process.getEnvMap(allocator);
+    if (!eq(env.get("TEEREX_OPERATOR") orelse "", "1") or
+        !std.posix.isatty(std.posix.STDIN_FILENO) or !std.posix.isatty(std.posix.STDERR_FILENO) or
+        env.get("AGENT_LAUNCH_ID") != null or env.get("LC_AGENT_LAUNCH_ID") != null or
+        env.get("AGENT_NAME") != null or env.get("LC_AGENT_NAME") != null)
+    {
+        try std.fs.File.stderr().writeAll("--operator requires TEEREX_OPERATOR=1 in an interactive human terminal; managed agents cannot use it.\n");
+        return error.OperatorTerminalRequired;
+    }
+    try env.put("TEEREX_OPERATOR_ACTIVE", try std.fmt.allocPrint(allocator, "{d}", .{if (@import("builtin").os.tag == .linux) std.os.linux.getpid() else std.c.getpid()}));
+    const environ = try std.process.createNullDelimitedEnvMap(allocator, &env);
+    if (@import("builtin").link_libc) std.c.environ = environ.ptr else std.os.environ = @as([*][*:0]u8, @ptrCast(environ.ptr))[0..environ.len];
+    return clean.items;
 }
 
 fn hasOption(args: []const []const u8, flag: []const u8) bool {

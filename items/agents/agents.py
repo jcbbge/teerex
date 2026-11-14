@@ -1036,7 +1036,7 @@ def remote_exec(o):
 
 def run_remote_child(o, payload, metadata, callbacks, sid, bid, token, argv, protocol):
     env = dict(os.environ)
-    for key in ("AGENT_CHANNEL", "LC_AGENT_CHANNEL"):
+    for key in ("AGENT_CHANNEL", "LC_AGENT_CHANNEL", "TEEREX_OPERATOR", "LC_TEEREX_OPERATOR", "TEEREX_OPERATOR_ACTIVE", "LC_TEEREX_OPERATOR_ACTIVE"):
         env.pop(key, None)
     env.update(metadata)
     env.update({"LC_" + k: v for k, v in metadata.items()})

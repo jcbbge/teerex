@@ -1,11 +1,14 @@
 """Authority checks against disposable Rex and throwaway authority stores only."""
 import base64
 import importlib.util
+import hashlib
 import json
 import os
+import pty
 from pathlib import Path
 import subprocess
 import sys
+import time
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -16,11 +19,19 @@ spec.loader.exec_module(_fixtures)
 
 class GuardTest(_fixtures.SurfacesTest):
     def setUp(self):
-        super().setUp()
+        self.work = self.root / str(time.monotonic_ns())
+        self.work.mkdir()
         self.store = self.work / 'boards'
         self.store.mkdir(mode=0o700)
+        self.env = dict(os.environ, PATH=str(Path(self.rex).parent) + os.pathsep + os.environ.get('PATH', ''),
+                        REX_SERVER='unix:///tmp/poison.sock', REX_SESSION='session:poison',
+                        REX_BLOCK='block:poison', REX_CLIENT='client:poison',
+                        XDG_STATE_HOME=str(self.work / 'state'), AGENT_REGISTRY=str(self.work / 'registry'))
         self.env['TEEREX_BOARDS_STORE'] = str(self.store)
         self.env['TEEREX_CLUTCH_DIR'] = str(self.work / 'clutch')
+        self.session = self.rpc('session.create', {'label': 'guard disposable'})['session_id']
+        self.anchor = self.open('tab')['actual']['block_id']
+        self.addCleanup(lambda: self.rpc('session.destroy', {'session_id': self.session}))
         self.env['REX_BLOCK'] = self.anchor
         self.env['REX_SESSION'] = self.session
 
@@ -75,6 +86,7 @@ class GuardTest(_fixtures.SurfacesTest):
     def test_supervisor_closes_viewer(self):
         worker = self.open('tab', label='worker')['actual']['block_id']
         viewer = self.open('tab', label='viewer')['actual']['block_id']
+        self.remove_creator(viewer)
         registry = self.work / 'registry'
         registry.mkdir(mode=0o700)
         self.env['AGENT_REGISTRY'] = str(registry)
@@ -85,6 +97,25 @@ class GuardTest(_fixtures.SurfacesTest):
         self.env['REX_BLOCK'] = worker
         self.assertEqual(self.control('close', viewer).returncode, 0)
 
+    def remove_creator(self, block):
+        key = hashlib.sha256(('unix://' + str(self.socket)).encode()).hexdigest()
+        (Path(self.env['XDG_STATE_HOME']) / 'teerex/pane-creators' / key / (block.replace(':', '-') + '.json')).unlink()
+
+    def test_registry_only_managed_agent(self):
+        worker = self.open('tab', label='pre-existing worker')['actual']['block_id']
+        stranger = self.open('tab', label='stranger')['actual']['block_id']
+        self.remove_creator(worker)
+        registry = self.work / 'legacy-registry'
+        registry.mkdir(mode=0o700)
+        self.env['AGENT_REGISTRY'] = str(registry)
+        target = dict(server='unix://' + str(self.socket), session_id=self.session, block_id=worker)
+        starter = dict(session_id=self.session, block_id=self.anchor)
+        (registry / ('agents-' + 'b' * 32 + '.json')).write_text(json.dumps(dict(target=target, starter=starter)))
+        self.env['REX_BLOCK'] = stranger
+        self.refused(self.control('close', worker), 'recorded spawner: ' + self.session + ' ' + self.anchor)
+        self.env['REX_BLOCK'] = self.anchor
+        self.assertEqual(self.control('close', worker).returncode, 0)
+
     def test_session_spawner(self):
         result = self.cli('surfaces', 'session', 'ensure', '--socket', str(self.socket), '--label', 'owned empty session')
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -93,6 +124,30 @@ class GuardTest(_fixtures.SurfacesTest):
         command = ('surfaces', 'session', 'close', '--socket', str(self.socket), '--session', sid)
         self.refused(self.cli(*command, env=env), 'recorded spawner: ' + self.session + ' ' + self.anchor)
         self.assertEqual(self.cli(*command).returncode, 0)
+
+    def test_operator_terminal(self):
+        pane = self.open('tab', label='operator target')['actual']['block_id']
+        self.register(pane)
+        args = [_fixtures.BIN, 'surfaces', 'rename', '--operator', '--socket', str(self.socket),
+                '--session', self.session, '--pane', pane, '--label', 'operator renamed']
+        env = {k: v for k, v in self.env.items() if not k.startswith(('AGENT_', 'LC_AGENT_'))}
+        env['TEEREX_OPERATOR'] = '1'
+        result = subprocess.run(args, env=env, capture_output=True, text=True, timeout=20)
+        self.refused(result, 'interactive human terminal')
+        master, slave = pty.openpty()
+        try:
+            result = subprocess.run(args, env=env, stdin=slave, stderr=slave, stdout=subprocess.PIPE, text=True, timeout=20)
+            self.assertEqual(result.returncode, 0, result.stdout)
+            env['REX_BLOCK'] = pane
+            result = subprocess.run(args, env=env, stdin=slave, stderr=slave, stdout=subprocess.PIPE, text=True, timeout=20)
+            self.assertNotEqual(result.returncode, 0)
+            env['REX_BLOCK'] = self.anchor
+            env['AGENT_LAUNCH_ID'] = 'a' * 32
+            result = subprocess.run(args, env=env, stdin=slave, stderr=slave, stdout=subprocess.PIPE, text=True, timeout=20)
+            self.assertNotEqual(result.returncode, 0)
+        finally:
+            os.close(slave)
+            os.close(master)
 
 
 if __name__ == '__main__':

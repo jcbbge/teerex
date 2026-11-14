@@ -52,13 +52,20 @@ def snapshot(server):
         starter = record.get('starter') or {}
         spawner = {k: starter.get(k) for k in ('session_id', 'block_id')}
         if target.get('block_id') and not record.get('human'):
-            creators[target['block_id']] = dict(spawner=spawner, allowed=[spawner])
+            report_to = {k: (record.get('report_to') or {}).get(k) for k in ('session_id', 'block_id')}
+            supervisor = {k: target.get(k) for k in ('session_id', 'block_id')}
+            creators.setdefault(target['block_id'], dict(spawner=spawner, allowed=[spawner, report_to, supervisor]))
         side = (record.get('scratch_pane_receipt') or {}).get('created') or {}
         if side.get('block_id') and (record.get('scratch_pane_receipt') or {}).get('outcome') == 'created_and_verified':
             supervisor = {k: target.get(k) for k in ('session_id', 'block_id')}
             creators[side['block_id']] = dict(spawner=spawner, allowed=[spawner, supervisor], viewer=True)
-    return dict(server=server, actor=actor, creators=creators, directory=str(directory),
-                seats=[s['target'] for s in boards['seats'] if s['target']['server'] == server])
+    seats = [s['target'] for s in boards['seats'] if s['target']['server'] == server and not s.get('inherited_to')]
+    operator = (os.environ.get('TEEREX_OPERATOR') == '1' and
+                os.environ.get('TEEREX_OPERATOR_ACTIVE') in (str(os.getpid()), str(os.getppid())) and
+                not any(os.environ.get(k) for k in ('AGENT_LAUNCH_ID', 'LC_AGENT_LAUNCH_ID', 'AGENT_NAME', 'LC_AGENT_NAME')))
+    if operator and any(actor['block_id'] == seat['block_id'] and actor['session_id'] == seat['session_id'] for seat in seats):
+        raise ValueError('registered_seat_pane_is_not_the_operator_terminal')
+    return dict(server=server, actor=actor, creators=creators, directory=str(directory), operator=operator, seats=seats)
 
 
 LUA = r'''
@@ -79,6 +86,7 @@ local function guard_window(view,bid)
 end
 local function guard_owner(id)
  local r=guard_policy.creators[id]
+ if not r then error('no_recorded_spawner',0) end
  local spawner=r and r.spawner or {}
  local allowed=false
  for _,who in ipairs(r and r.allowed or {}) do
@@ -109,7 +117,7 @@ rex.call=function(method,p)
  if viewer_cleanup then method='block.close' end
  local control=guard_controls[method] or method=='teerex.guard.take'
  local raw=method=='block.event'
- if control or raw then
+ if (control or raw) and not guard_policy.operator then
   for _,seat in ipairs(guard_policy.seats) do
    if seat.session_id==p.session_id then
     local protected=method=='session.destroy'
@@ -131,7 +139,7 @@ rex.call=function(method,p)
  end
  local owned=method=='block.close' or method=='session.destroy' or method=='session.move_block'
    or method=='session.set_block_label' or method=='session.set_window_label' or method=='session.detach_block'
- if owned then
+ if owned and not guard_policy.operator then
   if method=='session.destroy' then guard_owner(p.session_id)
   elseif p.window_id then
    local v=guard_view(p.session_id)
@@ -183,6 +191,8 @@ def authorize(server, method, payload, rpc):
                 if any(b['block_id'] == bid for b in layer.get('blocks', [])):
                     return w['window_id']
     policy = snapshot(server)
+    if policy['operator']:
+        return
     for seat in policy['seats']:
         if seat['session_id'] != payload.get('session_id'):
             continue
@@ -199,7 +209,9 @@ def authorize(server, method, payload, rpc):
             ids = [b['block_id'] for w in view['windows'] if w['window_id'] == payload['window_id']
                    for layer in w.get('layers', []) for b in layer.get('blocks', [])]
         for id in ids:
-            creator = policy['creators'].get(id, {})
+            creator = policy['creators'].get(id)
+            if creator is None:
+                raise ValueError('no_recorded_spawner')
             if not policy['actor'].get('block_id') or policy['actor'] not in creator.get('allowed', []):
                 spawner = creator.get('spawner', {})
                 raise ValueError('pane control refused; recorded spawner: ' + str(spawner.get('session_id', 'unknown')) + ' ' + str(spawner.get('block_id', 'unknown')))
