@@ -74,6 +74,11 @@ if protocol:
             for kind in ('Stop','StopFailure'):
                 event={"hook_event_name":kind,"transcript_path":str(transcript),"error":"remote failure β"}
                 command=settings['hooks'][kind][0]['hooks'][0]['command']
+                if kind == 'Stop':
+                    # The isolated compute mount cannot update the pane-host scratchpad.
+                    # Honor its one blocking reminder before reporting the settled turn.
+                    result=subprocess.run(command,shell=True,input=json.dumps(event),capture_output=True,text=True)
+                    with out.open('a') as f: f.write(json.dumps({'event':'remote-scratch-reminder','code':result.returncode,'stdout':result.stdout})+'\n')
                 result=subprocess.run(command,shell=True,input=json.dumps(event),capture_output=True,text=True)
                 with out.open('a') as f: f.write(json.dumps({"event":"remote-hook","kind":kind,"code":result.returncode,"stdout":result.stdout})+'\n')
             report_line=protocol.split('Supply report bytes on stdin then EOF using:\n',1)[1].split('\n',1)[0]
@@ -1588,6 +1593,10 @@ class AgentsTest(unittest.TestCase):
         self.assertEqual(started["argv"][:len(literal_args)], literal_args)
         self.assertEqual([v["code"] for v in events(worker) if v["event"] == "wrong-ack"], [1, 1])
         self.assertEqual([v["code"] for v in events(worker) if v["event"] == "ack"], [0])
+        reminder = [v for v in events(worker) if v["event"] == "remote-scratch-reminder"]
+        self.assertEqual(len(reminder), 1)
+        self.assertEqual(reminder[0]["code"], 0)
+        self.assertEqual(json.loads(reminder[0]["stdout"])["decision"], "block")
         self.assertEqual([v["code"] for v in events(worker) if v["event"] == "remote-hook"], [0, 0])
         wait_for(lambda: [v for v in events(worker) if v["event"] == "remote-reply"])
         self.assertEqual([v["code"] for v in events(worker) if v["event"] == "remote-reply"], [0])
