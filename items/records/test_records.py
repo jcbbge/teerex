@@ -732,8 +732,16 @@ class LiveRecordsTest(RecordsFixture):
             with os.fdopen(fd, "w") as f:
                 json.dump(template, f)
         before = set((self.store / "records").iterdir())
-        self.assertEqual(self.park("b", code=1)["failure_reason"], "store_full")
-        self.assertEqual(set((self.store / "records").iterdir()), before)
+        oldest = self.store / "records/a"
+        os.utime(oldest, ns=(1, 1))
+        preserved = (oldest / "record.json").read_bytes()
+        self.assertEqual(self.park("b")["outcome"], "written")
+        self.assertEqual(set((self.store / "records").iterdir()),
+                         (before - {oldest}) | {self.store / "records/b"})
+        archived = list((self.store / "archive").iterdir())
+        self.assertEqual(len(archived), 1)
+        self.assertEqual((archived[0] / "record.json").read_bytes(), preserved)
+        self.assertEqual(self.read("b")["id"], "b")
 
     def test_C06_export_private_refusal_and_secret_caveat(self):
         self.park()
