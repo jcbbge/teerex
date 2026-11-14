@@ -299,6 +299,55 @@ def scratch_steps(sections):
     return steps
 
 
+CIRCLED = {chr(0x2460 + i): str(i + 1) for i in range(20)}
+
+
+def parse_task(path):
+    with open(path, encoding="utf-8") as source:
+        lines = source.read().splitlines()
+    head = lines[0].strip("━─ ").strip() if lines else os.path.basename(path)
+    head = "".join(CIRCLED.get(c, c) for c in head)
+    num, _, title = head.partition(" ")
+    meta = lines[1] if len(lines) > 1 else ""
+    owner = meta.replace("owner:", "").split()[0] if "owner:" in meta else ""
+    state = (re.search(r"state:\s*(\w+)", meta) or [None, "?"])[1]
+    done = bool(re.search(r"done:\s*YES", meta))
+    chunks = []
+    for l in lines[2:]:
+        m = re.match(r"^([✓▶☐])\s+(.*?)(?:\s{2,}(\S.*))?$", l)
+        if m:
+            chunks.append({"mark": {"✓": "done", "▶": "now", "☐": "todo"}[m[1]], "text": re.sub(r"^\d+(\.\d+)?[a-z]?\s+", "", m[2]), "who": m[3] or ""})
+    last = next((l[5:].strip() for l in lines if l.startswith("last:")), "")
+    last = re.sub(r"^(\d\d:\d\d)\s*UTC\b", r"\1", last)
+    return {"number": num, "title": title, "owner": owner, "state": state, "done": done, "chunks": chunks, "last": last}
+
+
+class Tasks:
+    def __init__(self, host, directory):
+        self.host=host;self.directory=directory;self.previous={};self.error=None
+
+    def scan(self):
+        rows={}
+        try:
+            paths=sorted(p for p in self.directory.iterdir() if re.fullmatch(r'[0-9]+-.*\.md',p.name) and p.is_file())
+        except OSError as error:
+            message=f'Task directory unavailable: {error}'
+            if message!=self.error:emit(self.host,'stream',agent=None,text=message,role='problem')
+            self.error=message
+            return
+        self.error=None
+        for path in paths:
+            try:rows[path.name]=parse_task(path)
+            except (OSError,UnicodeError,IndexError) as error:
+                emit(self.host,'stream',agent=None,text=f'Task {path.name} unavailable: {error}',role='problem')
+                if path.name in self.previous:rows[path.name]=self.previous[path.name]
+        for identifier,row in rows.items():
+            if self.previous.get(identifier)!=row:emit(self.host,'task',id=identifier,**row)
+        for identifier,row in self.previous.items():
+            if identifier not in rows:emit(self.host,'task',id=identifier,**dict(row,state='gone'))
+        self.previous=rows
+
+
 class State:
     def __init__(self, a):
         self.a=a; self.rows={};self.calls={};self.call_starts={};self.roots={};self.pids={};self.status={};self.questions={};self.reports={};self.seeded=set();self.live={};self.reachable=None
@@ -682,13 +731,16 @@ def local(a):
     decisions=Decisions(a)
     decisions.poll()
     held=Held(a.host,json.loads(a.held_command_json)) if a.held_command_json else None
+    tasks=Tasks(a.host,a.tasks) if a.tasks else None
     if a.once:
+        if tasks:tasks.scan()
         if held:held.poll()
         state.scan()
         return
-    watcher=Watcher([a.agents_registry,a.jobs_registry,a.scratch,a.calls,a.profiles,a.store,Path(os.environ.get('TEEREX_ATTENTION_DIR',str(Path.home()/'.local/state/teerex/attention')))])
+    watcher=Watcher([a.agents_registry,a.jobs_registry,a.scratch,a.calls,a.profiles,a.store,Path(os.environ.get('TEEREX_ATTENTION_DIR',str(Path.home()/'.local/state/teerex/attention')))] + ([a.tasks] if a.tasks else []))
     sample=LinuxVitals() if sys.platform=='linux' else MacVitals()
     thread=threading.Thread(target=rex_events,args=(a,state),daemon=True);thread.start()
+    if tasks:tasks.scan()
     state.scan();deadline=time.monotonic();held_deadline=0;accounting_deadline=time.monotonic()+30
     try:
         while not STOP.is_set():
@@ -705,6 +757,7 @@ def local(a):
                     emit(a.host,'stream',agent=None,text='Machine measurements unavailable',role='problem')
                 deadline=now+1
             if watcher.wait(max(0,deadline-time.monotonic())):
+                if tasks:tasks.scan()
                 state.scan();decisions.poll();attention.poll()
     finally:watcher.close()
 
@@ -714,6 +767,7 @@ def merge(a):
     def host_feed(host):
         configured=False;last_held=None
         command=[a.executable,'targets','exec','--config',a.config,'--host',host,'--','board','feed','--local','--host-name',host]+(['--once'] if a.once else [])
+        if getattr(a,'tasks',None):command+=['--tasks',str(a.tasks)]
         try:
             selected=subprocess.run([a.executable,'targets','resolve','--config',a.config,'--host',host],capture_output=True,timeout=15)
             if selected.returncode:raise ValueError('host unavailable')
@@ -731,7 +785,7 @@ def merge(a):
                 if STOP.is_set():break
                 try:
                     event=json.loads(line)
-                    if event.get('v')!=1 or event.get('kind') not in ('host','agent','stream','vitals','held','decisions','attention'):continue
+                    if event.get('v')!=1 or event.get('kind') not in ('host','agent','task','stream','vitals','held','decisions','attention'):continue
                     event['host']=host
                     if event['kind']=='held':last_held=event.get('available')
                     with LOCK: print(json.dumps(event,separators=(',',':')),flush=True)
@@ -758,6 +812,7 @@ def main(argv=None):
     parser.add_argument('--open-held',action='store_true',help=argparse.SUPPRESS)
     parser.add_argument('--held-pane',action='store_true',help=argparse.SUPPRESS)
     parser.add_argument('--store',type=Path,default=Path.home()/'.local/state/teerex-boards',help=argparse.SUPPRESS)
+    parser.add_argument('--tasks',type=Path,help='absolute read-only task file directory on each selected host')
     parser.add_argument('--once',action='store_true',help='finite pane snapshot, then exit (no vitals or event subscription)')
     parser.add_argument('--local',action='store_true',help='read this host only (transport worker)')
     parser.add_argument('--host-name',dest='host',default=platform.node().split('.')[0])
@@ -771,6 +826,7 @@ def main(argv=None):
     args.executable=EXECUTABLE
     if not os.path.isabs(args.config) or any(not re.fullmatch(r'[A-Za-z0-9_-]+',h) for h in args.hosts.split(',')):
         parser.error('absolute --config and valid host names required')
+    if args.tasks is not None and not args.tasks.is_absolute():parser.error('--tasks must be absolute')
     for path in (args.agents_registry,args.jobs_registry,args.scratch,args.calls,args.profiles):
         if not path.is_absolute():parser.error('source paths must be absolute')
     if args.open_held or args.held_pane or args.held_open_json is not None:

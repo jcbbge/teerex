@@ -26,6 +26,59 @@ feed=importlib.util.module_from_spec(spec);spec.loader.exec_module(feed)
 REX=os.environ.get('REX_BIN') or shutil.which('rex')
 
 class FeedTests(unittest.TestCase):
+    def test_task_parse_reference_format(self):
+        with resources.temporary_directory() as tmp:
+            path=Path(tmp)/'7-example.md'
+            path.write_text('━━ ⑦ A task title ━━━━\nowner: worker        state: BLOCKED        done: NO\n✓ 1.1 Read contract  abc123\n▶ 1.2a Build it  worker\n☐ 2 Test it\nlast: 17:05 UTC waiting on review\n')
+            self.assertEqual(feed.parse_task(path),dict(number='7',title='A task title',owner='worker',state='BLOCKED',done=False,chunks=[dict(mark='done',text='Read contract',who='abc123'),dict(mark='now',text='Build it',who='worker'),dict(mark='todo',text='Test it',who='')],last='17:05 waiting on review'))
+            path.write_text('20 Finished\nowner: lead state: DONE done: YES\n')
+            self.assertTrue(feed.parse_task(path)['done'])
+            path.write_text('')
+            self.assertEqual(feed.parse_task(path)['number'],path.name)
+
+    def test_task_watch_changed_and_gone(self):
+        with resources.temporary_directory() as tmp:
+            root=Path(tmp);path=root/'7-example.md'
+            path.write_text('━━ ⑦ Example ━━━━\nowner: worker state: WORKING done: NO\n')
+            (root/'PROTOCOL.md').write_text('ignored')
+            tasks=feed.Tasks('fixture',root);watcher=feed.Watcher([root])
+            try:
+                with mock.patch.object(feed,'emit') as emit:
+                    tasks.scan();tasks.scan()
+                    self.assertEqual(emit.call_count,1)
+                    self.assertEqual(emit.call_args.args,('fixture','task'))
+                    self.assertEqual(emit.call_args.kwargs['id'],path.name)
+                    path.write_text('7 Changed\nowner: worker state: DONE done: YES\n')
+                    self.assertTrue(watcher.wait(2));tasks.scan()
+                    self.assertTrue(emit.call_args.kwargs['done'])
+                    self.assertEqual(emit.call_count,2)
+                    path.unlink()
+                    self.assertTrue(watcher.wait(2));tasks.scan();tasks.scan()
+                    self.assertEqual(emit.call_count,3)
+                    self.assertEqual(emit.call_args.kwargs['state'],'gone')
+            finally:watcher.close()
+
+    def test_task_once_and_absent_option(self):
+        with resources.temporary_directory() as tmp:
+            root=Path(tmp);(root/'1-task.md').write_text('1 Example\nowner: worker state: WORKING done: NO\n')
+            a=SimpleNamespace(host='fixture',tasks=root,once=True,held_command_json=None)
+            with mock.patch.object(feed,'State'),mock.patch.object(feed,'Attention'),mock.patch.object(feed,'Decisions'),mock.patch.object(feed,'emit') as emit:
+                feed.local(a)
+                self.assertEqual(emit.call_args.args,('fixture','task'))
+                emit.reset_mock();a.tasks=None;feed.local(a);emit.assert_not_called()
+
+    def test_task_named_host_forwarding(self):
+        a=SimpleNamespace(executable='/teerex',config='/config',hosts='fixture',tasks=Path('/tasks'),once=True)
+        source=dict(host=dict(store='/store'))
+        child=mock.Mock();child.stdout=[json.dumps(dict(v=1,kind='task',id='1-a.md',host='wrong'))];child.wait.return_value=0
+        output=io.StringIO()
+        with mock.patch.object(feed.subprocess,'run',return_value=SimpleNamespace(returncode=0,stdout=json.dumps(source))),mock.patch.object(feed.subprocess,'Popen',return_value=child) as start,contextlib.redirect_stdout(output):
+            try:feed.merge(a)
+            finally:feed.CHILDREN.remove(child)
+        argv=start.call_args.args[0]
+        self.assertEqual(argv[argv.index('--tasks')+1],'/tasks');self.assertIn('--once',argv)
+        self.assertEqual(json.loads(output.getvalue())['host'],'fixture')
+
     def test_proof_steps_and_observational_sources(self):
         steps=feed.scratch_steps({'Done':['Read — proof: contract','Guess — unproven'],'Now':[],'To-do':[]})
         self.assertEqual([(s['text'],s['proof']) for s in steps],[('Guess',None),('Read','contract')])
