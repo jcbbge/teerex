@@ -129,6 +129,32 @@ class SurfacesTest(unittest.TestCase):
         return [BIN, "surfaces", "ensure", "--socket", str(self.socket), "--session", "any", "--label", label,
                 "--create-session", create_session or self.session, *options, "--", "/bin/sh", "-c", "sleep 60"]
 
+    def test_global_ensure_creates_missing_session_and_records_both_creators(self):
+        for focus in ("no", "yes"):
+            label = "new destination " + focus + self.work.name
+            command = self.global_command("new pane " + focus, label, "--focus", focus)
+            r, made = self.run_json(command)
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            self.assertEqual(made["outcome"], "created")
+            sid = made["resolved"]["session_id"]
+            bid = made["actual"]["block_id"]
+            self.addCleanup(lambda sid=sid: self.rpc("session.destroy", {"session_id": sid}))
+            self.assertEqual(next(s for s in self.rpc("session.list", {})["sessions"]
+                                  if s["session_id"] == sid)["label"], label)
+            records = [json.loads(p.read_text()) for p in
+                       Path(self.env["XDG_STATE_HOME"]).glob("teerex/pane-creators/*/*.json")]
+            for target in (sid, bid):
+                record = next(v for v in records if v["id"] == target)
+                self.assertEqual(record["spawner"]["session_id"], self.env["REX_SESSION"])
+                self.assertEqual(record["spawner"]["block_id"], self.env["REX_BLOCK"])
+            before = self.rpc("session.view", {"session_id": sid})
+            r, reused = self.run_json(command)
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            self.assertEqual(reused["outcome"], "existing")
+            self.assertEqual(reused["resolved"], made["resolved"])
+            self.assertFalse(reused["creation_attempted"])
+            self.assertEqual(len(before["windows"]), len(self.rpc("session.view", {"session_id": sid})["windows"]))
+
     def test_global_ensure_creates_in_selected_session_then_reuses_across_sessions(self):
         sid = self.another_session("destination " + self.work.name)
         r, made = self.run_json(self.global_command("global seat α", sid[-8:]))
@@ -159,9 +185,9 @@ class SurfacesTest(unittest.TestCase):
         self.assertEqual(absent["failure_reason"], "target_not_found")
         self.assertFalse(absent.get("candidates"))
 
-    def test_global_ensure_refuses_missing_creation_target_and_incomplete_inventory(self):
+    def test_global_ensure_refuses_missing_creation_id_and_incomplete_inventory(self):
         before = self.view()
-        r, refused = self.run_json(self.global_command("uncreated seat", "absent destination"))
+        r, refused = self.run_json(self.global_command("uncreated seat", "session:00000000-0000-0000-0000-000000000000"))
         self.assertEqual(r.returncode, 1, r.stdout)
         self.assertEqual(refused["failure_reason"], "target_not_found")
         self.assertFalse(refused["creation_attempted"])
@@ -173,8 +199,11 @@ class SurfacesTest(unittest.TestCase):
                                capture_output=True, text=True, env=self.env, timeout=5)
             self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
         needle = 'local view=rex.call("session.view",{session_id=session.session_id})'
-        self.shim("import subprocess,sys\nargs=sys.argv[1:]\ni=args.index('-e')+1\n"
-                  + "args[i]=args[i].replace(" + repr(needle) + ",'local view=nil')\n"
+        self.shim("import subprocess,sys\nfrom pathlib import Path\nargs=sys.argv[1:]\n"
+                  + "if '-e' in args:\n i=args.index('-e')+1\n args[i]=args[i].replace("
+                  + repr(needle) + ",'local view=nil')\n"
+                  + "elif 'do' in args:\n p=Path(args[args.index('do')+1])\n p.write_text(p.read_text().replace("
+                  + repr(needle) + ",'local view=nil'))\n"
                   + f"sys.exit(subprocess.run([{self.rex!r},*args]).returncode)\n")
         r, refused = self.run_json(self.global_command("uncreated seat"))
         self.assertEqual(r.returncode, 1)

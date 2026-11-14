@@ -1,6 +1,11 @@
 -- Public Rex terminal placement and normalized geometry; no detached block or worker.
 local function surface(a, emit)
-    local function progress(v) if emit then emit(v) end end
+    local sent={}
+    local function progress(v)
+        -- One invocation has one attempt/creation frame; the final result carries
+        -- the pane receipt when global ensure first had to create its session.
+        if emit and not sent[v.event] then emit(v); sent[v.event]=true end
+    end
     local result = {outcome="refused", creation_attempted=false, retry_safe=false,
         automatic_close=false, focus_requested=false, painted_visibility="not_assessed",
         geometry_units="window_fraction", program_readiness="not_assessed"}
@@ -89,6 +94,19 @@ local function surface(a, emit)
         end
     end
     local selected=select_target(sessions.sessions,"session_id",a.session_id)
+    if not selected and global_ensure and result.failure_reason=="target_not_found" and
+        a.session_id:sub(1,8)~="session:" then
+        result.failure_reason=nil; result.candidates=nil
+        result.creation_attempted=true; progress({event="attempt",control=false})
+        local made=rex.call("session.create",{label=a.session_id})
+        if type(made)~="table" or not made.session_id then return fail("session_creation_receipt_unavailable") end
+        result.created=made; progress({event="created",created=made})
+        local fresh=rex.call("session.list")
+        if type(fresh)~="table" or type(fresh.sessions)~="table" then return fail("session_readback_unavailable") end
+        selected=select_target(fresh.sessions,"session_id",a.session_id,true)
+        if not selected then return fail(result.failure_reason) end
+        if selected.session_id~=made.session_id then return fail("session_identity_mismatch") end
+    end
     if not selected then return result end
     a.session_id=selected.session_id
     result.resolved={session_id=a.session_id}
