@@ -662,15 +662,12 @@ def contract_seat(state):
     """Resolve only an explicitly registered seat on this launch's server."""
     if not state.get("store"):
         return None
-    code, packet = invoke(["boards", "state", "inspect", "--store", absolute(state["store"])],
+    code, packet = invoke(["seat", "resolve", "--store", absolute(state["store"]),
+                           "--host", state["target"]["host"], "--socket", state["socket"], "--json"],
                           client_path=state["client_path"], rex_executable=state["rex_executable"])
-    require(code == 0 and isinstance(packet, dict) and isinstance(packet.get("state"), dict),
+    require(code == 0 and isinstance(packet, dict) and packet.get("outcome") in ("resolved", "no_seat"),
             "contract_seat_lookup_failed")
-    seats = [seat["target"] for seat in packet["state"]["seats"]
-             if seat["target"]["host"] == state["target"]["host"]
-             and seat["target"]["server"] == "unix://" + state["socket"]]
-    require(len(seats) <= 1, "contract_seat_ambiguous")
-    return seats[0] if seats else None
+    return packet.get("target")
 
 
 def contract_tell(root, launch_id, kind, line, to="starter", last_message=None, turn_report=None):

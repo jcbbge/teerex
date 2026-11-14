@@ -518,16 +518,20 @@ class ContractHelpersTest(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIsNone(state["contract"]["awaiting_starter"])
 
-    def test_seat_lookup_is_limited_to_registered_host_and_server(self):
+    def test_seat_lookup_uses_fresh_role_resolver(self):
         state = dict(store="/tmp/boards", client_path="/bin", rex_executable="/bin/rex",
                      socket="/tmp/private.sock", target=dict(host="worker-host"))
         target = dict(host="worker-host", server="unix:///tmp/private.sock", session_id="s", block_id="b")
-        seats = [dict(target=dict(target, host="other-host")), dict(target=dict(target, server="unix:///tmp/other.sock"))]
-        self.ns["invoke"] = lambda *args, **kwargs: (0, dict(state=dict(seats=seats)))
-        self.assertIsNone(self.ns["contract_seat"](state))
-        seats.append(dict(target=target))
+        calls = []
+        def resolved(args, **kwargs):
+            calls.append(args)
+            return 0, dict(outcome="resolved", target=target)
+        self.ns["invoke"] = resolved
         self.assertEqual(self.ns["contract_seat"](state), target)
-        seats.append(dict(target=dict(target, block_id="other")))
+        self.assertEqual(calls[0][:2], ["seat", "resolve"])
+        self.ns["invoke"] = lambda *args, **kwargs: (0, dict(outcome="no_seat", target=None))
+        self.assertIsNone(self.ns["contract_seat"](state))
+        self.ns["invoke"] = lambda *args, **kwargs: (1, dict(outcome="unknown"))
         with self.assertRaises(self.ns["Refusal"]):
             self.ns["contract_seat"](state)
 

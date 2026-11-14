@@ -359,6 +359,28 @@ def seat_for(store, t):
     return next((s for s in store.state["seats"] if s["target"] == t), None)
 
 
+def live_seat(store, host, socket):
+    """Only a successful fresh inventory may establish a missing seat."""
+    seats = [s for s in store.state["seats"]
+             if s["target"]["host"] == host and s["target"]["server"] == "unix://" + socket]
+    if not seats:
+        return None
+    live = probe(socket)
+    present = {(row["session"], row["block"]) for row in live["rows"]}
+    seats = [s for s in seats if (s["target"]["session_id"], s["target"]["block_id"]) in present]
+    check(len(seats) <= 1, "multiple_live_seats")
+    return seats[0] if seats else None
+
+
+def resolve_seat(a):
+    with contextlib.closing(Store(a.store)) as store:
+        seat = live_seat(store, a.host, a.socket)
+        result(kind="seat", outcome="resolved" if seat else "no_seat", registered=seat is not None,
+               target=seat["target"] if seat else None, live_state="checked", generation=store.state["generation"],
+               store=a.store, terminal_input_attempted=False)
+    return 0
+
+
 def folded(seat):
     opened, done, activity = {}, [], []
     for r in seat["records"]:
@@ -1172,6 +1194,11 @@ def parser():
     q.add_argument("--dashboard", action="store_true", help="read live OSC, bounded call history and optional lifecycle metadata")
     q.add_argument("--agents-registry", help="dashboard-only private lifecycle registry; 32 records, 256 KiB each; no token/body projection")
     q.add_argument("--teerex", help="absolute current CLI; native bridge supplies self path")
+    c = commands.add_parser("seat-resolve", help="fresh read of the live registered seat; no terminal input")
+    common(c, False)
+    c.add_argument("--host", required=True)
+    c.add_argument("--socket", required=True)
+    c.add_argument("--json", action="store_true", help="JSON is always emitted")
     c = commands.add_parser("state", help="private authoritative inspect and explicit recovery remapping")
     ops = c.add_subparsers(dest="operation", required=True)
     for op in ("inspect", "remap-preview", "remap-apply"):
@@ -1293,7 +1320,11 @@ def main(argv=None):
     # Unlike argparse's default, reject duplicate options rather than accepting the last.
     options = [x.split("=", 1)[0] for x in argv if x.startswith("--")]
     check(len([x for x in options if x not in ("--jobs-registry", "--agents-registry", "--option")]) == len(set(x for x in options if x not in ("--jobs-registry", "--agents-registry", "--option"))), "duplicate_option")
+    if argv[:2] == ["seat", "resolve"]:
+        argv[:2] = ["seat-resolve"]
     a = parser().parse_args(argv)
+    if a.command == "seat-resolve":
+        return resolve_seat(a)
     if a.command == "boards" and a.view == "friction":
         import teerex_friction
         return teerex_friction.main(a)

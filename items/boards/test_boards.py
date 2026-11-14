@@ -869,6 +869,21 @@ class RexBoardsTest(unittest.TestCase):
         self.assertEqual(json.loads((store / 'state.json').read_text()), before)
         self.assertEqual(list(store.glob('archive-*.json')), [])
 
+    def test_seat_role_resolver_checks_live_presence(self):
+        store = self.root / ('role-resolve-' + str(time.monotonic_ns()))
+        store.mkdir(mode=0o700)
+        made = json.loads(subprocess.check_output(self.base + ['new', '--json', '--keep-open', '--shell=none', '--', '/bin/sleep', '120']))
+        sid, bid = made['session_id'], made['initial_windows'][0]['block_ids'][0]
+        command = [BIN, '--rex', self.rex, 'seat']
+        common = ['--store', str(store), '--host', 'fixture', '--socket', str(self.socket)]
+        def resolve():
+            return json.loads(subprocess.check_output(command + ['resolve', *common, '--json']))
+        self.assertEqual(resolve()['outcome'], 'no_seat')
+        subprocess.check_output(command + ['register', *common, '--session', sid, '--block', bid, '--owner', 'test'])
+        self.assertEqual(resolve()['target']['block_id'], bid)
+        subprocess.check_output(self.base + ['block', 'close', '-s', sid, bid])
+        self.assertEqual(resolve()['outcome'], 'no_seat')
+
     def test_fleet_full_evicts_dead_and_all_live_grows(self):
         store = self.root / 'capacity-store'
         store.mkdir(mode=0o700)
