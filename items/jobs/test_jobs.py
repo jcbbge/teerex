@@ -623,6 +623,29 @@ class JobsTest(unittest.TestCase):
         self.assertEqual(self.invoke("list", registry=link)[0].returncode, 1)
         self.assertEqual(self.view(), before)
 
+    def test_registry_file_grows_past_old_byte_cap(self):
+        self.track()
+        path = self.registry / 'state.json'
+        raw = json.loads(path.read_text())
+        original = raw['entries'][0]
+        raw['entries'] = [dict(original, block_id=f'block:{n:08x}-0000-0000-0000-000000000000', purpose='x' * 256) for n in range(300)]
+        path.write_text(json.dumps(raw))
+        self.assertGreater(path.stat().st_size, 262144)
+        self.block = raw['entries'][0]['block_id']
+        result, receipt = self.invoke('forget', owner=original['owner'], generation=original['generation'], reason='capacity regression')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(len(json.loads(path.read_text())['entries']), 299)
+
+    def test_all_live_registry_grows_past_32(self):
+        for n in range(34):
+            if n:
+                self.detached()
+            result = self.track()
+            self.assertIsNone(result['evicted_absent_entry'])
+        state = json.loads((self.registry / 'state.json').read_text())
+        self.assertEqual(len(state['entries']), 34)
+        self.assertEqual(len(self.invoke('list')[1]['entries']), 34)
+
     def test_capacity_corruption_and_crash_staging_never_drop_entries(self):
         self.track()
         state = self.registry / "state.json"
@@ -635,7 +658,8 @@ class JobsTest(unittest.TestCase):
         old_block = self.block
         self.detached()
         r, p = self.invoke("track", owner="operator α", kind="command", purpose="capacity", deadline_unix_ms=int(time.time()*1000)+60000, cleanup="manual")
-        self.assertEqual(p["failure_reason"], "RegistryFull")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(p["evicted_absent_entry"]["block_id"], "block:00000001-0000-0000-0000-000000000000")
         self.assertEqual(len(self.invoke("list")[1]["entries"]), 32)
         state.write_text(good)
         self.block = old_block

@@ -18,7 +18,7 @@ const usage =
     \\Live operations optionally take --timeout-ms N (100..60000, default 5000).
     \\Registry locks (shared for list/doctor, exclusive otherwise) wait up to10000ms; registry_busy is retry-safe.
     \\List/doctor open existing files read-only and create no files, including no lock file.
-    \\Registry must already be an absolute, private 0700 owned directory. Max 32 records/256 KiB.
+    \\Registry must already be an absolute, private 0700 owned directory. Dead entries evicted above 32 records; live records retained.
     \\API13 Mac-arm64/Linux-amd64 only; no autostart, agents, daemon, automatic close or enforced deadlines.
     \\Ownership is recorded responsibility, not authority, native ownership, isolation or process control.
     \\Exit: 0 requested evidence/record verified, 1 error/refusal/unknown, 2 usage, 124 deadline, 130/143 signal.
@@ -166,9 +166,9 @@ const Registry = struct {
         };
         if (saved) |f| {
             defer f.close();
-            const raw = try f.readToEndAlloc(allocator, 262144);
+            const raw = try f.readToEndAlloc(allocator, std.math.maxInt(usize));
             state = (try std.json.parseFromSlice(State, allocator, raw, .{ .allocate = .alloc_always })).value;
-            if (state.schema_version != 1 or state.entries.len > 32 or state.next_generation == 0 or state.next_generation >= std.math.maxInt(u64) - 1) return error.InvalidRegistry;
+            if (state.schema_version != 1 or state.next_generation == 0 or state.next_generation >= std.math.maxInt(u64) - 1) return error.InvalidRegistry;
             for (state.entries, 0..) |entry, i| {
                 if (!validEntry(entry) or entry.generation >= state.next_generation) return error.InvalidRegistry;
                 for (state.entries[0..i]) |old| {
@@ -191,7 +191,6 @@ const Registry = struct {
     }
     fn save(self: *Registry, allocator: std.mem.Allocator) !void {
         const raw = try std.json.Stringify.valueAlloc(allocator, self.state, .{ .whitespace = .indent_2 });
-        if (raw.len > 262144) return error.RegistryFull;
         // Fixed name bounds crash debris to one file; never overwrite an unreconciled staged write.
         const next = try self.dir.createFile("state.next", .{ .exclusive = true, .mode = 0o600 });
         var renamed = false;
@@ -424,9 +423,9 @@ fn pendingState(allocator: std.mem.Allocator, registry: *Registry) !?State {
         else => return err,
     };
     defer file.close();
-    const raw = try file.readToEndAlloc(allocator, 262144);
+    const raw = try file.readToEndAlloc(allocator, std.math.maxInt(usize));
     const state = (try std.json.parseFromSlice(State, allocator, raw, .{ .allocate = .alloc_always })).value;
-    if (state.schema_version != 1 or state.entries.len > 32 or state.next_generation == 0) return error.InvalidPendingRegistry;
+    if (state.schema_version != 1 or state.next_generation == 0) return error.InvalidPendingRegistry;
     for (state.entries) |e| if (!validEntry(e) or e.generation >= state.next_generation) return error.InvalidPendingRegistry;
     return state;
 }
@@ -495,10 +494,10 @@ fn execute(allocator: std.mem.Allocator, o: Options) !u8 {
     for (registry.state.entries, 0..) |e, at| {
         if (eq(e.socket, o.socket.?) and eq(e.session_id, o.session.?) and eq(e.block_id, o.block.?)) index = at;
     }
+    var evicted: ?Entry = null;
     const track = eq(o.operation, "track");
     if (track and index != null) return error.TargetAlreadyTracked;
     if (!track and index == null) return error.TargetNotTracked;
-    if (track and registry.state.entries.len == 32) return error.RegistryFull;
     var entry: ?Entry = if (index) |at| registry.state.entries[at] else null;
     if (entry) |e| {
         if (o.generation) |g| if (g != e.generation) return error.GenerationConflict;
@@ -530,6 +529,22 @@ fn execute(allocator: std.mem.Allocator, o: Options) !u8 {
                 eq(existing.source.instance_id, live.collector.source.?.instance_id) and
                 eq(existing.source.host_id, live.collector.source.?.host_id)) return error.TargetAlreadyTrackedThroughAnotherEndpoint;
         }
+        if (registry.state.entries.len >= 32) {
+            // Only proven absent targets qualify; unknown and live entries remain.
+            var oldest: ?usize = null;
+            for (registry.state.entries, 0..) |existing, at| {
+                const probe: Options = .{ .operation = "inspect", .registry = o.registry, .socket = existing.socket, .session = existing.session_id, .block = existing.block_id, .timeout_ms = 1000 };
+                const observed = query(allocator, probe, existing) catch continue;
+                if ((eq(observed.outcome, "verified") or eq(observed.outcome, "refused")) and observed.failure != null and eq(observed.failure.?, "target_absent_at_observation")) {
+                    if (oldest == null or existing.registered_at_unix_ms < registry.state.entries[oldest.?].registered_at_unix_ms) oldest = at;
+                }
+            }
+            if (oldest) |at| {
+                evicted = registry.state.entries[at];
+                std.mem.copyForwards(Entry, registry.state.entries[at .. registry.state.entries.len - 1], registry.state.entries[at + 1 ..]);
+                registry.state.entries = registry.state.entries[0 .. registry.state.entries.len - 1];
+            }
+        }
         entry = .{ .socket = o.socket.?, .session_id = o.session.?, .block_id = o.block.?, .source = live.collector.source.?, .block_host_id = live.collector.observation.?.block_host_id, .owner = o.owner.?, .kind = o.kind.?, .purpose = o.purpose.?, .deadline_unix_ms = o.deadline_unix_ms.?, .generation = try registry.generation(), .registered_at_unix_ms = now, .receipt_path = o.receipt_file };
         registry.state.entries = try std.mem.concat(allocator, Entry, &.{ registry.state.entries, &.{entry.?} });
         try registry.save(allocator);
@@ -545,6 +560,6 @@ fn execute(allocator: std.mem.Allocator, o: Options) !u8 {
         registry.state.entries[index.?] = entry.?;
         try registry.save(allocator);
     }
-    try output(allocator, .{ .schema_version = 1, .kind = "jobs_result", .operation = o.operation, .outcome = live.outcome, .failure_reason = live.failure, .backend_term = live.backend_term, .entry = entry, .source_observed = live.collector.source, .observation = live.collector.observation, .observed_at_unix_ms = std.time.milliTimestamp(), .observation_is_atomic = false, .mutation_attempt_frame_seen = live.collector.attempt, .retry_safe = !eq(o.operation, "present"), .deadline_passed = if (entry) |e| std.time.milliTimestamp() >= e.deadline_unix_ms else false, .deadline_enforced = false, .automatic_cleanup = false, .recorded_owner_is_process_owner = false, .owner_liveness = "not_checked", .task_completion = "not_assessed", .all_processes_verified_gone = false, .exclusive_control = false });
+    try output(allocator, .{ .schema_version = 1, .kind = "jobs_result", .operation = o.operation, .outcome = live.outcome, .evicted_absent_entry = evicted, .failure_reason = live.failure, .backend_term = live.backend_term, .entry = entry, .source_observed = live.collector.source, .observation = live.collector.observation, .observed_at_unix_ms = std.time.milliTimestamp(), .observation_is_atomic = false, .mutation_attempt_frame_seen = live.collector.attempt, .retry_safe = !eq(o.operation, "present"), .deadline_passed = if (entry) |e| std.time.milliTimestamp() >= e.deadline_unix_ms else false, .deadline_enforced = false, .automatic_cleanup = false, .recorded_owner_is_process_owner = false, .owner_liveness = "not_checked", .task_completion = "not_assessed", .all_processes_verified_gone = false, .exclusive_control = false });
     return live.code;
 }
