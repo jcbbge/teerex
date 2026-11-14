@@ -68,7 +68,11 @@ SHIM = r'''
 import json,os,signal,subprocess,sys,time
 from pathlib import Path
 args=sys.argv[1:]
-with open(os.environ['DOCTOR_AUDIT'],'a') as f:f.write(json.dumps([args,{k:os.getenv(k) for k in ['REX_SERVER','REX_SESSION','REX_BLOCK','REX_CLIENT']}])+'\n')
+script=None
+if 'do' in args:
+    tail=args[args.index('do')+1:]
+    script=tail[1] if tail[0]=='-e' else Path(tail[0]).read_text()
+with open(os.environ['DOCTOR_AUDIT'],'a') as f:f.write(json.dumps([args,{k:os.getenv(k) for k in ['REX_SERVER','REX_SESSION','REX_BLOCK','REX_CLIENT']},script])+'\n')
 mode=os.getenv('DOCTOR_FAULT','')
 if mode=='hang':
     signal.signal(signal.SIGTERM,signal.SIG_IGN)
@@ -191,17 +195,23 @@ class RuntimeTest(unittest.TestCase):
         audit = Path(self.env()["DOCTOR_AUDIT"])
         calls = [json.loads(line) for line in audit.read_text().splitlines()]
         self.assertEqual(len(calls), 8)
-        for args, hints in calls:
+        for args, hints, script in calls:
             self.assertEqual(args[:7], ["--autostart=false", "--server", packet["server"], "--timeout", "2s", "--color", "never"])
             self.assertEqual(set(hints.values()), {None})
             tail = args[7:]
             allowed = [["version", "--json"], ["api", "call", "server.version"],
                        *[["api", "describe", m, "--json"] for m in METHODS]]
             if tail not in allowed:
-                self.assertEqual(tail[:2], ["do", "-e"])
-                self.assertEqual(len(tail), 3)
-                self.assertNotIn("rex.call(", tail[2])
-                self.assertNotIn("rex.exec.start(", tail[2])
+                self.assertEqual(tail[0], "do")
+                if tail[1] == "-e":
+                    self.assertEqual(len(tail), 3)
+                    self.assertEqual(script, tail[2])
+                else:
+                    self.assertEqual(len(tail), 2)
+                    self.assertTrue(Path(tail[1]).is_absolute())
+                self.assertIsInstance(script, str)
+                self.assertNotIn("rex.call(", script)
+                self.assertNotIn("rex.exec.start(", script)
 
     def test_pinned_executable_is_reported_and_overrides_path(self):
         for global_pin in (False, True):
