@@ -89,7 +89,7 @@ jobs:
         run: zig build -Doptimize=ReleaseSmall -Dtarget=${{ matrix.target }}
 
       - name: Run native child supervisor regressions
-        run: zig test src/child_test.zig
+        run: zig test --dep pane_guard -Mroot=src/child_test.zig -Mpane_guard=src/pane_guard.zig
 
       - name: Verify static Linux executable
         if: runner.os == 'Linux'

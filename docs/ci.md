@@ -31,7 +31,7 @@ The agents command and its launch, callback, channel and fence tests were remove
 | Mac API12 (Rex preview.14) | `macos-26`, arm64 | Same public suites as Mac API10. |
 | Mac API13 (Rex preview.16) | `macos-26`, arm64 | Same public suites plus API13 jobs and installer controls. |
 
-Every lane checks Zig formatting and builds `ReleaseSmall`. Zig **0.15.2** is downloaded from its versioned official archive and checked against the platform-specific SHA-256 from [Zig's download index](https://ziglang.org/download/index.json). Python **3.13** is selected explicitly. GitHub actions use immutable commit pins. There is no `zig build test` interface: CI invokes the listed Python public-CLI suites and `zig test src/child_test.zig` directly.
+Every lane checks Zig formatting and builds `ReleaseSmall`. Zig **0.15.2** is downloaded from its versioned official archive and checked against the platform-specific SHA-256 from [Zig's download index](https://ziglang.org/download/index.json). Python **3.13** is selected explicitly. GitHub actions use immutable commit pins. There is no `zig build test` interface: CI invokes the listed Python public-CLI suites and `zig test --dep pane_guard -Mroot=src/child_test.zig -Mpane_guard=src/pane_guard.zig` directly.
 
 The four cells continue independently when another fails. Tests are not retried, allowed to fail or skipped for missing dependencies. A failed download, checksum, startup, wrong architecture/OS family or regression fails its lane. Platform/revision-specific steps are deliberately selected; Linux alone is not full integration coverage. Linux run/doctor runtime are unsupported, not covered by a successful cell. Branch-protection settings are unchanged.
 
@@ -63,7 +63,7 @@ zig version
 zig fmt --check build.zig src items
 # Linux; use aarch64-macos on an arm64 Mac instead.
 zig build -Doptimize=ReleaseSmall -Dtarget=x86_64-linux-musl
-zig test src/child_test.zig
+zig test --dep pane_guard -Mroot=src/child_test.zig -Mpane_guard=src/pane_guard.zig
 export TEEREX_BIN="$PWD/zig-out/bin/teerex"
 export REX_BIN="$(command -v rex)"
 rex version
