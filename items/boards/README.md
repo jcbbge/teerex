@@ -20,6 +20,29 @@
 
 Published alpha.5's family-level selector insertion breaks named `boards state|seat|inbox OP`. Current source [routes by complete leaf](../../docs/alpha5.md#leaf-aware-named-host-routing-issue16): state inspect/remap gets store only; seat/inbox/fleet mutations get socket/host/store; inbox renderer is targeted; fleet renderer gets store only and accepts its own explicit fleet config/hosts. Root aliases retain the same contract and explicit store overrides still work. Real named-root register/inspect/inbox/remap/clear/forget tests pass without invoking Rex for offline state. This is not an updated alpha.5 archive or permission to act on personal state.
 
+## Repair the seat's companion panes
+
+Run `teerex --config "$HOSTS" --host hive seat panes --tasks /absolute/tasks`
+from the live registered seat, or append `--operator` from an interactive operator
+terminal. It keeps running board programs, opens missing companions, and reopens
+exited or different programs; `--replace` reopens both. Omit `--tasks` to manage
+only `board`; the receipt explicitly reports that tasks was skipped. The seat
+keeps 60% width; the right column holds tasks above board, with board taking 40%
+of its height. A surviving companion anchors its replacement.
+
+Tasks runs `board --tasks DIR --hosts THIS_HOST`; board covers every configured
+host. Both use the supplied config and the managed `current/teerex` link when
+available. Direct calls accept `--store`, `--host`, `--socket` and optionally
+`--board-config`/`--board-host`; otherwise the board uses the default hosts config.
+Caller identity and fresh registration are checked before any pane mutation.
+Other callers and stale registrations refuse; companions created by someone
+else stay protected by the pane guard. One JSON receipt gives each managed
+pane's `kept`, `opened`, `reopened` or `refused` outcome, block ID and unchanged
+surface refusal reason. No retries or live-seat replacement occur.
+
+Verb-only disposable-server checks: `REX_BIN=/absolute/rex python3
+items/boards/test_seat_panes.py SeatPanesTest -v`.
+
 ## Optional historical inbox registration and viewer
 
 Create the store deliberately on the command host. All following `$SOCKET`, `$SESSION`, `$SEAT`, `$HOST_ID`, `$STORE`, `$TEEREX` values must name the selected target and absolute executable; none is inferred from the active pane or environment.
