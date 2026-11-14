@@ -100,6 +100,8 @@ teerex surfaces ensure --socket "$S" --session any --label seat --create-session
 teerex surfaces rename|focus|move|close --socket "$S" --session "$SES" --pane "$P" …
 ```
 
+Generate a palette jump with `teerex surfaces palette focus --file /absolute/jump.lua --teerex /absolute/teerex --name jump_logs --title "Jump to logs" --label logs`. It resolves across all sessions and focuses the existing pane; absent or ambiguous targets refuse without opening anything. For the registered seat, use `--seat --board-store /absolute/boards --socket "$S"` instead of `--label logs`. Install the fragment through the [palette plan/apply workflow](../items/surfaces/README.md#prepare-and-register-a-palette-action).
+
 - Every pane you open is visible, and yours to close when your work lands.
 - Long output for Josh goes in a `.md` file, opened in `leaf` in a pane beside yours.
 

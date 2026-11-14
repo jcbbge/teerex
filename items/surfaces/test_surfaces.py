@@ -859,17 +859,36 @@ class SurfacesTest(unittest.TestCase):
         self.config.write_text("dofile(" + json.dumps(str(fragment)) + ")\n")
         self.rpc("server.config_reload", {})
         invoke = self.base + ["do", "--session", self.session, "--block", self.anchor, "jump_existing"]
+        before = self.rpc("session.list", {})
+        stable = self.view()
         absent = subprocess.run(invoke, capture_output=True, text=True)
         self.assertNotEqual(absent.returncode, 0)
+        self.assertIn("Pane to focus was not found", absent.stdout + absent.stderr)
+        self.assertEqual(self.rpc("session.list", {}), before)
+        self.assertEqual(self.view(), stable)
         block = {"block": {"flavor": "com.superlogical.terminal.shell", "label": "focus destination",
                            "options": {"command": ["/bin/sh", "-c", "sleep 60"]}}}
         made = self.rpc("session.create", {"label": "focus other", "initial_windows": [{"layout": block}]})
+        self.addCleanup(lambda: self.rpc("session.destroy", {"session_id": made["session_id"]}))
+        destination = self.rpc("session.view", {"session_id": made["session_id"]})
+        before = self.rpc("session.list", {})
         result = subprocess.run(invoke, capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertEqual(json.loads(result.stdout)["outcome"], "focused_and_verified")
+        focused = json.loads(result.stdout)
+        self.assertEqual(focused["outcome"], "focused_and_verified")
+        self.assertEqual(focused["resolved"]["session_id"], made["session_id"])
+        self.assertFalse(focused.get("creation_attempted", False))
+        self.assertEqual(focused["actual"]["focused_block_id"], focused["resolved"]["block_id"])
+        self.assertEqual(self.rpc("session.list", {}), before)
+        self.assertEqual(len(self.rpc("session.view", {"session_id": made["session_id"]})["windows"]), len(destination["windows"]))
         self.rpc("session.new_window", {"session_id": made["session_id"], "layout": block})
+        before = self.rpc("session.list", {})
+        stable = self.rpc("session.view", {"session_id": made["session_id"]})
         ambiguous = subprocess.run(invoke, capture_output=True, text=True)
         self.assertNotEqual(ambiguous.returncode, 0)
+        self.assertIn("More than one pane matches the focus target", ambiguous.stdout + ambiguous.stderr)
+        self.assertEqual(self.rpc("session.list", {}), before)
+        self.assertEqual(self.rpc("session.view", {"session_id": made["session_id"]}), stable)
 
     def test_named_host_focus_palette_targets_selected_server_without_creation(self):
         socket = self.work / "other.sock"
@@ -952,6 +971,15 @@ class SurfacesTest(unittest.TestCase):
         r = subprocess.run(invoke, capture_output=True, text=True)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertEqual(json.loads(r.stdout)["outcome"], "focused_and_verified")
+        self.rpc("block.close", {"session_id": self.session, "block_id": self.anchor, "keep_last": False})
+        caller_session = self.env["REX_SESSION"]
+        caller_block = self.env["REX_BLOCK"]
+        invoke = self.base + ["do", "--session", caller_session, "--block", caller_block, "jump_registered"]
+        before = self.rpc("session.list", {})
+        stale = subprocess.run(invoke, capture_output=True, text=True)
+        self.assertNotEqual(stale.returncode, 0)
+        self.assertIn("Pane to focus was not found", stale.stdout + stale.stderr)
+        self.assertEqual(self.rpc("session.list", {}), before)
 
     def test_palette_fragment_loaded_as_real_rex_action_no_overwrite(self):
         fragment = self.work / "palette.lua"
