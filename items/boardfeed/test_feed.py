@@ -62,7 +62,7 @@ class FeedTests(unittest.TestCase):
         with resources.temporary_directory() as tmp:
             root=Path(tmp);(root/'1-task.md').write_text('1 Example\nowner: worker state: WORKING done: NO\n')
             a=SimpleNamespace(host='fixture',tasks=root,once=True,held_command_json=None)
-            with mock.patch.object(feed,'State'),mock.patch.object(feed,'Attention'),mock.patch.object(feed,'Decisions'),mock.patch.object(feed,'emit') as emit:
+            with mock.patch.object(feed,'State'),mock.patch.object(feed,'emit') as emit:
                 feed.local(a)
                 self.assertEqual(emit.call_args.args,('fixture','task'))
                 emit.reset_mock();a.tasks=None;feed.local(a);emit.assert_not_called()
@@ -79,48 +79,19 @@ class FeedTests(unittest.TestCase):
         self.assertEqual(argv[argv.index('--tasks')+1],'/tasks');self.assertIn('--once',argv)
         self.assertEqual(json.loads(output.getvalue())['host'],'fixture')
 
-    def test_registered_seat_role_is_read_only_and_exact(self):
+    def test_seat_label_role(self):
         with resources.temporary_directory() as tmp:
-            root=Path(tmp)
-            a=SimpleNamespace(host='fixture',rex='/not-found',socket='/fixture.sock',store=root/'store')
-            for field in ('store','agents_registry','jobs_registry','scratch','calls'):
-                path=root/field;path.mkdir(exist_ok=True);setattr(a,field,path)
+            a=SimpleNamespace(host='fixture',rex='/not-found',socket='/fixture.sock',scratch=Path(tmp)/'scratch',calls=Path(tmp)/'calls')
             state=feed.State(a);state.refresh_inventory=lambda:True
-            state.live={'b':dict(session='s',label='operator'),'other':dict(session='s',label='seat')}
-            for block in state.live:
-                (a.agents_registry/(block+'.json')).write_text(json.dumps(dict(name=block,target=dict(session_id='s',block_id=block))))
-            target=dict(host='fixture',server='unix:///fixture.sock',session_id='s',block_id='b')
-            path=a.store/'state.json'
-            def scan(registrations):
-                path.write_text(json.dumps(dict(seats=registrations)))
-                before=path.read_bytes()
-                with mock.patch.object(feed,'emit'):state.scan()
-                self.assertEqual(path.read_bytes(),before)
-            scan([dict(target=target)])
-            self.assertEqual(state.rows['b']['role'],'seat');self.assertNotIn('role',state.rows['other'])
-            for change in (dict(host='other'),dict(server='unix:///other'),dict(session_id='wrong')):
-                scan([dict(target=dict(target,**change))]);self.assertNotIn('role',state.rows['b'])
-            scan([dict(target=target,inherited_to=target)]);self.assertNotIn('role',state.rows['b'])
-            scan([]);self.assertNotIn('role',state.rows['b'])
-            path.unlink()
+            state.live={'b':dict(session='s',label='seat'),'other':dict(session='s',label='worker')}
+            for block in state.live:state.update_status(block,dict(records=[dict(id='agent',app='codex',state='working')]))
             with mock.patch.object(feed,'emit'):state.scan()
-            self.assertNotIn('role',state.rows['b']);self.assertFalse(path.exists())
+            self.assertEqual(state.rows['b']['role'],'seat')
+            self.assertNotIn('role',state.rows['other'])
 
     def test_proof_steps_and_observational_sources(self):
         steps=feed.scratch_steps({'Done':['Read — proof: contract','Guess — unproven'],'Now':[],'To-do':[]})
         self.assertEqual([(s['text'],s['proof']) for s in steps],[('Guess',None),('Read','contract')])
-        a=SimpleNamespace(executable='/teerex',agents_registry=Path('/registry'),profiles=Path('/profiles'),host='hive')
-        state=feed.State(a)
-        packet=dict(agents=[dict(target=dict(block_id='b'),tokens_in=10,tokens_out=20,dollars=None,current_turn_seconds=1,wall_seconds=2,transcript='private')])
-        with mock.patch.object(feed,'tracked_output',return_value=json.dumps(packet)):
-            state.accounting_snapshot()
-        self.assertEqual(state.accounting['b']['tokens_in'],10);self.assertNotIn('transcript',state.accounting['b'])
-        with mock.patch.object(feed,'tracked_output',return_value='working item-1  sample · task · level 1\nTitle') as read:
-            self.assertEqual(state.project('item-1'),'sample / item-1');self.assertEqual(state.project('item-1'),'sample / item-1');read.assert_called_once()
-            self.assertEqual(state.project(None),'none')
-        with mock.patch.object(feed,'tracked_output',return_value=json.dumps(dict(messages=7,words=12,senders=[dict(over_share=True)]))),mock.patch.object(feed,'emit') as emit:
-            attention=feed.Attention(a);attention.poll();attention.poll()
-            emit.assert_called_once_with('hive','attention',available=True,messages=7,words=12,over_share=True)
 
     def held_row(self, identifier='item-1', since=1, broken=False):
         return dict(id=identifier,project='fixture',title='Example',waits='ship',text='ship? Example',on='',since=since,broken=broken,broken_why='broken' if broken else '')
@@ -258,67 +229,57 @@ class FeedTests(unittest.TestCase):
         self.assertGreater(a['mem']['total'],0);self.assertTrue(b['cpu']);self.assertTrue(b['disks'])
         self.assertTrue(all(0<=x<=100 for x in b['cpu']))
 
-    def test_registry_scratch_calls_and_removal(self):
+    def test_status_scratch_calls_and_removal(self):
         with resources.temporary_directory() as tmp:
             root=Path(tmp)
             class Args:pass
             a=Args();a.host='fixture';a.rex='/not-found';a.socket=str(root/'none')
-            for field in ('agents_registry','jobs_registry','scratch','calls'):
+            for field in ('scratch','calls'):
                 setattr(a,field,root/field);getattr(a,field).mkdir()
             session='session:11111111-1111-1111-1111-111111111111';block='block:22222222-2222-2222-2222-222222222222'
             (a.scratch/session).mkdir();pad=a.scratch/session/(block+'.md')
             pad.write_text('## Now\n- [ ] Build feed\n## To-do\n- [ ] Test\n## Done\n- [x] Read\n')
-            path=a.agents_registry/'agents-fixture.json'
-            path.write_text(json.dumps(dict(launch_id='fixture',name='worker',phase='brief_submitted',target=dict(session_id=session,block_id=block),token='DO NOT PRINT')))
             state=feed.State(a);out=io.StringIO()
             state.live={block:dict(block_id=block,session=session,label='worker',placement='placed')}
             state.refresh_inventory=lambda:True
+            state.update_status(block,dict(records=[dict(id='agent',app='codex',state='working')]))
             with contextlib.redirect_stdout(out):
                 state.scan();state.scan()
-                (a.jobs_registry/'state.json').write_text(json.dumps(dict(entries=[dict(owner='worker',session_id=session,block_id=block)])))
                 state.scan()
                 pad.write_text('## Now\n- [ ] Test feed\n');state.scan()
                 (a.calls/'calls.jsonl').write_text(json.dumps(dict(phase='start',call_id='one',verb='send',body='SECRET'))+'\n'+json.dumps(dict(phase='end',call_id='one',exit=0))+'\n');state.scan()
-                (a.jobs_registry/'state.json').unlink();path.unlink();state.scan()
+                state.live={};state.scan()
             rows=[json.loads(x) for x in out.getvalue().splitlines()]
             agents=[r for r in rows if r['kind']=='agent']
             self.assertEqual(len(agents),3);self.assertEqual(agents[0]['total'],3);self.assertEqual(agents[-1]['state'],'gone')
             self.assertIn('message delivered',out.getvalue());self.assertNotIn('SECRET',out.getvalue());self.assertNotIn('DO NOT PRINT',out.getvalue())
 
-    def test_supervisor_status_ids_and_legacy_classify_panes(self):
+    def test_agent_hook_status_classifies_panes(self):
         with resources.temporary_directory() as tmp:
             root=Path(tmp)
             a=SimpleNamespace(host='fixture',rex='/not-found',socket=str(root/'none'))
-            for field in ('agents_registry','jobs_registry','scratch','calls'):
+            for field in ('scratch','calls'):
                 setattr(a,field,root/field);getattr(a,field).mkdir()
             state=feed.State(a);state.refresh_inventory=lambda:True
             block='block:worker'
             state.live={block:dict(session='session:fixture',label='worker')}
-            for identifier,app in [('teerex','codex'),('teerex/tint','claude'),('legacy','teerex-agent')]:
+            for identifier,app in [('agent','codex'),('agent','claude'),('agent','pi')]:
                 with self.subTest(identifier=identifier):
                     state.update_status(block,dict(records=[dict(id=identifier,app=app,state='working'),dict(id='other',app='other',state='error')]))
                     with mock.patch.object(feed,'emit'):state.scan()
                     self.assertEqual(state.rows[block]['state'],'working')
+            for status in ('working','idle','done'):
+                state.update_status(block,dict(records=[dict(id='agent',app='codex',state=status)]))
+                with mock.patch.object(feed,'emit'):state.scan()
+                self.assertEqual(state.rows[block]['state'],status)
+                self.assertEqual(state.rows[block]['name'],'worker')
+            state.live[block]['label']=''
+            with mock.patch.object(feed,'emit'):state.scan()
+            self.assertNotIn(block,state.rows)
+            state.live[block]['label']='worker'
             state.update_status(block,dict(records=[dict(id='other',app='codex',state='working')]))
             with mock.patch.object(feed,'emit'):state.scan()
             self.assertNotIn(block,state.rows)
-
-    def test_decision_projection_folds_resolved_cards_without_push(self):
-        card=dict(id='open',title='Choice',ask='Choose?',context='Context',options=[],recommend='Wait')
-        records=[dict(kind='decision',at=1,body=dict(card,id='closed')),dict(kind='resolution',at=2,body=dict(id='closed')),dict(kind='decision',at=3,body=card)]
-        data=dict(state=dict(seats=[dict(target=dict(block_id='block:seat'),records=records)]))
-        a=SimpleNamespace(executable='/fixture',store=Path('/fixture/store'),host='hive')
-        decisions=feed.Decisions(a)
-        with mock.patch.object(feed,'tracked_output',return_value=json.dumps(data).encode()) as command,mock.patch.object(feed,'emit') as emit:
-            decisions.poll();decisions.poll()
-            self.assertEqual(emit.call_count,1)
-            snapshot=emit.call_args.kwargs
-            self.assertTrue(snapshot['available'])
-            self.assertEqual([r['id'] for r in snapshot['decisions']],['open'])
-            self.assertEqual(command.call_args.args[0],['/fixture','boards','state','inspect','--store','/fixture/store'])
-        decisions.signature=object()
-        with mock.patch.object(feed,'tracked_output',side_effect=ValueError()),mock.patch.object(feed,'emit') as emit:
-            decisions.poll();self.assertFalse(emit.call_args.kwargs['available'])
 
     def test_scratch_step_projection_preserves_annotations(self):
         steps=feed.scratch_steps({'Done':['Read · computer · ■ checked'],'Now':['Build · model · ⇥ reviewer'],'To-do':['Verify']})
@@ -327,70 +288,12 @@ class FeedTests(unittest.TestCase):
         self.assertEqual(steps[1]['handoff'],'reviewer')
         self.assertEqual(steps[2]['text'],'Verify')
 
-    def test_contract_and_legacy_worker_rows(self):
-        with resources.temporary_directory() as tmp:
-            root=Path(tmp)
-            a=SimpleNamespace(host='fixture',rex='/not-found',socket=str(root/'none'))
-            for field in ('agents_registry','jobs_registry','scratch','calls'):
-                setattr(a,field,root/field);getattr(a,field).mkdir()
-            session='session:test';block='block:worker';parent='block:123456789'
-            (a.scratch/session).mkdir()
-            (a.scratch/session/(block+'.md')).write_text('## Now\n- Build\n## To-do\n- Test\n## Done\n- Read\nWaiting: reviewer · approval\nCheck: 2030-01-01T00:00:00Z\n')
-            address=dict(session_id=session,block_id=parent)
-            record=dict(name='worker',target=dict(session_id=session,block_id=block),starter=address,last_hook=dict(at=123))
-            path=a.agents_registry/'worker.json'
-            path.write_text(json.dumps(record))
-            state=feed.State(a);state.refresh_inventory=lambda:True
-            state.live={block:dict(session=session,label='worker'),parent:dict(session=session,label='parent pane')}
-            with mock.patch.object(feed,'emit'):
-                state.scan()
-                row=state.rows[block]
-                self.assertEqual((row['waiting'],row['check']),('reviewer · approval','2030-01-01T00:00:00Z'))
-                self.assertEqual((row['starter'],row['step_n'],row['step_total'],row['last_contact_at'],row['stalled']),('parent pane',2,3,123,False))
-                (a.agents_registry/'parent.json').write_text(json.dumps(dict(name='starter agent',target=address)))
-                record['contract']=dict(starter=address,step_n=4,steps_total=7,last_contact_at=456,stalled=True)
-                path.write_text(json.dumps(record));state.scan()
-                row=state.rows[block]
-                self.assertEqual((row['waiting'],row['check']),('reviewer · approval','2030-01-01T00:00:00Z'))
-                self.assertEqual((row['starter'],row['step_n'],row['step_total'],row['last_contact_at'],row['stalled']),('starter agent',4,7,456,True))
-                (a.agents_registry/'parent.json').unlink();state.live.pop(parent);state.scan()
-                self.assertEqual(state.rows[block]['starter'],'12345678')
-                record['contract']['starter']=None;path.write_text(json.dumps(record));state.scan()
-                self.assertEqual(state.rows[block]['starter'],'')
-
-    def test_profile_process_changes_and_unclassified_rescan(self):
-        with resources.temporary_directory() as tmp:
-            root=Path(tmp);profiles=root/'profiles.json'
-            profiles.write_text(json.dumps(dict(profiles=dict(example=dict(argv=['/example/runner'])))))
-            a=SimpleNamespace(host='fixture',profiles=profiles)
-            for key in ('agents_registry','jobs_registry','scratch','calls'):setattr(a,key,root/key)
-            state=feed.State(a);state.live={'b':dict(session='s',label='Seat')}
-            state.refresh_inventory=lambda:True
-            process={'child':dict(argv0='/bin/sh')}
-            state.rex_json=lambda *args: process if args[-2]=='process' else dict(records=[dict(state='waiting')])
-            with contextlib.redirect_stdout(io.StringIO()):
-                state.scan();self.assertEqual(state.rows,{})
-                process={'foreground':dict(path='/example/runner')}
-                state.scan();self.assertEqual(state.rows['b']['name'],'Seat')
-                self.assertEqual(state.rows['b']['state'],'waiting')
-                process={'child':dict(argv0='/bin/sh')}
-                state.rex_event(dict(type='block_event',payload=dict(block_id='b',name='process_changed')))
-                self.assertEqual(state.rows,{})
-                process={'child':dict(argv0='/example/runner')}
-                state.rex_event(dict(type='block_event',payload=dict(block_id='b',name='process_changed')))
-                self.assertIn('b',state.rows)
-                state.live['b']['label']='';state.scan()
-                self.assertEqual(state.rows['b']['name'],'runner')
-                for content in ('bad json','[]','{"profiles":null}'):
-                    profiles.write_text(content);state.scan();self.assertEqual(state.rows,{})
-                profiles.unlink();state.scan();self.assertEqual(state.rows,{})
-
     def test_status_and_title_projection(self):
         class Args:host='fixture'
         state=feed.State(Args());state.scan=lambda:None
         out=io.StringIO()
         with contextlib.redirect_stdout(out):
-            state.rex_event(dict(type='session_event',payload=dict(event=dict(type='block_event',payload=dict(block_id='b',name='program_status_changed',payload=dict(id='',record=dict(state='blocked',msg='Which option?')))))))
+            state.rex_event(dict(type='session_event',payload=dict(event=dict(type='block_event',payload=dict(block_id='b',name='program_status_changed',payload=dict(id='agent',record=dict(state='blocked',msg='Which option?')))))))
             state.rex_event(dict(type='session_event',payload=dict(event=dict(type='block_label_changed',payload={}))))
         self.assertEqual(state.status['b'],'blocked');self.assertEqual(state.questions['b'],'Which option?');self.assertIn('title changed',out.getvalue())
 
@@ -416,7 +319,7 @@ class FeedTests(unittest.TestCase):
                     if server.poll() is not None:raise RuntimeError('fixture Rex exited')
                     time.sleep(.02)
                 command=([os.environ['TEEREX_BIN'],'board','feed'] if os.environ.get('TEEREX_BIN') else [sys.executable,str(SOURCE),'/not-used'])+['--local','--host-name','fixture','--socket',str(socket),'--rex',REX]
-                for flag in ('agents-registry','jobs-registry','scratch','calls'):
+                for flag in ('scratch','calls'):
                     (root/flag).mkdir();command+=['--'+flag,str(root/flag)]
                 process=resources.start_process(command,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,env=dict(isolated_environment(),HOME=tmp))
                 events=queue.Queue()
@@ -429,24 +332,18 @@ class FeedTests(unittest.TestCase):
                     self.fail('event missing')
                 wait_for(lambda e:e['kind']=='vitals')
                 # A successful event-driven subscription must observe creation after startup.
-                result=subprocess.run([REX,'--autostart=false','-S',endpoint,'new','--json','boardfixture','--',sys.executable,'-c',"import time;time.sleep(.6);print('\\x1b]7501;state=blocked:app=fixture:msg=Q2hvb3NlPw==\\x1b\\\\',flush=True);time.sleep(20)"],capture_output=True,text=True,timeout=5)
+                result=subprocess.run([REX,'--autostart=false','-S',endpoint,'new','--json','boardfixture','--',sys.executable,'-c',"import time;time.sleep(.6);print('\\x1b]7501;state=blocked:id=agent:app=codex:msg=Q2hvb3NlPw==\\x1b\\\\',flush=True);time.sleep(20)"],capture_output=True,text=True,timeout=5)
                 self.assertEqual(result.returncode,0,result.stderr)
                 wait_for(lambda e:e['kind']=='stream' and e['text']=='workspace opened')
                 created=json.loads(result.stdout)
                 session=created['session_id'];block=created['initial_windows'][0]['block_ids'][0]
-                record=root/'agents-registry'/'agents-fixture.json'
-                record.write_text(json.dumps(dict(launch_id='fixture',name='worker',phase='brief_submitted',target=dict(session_id=session,block_id=block))))
-                row=wait_for(lambda e:e['kind']=='agent' and e['name']=='worker')
+                row=wait_for(lambda e:e['kind']=='agent' and e['block']==block and e['state']=='blocked')
                 self.assertEqual(row['placement'],'placed')
-                wait_for(lambda e:e['kind']=='agent' and e['state']=='blocked' and e['question']=='Choose?')
+                self.assertEqual(row['question'],'Choose?')
                 (root/'scratch'/session).mkdir()
                 (root/'scratch'/session/(block+'.md')).write_text('## Now\n- [ ] Test push\n')
                 wait_for(lambda e:e['kind']=='agent' and e['now']=='Test push')
-                # Inventory is Rex's, with registry duplicates/stale names excluded.
-                duplicate=root/'agents-registry'/'agents-duplicate.json'
-                duplicate.write_text(json.dumps(dict(launch_id='duplicate',name='worker',target=dict(session_id='session:99999999-9999-9999-9999-999999999999',block_id=block))))
-                (root/'agents-registry'/'agents-dead.json').write_text(json.dumps(dict(launch_id='dead',owner='ghost-owner',target=dict(session_id=session,block_id='block:99999999-9999-9999-9999-999999999999'))))
-                other=subprocess.run([REX,'--autostart=false','-S',endpoint,'new','--json','lua','--',sys.executable,'-c',"import time;print('\\x1b]7501;state=idle:app=teerex-agent\\x1b\\\\',flush=True);time.sleep(20)"],capture_output=True,text=True,timeout=5)
+                other=subprocess.run([REX,'--autostart=false','-S',endpoint,'new','--json','lua','--',sys.executable,'-c',"import time;print('\\x1b]7501;state=idle:id=agent:app=pi\\x1b\\\\',flush=True);time.sleep(20)"],capture_output=True,text=True,timeout=5)
                 self.assertEqual(other.returncode,0,other.stderr)
                 other_created=json.loads(other.stdout);other_sid=other_created['session_id'];other_block=other_created['initial_windows'][0]['block_ids'][0]
                 wait_for(lambda e:e['kind']=='agent' and e['block']==other_block and e['state']=='idle')
@@ -458,10 +355,9 @@ class FeedTests(unittest.TestCase):
                 plain=subprocess.run([REX,'--autostart=false','-S',endpoint,'new','--json','not-an-agent','--','/bin/sh','-c','sleep 20'],capture_output=True,text=True,timeout=5)
                 self.assertEqual(plain.returncode,0,plain.stderr)
                 plain_created=json.loads(plain.stdout)
-                (root/'jobs-registry'/'plain.json').write_text(json.dumps(dict(entries=[dict(owner='not-an-agent',session_id=plain_created['session_id'],block_id=plain_created['initial_windows'][0]['block_ids'][0])])))
                 class Args:pass
                 args=Args();args.host='fixture';args.rex=REX;args.socket=str(socket)
-                for key,folder in [('agents_registry','agents-registry'),('jobs_registry','jobs-registry'),('scratch','scratch'),('calls','calls')]:setattr(args,key,root/folder)
+                for key,folder in [('scratch','scratch'),('calls','calls')]:setattr(args,key,root/folder)
                 inventory=feed.State(args)
                 with contextlib.redirect_stdout(io.StringIO()):inventory.scan()
                 self.assertEqual(set(inventory.rows),{block,other_block})
@@ -470,34 +366,10 @@ class FeedTests(unittest.TestCase):
                 self.assertEqual(inventory.rows[block]['state'],'blocked')
                 self.assertEqual(inventory.rows[other_block]['now'],'Lua own work')
                 self.assertEqual(inventory.rows[other_block]['state'],'idle')
-                # A distinct, profile-owned executable with no managed launch or OSC record.
-                runner=root/'runner';shutil.copy(shutil.which('sleep'),runner)
-                # macOS kills a copied platform binary until it is ad-hoc signed.
-                if sys.platform=='darwin':subprocess.run(['codesign','--force','-s','-',str(runner)],check=True,capture_output=True)
-                alias=root/'runner-link';alias.symlink_to(runner)
-                profiles=root/'profiles.json'
-                profiles.write_text(json.dumps(dict(profiles=dict(example=dict(argv=[str(alias)])))))
-                manual=subprocess.run([REX,'--autostart=false','-S',endpoint,'new','--json','manual','--',str(runner),'20'],capture_output=True,text=True,timeout=5)
-                self.assertEqual(manual.returncode,0,manual.stderr)
-                manual_block=json.loads(manual.stdout)['initial_windows'][0]['block_ids'][0]
-                (root/'jobs-registry'/'manual.json').write_text(json.dumps(dict(block_id=manual_block,name='decoy-job-name')))
-                profile_link=root/'profiles-link.json';profile_link.symlink_to(profiles)
-                args.profiles=profile_link
-                with contextlib.redirect_stdout(io.StringIO()):inventory.scan()
-                self.assertEqual(set(inventory.rows),{block,other_block,manual_block})
-                self.assertEqual(inventory.rows[manual_block]['state'],'unknown')
-                self.assertNotEqual(inventory.rows[manual_block]['name'],'decoy-job-name')
                 probe_spec=importlib.util.spec_from_file_location('check_one_source',SOURCE.parent.parent/'board/check_one_source.py')
                 probe=importlib.util.module_from_spec(probe_spec);probe_spec.loader.exec_module(probe)
-                def probe_rows(path):
-                    return json.loads(subprocess.check_output([sys.executable,'-c',probe.PROBE,REX,str(socket),str(path)],env=dict(isolated_environment(),HOME=tmp),timeout=15))
-                self.assertEqual({r['block'] for r in probe_rows(profiles)},{other_block,manual_block})
-                args.profiles=root/'missing-profiles.json'
-                with contextlib.redirect_stdout(io.StringIO()):inventory.scan()
-                self.assertEqual(set(inventory.rows),{block,other_block})
-                self.assertEqual({r['block'] for r in probe_rows(args.profiles)},{other_block})
-
-                duplicate.unlink()
+                observed=json.loads(subprocess.check_output([sys.executable,'-c',probe.PROBE,REX,str(socket)],timeout=15))
+                self.assertEqual({r['block'] for r in observed},{block,other_block})
                 (root/'calls'/'calls.jsonl').write_text(json.dumps(dict(phase='start',call_id='x',verb='send'))+'\n'+json.dumps(dict(phase='end',call_id='x',exit=0))+'\n')
                 wait_for(lambda e:e['kind']=='stream' and e['text']=='message delivered')
                 closed=subprocess.run([REX,'--autostart=false','-S',endpoint,'block','close','--session',session,block],capture_output=True,text=True,timeout=5)

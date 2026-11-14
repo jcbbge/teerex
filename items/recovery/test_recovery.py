@@ -145,47 +145,6 @@ class RecoveryTest(unittest.TestCase):
         self.assertEqual(len(remap["mappings"]), 132)
         self.assertEqual(len(remap["launches"]), 132)
 
-    def test_reconcile_restart_read_only_confirmed_archive_and_lock(self):
-        self.fixture()
-        registry = self.root / "registry"
-        registry.mkdir(mode=0o700)
-        lock = registry / "agents.lock"
-        lock.touch(mode=0o600)
-        record = registry / ("agents-" + "a" * 32 + ".json")
-        record.write_text(json.dumps(dict(target=self.target(self.blocks[0]["block_id"]), supervisor_pid=os.getpid())))
-        record.chmod(0o600)
-        def invoke(*args, code=0):
-            return self.invoke("reconcile", "--registry", str(registry), *args, directory=False, code=code)
-        foreign = registry / ("agents-" + "b" * 32 + ".json")
-        foreign.write_text(json.dumps(dict(target=dict(self.target(self.blocks[0]["block_id"]), server="unix:///foreign.sock"))))
-        foreign.chmod(0o600)
-        foreign_before = foreign.read_bytes()
-        before = record.read_bytes()
-        preview = invoke()
-        self.assertEqual(preview["records"][0]["status"], "pane_present")
-        self.assertEqual(record.read_bytes(), before)
-        self.restart()
-        plan = invoke()
-        self.assertEqual(plan["records"][0]["status"], "pane_absent")
-        self.assertFalse((registry / "archive").exists())
-        invoke("--apply", "--confirm", preview["confirm"], code=1)
-        self.assertTrue(record.exists())
-        import fcntl
-        with lock.open("rb") as held:
-            fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            invoke(code=1)
-        result = invoke("--apply", "--confirm", plan["confirm"])
-        self.assertTrue(result["applied"])
-        self.assertFalse(result["processes_changed"])
-        self.assertFalse(record.exists())
-        archived = list((registry / "archive").glob("reconcile-*/agents-*.json"))
-        self.assertEqual(len(archived), 1)
-        self.assertEqual(archived[0].read_bytes(), before)
-        self.assertEqual(foreign.read_bytes(), foreign_before)
-        self.stop()
-        invoke(code=1)
-        self.assertEqual(foreign.read_bytes(), foreign_before)
-
     def fixture(self, nested=False):
         block = lambda label: {"block": {"flavor": "com.superlogical.terminal.shell", "label": label,
                                          "options": {"shell": "none", "cwd": str(self.root), "command": ["/bin/sh", "-c", "sleep 90"], "exit": {"on_completion": False}}}}
@@ -436,58 +395,6 @@ class RecoveryTest(unittest.TestCase):
                     "--confirm", plan["confirmation"], directory=False, code=3)
         self.assertTrue((Path(second["path"]).parent / "remap.json").exists())
         self.assertFalse((Path(first["path"]).parent / "restore.jsonl").exists())
-
-    def test_absent_registry_launch_is_omitted_but_identity_contradiction_refuses(self):
-        self.fixture()
-        metadata = self.metadata()
-        value = json.loads(metadata.read_text())
-        stale = json.loads(json.dumps(value["entries"][0]))
-        stale["target"]["block_id"] = "block:00000000-0000-0000-0000-000000000002"
-        value["entries"].append(stale)
-        metadata.write_text(json.dumps(value))
-        registry = self.root / "registry"
-        registry.mkdir(mode=0o700)
-        (registry / "agents.lock").touch(mode=0o600)
-        for i, entry in enumerate(value["entries"]):
-            record = registry / ("agents-%s.json" % i)
-            record.write_text(json.dumps(entry))
-            record.chmod(0o600)
-        result = self.invoke("snapshot", "--registry", str(registry))
-        self.assertEqual(result["omissions"]["absent_references"], [
-            {"reason": "launch_target_absent_at_snapshot", "target": stale["target"]}])
-        saved = json.loads((self.store / "snapshot.json").read_text())
-        self.assertEqual(saved["sessions"][0]["panes"][0]["launch"]["target"], value["entries"][0]["target"])
-        self.assertEqual(len(saved["sessions"][0]["panes"]), 1)
-        self.assertEqual(result["omissions"]["absent_references"][0]["reason"], "launch_target_absent_at_snapshot")
-        other = self.root / "other"
-        other.mkdir(mode=0o700)
-        stale["target"]["block_id"] = value["entries"][0]["target"]["block_id"]
-        stale["target"]["session_id"] = "session:00000000-0000-0000-0000-000000000002"
-        (registry / "agents-1.json").write_text(json.dumps(stale))
-        self.store = other
-        result = self.invoke("snapshot", "--registry", str(registry), code=1)
-        self.assertIn("contradiction", result["reason"])
-
-    def test_agents_registry_sanitized_under_nonblocking_shared_lock(self):
-        import fcntl
-        self.fixture()
-        metadata = json.loads(self.metadata(agent=True).read_text())["entries"][0]
-        metadata.update(protocol_file="SECRET_PROTOCOL_FILE_NOT_READ", token="SECRET_TOKEN_NOT_COPIED", protocol_outcome="argument_supplied")
-        registry = self.root / "registry"
-        registry.mkdir(mode=0o700)
-        lock = registry / "agents.lock"
-        lock.touch(mode=0o600)
-        record = registry / ("agents-" + "a" * 32 + ".json")
-        record.write_text(json.dumps(metadata))
-        record.chmod(0o600)
-        with lock.open("r+") as held:
-            fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            self.invoke("snapshot", "--registry", str(registry), code=1)
-        self.invoke("snapshot", "--registry", str(registry))
-        saved = json.loads((self.store / "snapshot.json").read_text())
-        launch = saved["sessions"][0]["panes"][0]["launch"]
-        self.assertEqual(launch["protocol_outcome"], "argument_supplied")
-        self.assertNotIn("SECRET_", (self.store / "snapshot.json").read_text())
 
     def test_transport_uncertainty_keeps_journal_and_never_retries_or_closes(self):
         self.fixture()

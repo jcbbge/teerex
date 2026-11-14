@@ -689,7 +689,7 @@ const UI = struct {
                     try add(&lines, a, try fmt(a, "− {s}", .{text(option, "lose")}), .secondary);
                 }
                 try add(&lines, a, try fmt(a, "Recommendation: {s}", .{text(d, "recommend")}), .secondary);
-                try add(&lines, a, "1–8 answer · j/k browse · d returns", .secondary);
+                try add(&lines, a, "j/k browse · d returns", .secondary);
             } else try add(&lines, a, if (eq(decision_count, "?")) "Decision source unavailable · d returns" else "No open decisions · d returns", .secondary);
         }
         if (self.help) {
@@ -1432,32 +1432,7 @@ pub fn run(_: A, args: []const []const u8) !u8 {
                 }
                 const key = input[0];
                 consumed += 1;
-                if (ui.decisions_open and key >= '1' and key <= '8') {
-                    if (model.hosts[ui.host].decisions) |*packet| {
-                        const list = packet.value.object.getPtr("decisions").?;
-                        if (ui.decision_index < list.array.items.len) {
-                            const d = list.array.items[ui.decision_index];
-                            const choices = arr(get(d, "options"));
-                            const choice: usize = key - '1';
-                            if (choice < choices.len) {
-                                if (model.replay) {
-                                    ui.status = "Replay · answer not sent";
-                                } else {
-                                    const target = get(d, "target");
-                                    const result = try std.process.Child.run(.{ .allocator = allocator, .argv = &.{ self, "--config", opts.config, "--host", model.hosts[ui.host].name, "ask", "--store", text(d, "store"), "--session", text(target, "session_id"), "--block", text(target, "block_id"), "--from", "operator", "--resolve", text(d, "id"), "--answer", text(choices[choice], "label") }, .max_output_bytes = 262144 });
-                                    defer allocator.free(result.stdout);
-                                    defer allocator.free(result.stderr);
-                                    if (result.term == .Exited and result.term.Exited == 0) {
-                                        _ = list.array.orderedRemove(ui.decision_index);
-                                        ui.status = "Answer recorded";
-                                    } else ui.status = "Answer not confirmed · inspect decision history";
-                                }
-                            }
-                        }
-                    }
-                    dirty = true;
-                    continue;
-                }
+                if (ui.decisions_open and key >= '1' and key <= '8') continue;
                 if (ui.decisions_open and (key == 'j' or key == 'k')) {
                     if (key == 'j') ui.decision_index += 1 else ui.decision_index -|= 1;
                     dirty = true;

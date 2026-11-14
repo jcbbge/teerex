@@ -66,16 +66,24 @@ def inspect_host(host):
         add('rexconfig', not drift and (code == 0 or 'drift: teerex build ' in out), '\n'.join(drift) or (err if code else out) or 'configuration matches', install)
     except OSError as exc:
         add('rexconfig', False, str(exc), install)
-    try:
-        profiles = json.loads((home / '.config/teerex/profiles.json').read_text())
-        for harness in ('claude', 'codex'):
-            profile = profiles.get('profiles', {}).get(harness, {})
-            code, out, err = run_command([host['teerex'], 'agents', 'hook', '--help'])
-            add(harness + '_hooks', profile.get('hook_events') is True and code == 0,
-                'per-launch hook adapter and profile enabled' if profile.get('hook_events') and code == 0 else 'hook adapter or hook_events profile missing', install)
-    except (OSError, ValueError) as exc:
-        for harness in ('claude', 'codex'):
+    for harness, settings in (('claude', '.claude/settings.json'), ('codex', '.codex/hooks.json')):
+        try:
+            path = home / settings
+            hooks = json.loads(path.read_text()).get('hooks', {}) if path.exists() else {}
+            ok = all(any('agent-hook' in hook.get('command', '')
+                         for group in hooks.get(event, []) for hook in group.get('hooks', []))
+                     for event in ('Stop', 'UserPromptSubmit'))
+            if harness == 'codex' and not ok:
+                # Older Codex installations use notify instead of lifecycle hooks.
+                config_path = home / '.codex/config.toml'
+                config = config_path.read_text() if config_path.exists() else ''
+                ok = any(line.lstrip().startswith('notify') and 'agent-hook' in line
+                         for line in config.splitlines())
+            add(harness + '_hooks', ok, 'agent-hook configured' if ok else 'agent-hook missing from Stop/UserPromptSubmit', install)
+        except (OSError, ValueError, TypeError, AttributeError) as exc:
             add(harness + '_hooks', False, str(exc), install)
+    extension = home / '.pi/agent/extensions/agent-hook.ts'
+    add('pi_hooks', extension.is_file(), 'agent-hook extension present' if extension.is_file() else 'agent-hook extension missing', install)
     return checks
 
 

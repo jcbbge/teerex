@@ -229,7 +229,7 @@ class BoardTest(unittest.TestCase):
         sid=rpc('session.create',dict(label='glyph fixture'))['session_id']
         creator = dict(isolated_environment(), HOME=str(self.root), PATH=str(Path(rex).parent)+os.pathsep+os.environ.get('PATH',''))
         pane_authority.caller(self, rpc, creator, self.root)
-        opened=json.loads(subprocess.check_output([BIN,'--rex',rex,'surfaces','open','--socket',str(socket),'--session',sid,'--layout','tab','--label','🟠 fixture','--','/bin/sh','-c','sleep 60'],env=creator,timeout=10))['actual']
+        opened=json.loads(subprocess.check_output([BIN,'--rex',rex,'surfaces','open','--socket',str(socket),'--session',sid,'--layout','tab','--label','🟠 fixture','--','/bin/sh'],env=creator,timeout=10))['actual']
         fifo=self.root/'events';os.mkfifo(fifo)
         writer=os.open(fifo,os.O_RDWR|os.O_NONBLOCK);self.addCleanup(os.close,writer)
         pane=Pane(self.root,fixture=fifo,extra_env=dict(creator,REX_SERVER='unix://'+str(socket),LC_REX_SESSION=sid,LC_REX_BLOCK=opened['block_id']))
@@ -333,7 +333,6 @@ class BoardTest(unittest.TestCase):
         self.assertNotIn(b'7501;state=blocked',p.output)
         self.assertIn(b'\x1b[7m',p.output)  # selected agent, independent of decisions
         p.key(b'd');self.assertIn('Deploy now?',p.view());self.assertIn('1. Go',p.view());self.assertIn('Preserves work',p.view())
-        p.key(b'2');self.assertIn('Replay · answer not sent',p.view())
         p.key(b'd');self.assertNotIn('Deploy now?',p.view())
         # Keep forbidden attention wording out of implementation, tests and docs.
         forbidden='needs'+' you'
@@ -574,7 +573,7 @@ class BoardTest(unittest.TestCase):
             sid=rpc('session.create',dict(label='board disposable '+name))['session_id']
             env=dict(isolated_environment(),TEEREX_CALL_LOG_DIR=str(root/'calls'),XDG_STATE_HOME=str(root/'state'))
             def open_pane(label):
-                return json.loads(subprocess.check_output([BIN,'--rex',rex,'surfaces','open','--socket',str(socket),'--session',sid,'--layout','tab','--label',label,'--','/bin/sh','-c','sleep 60'],env=env,stderr=subprocess.DEVNULL,timeout=10))['actual']['block_id']
+                return json.loads(subprocess.check_output([BIN,'--rex',rex,'surfaces','open','--socket',str(socket),'--session',sid,'--layout','tab','--label',label,'--','/bin/sh'],env=env,stderr=subprocess.DEVNULL,timeout=10))['actual']['block_id']
             target=open_pane('target')
             other=open_pane('other')
             targets[name]=(rpc,sid,target,other)
@@ -650,25 +649,11 @@ class BoardTest(unittest.TestCase):
                                     dict(isolated_environment(), HOME=str(self.root), XDG_STATE_HOME=str(self.root / 'state'),
                                          TEEREX_BOARDS_STORE=str(self.root / 'operator-boards'), AGENT_REGISTRY=str(self.root / 'operator-agents')),
                                     capture_output=True,timeout=5,check=True)
-        # Finite live JSON and the independent kept check use these disposable
-        # servers and a private launch registry, never the operator's state.
-        registry=self.root/'.local/state/teerex-agents';registry.mkdir(parents=True)
+        # Finite live JSON reads only disposable Rex program status and labels.
         for name, (_, sid, target, _) in targets.items():
-            (registry/(name+'.json')).write_text(json.dumps(dict(name=name,launch_id=name,target=dict(session_id=sid,block_id=target))))
+            subprocess.run([rex,'--autostart=false','--server','unix://'+hosts[name]['socket'],'send','--session',sid,'--block',target,"printf '\\033]7501;state=working:id=agent:app=codex\\007'"],check=True,capture_output=True)
+            subprocess.run([rex,'--autostart=false','--server','unix://'+hosts[name]['socket'],'send-key','--session',sid,'--block',target,'enter'],check=True,capture_output=True)
         private_env=dict(isolated_environment(),HOME=str(self.root),TEEREX_CALL_LOG_DIR=str(self.root/'calls'))
-        private_env['TEEREX_ASK_STATE_DIR']=str(self.root/'asks')
-        _,decision_session,asker_block,seat_block=targets['hive']
-        Path(hosts['hive']['store']).mkdir(mode=0o700,exist_ok=True)
-        decision_base=[BIN,'--config',str(config),'--host','hive']
-        registered=subprocess.run(decision_base+['boards','seat','register','--session',decision_session,'--block',seat_block,'--owner','operator'],env=private_env,capture_output=True,text=True,timeout=10)
-        self.assertEqual(registered.returncode,0,registered.stdout+registered.stderr)
-        card=self.root/'decision.json'
-        card.write_text(json.dumps(dict(id='board-choice',title='Board decision',ask='Pick the release time?',context='Disposable board check',options=[dict(label='Now',gain='Available',lose='Interrupts'),dict(label='Later',gain='Preserves work',lose='Delay')],recommend='Later')))
-        asked=subprocess.run(decision_base+['ask','--session',decision_session,'--block',seat_block,'--from','worker','--card-file',str(card)],env=dict(private_env,REX_SESSION=decision_session,REX_BLOCK=asker_block),capture_output=True,text=True,check=True,timeout=10)
-        asked_receipt=json.loads(asked.stdout)
-        self.assertEqual(asked_receipt['outcome'],'events_acknowledged')
-        self.assertTrue(asked_receipt['paste']['attempted'])
-        self.assertEqual(asked_receipt['history'],'recorded')
         snapshot=subprocess.run([BIN,'board','--config',str(config),'--json'],env=private_env,capture_output=True,text=True,timeout=20)
         self.assertEqual(snapshot.returncode,0,snapshot.stderr)
         data=json.loads(snapshot.stdout)
@@ -676,7 +661,7 @@ class BoardTest(unittest.TestCase):
             self.assertEqual(len(host['rows']),1)
             self.assertEqual(host['rows'][0]['block'],targets[host['host']][2])
             self.assertEqual(host['counts']['total'],1)
-            self.assertEqual(host['counts']['unknown'],1)
+            self.assertEqual(host['counts']['working'],1)
         held_check=Path(__file__).with_name('check_held_source.py')
         result=subprocess.run(['python3',str(held_check),'--config',str(config),'--teerex',BIN],env=private_env,capture_output=True,text=True,timeout=30)
         self.assertEqual(result.returncode,0,result.stdout+result.stderr)
@@ -694,34 +679,6 @@ class BoardTest(unittest.TestCase):
         self.assertEqual(result.returncode,1,result.stdout+result.stderr)
         self.assertIn('header total: rows=1 header=2',result.stdout)
         self.assertIn('1 differences',result.stdout)
-        # Profile-only rows and the independent checker agree without a launch record.
-        runner=self.root/'profile-runner';shutil.copy(shutil.which('sleep'),runner)
-        # macOS kills a copied platform binary until it is ad-hoc signed.
-        if sys.platform=='darwin':subprocess.run(['codesign','--force','-s','-',str(runner)],check=True,capture_output=True)
-        profile_dir=self.root/'.config/teerex';profile_dir.mkdir(parents=True)
-        profiles=profile_dir/'profiles.json'
-        profiles.write_text(json.dumps(dict(profiles=dict(example=dict(argv=[str(runner)])))))
-        manual=subprocess.run([rex,'--autostart=false','--server','unix://'+hosts['hive']['socket'],'new','--json','manual','--',str(runner),'60'],capture_output=True,text=True,timeout=5)
-        self.assertEqual(manual.returncode,0,manual.stderr)
-        manual_created=json.loads(manual.stdout)
-        manual_block=manual_created['initial_windows'][0]['block_ids'][0]
-        snapshot=subprocess.run([BIN,'board','--config',str(config),'--json'],env=private_env,capture_output=True,text=True,timeout=20)
-        self.assertEqual(snapshot.returncode,0,snapshot.stderr)
-        host=next(h for h in json.loads(snapshot.stdout)['hosts'] if h['host']=='hive')
-        self.assertEqual({r['block'] for r in host['rows']},{targets['hive'][2],manual_block})
-        self.assertEqual(host['counts']['total'],2)
-        result=subprocess.run(['python3',str(check),'--config',str(config),'--teerex',BIN],env=private_env,capture_output=True,text=True,timeout=30)
-        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
-        self.assertIn('0 differences',result.stdout)
-        profiles.unlink()
-        snapshot=subprocess.run([BIN,'board','--config',str(config),'--json'],env=private_env,capture_output=True,text=True,timeout=20)
-        self.assertEqual(snapshot.returncode,0,snapshot.stderr)
-        host=next(h for h in json.loads(snapshot.stdout)['hosts'] if h['host']=='hive')
-        self.assertEqual({r['block'] for r in host['rows']},{targets['hive'][2]})
-        self.assertEqual(host['counts']['total'],1)
-        pane_authority.operator([BIN,'surfaces','close','--socket',hosts['hive']['socket'],'--session',manual_created['session_id'],'--pane',manual_block],
-                                dict(private_env, PATH=os.path.dirname(rex)+os.pathsep+os.environ.get('PATH','')),
-                                capture_output=True,timeout=5,check=True)
         # The normal entrypoint must start the integrated feed, receive vitals,
         # and reap its foreground feed children when the board exits.
         live=Pane(self.root,fixture=None,config=config,extra_env=dict(TEEREX_ASK_STATE_DIR=str(self.root/'asks')))
@@ -731,15 +688,6 @@ class BoardTest(unittest.TestCase):
         self.assertIn('agents',live.view())
         live.key(b'm');live.until(lambda:live.view().splitlines()[0].strip().startswith('m5  '),seconds=5)
         live.key(b'm')
-        live.until(lambda:'1 asks' in live.view(),seconds=10)
-        self.assertNotIn('Pick the release time?',live.view())
-        live.key(b'd');live.until(lambda:'Pick the release time?' in live.view())
-        live.key(b'2');live.until(lambda:b'Answer recorded' in live.output,seconds=10)
-        live.until(lambda:'asks' not in live.view())
-        self.assertNotIn('asks',live.view())
-        history=subprocess.run(decision_base+['boards','state','inspect'],env=private_env,capture_output=True,text=True,check=True,timeout=10)
-        resolutions=[r for seat in json.loads(history.stdout)['state']['seats'] for r in seat['records'] if r['kind']=='resolution']
-        self.assertEqual(resolutions[-1]['body'],dict(id='board-choice',answer='Later'))
         processes={int(pid):int(ppid) for pid,ppid in (line.split() for line in subprocess.check_output(['ps','-axo','pid=,ppid='],text=True).splitlines())}
         descendants={live.proc.pid}
         for _ in range(10):
@@ -883,10 +831,10 @@ class BoardTest(unittest.TestCase):
             if 'session.list' in a: print(json.dumps(dict(sessions=[dict(session_id={sid!r})]))); sys.exit()
             if 'ls' in a and '--block' not in a:
                 first=not mark.exists(); mark.touch()
-                print(json.dumps([dict(block_id=b) for b in ([{kept!r},{gone!r}] if first else [{kept!r}])])); sys.exit()
+                print(json.dumps([dict(block_id=b,label="worker") for b in ([{kept!r},{gone!r}] if first else [{kept!r}])])); sys.exit()
             block=a[a.index('--block')+1]
             if block=={gone!r}: sys.exit(1)
-            if 'program_status' in a: print(json.dumps(dict(records=[dict(id='teerex/tint',app='codex',state='working')]))); sys.exit()
+            if 'program_status' in a: print(json.dumps(dict(records=[dict(id='agent',app='codex',state='working')]))); sys.exit()
             print(json.dumps(dict()))
         '''))
         fake.chmod(0o755)

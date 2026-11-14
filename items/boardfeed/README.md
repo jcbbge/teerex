@@ -7,8 +7,7 @@ installation, retry, or SSH fallback is started. Disconnects produce `host`
 events while the other host continues.
 
 `--local --host-name NAME --socket ABS --rex ABS` runs a transport worker on
-one host. Read-only source overrides: `--agents-registry ABS`,
-`--jobs-registry ABS`, `--scratch ABS`, `--calls ABS`. Defaults are the host's
+one host. Read-only source overrides: `--scratch ABS`, `--calls ABS`. Defaults are the host's
 standard teerex state paths; `TEEREX_CALL_LOG_DIR` selects the call directory.
 The named-host transport injects the configured socket and Rex executable.
 Python 3.9+ is required, using only its standard library.
@@ -30,7 +29,7 @@ processes retain a null agent. First CPU/network samples establish the baseline.
 Missing process/status evidence leaves agent CPU/RSS null; grouped process
 measurements are in `vitals.top`. macOS process CPU is the native `ps` average,
 while Linux reports interval deltas. Filesystem events trigger state reads;
-there is no periodic registry or Rex polling.
+there is no periodic Rex polling.
 
 Verification: `REX_BIN=/absolute/disposable-capable/rex python3
 items/boardfeed/test_feed.py -v`. Tests create private temporary directories and
@@ -39,11 +38,7 @@ The Linux `/proc` fixture case is selected only on Linux; all other cases run
 on both operating systems. Tests never use a personal Rex socket or registry.
 
 Agent rows start from the live Rex pane inventory, one row per block id.
-Launch records supply metadata only; a dead launch never creates a row.
-A live pane qualifies through a launch record, a `teerex` or `teerex/tint` status record, or a child/foreground executable matching `profiles.*.argv[0]` in the host’s `~/.config/teerex/profiles.json` (`--profiles ABS` overrides it; unavailable files add nothing), with process changes refreshing membership.
-Scratchpads join by the live pane’s session and block id, including idle/done
-panes. State comes only from OSC 7501 `program_status`; `blocked` remains
-`blocked`, and missing status is `unknown`.
+A live pane qualifies when it has a Rex label and an `id=agent` program-status record. Rexconfig's agent-hook publishes working, idle, done or error using OSC 7501; other programs and old launch records do not add rows.
 
 `--once` reads one finite inventory/status/scratchpad snapshot and exits without
 starting vitals or the event subscription. With named hosts it forwards the
@@ -82,17 +77,6 @@ Example additions to an existing hive entry (retain its transport/path fields):
 }
 ```
 
-Agent rows expose starter display name, contract step_n/step_total, last_contact_at (milliseconds) and stalled. Older launches use scratchpad steps, starter metadata and the last hook contact; absent contact is zero.
+Agent rows use live Rex pane labels and `id=agent` program status from rexconfig agent-hook. Scratchpad steps supply progress; unavailable parent/contact/cost/project metadata stays empty or unknown.
 
 Agent rows project ordered scratchpad steps (Done, Now, To-do), preserving optional executor, outcome and handoff annotations. Pane inventory and row-derived counts are unchanged.
-
-Decision snapshots read each configured host’s existing boards store through `boards state inspect`, fold resolutions and publish only open cards. The feed watches that store with the existing filesystem watcher; unavailable sources are explicit. No decision is sent or opened by the feed.
-
-Board enrichment remains observational: `agents cost --json` supplies only
-allowlisted token, dollar and turn/wall duration fields; transcript paths and
-raw launch records never enter feed events. Attention snapshots use
-`boards attention --json --since 1h`, refresh on log/profile changes and age
-out on the foreground feed’s sampling loop. Accounting refreshes every 30s
-while the board owns the feed; no schedule or service is installed.
-Explicit Rivet item associations are resolved with `rv show`, with none when
-unavailable. Scratch step events carry proof separately from label text.

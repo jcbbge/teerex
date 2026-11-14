@@ -267,21 +267,6 @@ class MacVitals:
         return dict(cpu=cpu,cpu_total=sum(cpu)/max(1,len(cpu)),load=list(os.getloadavg()),mem=dict(total=total,used=max(0,total-available)),swap=dict(total=byte_value('total'),used=byte_value('used')),disks=disks,net=net,top=group_processes(processes,roots))
 
 
-def executable_path(value):
-    if not isinstance(value,str) or not value:return None
-    try:return str(Path(value).resolve()) if Path(value).exists() else value
-    except (OSError,RuntimeError):return value
-
-
-def profile_executables(path):
-    try:
-        profiles=json.loads(read(path.resolve())).get('profiles',{})
-        return {executable_path(p['argv'][0]) for p in profiles.values()
-                if isinstance(p,dict) and isinstance(p.get('argv'),list) and p['argv']
-                and isinstance(p['argv'][0],str) and p['argv'][0]}
-    except (OSError,ValueError,UnicodeError,TypeError,AttributeError,RuntimeError):return set()
-
-
 def scratch_steps(sections):
     steps=[]
     for section,state in (('Done','done'),('Now','now'),('To-do','todo')):
@@ -353,7 +338,6 @@ class State:
         self.a=a; self.rows={};self.calls={};self.call_starts={};self.roots={};self.pids={};self.status={};self.questions={};self.reports={};self.seeded=set();self.live={};self.reachable=None
         self.lock=threading.RLock()
         self.processes={}
-        self.accounting={};self.projects={}
 
     def rex_json(self, *args):
         command=[self.a.rex,'--autostart=false','--server','unix://'+self.a.socket,'--timeout','2s',*args]
@@ -382,34 +366,6 @@ class State:
     def scan(self):
         with self.lock:
             self.refresh_inventory()
-            # Registries provide names/launch metadata, never the pane inventory.
-            records={}
-            for registry in (self.a.agents_registry,self.a.jobs_registry):
-                if not registry.exists():continue
-                for path in sorted(registry.glob('*.json')):
-                    try:
-                        data=json.loads(read(path))
-                        if not isinstance(data,dict):continue
-                        for record in data.get('entries',[data]):
-                            if not isinstance(record,dict):continue
-                            target=record.get('target') or {}
-                            block=target.get('block_id') or record.get('block_id')
-                            if not block:continue
-                            # Prefer named managed launches; duplicates can never add rows.
-                            if block not in records:records[block]=dict(record,_managed=registry==self.a.agents_registry)
-                    except (OSError,ValueError,UnicodeError,TypeError):continue
-            executables=profile_executables(self.a.profiles) if getattr(self.a,'profiles',None) else set()
-            # Same registration and live-address rules as boards.live_seat;
-            # read existing state directly without opening a mutable Store.
-            seat=None
-            try:
-                registrations=json.loads((self.a.store/'state.json').read_text(encoding='utf-8'))['seats']
-                seats=[r['target'] for r in registrations if not r.get('inherited_to')
-                       and r['target']['host']==self.a.host
-                       and r['target']['server']=='unix://'+self.a.socket
-                       and self.live.get(r['target']['block_id'],{}).get('session')==r['target']['session_id']]
-                if len(seats)==1:seat=seats[0]
-            except (OSError,ValueError,KeyError,TypeError,AttributeError):pass
             rows={}
             for block,pane in self.live.items():
                 session=pane['session']
@@ -421,14 +377,8 @@ class State:
                         status=self.rex_json('block','call','--session',session,'--block',block,'program_status','{}')
                         self.update_status(block,status)
                     except (OSError,ValueError,subprocess.SubprocessError):pass
-                record=records.get(block)
-                agent_reports=[r for r in self.reports.get(block,{}).values() if (r.get('id') in ('teerex', 'teerex/tint') or r.get('app') == 'teerex-agent')]
-                matched=next((value for role in ('child','foreground')
-                              for field in ('argv0','path')
-                              for value in [(self.processes.get(block,{}).get(role) or {}).get(field)]
-                              if executable_path(value) in executables),None)
-                if not (record or {}).get('_managed') and not agent_reports and not matched:continue
-                record=record or {}
+                agent_reports=[r for identifier,r in self.reports.get(block,{}).items() if identifier == 'agent']
+                if not pane.get('label') or not agent_reports:continue
                 # The pane address owns its scratchpad, regardless of record name/session.
                 pad=self.a.scratch/session/(block+'.md')
                 sections={'Now':[],'To-do':[],'Done':[]};section=None;headers={}
@@ -440,60 +390,20 @@ class State:
                         elif section in sections and line.startswith(('- [ ] ','- [x] ','- ')):
                             sections[section].append(line[6:] if line.startswith(('- [ ] ','- [x] ')) else line[2:])
                 except (OSError,ValueError,UnicodeError):pass
-                hook=record.get('last_hook') or {}
-                contract=record.get('contract') or {}
-                starter=contract.get('starter',record.get('starter')) or {}
-                starter_block=starter.get('block_id','')
-                starter_session=starter.get('session_id')
-                starter_record=records.get(starter_block,{})
-                starter_pane=self.live.get(starter_block,{})
-                if (starter_record.get('target') or {}).get('session_id')!=starter_session:starter_record={}
-                if starter_pane.get('session')!=starter_session:starter_pane={}
-                starter_name=starter_record.get('name') or starter_pane.get('label') or starter_block.split(':')[-1][:8]
-                if not record.get('_managed') and not agent_reports:
-                    name=pane.get('label') or os.path.basename(matched)
-                else:
-                    name=record.get('name') or pane.get('label') or (agent_reports[0].get('app') if agent_reports else None) or 'agent'
-                row=dict(id=block,name=name,session=session,block=block,state=self.status.get(block,'unknown'),placement=pane.get('placement','placed'),now=next(iter(sections['Now']),None),done=len(sections['Done']),total=sum(map(len,sections.values())),question=self.questions.get(block),since=hook.get('at') or record.get('created_at') or record.get('registered_at_unix_ms') or 0,cpu=None,rss=None)
-                row.update(waiting=headers.get('waiting',''),check=headers.get('check',''),updated=headers.get('updated',''),steps=scratch_steps(sections),executor=record.get('profile') or 'agent',starter=starter_name,step_n=contract.get('step_n',len(sections['Done'])+bool(sections['Now'])),step_total=contract.get('steps_total',row['total']),last_contact_at=contract.get('last_contact_at',hook.get('at') or 0),stalled=contract.get('stalled',False))
-                item=(record.get('cost') or {}).get('rivet_item')
-                if not item and record.get('owner')=='rivet':item=(record.get('purpose') or '').split(' · ')[0]
-                row.update(cost=self.accounting.get(block),project=self.project(item),rivet_item=item)
-                if seat and block==seat['block_id'] and session==seat['session_id']:row['role']='seat'
+                report=agent_reports[-1]
+                row=dict(id=block,name=pane['label'],session=session,block=block,state=self.status.get(block,'unknown'),placement=pane.get('placement','placed'),now=next(iter(sections['Now']),None),done=len(sections['Done']),total=sum(map(len,sections.values())),question=self.questions.get(block),since=0,cpu=None,rss=None)
+                row.update(waiting=headers.get('waiting',''),check=headers.get('check',''),updated=headers.get('updated',''),steps=scratch_steps(sections),executor=report.get('app') or 'agent',starter='',step_n=len(sections['Done'])+bool(sections['Now']),step_total=row['total'],last_contact_at=0,stalled=False,cost=None,project='none',rivet_item=None)
+                if pane['label']=='seat':row['role']='seat'
                 rows[block]=row
             for block,row in rows.items():
                 if self.rows.get(block)!=row:emit(self.a.host,'agent',**row)
             for block,row in self.rows.items():
                 if block not in rows:emit(self.a.host,'agent',**dict(row,state='gone'))
-            active_items={r.get('rivet_item') for r in rows.values()}
-            self.projects={k:v for k,v in self.projects.items() if k in active_items}
             self.rows=rows
             self.seeded.intersection_update(self.live)
             self.processes={b:p for b,p in self.processes.items() if b in self.live}
             self.roots={self.pids[row['block']]:row['name'] for row in rows.values() if row['block'] in self.pids}
             self.tail_calls()
-
-    def project(self,item):
-        if not item:return 'none'
-        if item not in self.projects:
-            try:
-                if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.:-]*',item):raise ValueError('invalid item')
-                raw=tracked_output(['rv','show',item],timeout=15,text=True)
-                header=re.sub(r'\x1b\[[0-9;]*m','',raw).splitlines()[0]
-                match=re.search(r'\s'+re.escape(item)+r'\s+(.+?) · ',header)
-                if not match:raise ValueError('no item header')
-                self.projects[item]=match[1]+' / '+item
-            except (OSError,ValueError,IndexError,subprocess.SubprocessError):self.projects[item]='none'
-        return self.projects[item]
-
-    def accounting_snapshot(self):
-        self.projects.clear()
-        try:
-            packet=json.loads(tracked_output([self.a.executable,'agents','cost','--registry',str(self.a.agents_registry),'--json'],timeout=30))
-            # Allow only measured fields; never forward transcript paths or raw launch records.
-            self.accounting={r['target']['block_id']:{k:r.get(k) for k in ('tokens_in','tokens_out','dollars','current_turn_seconds','wall_seconds')}
-                             for r in packet['agents'] if isinstance(r.get('target'),dict) and r['target'].get('block_id')}
-        except (OSError,ValueError,KeyError,TypeError,subprocess.SubprocessError):self.accounting={}
 
     def refresh_process(self,block,session):
         self.processes.pop(block,None)
@@ -531,8 +441,8 @@ class State:
                                 r=dict(start,**r)
                             command=r.get('command',r.get('verb',''))
                             if isinstance(command,list):command=command[0] if command else ''
-                            if command in ('send','ask','agents','run','run-visible','spawn'):
-                                text={'send':'message delivered','ask':'question updated','agents':'agent activity','spawn':'pane opened','run':'command updated','run-visible':'command updated'}[command]
+                            if command in ('send','run','run-visible'):
+                                text={'send':'message delivered','run':'command updated','run-visible':'command updated'}[command]
                                 emit(self.a.host,'stream',agent=None,text=text,role='words')
                         except (ValueError,TypeError):pass
                     self.calls[key]=f.tell()
@@ -549,10 +459,8 @@ class State:
         elif 'ids' in payload:
             for identifier in payload['ids']:reports.pop(identifier,None)
         elif 'state' in payload:reports[payload.get('id','')]=payload
-        priority={'error':5,'blocked':4,'waiting':4,'working':3,'done':2,'idle':1}
-        agent_reports=[r for r in reports.values() if (r.get('id') in ('teerex', 'teerex/tint') or r.get('app') == 'teerex-agent')]
-        managed=[r for r in agent_reports if (r.get('id') in ('teerex', 'teerex/tint') or r.get('app') == 'teerex-agent')]
-        record=managed[-1] if managed else agent_reports[-1] if agent_reports else max(reports.values(),key=lambda r:priority.get(r.get('state'),0),default={})
+        agent_reports=[r for identifier,r in reports.items() if identifier == 'agent']
+        record=agent_reports[-1] if agent_reports else {}
         state=record.get('state')
         if state in ('working','waiting','blocked','error','idle','done'):self.status[block]=state
         else:self.status.pop(block,None)
@@ -689,59 +597,8 @@ def open_held(a):
         if result.returncode:raise ValueError('held pane unavailable')
 
 
-class Decisions:
-    def __init__(self,a):
-        self.a=a;self.previous=None;self.signature=object()
-
-    def poll(self):
-        try:
-            info=(self.a.store/'state.json').stat()
-            signature=(info.st_ino,info.st_mtime_ns,info.st_size)
-        except OSError:signature=None
-        if signature==self.signature:return
-        self.signature=signature
-        try:
-            result=tracked_output([self.a.executable,'boards','state','inspect','--store',str(self.a.store)],timeout=5)
-            state=json.loads(result)['state'];rows=[]
-            for seat in state['seats']:
-                opened={}
-                for record in seat['records']:
-                    if record['kind']=='decision':opened[record['body']['id']]=record
-                    elif record['kind']=='resolution':opened.pop(record['body']['id'],None)
-                for record in opened.values():
-                    rows.append(dict(record['body'],target=seat['target'],store=str(self.a.store),opened_at=record['at']))
-            snapshot=dict(available=True,decisions=sorted(rows,key=lambda r:r['opened_at']))
-        except (OSError,ValueError,KeyError,TypeError,subprocess.SubprocessError):
-            snapshot=dict(available=False,decisions=[])
-        if snapshot!=self.previous:
-            emit(self.a.host,'decisions',**snapshot);self.previous=snapshot
-
-
-class Attention:
-    def __init__(self,a):self.a=a;self.previous=None;self.signature=None
-
-    def poll(self):
-        path=Path(os.environ.get('TEEREX_ATTENTION_DIR',str(Path.home()/'.local/state/teerex/attention')))/'deliveries.jsonl'
-        def stamp(path):
-            try:
-                info=path.stat();return (info.st_ino,info.st_mtime_ns,info.st_size)
-            except OSError:return None
-        signature=(stamp(path),stamp(self.a.profiles),int(time.time()//30))
-        if signature==self.signature:return
-        self.signature=signature
-        try:
-            packet=json.loads(tracked_output([self.a.executable,'boards','attention','--json','--since','1h','--profiles',str(self.a.profiles),'--agents-registry',str(self.a.agents_registry)],timeout=5))
-            snapshot=dict(available=True,messages=packet['messages'],words=packet['words'],over_share=any(r['over_share'] for r in packet['senders']))
-        except (OSError,ValueError,KeyError,TypeError,subprocess.SubprocessError):snapshot=dict(available=False,messages=None,words=None,over_share=False)
-        if snapshot!=self.previous:emit(self.a.host,'attention',**snapshot);self.previous=snapshot
-
-
 def local(a):
     state=State(a)
-    state.accounting_snapshot()
-    attention=Attention(a);attention.poll()
-    decisions=Decisions(a)
-    decisions.poll()
     held=Held(a.host,json.loads(a.held_command_json)) if a.held_command_json else None
     tasks=Tasks(a.host,a.tasks) if a.tasks else None
     if a.once:
@@ -749,16 +606,14 @@ def local(a):
         if held:held.poll()
         state.scan()
         return
-    watcher=Watcher([a.agents_registry,a.jobs_registry,a.scratch,a.calls,a.profiles,a.store,Path(os.environ.get('TEEREX_ATTENTION_DIR',str(Path.home()/'.local/state/teerex/attention')))] + ([a.tasks] if a.tasks else []))
+    watcher=Watcher([a.scratch,a.calls] + ([a.tasks] if a.tasks else []))
     sample=LinuxVitals() if sys.platform=='linux' else MacVitals()
     thread=threading.Thread(target=rex_events,args=(a,state),daemon=True);thread.start()
     if tasks:tasks.scan()
-    state.scan();deadline=time.monotonic();held_deadline=0;accounting_deadline=time.monotonic()+30
+    state.scan();deadline=time.monotonic();held_deadline=0
     try:
         while not STOP.is_set():
             now=time.monotonic()
-            if now>=accounting_deadline:
-                state.accounting_snapshot();state.scan();attention.poll();accounting_deadline=time.monotonic()+30
             if held and now>=held_deadline:
                 held.poll();held_deadline=time.monotonic()+30
             if now>=deadline:
@@ -770,7 +625,7 @@ def local(a):
                 deadline=now+1
             if watcher.wait(max(0,deadline-time.monotonic())):
                 if tasks:tasks.scan()
-                state.scan();decisions.poll();attention.poll()
+                state.scan()
     finally:watcher.close()
 
 
@@ -784,7 +639,6 @@ def merge(a):
             selected=subprocess.run([a.executable,'targets','resolve','--config',a.config,'--host',host],capture_output=True,timeout=15)
             if selected.returncode:raise ValueError('host unavailable')
             source=json.loads(selected.stdout)['host']
-            command+=['--store',source['store']]
             configured='held_command' in source
             if configured:
                 try:
@@ -823,7 +677,6 @@ def main(argv=None):
     parser.add_argument('--held-id',help=argparse.SUPPRESS)
     parser.add_argument('--open-held',action='store_true',help=argparse.SUPPRESS)
     parser.add_argument('--held-pane',action='store_true',help=argparse.SUPPRESS)
-    parser.add_argument('--store',type=Path,default=Path.home()/'.local/state/teerex-boards',help=argparse.SUPPRESS)
     parser.add_argument('--tasks',type=Path,help='absolute read-only task file directory on each selected host')
     parser.add_argument('--once',action='store_true',help='finite pane snapshot, then exit (no vitals or event subscription)')
     parser.add_argument('--local',action='store_true',help='read this host only (transport worker)')
@@ -832,14 +685,14 @@ def main(argv=None):
     parser.add_argument('--rex',default=os.environ.get('TEEREX_INTERNAL_REX',os.environ.get('REX_BIN','rex')))
     parser.add_argument('--profiles',type=Path,default=Path.home()/'.config/teerex/profiles.json',help='absolute read-only profiles file on this host')
     home=Path.home()/'.local/state'
-    for flag,default in [('agents-registry',home/'teerex-agents'),('jobs-registry',home/'teerex-jobs'),('scratch',home/'teerex/scratch'),('calls',Path(os.environ.get('TEEREX_CALL_LOG_DIR',home/'teerex/calls')))]:
+    for flag,default in [('scratch',home/'teerex/scratch'),('calls',Path(os.environ.get('TEEREX_CALL_LOG_DIR',home/'teerex/calls')))]:
         parser.add_argument('--'+flag,type=Path,default=default,help='absolute read-only source directory on this host')
     args=parser.parse_args(argv)
     args.executable=EXECUTABLE
     if not os.path.isabs(args.config) or any(not re.fullmatch(r'[A-Za-z0-9_-]+',h) for h in args.hosts.split(',')):
         parser.error('absolute --config and valid host names required')
     if args.tasks is not None and not args.tasks.is_absolute():parser.error('--tasks must be absolute')
-    for path in (args.agents_registry,args.jobs_registry,args.scratch,args.calls,args.profiles):
+    for path in (args.scratch,args.calls,args.profiles):
         if not path.is_absolute():parser.error('source paths must be absolute')
     if args.open_held or args.held_pane or args.held_open_json is not None:
         try:open_held(args)

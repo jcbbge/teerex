@@ -14,7 +14,7 @@ Registry launches whose panes are absent from the snapshot inventory are listed 
 
 ## Who
 
-The operator or an authorized setup agent selects one command host and explicit Rex socket. The shared root's named-host transport may invoke this leaf on another machine; all directories, registry paths, binaries and cwd values then belong to **that command host**. This module does not invent SSH routes, discover personal machines or interpret a label as an execution address.
+The operator or an authorized setup agent selects one command host and explicit Rex socket. The shared root's named-host transport may invoke this leaf on another machine; all directories, binaries and cwd values then belong to **that command host**. This module does not invent SSH routes, discover personal machines or interpret a label as an execution address.
 
 A recovery file is private operator-owned state, not a portable permission grant. A preview hash binds the snapshot content, live target instance/host/version, existing-session inventory and omission policy. It is a confirmation of that concrete plan, not a security sandbox or exclusive mutation lease.
 
@@ -47,11 +47,10 @@ After a restart, preview against the explicitly selected **empty** server. Resto
 
 ## Where and private bounds
 
-- Snapshot/store/metadata paths are absolute. Store/registry directory: owned by the invoking UID, exactly 0700. State/metadata files: owned regular files, exactly 0600, one hard link. Final symlinks are refused. Use trusted parent directories and a trusted local filesystem; this is not protection from a malicious same-UID process or a mutation lease.
+- Snapshot/store/metadata paths are absolute. Store directory: owned by the invoking UID, exactly 0700. State/metadata files: owned regular files, exactly 0600, one hard link. Final symlinks are refused. Use trusted parent directories and a trusted local filesystem; this is not protection from a malicious same-UID process or a mutation lease.
 - `snapshot.json`, `restore.jsonl`, `remap.json` and `board-map.json` are never overwritten. Keep them off Git/public logs and back them up using your own private policy. No automatic retention/deletion is performed.
 - Snapshots, inventories, private JSON, transport stdout and restore journals have no count or byte cap. Split depth 16; argv at most 64 elements/16 KiB encoded and 4096 bytes per element; sanitized launch record at most 32 KiB. Stderr is consumed up to 64 KiB but not echoed in receipts.
 - Rex requests/child invocations are bounded by `--timeout-ms` (100–60000, default 5000); the foreground native controller has a 15-minute outer bound. A deadline/uncertain ACK is not permission to retry. No background watcher or hidden agent is created.
-- The optional agent registry is read under its established `agents.lock`, a nonblocking shared advisory lock. Contention refuses without retry. Metadata is historical caller evidence, not proof a harness can resume.
 - Snapshot rechecks each session's layout, the session inventory and server identity without retries. Cwd/process/cross-session/board observations are not one atomic server-wide snapshot.
 
 ## Why
@@ -77,7 +76,6 @@ Inspect `running.version`, `running.host_id`, `running.instance_id`, `installed_
 ```sh
 mkdir -m 700 /ABS/new-recovery-directory
 teerex recovery snapshot --socket /ABS/rex.sock --directory /ABS/new-recovery-directory \
-  --registry /ABS/agent-registry
 teerex recovery inspect --directory /ABS/new-recovery-directory
 ```
 
@@ -97,7 +95,7 @@ and confirmed apply both select anew, so a newer capture invalidates an older
 confirmation. `--directory` selects one exact existing private directory;
 it cannot be combined with `--root`.
 
-`--registry` is optional and explicit. Registry input is schema1 `agents-LAUNCHID.json`; tokens, briefs, hook details and arbitrary fields are discarded. `protocol_outcome`, `protocol_acknowledged` and measured immediate-child exit codes remain historical declared evidence, never new readiness/death claims. No token-bearing protocol argument is copied from the live process: the agents registry's argv is the pre-protocol profile argv.
+`--metadata` is an optional explicit source. Metadata is sanitized schema1 caller evidence, never authority to relaunch an agent.
 
 For independently owned non-agent panes, an optional private `--metadata /ABS/metadata.json` has this shape (illustrative IDs only):
 
@@ -131,7 +129,6 @@ The combined read-only update/snapshot step is:
 
 ```sh
 teerex recovery update --socket /ABS/rex.sock --snapshot --directory /ABS/new-recovery-directory \
-  --registry /ABS/agent-registry
 ```
 
 This still performs **no update, restart or restore**. There is no public updater API in the inspected Rex release. Use that selected server's documented installer/app restart control only after separately approving target/impact, preserving drafts and accounting for every unsupported field. There is no invented universal one-click action.
@@ -157,7 +154,7 @@ Use the same `--accept-omissions` choice as the preview, if any. The token is re
 
 Each new surface initially runs a visible fixed recovery shim. All final pane rectangles/layers/hosts/labels are re-inspected before any original command is released. Remapped report/inbox/starter lines are sent only to those new recovery-owned readers as data, not shell source or unsent drafts. They set `AGENT_REPORT_TO`, `TEEREX_INBOX` and `AGENT_STARTER` (plus the applicable agent-core `LC_` forms). A queued-byte ACK does not prove the program consumed them or started successfully. Programs remain visible/retained in Rex; no hidden fallback exists. Argv stays literal: embedded pane IDs or viewer flags inside arbitrary arguments are **not** rewritten. Reopen board/viewer programs through their owning command with the new address rather than claiming application-internal references recovered.
 
-`remap.json` contains full old/new pane addresses, old/new session IDs, final measured geometry and remapped launch references. It is **not** an importable replacement for the agents lifecycle registry, and its old `launch_id`/ACK facts do not authorize relaunch. Relaunch an agent through an explicitly configured fresh `agents launch` gate; operator-authored resume flags in a profile are not measured harness-recovery support.
+`remap.json` contains full old/new pane addresses, old/new session IDs, final measured geometry and remapped launch references. It does not authorize agent relaunch; start agents separately through rexconfig. Operator-authored resume flags are not measured harness-recovery support.
 
 Legacy board fields in older snapshots are ignored; snapshot files and retained board stores are never changed.
 
@@ -186,7 +183,7 @@ zig build-exe --dep rex_recovery --dep rex_surfaces \
 REX_BIN=/ABS/rex TEEREX_BIN=/ABS/teerex-recovery-test python3 items/recovery/test_recovery.py -v
 ```
 
-The suite creates/stops only its own disposable Unix-socket servers and uses controlled argv, canonical unsent-input/grey-suggestion fixtures and opaque resume metadata. It checks nested asymmetric geometry, exact arguments/cwd, report/inbox remapping, no blind agent resume, per-field omissions, ownership/modes/links/bounds, agent registry locking/sanitization, board preview/apply preservation, wrong host/nonempty target/confirmation refusals, one-attempt uncertainty with retained journal, and read-only update behavior. Cross-host refusal uses an explicitly foreign-host snapshot fixture; it is not a certification of attached-host execution. These are public API/CLI checks, not a rendered Rex.app/pixel test or personal-machine validation.
+The suite creates/stops only its own disposable Unix-socket servers and uses controlled argv, canonical unsent-input/grey-suggestion fixtures and opaque resume metadata. It checks nested asymmetric geometry, exact arguments/cwd, report/inbox remapping, no blind agent resume, per-field omissions, ownership/modes/links/bounds, board preview/apply preservation, wrong host/nonempty target/confirmation refusals, one-attempt uncertainty with retained journal, and read-only update behavior. Cross-host refusal uses an explicitly foreign-host snapshot fixture; it is not a certification of attached-host execution. These are public API/CLI checks, not a rendered Rex.app/pixel test or personal-machine validation.
 
 ### Validation recorded 12 November 2026
 
@@ -205,33 +202,10 @@ The inspected public agent-core checkout has the messaging/Rex files cited above
 
 Migration is therefore **blocked**, not completed: obtain the actual private script/accounting through an approved private source; inventory each behavior; compare it against the support table and controlled Mac/Linux acceptance evidence; prove parity for the supported operations and obtain explicit acceptance of each unsupported one; only then prepare the source migration/deletion patch. Do not delete personal files, run a local restore, restart/update Joshua's servers or substitute this structural subset for full agent/draft recovery on the strength of this brief alone.
 
-## Reconcile launch records after a crash or Rex restart (Q14)
-
-`teerex recovery reconcile --socket ABS --registry ABS` is read-only discovery.
-It observes the current API13 server identity and bounded pane inventory under
-the agents registry lock, and reports each launch as `pane_present`,
-`pane_absent` or `different_server`. Process liveness remains `unknown`: neither
-an absent pane nor a saved supervisor PID proves a remote agent died.
-
-Review `archive_files`, then apply the exact plan with
-`recovery reconcile --socket ABS --registry ABS --apply --confirm HASH`.
-It re-observes the server and rehashes records and companion files under an
-exclusive nonblocking lock. A changed server, inventory/record plan or file
-refuses the old confirmation. Only absent-pane launch metadata is moved into
-`archive/reconcile-HASH/`, alongside the plan. Unknown/different-server records
-stay in place. Files must be owned private regular files; symlinks refuse.
-No processes, jobs registrations, scratchpads or panes are changed; nothing is
-killed or relaunched and historical ACKs confer no new authority. Partial I/O
-failures retain the archive plan for inspection; never blindly retry an apply.
-
-The regression `RecoveryTest.test_reconcile_restart_read_only_confirmed_archive_and_lock`
-uses a disposable server restart, proves preview byte preservation, stale-plan
-refusal and lock contention, and checks the archived record bytes.
-
 ### Issue 24/25 verification — 14 November 2026
 
 Both behaviors were already implemented in base `2961d7a`. The issue-specific
-regressions now exercise the actual locked agents registry, named-host capture,
+regressions now exercise explicit caller metadata and named-host capture,
 private root/child/file modes, skipping unfinished captures, newest selection,
 and confirmed restore through `--root` into an empty disposable server.
 
@@ -239,7 +213,6 @@ Run only these checks from the checkout (select absolute tested binary paths):
 
 ```sh
 REX_BIN=/ABS/rex TEEREX_BIN=/ABS/teerex python3 items/recovery/test_recovery.py \
-  RecoveryTest.test_absent_registry_launch_is_omitted_but_identity_contradiction_refuses \
   RecoveryTest.test_root_creates_private_snapshots_and_selects_newest -v
 TEEREX_BIN=/ABS/teerex python3 src/test_targets.py \
   TargetsTest.test_recovery_store_default_and_explicit_directory -v

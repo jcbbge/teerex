@@ -13,7 +13,7 @@ const usage =
     \\  surfaces resolve|session ensure|ensure|open|inspect|rename|move|focus|close  Visible terminals
     \\  board [--replay FILE] | feed              Live themed stream and machine vitals
     \\  records init|new|park|add|attach|set|close|show|resume|navigate|list|lint|export|forget|forget-scratchpad  Private evidence and reasoning
-    \\  recovery snapshot|inspect|restore|update|reconcile      Private snapshots and reviewed restoration
+    \\  recovery snapshot|inspect|restore|update      Private snapshots and reviewed restoration
     \\  snapshot|restore|update                       Recovery aliases; update is manual handoff
     \\  fleet install|rollback                       Explicit named-host installation plan/apply
     \\  targets resolve|exec                         Named-host lookup and explicit transport

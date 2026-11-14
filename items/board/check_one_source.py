@@ -18,55 +18,32 @@ spec.loader.exec_module(targets)
 # Runs where the configured host lives, through the same named-host SSH transport
 # as board feed. The probe deliberately reads Rex independently of feed.State.
 PROBE = r'''
-import json, pathlib, subprocess, sys
+import json, subprocess, sys
 rex, socket = sys.argv[1:3]
-profiles = pathlib.Path(sys.argv[3]) if len(sys.argv)>3 else pathlib.Path.home()/'.config/teerex/profiles.json'
-def canonical(value):
-    if not isinstance(value,str) or not value:return None
-    try:return str(pathlib.Path(value).resolve()) if pathlib.Path(value).exists() else value
-    except (OSError,RuntimeError):return value
-executables=set()
-try:
-    configured=json.loads(profiles.read_text())['profiles']
-    for profile in configured.values():
-        if isinstance(profile,dict) and isinstance(profile.get('argv'),list) and profile['argv']:
-            value=canonical(profile['argv'][0])
-            if value:executables.add(value)
-except (OSError,ValueError,UnicodeError,KeyError,TypeError,AttributeError):pass
 def call(*args):
     return json.loads(subprocess.check_output([rex, '--autostart=false', '--server', 'unix://'+socket, '--timeout', '2s', *args], timeout=3))
-launches=set()
-for path in (pathlib.Path.home()/'.local/state/teerex-agents').glob('*.json'):
-    try:
-        data=json.loads(path.read_text())
-        for r in data.get('entries',[data]):
-            if isinstance(r,dict):launches.add((r.get('target') or {}).get('block_id') or r.get('block_id'))
-    except (OSError,ValueError,TypeError):pass
 rows=[]
-priority={'error':5,'blocked':4,'waiting':4,'working':3,'done':2,'idle':1}
 for session in call('api','call','session.list','{}').get('sessions',[]):
     sid=session['session_id']
     def blocks():
         panes=call('block','ls','--session',sid,'--json')
-        return [p['block_id'] for p in (panes.get('blocks',[]) if isinstance(panes,dict) else panes)]
+        return [p for p in (panes.get('blocks',[]) if isinstance(panes,dict) else panes)]
     try:listed=blocks()
     except subprocess.CalledProcessError:
         # A session closed mid-read is absent, not a read failure.
         if sid in {s['session_id'] for s in call('api','call','session.list','{}').get('sessions',[])}:raise
         continue
-    for block in listed:
+    for pane in listed:
+        block=pane["block_id"]
         try:
             reports=call('block','call','--session',sid,'--block',block,'program_status','{}').get('records',[])
-            process=call('block','call','--session',sid,'--block',block,'process','{}')
         except subprocess.CalledProcessError:
             # A pane closed mid-read is absent; the bracketing reads mark it in flux.
-            if block in blocks():raise
+            if block in {p["block_id"] for p in blocks()}:raise
             continue
-        managed=[r for r in reports if (r.get('id') in ('teerex', 'teerex/tint') or r.get('app') == 'teerex-agent')]
-        matched=any(canonical((process.get(role) or {}).get(field)) in executables
-                    for role in ('child','foreground') for field in ('argv0','path'))
-        if block not in launches and not managed and not matched:continue
-        report=managed[-1] if managed else max(reports,key=lambda r:priority.get(r.get('state'),0),default={})
+        managed=[r for r in reports if r.get('id') == 'agent']
+        if not pane.get('label') or not managed:continue
+        report=managed[-1]
         rows.append(dict(block=block,session=sid,state=report.get('state','unknown')))
 print(json.dumps(rows))
 '''

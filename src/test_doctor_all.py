@@ -29,6 +29,13 @@ class DoctorAllTest(unittest.TestCase):
             profiles = home / '.config/teerex/profiles.json'
             profiles.parent.mkdir(parents=True)
             profiles.write_text(json.dumps({'profiles': {h: {'hook_events': True} for h in ('claude', 'codex')}}))
+            for settings in ('.claude/settings.json', '.codex/hooks.json'):
+                path = home / settings
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(json.dumps({'hooks': {event: [{'hooks': [{'command': 'agent-hook --harness fixture'}]}] for event in ('Stop', 'UserPromptSubmit')}}))
+            extension = home / '.pi/agent/extensions/agent-hook.ts'
+            extension.parent.mkdir(parents=True)
+            extension.touch()
             host = dict(home=str(home), host_id='test', rex='/rex', teerex='/teerex', socket='/socket', transport='local')
             def invoke(argv):
                 if 'server.version' in argv:
@@ -49,6 +56,24 @@ class DoctorAllTest(unittest.TestCase):
             failures = [(h['host'], c['check']) for h in packet['hosts'] for c in h['checks'] if not c['ok']]
             self.assertEqual(failures, [('good', 'teerex_build'), ('bad', 'host_reachable')])
             self.assertTrue(all(c['fix'] for h in packet['hosts'] for c in h['checks']))
+
+    def test_hook_sources_and_notify_fallback(self):
+        with resources.temporary_directory() as directory:
+            home = Path(directory)
+            host = dict(home=directory, rex='/rex', teerex='/teerex', socket='/socket')
+            (home / '.codex').mkdir()
+            config = home / '.codex/config.toml'
+            config.write_text('notify = ["agent-hook", "--harness", "codex"]\n')
+            with patch.object(doctor_all, 'run_command', return_value=(1, '', 'fixture')) as run:
+                checks = {c['check']: c for c in doctor_all.inspect_host(host)}
+            self.assertTrue(checks['codex_hooks']['ok'])
+            self.assertFalse(checks['claude_hooks']['ok'])
+            self.assertFalse(checks['pi_hooks']['ok'])
+            self.assertFalse(any('agents' in call.args[0] for call in run.call_args_list))
+            config.write_text('# notify = ["agent-hook"]\n')
+            with patch.object(doctor_all, 'run_command', return_value=(1, '', 'fixture')):
+                checks = {c['check']: c for c in doctor_all.inspect_host(host)}
+            self.assertFalse(checks['codex_hooks']['ok'])
 
     def test_guarded_surfaces_failure_is_red(self):
         with resources.temporary_directory() as directory:

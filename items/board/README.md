@@ -17,6 +17,8 @@ teerex board --hosts hive --json             # only the selected source
 teerex board --no-graphics                    # Unicode only
 ```
 
+The named-host schema and setup are documented in [fleet-install](../../docs/fleet-install.md). Rexconfig owns the real `~/.config/teerex/hosts.json` file.
+
 `--once` needs `--replay` unless combined with `--json`. The bundled [`fixture.jsonl`](fixture.jsonl) is
 **SAMPLE DATA**, with no real agent identifiers or operator activity.
 Interactive mode needs terminal stdin/stdout. Python 3.9+ is required for the
@@ -26,10 +28,7 @@ feed and explicit named-host actions; the renderer itself is native Zig.
 
 The current host has CPU trend, memory/swap, load, disk and network bands.
 Wide panes add per-core heat, the other host's summary and top process trees
-grouped by agent. One quiet `◇ N` in the header counts open decisions from
-that host's existing boards inbox store. `d` pulls the cards, j/k browses and
-1–8 answers through the existing ask resolution path. Cards never open on their
-own, flash or mark the board blocked. Unknown source availability is `◇ ?`.
+grouped by agent. Replay files can display archived decisions read-only: `d` opens cards and j/k browses. The live feed does not read decision or attention stores.
 The board owns only its `teerex/board` status record and clears it on exit.
 
 The selected host filters agents in every lens, preserving the existing pane and header contract. `m` switches machine vitals, agents and held work. Finite JSON keeps each host’s rows separate. There is no event stream section: it
@@ -42,7 +41,7 @@ retain the last readings with an explicit unavailable notice.
 | Up/Down, j/k | Select a live agent |
 | Enter | `teerex --config … --host ROW_HOST surfaces focus` on that exact pane |
 | Space | Expand ordered Done → Now → To-do steps with the current step marked; inline scratchpad via the selected host's rexconfig `scratch show --json` using the configured named-host transport; the event's Now/progress remain available if the read fails |
-| d | Pull decisions; 1–8 answers; d returns |
+| d | Browse archived decisions; d returns |
 | 1–5 | Agent, project, waiting graph, cost, machine lenses |
 | m | Switch hive / M5 vitals and held work |
 | ? | Keys overlay |
@@ -181,9 +180,9 @@ Run the kept, read-only comparison against every host in the configured file:
 python3 items/board/check_one_source.py --config "$HOME/.config/teerex/hosts.json" --teerex "$PWD/zig-out/bin/teerex"
 ```
 
-Hand-started panes also qualify when their child/foreground executable matches the host’s `profiles.*.argv[0]`; the independent probe reads the same profiles file (`--profiles ABS` overrides it).
+Agent rows require a live Rex pane label and an `id=agent` program-status record from rexconfig agent-hook. The independent probe reads those same Rex facts.
 
-It reads Rex pane/status inventory and launch metadata independently through
+It reads Rex pane labels and program status independently through
 the existing named-host transport, then reads `board --json`. It prints every
 missing/extra/duplicate pane, session/state mismatch and header discrepancy;
 only zero differences exits 0. The board snapshot is bracketed by two Rex reads. A presence, session or
@@ -262,10 +261,7 @@ the board running. Held work does not contribute to this agent health signal.
 
 Keys 1–5 change grouping of the same selected-host rows without removing live agents. Waiting edges indent
 under their named target; cycles and unknown targets retain every row. Cost
-shows the existing `agents cost --json` measurements, with unavailable tokens,
-dollars or turn time labelled unknown. Project labels resolve explicit
-`cost.rivet_item` associations and Rivet-owned launch purposes through read-only
-`rv show`; unmatched rows say none. Names and project values are not guessed.
+shows unavailable token, dollar and turn time values as unknown. Project labels are none without an associated source.
 
 `board --json --once --lens 1` (through `--lens 5`) includes the active `lens`
 and each host’s attention snapshot. `defaults.board_lens` in
