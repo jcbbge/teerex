@@ -34,7 +34,7 @@ class CostTests(unittest.TestCase):
         self.write(records)
         rates = {'test': dict(input=1, output=2, cache_read=3, cache_write=4)}
         row = NS['cost_usage'](self.path, 'claude', rates=rates)
-        self.assertEqual((row['tokens_in'], row['tokens_out'], row['turn_tokens']), (35, 8, 43))
+        self.assertEqual((row['tokens_in'], row['tokens_out'], row['turn_tokens']), (35, 8, 23))
         self.assertAlmostEqual(row['dollars'], .000106)
         self.assertEqual(row['dollar_source'], 'estimate_profile_rates')
         self.assertIsNone(NS['cost_usage'](self.path, 'claude')['dollars'])
@@ -49,6 +49,33 @@ class CostTests(unittest.TestCase):
         row = NS['cost_usage'](self.path, 'codex')
         self.assertEqual((row['tokens_in'], row['tokens_out'], row['cache_read_tokens']), (150, 20, 60))
         self.assertIsNone(row['dollars'])
+
+    def test_cache_reads_do_not_cross_new_token_threshold(self):
+        for harness in ('claude', 'codex'):
+            for new_input, expected_notices in ((10, 0), (1000001, 1)):
+                with self.subTest(harness=harness, new_input=new_input):
+                    usage = dict(input_tokens=new_input, output_tokens=5)
+                    if harness == 'claude':
+                        usage.update(cache_read_input_tokens=1000000, cache_creation_input_tokens=3)
+                        record = dict(type='assistant', message=dict(role='assistant', usage=usage))
+                    else:
+                        usage.update(input_tokens=new_input + 1000003, cached_input_tokens=1000000,
+                                     cache_write_input_tokens=3)
+                        record = dict(type='token_usage_record', payload=dict(thread_token_usage=usage))
+                    self.write([record])
+                    row = NS['cost_usage'](self.path, harness)
+                    self.assertEqual(row['turn_tokens'], new_input + 8)
+                    self.assertEqual(row['tokens_in'], new_input + 1000003)
+                    self.assertEqual(row['cache_read_tokens'], 1000000)
+                    row.update(threshold=dict(turn_seconds=7200, turn_tokens=1000000),
+                               current_turn_seconds=1, turn_active=True)
+                    state = dict(launch_id='a' * 32, name='test', starter={'block_id': 'test'})
+                    sent = []
+                    with patch.dict(NS, update=lambda root, launch, change: change(state), now=lambda: 1000,
+                                    send=lambda *args: (sent.append(args) or (0, {})),
+                                    transport_ack=lambda *args: True):
+                        NS['cost_flag']('root', state, row)
+                    self.assertEqual(len(sent), expected_notices)
 
     def test_pi_recorded_dollars(self):
         self.write([dict(type='message', id='m', message=dict(role='assistant', usage=dict(

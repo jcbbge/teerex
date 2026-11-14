@@ -165,7 +165,7 @@ def cost_usage(path, harness, turn_at=0, rates=None):
         for k in total:
             total[k] += delta[k]
         if at >= turn_at:
-            turn_tokens += sum(delta.values())
+            turn_tokens += delta['input'] + delta['cache_write'] + delta['output']
         if amount is None:
             priced = False
         else:
