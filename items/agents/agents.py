@@ -1251,6 +1251,7 @@ def launch_agent(o):
     require(type(profile.get('come_forward', False)) is bool, 'invalid_come_forward')
     execution, callbacks = execution_config(profile)
     tint = tint_config(profile.get("tint"))
+    accounting = cost_settings(profile)
     delivery = delivery_config(profile.get("delivery"))
     require(not (delivery is not None and execution is not None), "remote_fenced_delivery_not_yet_supported")
     if execution is None:
@@ -1297,7 +1298,7 @@ def launch_agent(o):
                      immediate_child_term=None, notifications={}, brief_file=None, protocol_file=None,
                      hook_events=profile.get("hook_events", False), client_path=os.environ.get("PATH", os.defpath),
                      rex_executable=os.environ.get("TEEREX_INTERNAL_REX"), delivery=delivery, execution=execution,
-                     callbacks=callbacks, remote_child_term=None, human=human, scratch_pane=profile.get("scratch_pane", True), tint=tint, layout=layout, come_forward=profile.get("come_forward", False))
+                     callbacks=callbacks, cost=accounting, remote_child_term=None, human=human, scratch_pane=profile.get("scratch_pane", True), tint=tint, layout=layout, come_forward=profile.get("come_forward", False))
         if not human:
             state["intent"] = intent
             state["contract"] = contract_init(state, profile, brief, o.done_when, o.contract_interval_s)
@@ -1980,6 +1981,7 @@ def supervise_child(o):
         signal.signal(signal.SIGTERM, forward)
         signal.signal(signal.SIGHUP, forward)
         signal.signal(signal.SIGINT, forward)
+        last_cost_check = 0
         last_hook = None
         last_status = None
         last_input_ns = 0
@@ -2009,6 +2011,13 @@ def supervise_child(o):
                 contract_starter(o.registry, o.launch_id)
                 contract_lapse(o.registry, o.launch_id)
                 live = load(o.registry, o.launch_id)
+                if time.monotonic() - last_cost_check >= 60:
+                    last_cost_check = time.monotonic()
+                    try:
+                        matches, unused = cost_matches([live])
+                        cost_flag(o.registry, live, cost_row(live, matches[live['launch_id']]))
+                    except Exception as exc:
+                        supervisor_error(o, "last_cost_error", exc)
                 current = live.get("last_hook")
                 try:
                     waiting = scratch_read(Path(state["scratchpad"])).get("waiting", "")
@@ -2240,6 +2249,11 @@ def parser():
                                   help="human interactive launch: visible tracked pane, standing flags, no starter/brief/ACK")
     human_parser.set_defaults(operation="human")
     human_parser.add_argument("--routed", action="store_true", help=argparse.SUPPRESS)
+    q = sub.add_parser("cost", help="local live/recent managed agent transcript tokens, dollars and wall/turn time; unknown costs stay unknown")
+    q.add_argument("--registry", default=str(Path.home() / ".local/state/teerex-agents"))
+    q.add_argument("--rivet-item", action="append", help="explicit Rivet item: read rv show displayed dollars; repeatable")
+    q.add_argument("--since", help="launches since inclusive ISO timestamp with timezone or Unix milliseconds")
+    q.add_argument("--json", action="store_true")
     q = sub.add_parser("timeline", help="read timestamped launch/ACK/brief/Stop/StopFailure/exit/prune events, including archives; oldest first")
     q.add_argument("--registry", required=True)
     q.add_argument("--name", help="exact agent name")

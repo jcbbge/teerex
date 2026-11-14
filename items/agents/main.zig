@@ -24,7 +24,7 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
         try argv.appendSlice(allocator, &.{ "python3", "-I", "-c", @embedFile("fence_probe.py"), self });
     } else {
         const bootstrap = try @import("rex_boards").call_log.python(allocator, source_bootstrap);
-        const source = "SCRATCH_LIBRARY = True\n" ++ @import("rex_scratch").source ++ "\n" ++ @import("scoped_channel").source ++ "\n" ++ input_events_source ++ "\n" ++ @embedFile("agents.py");
+        const source = "SCRATCH_LIBRARY = True\n" ++ @import("rex_scratch").source ++ "\n" ++ @import("scoped_channel").source ++ "\n" ++ input_events_source ++ "\n" ++ @embedFile("cost.py") ++ "\n" ++ @embedFile("agents.py");
         try argv.appendSlice(allocator, &.{ "python3", "-I", "-c", bootstrap });
         try appendSource(allocator, &argv, source);
         try argv.append(allocator, self);

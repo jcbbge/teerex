@@ -427,3 +427,40 @@ The profile's `contract_interval_s` (default 600), or launch `--contract-interva
 DONE and FLAG hold the starter responsible for answering. Acknowledged input to the worker clears that pending answer; child exit ends it. An unanswered report sends UNANSWERED after one interval and escalates to the seat after the next. Seat lookup uses the existing board registration and delivery retains root send's inbox routing and refusal boundaries. The supervisor adds no process or service.
 
 Managed scratch viewers follow their exact agent block ID, including app pane and tab closures. On immediate child exit the supervisor closes only the viewer in its own creation receipt before sending the exit notice. The retained agent pane remains available for inspection.
+
+## Transcript cost meter
+
+`teerex agents cost [--json] [--since ISO_WITH_ZONE|UNIX_MS]` reads local
+managed launch records (including archives) and harness JSONL accounting.
+`--registry DIR` overrides `~/.local/state/teerex-agents`. `--since` selects
+launch time. Matching requires the exact launch ID in the initial messaging
+protocol user prompt; missing, ambiguous, human-without-protocol and remote
+transcripts remain unknown rather than being guessed from cwd or timestamps.
+Claude repeated streaming message IDs are counted once, including cached input;
+Codex cumulative detailed/token-count events are counted once; pi's recorded
+usage and dollars are retained. Input includes cache reads/writes. Dollars are
+unknown unless recorded or estimated from explicit profile rates. These are
+transcript totals, not subscription invoices. JSON includes match evidence,
+transcript path, read errors, wall seconds, current turn seconds and turn tokens.
+Older supervisors provide only the turn-start evidence they recorded.
+
+Profiles may set `cost: {turn_seconds: 7200, turn_tokens: 1000000}`. These are
+warning thresholds, never limits. The existing visible supervisor checks once
+per minute and flags the starter once per launch when either threshold is crossed
+on an active turn; the agent continues. It claims the attempt durably before
+sending and does not retry uncertain sends. New launches use this supervisor;
+already-running supervisors retain their installed behavior. Reading cost does
+not send warnings. Failure to read accounting never stops the agent.
+
+Optional `cost.rates` maps model IDs to `input`, `output`, `cache_read`,
+`cache_write` dollar prices per million tokens. All four rates must be explicit;
+no rates are bundled. Such dollars are labelled `estimate_profile_rates`.
+`cost.rivet_item` or repeatable `cost --rivet-item ID` reads only `rv show ID`
+and reports its displayed call costs with their three-decimal rounding.
+No Rivet item is inferred, started or modified.
+
+Accounting schemas were read directly from installed Claude, Codex and pi
+transcripts on hive on 2026-11-14. Isolated checks:
+`python3 items/agents/test_cost.py CostTests -v`; the disposable-server live
+threshold check is `REX_BIN=ABS TEEREX_BIN=ABS python3
+items/agents/test_cost.py CostLiveTests -v`.
