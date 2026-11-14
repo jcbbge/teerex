@@ -1871,6 +1871,36 @@ with ThreadPoolExecutor() as pool:
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
         self.assertEqual(result["auto_prune"]["retired"], 1)
 
+    def test_launch_retires_jobs_in_deleted_session_without_foreign_diagnostics(self):
+        made = json.loads(subprocess.check_output(self.base + [
+            "new", "--json", "--keep-open", "--shell=none", "--", "/bin/sleep", "120"], timeout=10))
+        dead_session = made["session_id"]
+        dead_block = made["initial_windows"][0]["block_ids"][0]
+        tracked = subprocess.run([BIN, "jobs", "track", "--registry", str(self.registry),
+            "--socket", str(self.socket), "--session", dead_session, "--block", dead_block,
+            "--owner", "fixture", "--kind", "command", "--purpose", "stale job reproduction",
+            "--deadline-unix-ms", str(int(time.time() * 1000) + 60000), "--cleanup", "manual"],
+            env=self.env, capture_output=True, text=True, timeout=10)
+        self.assertEqual(tracked.returncode, 0, tracked.stdout + tracked.stderr)
+        path = self.registry / "state.json"
+        state = json.loads(path.read_text())
+        # A full registry previously triggered one scoped Rex client per old entry.
+        for i in range(1, 32):
+            state["entries"].append(dict(state["entries"][0],
+                block_id="block:00000000-0000-0000-0000-%012d" % i))
+        path.write_text(json.dumps(state))
+        self.rpc("session.destroy", dict(session_id=dead_session))
+        started = time.monotonic()
+        p, packet = self.run_cli("launch", "--config", str(self.config), "--profile", "probe",
+            "--brief-file", str(self.brief), "--ack-timeout-ms", "2000", timeout=60)
+        elapsed = time.monotonic() - started
+        print("stale job launch: %.3fs, exit %s" % (elapsed, p.returncode), flush=True)
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertNotIn(dead_session, p.stderr)
+        self.assertLess(elapsed, 10)
+        self.assertEqual(len(json.loads(path.read_text())["entries"]), 1)
+        self.assertEqual(packet["outcome"], "brief_delivered")
+
     def test_registry_of_live_panes_grows_past_old_count_limit(self):
         original = self.record(self.launch()[1]["launch_id"])
         for i in range(31):
