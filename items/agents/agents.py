@@ -1739,7 +1739,7 @@ def launch_agent(o):
                     f"Your session scratchpad is {scratchpad} (AGENT_SCRATCHPAD).\n"
                     + ('Contract: write your steps first; every turn after the brief ends declared — finished (every step checked off, To-do empty), blocked (teerex scratch flag "what is stuck; what you tried; what you need"; never check off steps you could not do), or waiting (teerex scratch now STEP --waiting "on what" --check 10m). teerex tells your starter each step and each declaration.\n' if state.get("contract") else "") +
                     "Keep its Now/To-do/Done current before and after every step; Now has at most one task.\n"
-                    "Report stops, results, blockers and questions directly to report-to; never type into a registered human seat.\n"
+                    "Report stops, results, blockers and questions directly to report-to through teerex send.\n"
                     "A finished turn is idle, not process death. Supply report bytes on stdin then EOF using:\n" +
                     shlex.join(report_command) + "\n" +
                     ("Replace NEW_HEX32 with a fresh 32-lowercase-hex request id for each NEW message; never retry uncertain input.\n"

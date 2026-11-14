@@ -15,6 +15,7 @@ pub fn tryRoute(allocator: std.mem.Allocator, args: []const []const u8) !?u8 {
     defer argv.deinit(allocator);
     try argv.appendSlice(allocator, &.{ "python3", "-I", "-c", "import sys,types\n_seat=types.ModuleType('teerex_seat_status')\nexec(sys.argv.pop(1),_seat.__dict__)\nsys.modules['teerex_seat_status']=_seat\nexec(sys.argv.pop(1))", seat_status_source, @embedFile("boards.py"), "try-route" });
     try argv.appendSlice(allocator, args);
+    try argv.appendSlice(allocator, &.{ "--teerex", try stableSelfPath(allocator) });
     var child = std.process.Child.init(argv.items, allocator);
     child.stdin_behavior = .Inherit;
     child.stdout_behavior = .Pipe;
@@ -93,13 +94,12 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
     defer argv.deinit(allocator);
     // Keep each module separate: combining them exceeds Linux's per-argument limit.
     const bootstrap = "import sys,types\nfor name in ('teerex_seat_status','teerex_dashboard','teerex_friction'):\n m=types.ModuleType(name);exec(sys.argv.pop(1),m.__dict__);sys.modules[name]=m\nsys.modules['teerex_friction'].FLAGS=set(sys.argv.pop(1).split())\nexec(compile(sys.argv.pop(1), '<boards>', 'exec'))";
-    try argv.appendSlice(allocator, &.{ "python3", "-I", "-c", try call_log.python(allocator, bootstrap), seat_status_source,
-        @embedFile("dashboard.py"), @embedFile("friction.py"), @import("flagnames.zig").names, @embedFile("boards.py") });
+    try argv.appendSlice(allocator, &.{ "python3", "-I", "-c", try call_log.python(allocator, bootstrap), seat_status_source, @embedFile("dashboard.py"), @embedFile("friction.py"), @import("flagnames.zig").names, @embedFile("boards.py") });
     const render = args.len > 0 and (std.mem.eql(u8, args[0], "inbox") or std.mem.eql(u8, args[0], "fleet") or std.mem.eql(u8, args[0], "calls")) and
         (args.len == 1 or std.mem.startsWith(u8, args[1], "--"));
     if (render or (args.len > 0 and std.mem.eql(u8, args[0], "friction"))) try argv.append(allocator, "boards");
     try argv.appendSlice(allocator, args);
-    if (args.len > 0 and ((render and (std.mem.eql(u8, args[0], "fleet") or std.mem.eql(u8, args[0], "calls"))) or std.mem.eql(u8, args[0], "probe") or std.mem.eql(u8, args[0], "ask") or (args.len > 1 and std.mem.eql(u8, args[0], "seat") and std.mem.eql(u8, args[1], "register")))) {
+    if (args.len > 0 and ((render and (std.mem.eql(u8, args[0], "fleet") or std.mem.eql(u8, args[0], "calls"))) or std.mem.eql(u8, args[0], "probe") or std.mem.eql(u8, args[0], "ask") or std.mem.eql(u8, args[0], "try-route") or (args.len > 1 and std.mem.eql(u8, args[0], "seat") and std.mem.eql(u8, args[1], "register")))) {
         var explicit_self = false;
         for (args) |arg| if (std.mem.eql(u8, arg, "--teerex") or std.mem.startsWith(u8, arg, "--teerex=")) {
             explicit_self = true;

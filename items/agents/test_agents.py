@@ -136,6 +136,8 @@ while True:
         with out.open("a") as f: f.write(json.dumps({"event":"input","payload":payload})+"\n")
         if "RUN SYNTHETIC HOOKS" in payload and behavior in ("codex-hook", "pi-hook"):
             harness_hooks()
+        if "TASK β asymmetric" in payload and behavior == "quiet":
+            os.write(1,b'\x1b]7501;state=blocked:kind=question:app=synthetic\x07')
         if "TASK β asymmetric" in payload and behavior == "scratch-three":
             binary=shlex.split(protocol.split("Acknowledge this protocol now by running:\n",1)[1].split("\n",1)[0])[0]
             for task in ("Read contracts", "Build feature", "Run gates"):
@@ -3042,19 +3044,24 @@ Path('/work/network-harness').touch()
 
     def test_contract_lapse_wakes_worker_and_second_lapse_reaches_seat(self):
         seat_records, seat_log = self.contract_seat_fixture()
-        p, launched = self.launch(contract=True)
+        p, launched = self.launch(behavior="quiet", contract=True)
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
         launch_id = launched["launch_id"]
         state = self.record(launch_id)
         self.scratch_contract(state, "Work", ["Verify"])
         wait_for(lambda: any("STEP probe 1/2 started" in text for text in self.starter_messages()))
+        # The lapse guard correctly ignores a working harness. Settle this fixture first.
+        event = json.dumps(dict(hook_event_name="Stop", last_assistant_message="waiting for input"))
+        for _ in range(2):
+            self.run_cli("stop", "--registry", str(self.registry), "--launch-id", launch_id,
+                         "--event-file", "-", input=event)
         wait_for(lambda: self.record(launch_id)["contract"]["lapses"] == 1)
         self.assertTrue(self.record(launch_id)["contract"]["stalled"])
         wait_for(lambda: self.program_state(state["target"]["block_id"]) == "blocked")
-        wait_for(lambda: any("Contract check:" in v.get("payload", "") for v in events(self.worker_log)))
+        wait_for(lambda: any("tell your starter now what is stuck" in v.get("payload", "") for v in events(self.worker_log)))
         wait_for(lambda: len([r for r in seat_records() if "LAPSE probe" in r["body"]]) == 1, timeout=12)
         self.assertEqual(sum("LAPSE probe" in text for text in self.starter_messages()), 2)
-        self.assertFalse([v for v in events(seat_log) if v["event"] == "input"])
+        wait_for(lambda: any(v["event"] == "input" for v in events(seat_log)))
         self.scratch_contract(state, "Verify", done=["Work"])
         wait_for(lambda: not self.record(launch_id)["contract"]["stalled"])
         self.assertEqual(self.record(launch_id)["contract"]["lapses"], 0)
@@ -3091,7 +3098,7 @@ Path('/work/network-harness').touch()
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
         wait_for(lambda: self.record(launch_id)["contract"]["awaiting_starter"] is None)
         self.assertEqual(self.record(launch_id)["contract"]["starter_lapses"], 0)
-        self.assertFalse([v for v in events(seat_log) if v["event"] == "input"])
+        wait_for(lambda: any(v["event"] == "input" for v in events(seat_log)))
 
     def test_contract_flag_survives_child_exit_and_starter_accepts(self):
         self.settings["profiles"]["probe"]["contract_interval_s"] = 2

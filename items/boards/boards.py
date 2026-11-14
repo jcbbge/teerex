@@ -406,6 +406,9 @@ def folded(seat):
 
 
 def mutate(a):
+    route = a.command == "try-route"
+    if route:
+        check(a.teerex and os.path.isabs(a.teerex), "absolute_native_teerex_required")
     role = a.command == "try-route" and a.session == "seat" and a.block == "seat"
     t = None if role else selected(a)
     with contextlib.closing(Store(a.store)) as store:
@@ -549,14 +552,46 @@ def mutate(a):
             raise Deadline("inbox_deadline_before_save_no_record_saved")
         store.save()
         attention_count = "not_requested"
-        if a.command == "inbox" and a.operation == "append":
+        if a.command == "inbox" and a.operation == "append" and not route:
             from teerex_seat_status import attention_record
             attention_count = attention_record(dict(socket=a.socket, session=a.session, block=a.block, sender=a.sender),
                              len(body.split()), seat=True)
-        result(kind="boards_result", command=a.command, operation=a.operation, outcome="recorded", target=t, attention_count=attention_count,
+        if route:
+            # Commit history before any input, then release the store lock before guarded send.
+            generation = store.state["generation"]
+        else:
+            result(kind="boards_result", command=a.command, operation=a.operation, outcome="recorded", target=t, attention_count=attention_count,
                generation=store.state["generation"], store=a.store, provenance="report", terminal_input_attempted=False,
                application_consumption="not_assessed", global_atomicity=False)
+            return 0
+    if a.sender == "teerex-contract" and body.startswith(("STEP ", "NOT DONE ")):
+        result(kind="inbox_route", outcome="recorded", target=t, generation=generation,
+               history="recorded", terminal_input_attempted=False)
         return 0
+    argv = [a.teerex, "send", "--socket", a.socket, "--session", a.session, "--block", a.block,
+            "--from", a.sender, "--message-file", "-", "--draft", a.draft,
+            "--draft-wait-ms", str(a.draft_wait_ms), "--timeout-ms", str(a.timeout_ms)]
+    if a.no_queue:
+        argv.append("--no-queue")
+    return deliver_recorded(a, argv, body)
+
+
+def deliver_recorded(a, argv, body):
+    """One native guarded attempt; retained history is never replayed on failure."""
+    env = dict(os.environ, TEEREX_BOARDS_STORE=a.store)
+    proc = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, env=env)
+    try:
+        output, _ = proc.communicate(body.encode())
+    except Cancelled as e:
+        proc.send_signal(e.signum)
+        proc.communicate()
+        result(kind="inbox_route", outcome="cancelled", history="recorded", retry_safe=False,
+               terminal_input_attempted=True)
+        return 128 + e.signum
+    receipt = json_load(output.decode())
+    receipt.update(history="recorded", retry_safe=False)
+    print(json.dumps(receipt), flush=True)
+    return proc.returncode if proc.returncode >= 0 else 128 - proc.returncode
 
 
 def prepared_sections(body):
@@ -670,21 +705,14 @@ def _deliver_ask(a):
                 check(any(r["body"]["id"] == a.resolve for r in folded(seat)[0]), "open_decision_not_found")
             else:
                 check(not any(r["kind"] == "decision" and r["body"]["id"] == value["id"] for r in seat["records"]), "decision_id_already_used")
-    if a.store and not answer_only and a.deliver is None:
-        # Stored operator decisions are pulled from the board, never typed or badged.
+    history_recorded = bool(a.store and not answer_only)
+    if history_recorded:
         with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8") as f:
-            json.dump(value, f);f.flush();a.card_file=f.name
-            with contextlib.redirect_stdout(__import__('io').StringIO()):mutate(a)
-        tracked=False
-        try:
-            import teerex_seat_status
-            teerex_seat_status.register(dict(socket=a.socket,session=a.session,block=a.block,
-                id='ask/'+value['id'],sender=a.sender,origin=teerex_seat_status.origin()))
-            tracked=True
-        except (OSError,ValueError,subprocess.SubprocessError):pass
-        result(kind='ask_result',outcome='recorded',decision_id=value['id'],terminal_input_attempted=False,
-               status_record='not_requested',reply_tracking='recorded' if tracked else 'unavailable',history='recorded')
-        return 0
+            json.dump(value, f)
+            f.flush()
+            a.card_file = f.name
+            with contextlib.redirect_stdout(__import__('io').StringIO()):
+                mutate(a)
     argv = [a.teerex, "send", "--socket", a.socket, "--session", a.session, "--block", a.block,
             "--from", a.sender, "--message-file", "-", "--draft", a.draft, "--draft-wait-ms", str(a.draft_wait_ms)]
     if not answer_only:
@@ -708,22 +736,10 @@ def _deliver_ask(a):
             proc.communicate()
         raise
     if proc.returncode:
-        sys.stdout.buffer.write(output)
+        receipt = json_load(output.decode())
+        receipt.update(history="recorded" if history_recorded else "not_requested", retry_safe=False)
+        print(json.dumps(receipt), flush=True)
         return proc.returncode if proc.returncode > 0 else 128 - proc.returncode
-    if a.store and not answer_only:
-        try:
-            with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8") as f:
-                if a.resolve is None:
-                    json.dump(value, f)
-                    f.flush()
-                    a.card_file = f.name
-                # Suppress the storage receipt; delivery has its own native receipt.
-                with contextlib.redirect_stdout(__import__("io").StringIO()):
-                    mutate(a)
-        except (Refused, OSError, ValueError) as e:
-            result(kind="ask_result", outcome="delivered_history_failed", terminal_input_attempted=True,
-                   retry_safe=False, reason=str(e)[:512], recovery="do_not_resend_inspect_history")
-            return 1
     receipt = json_load(output.decode())
     receipt["decision_id"] = value["id"] if value else None
     receipt["history"] = "recorded" if a.store else "not_requested"
@@ -1308,16 +1324,17 @@ def parser():
                 q.add_argument("--purpose", required=True)
                 q.add_argument("--state", choices=STATES, required=True)
                 q.add_argument("--detail", required=True)
-    q = commands.add_parser("try-route", help="append if exact seat registered; exit 3 ONLY for not_registered; all errors refuse")
+    q = commands.add_parser("try-route", help="record and guarded-send to registered seat; exit 3 ONLY for not_registered")
     common(q)
     q.add_argument("--from", dest="sender", required=True)
     q.add_argument("--message-file", required=True)
-    q.add_argument("--no-queue", action="store_true", help="native fallback waits/refuses held input; inbox append unchanged")
-    q.add_argument("--draft", choices=("guard", "ignore"), default="guard", help="native fallback draft policy; registered inbox append never types")
+    q.add_argument("--teerex", help="absolute native CLI; supplied by compiled bridge")
+    q.add_argument("--no-queue", action="store_true", help="wait/refuse held input instead of durable queue")
+    q.add_argument("--draft", choices=("guard", "ignore"), default="guard", help="native fallback draft policy; registered seat delivery uses the same guard")
     q.add_argument("--draft-wait-ms", type=bounded_int(0, 55000), default=30000, metavar="0..55000")
     q.add_argument("--timeout-ms", type=bounded_int(100, 115000), default=None, metavar="100..115000",
                    help="registered stdin must reach EOF; native fallback guard defaults to draft wait+10000ms, ignore10000")
-    q = commands.add_parser("ask", help="record stored decisions for operator pull; direct cards use guarded send")
+    q = commands.add_parser("ask", help="record decision history and deliver cards through guarded send")
     q.add_argument("--store", help="optional existing private history store; seat must be registered")
     for k in ("host", "socket", "session", "block"):
         q.add_argument("--" + k, required=True)

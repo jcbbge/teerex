@@ -96,7 +96,7 @@ class BoardsTest(unittest.TestCase):
         if operation is not None:
             argv.append(operation)
         opts = dict(store=self.store)
-        if command == "ask":
+        if command in ("ask", "try-route"):
             opts["teerex"] = self.native
         if target:
             opts.update(self.target)
@@ -170,12 +170,24 @@ class BoardsTest(unittest.TestCase):
         self.invoke("try-route", code=3, socket=str(self.root / "other.sock"), **opts)
         self.invoke("try-route", code=3, session="session:" + OTHER, **opts)
         p = self.invoke("try-route", **opts)
-        self.assertFalse(p["terminal_input_attempted"])
-        self.assertEqual(p["application_consumption"], "not_assessed")
+        self.assertTrue(p["terminal_input_attempted"])
+        self.assertEqual(p["history"], "recorded")
         self.assertEqual(self.inspect()["seats"][0]["records"][0]["body"], self.message.read_text())
         (self.store / "state.json").write_text("broken")
         p = self.invoke("try-route", code=1, **opts)
         self.assertNotEqual(p.get("outcome"), "not_registered")
+
+    def test_failed_seat_delivery_retains_history_without_retry(self):
+        self.register()
+        self.native.write_text("#!/usr/bin/env python3\nimport sys,json\nfrom pathlib import Path\n"
+                               + "with Path(" + repr(str(self.sent)) + ").open('a') as f:f.write('attempt\\n')\n"
+                               + "print(json.dumps(dict(outcome='refused',failure_reason='draft_not_cleared',paste=dict(attempted=False))))\nraise SystemExit(1)\n")
+        receipt = self.invoke('try-route', code=1, **{'from': 'worker', 'message_file': self.message})
+        self.assertEqual(receipt['history'], 'recorded')
+        self.assertEqual(receipt['failure_reason'], 'draft_not_cleared')
+        self.assertFalse(receipt['retry_safe'])
+        self.assertEqual(self.sent.read_text(), 'attempt\n')
+        self.assertEqual(len(self.inspect()['seats'][0]['records']), 1)
 
     def test_exact_inherited_inbox_routes_without_rex_read(self):
         self.register()
@@ -186,8 +198,8 @@ class BoardsTest(unittest.TestCase):
         state['seats'].append(dict(target=successor, owner='next-seat', registered_at=1, records=[]))
         (self.store / 'state.json').write_text(json.dumps(state))
         receipt = self.invoke('try-route', **{'from': 'worker', 'message_file': self.message})
-        self.assertEqual(receipt['outcome'], 'recorded')
-        self.assertEqual(receipt['target'], successor)
+        self.assertEqual(receipt['outcome'], 'events_acknowledged')
+        self.assertEqual(receipt['history'], 'recorded')
         state = self.inspect()
         self.assertEqual(state['seats'][0]['records'], [])
         self.assertEqual(state['seats'][1]['records'][0]['body'], self.message.read_text())
@@ -243,14 +255,22 @@ class BoardsTest(unittest.TestCase):
         for path in self.store.glob("archive-*.json"):
             self.assertEqual(path.stat().st_mode & 0o777, 0o600)
 
-    def test_stored_decision_is_pull_only_without_terminal_input(self):
+    def test_stored_decision_is_typed_and_recorded_once(self):
         self.register()
-        result=self.ask()
-        self.assertEqual(result['outcome'],'recorded')
-        self.assertFalse(result['terminal_input_attempted'])
-        self.assertEqual(result['status_record'],'not_requested')
-        self.assertFalse(self.sent.exists())
-        self.assertIn('Deploy the reviewed fix now?',self.invoke('inbox',once=True))
+        result = self.ask()
+        self.assertEqual(result['outcome'], 'events_acknowledged')
+        self.assertTrue(result['terminal_input_attempted'])
+        self.assertEqual(result['history'], 'recorded')
+        self.assertIn('Deploy the reviewed fix now?', self.sent.read_text())
+        self.assertEqual(len(self.inspect()['seats'][0]['records']), 1)
+
+    def test_failed_stored_decision_retains_history(self):
+        self.register()
+        self.native.write_text("#!/usr/bin/env python3\nimport json\nprint(json.dumps(dict(outcome='uncertain')))\nraise SystemExit(1)\n")
+        result = self.invoke('ask', code=1, **{'from': 'worker', 'card_file': self.card})
+        self.assertEqual(result['history'], 'recorded')
+        self.assertFalse(result['retry_safe'])
+        self.assertEqual(len(self.inspect()['seats'][0]['records']), 1)
 
     def test_ask_without_history_and_failure_does_not_record(self):
         args = self.argv("ask", store=None, **{"from": "worker", "card_file": self.card})
@@ -830,6 +850,73 @@ class RexBoardsTest(unittest.TestCase):
         cls.base = [cls.rex, "--autostart=false", "--server", "unix://" + str(cls.socket), "--timeout", "3s"]
         cls.version = json.loads(subprocess.check_output(cls.base + ["api", "call", "server.version"]))
         print("Disposable live Rex:", json.dumps(cls.version), flush=True)
+
+    def test_seat_messages_wake_once_contract_policy_and_held_queue(self):
+        root = self.root / ('seat-wake-' + str(time.monotonic_ns()))
+        root.mkdir(mode=0o700)
+        store = root / 'store'
+        store.mkdir(mode=0o700)
+        received = root / 'received'
+        env = dict(os.environ, TEEREX_ATTENTION_DIR=str(root / 'attention'),
+                   TEEREX_ASK_STATE_DIR=str(root / 'asks'), TEEREX_CLUTCH_DIR=str(root / 'clutch'),
+                   TEEREX_CALL_LOG_DIR=str(root / 'calls'))
+        script = ("import os,tty;tty.setraw(0);os.write(1,b'READY');f=open(" + repr(str(received)) + ", 'ab',buffering=0)\n"
+                  "while True:\n b=os.read(0,65536)\n if not b:break\n f.write(b)\n")
+        made = json.loads(subprocess.check_output(self.base + ['new', '--json', '--shell=none', '--', sys.executable, '-u', '-c', script]))
+        sid, bid = made['session_id'], made['initial_windows'][0]['block_ids'][0]
+        target = ['--socket', str(self.socket), '--session', sid, '--block', bid]
+        history = ['--store', str(store), '--host', 'fixture']
+        def call(*args, body=None, code=0):
+            p = subprocess.run([BIN, '--rex', self.rex, *args], input=body, env=env, text=True, capture_output=True, timeout=15)
+            self.assertEqual(p.returncode, code, p.stdout + p.stderr)
+            return json.loads(p.stdout)
+        call('seat', 'register', *history, *target, '--owner', 'test')
+        end = time.monotonic() + 3
+        while not received.exists():
+            self.assertLess(time.monotonic(), end)
+            time.sleep(.02)
+        def records():
+            return json.loads((store / 'state.json').read_text())['seats'][0]['records']
+        def wait_text(value):
+            end = time.monotonic() + 3
+            while value not in received.read_text():
+                self.assertLess(time.monotonic(), end, received.read_text())
+                time.sleep(.02)
+        for command, destination, message in [
+            (['send'], ['--socket', str(self.socket), '--session', 'seat', '--block', 'seat'], 'role wake'),
+            (['send'], target, 'exact wake'),
+            (['boards', 'try-route'], target, 'route wake')]:
+            receipt = call(*command, *history, *destination, '--from', 'worker', '--message-file', '-', body=message)
+            self.assertEqual(receipt['outcome'], 'events_acknowledged')
+            self.assertEqual(receipt['history'], 'recorded')
+            wait_text(message)
+            self.assertEqual(received.read_text().count(message), 1)
+            self.assertEqual(sum(r['body'] == message for r in records()), 1)
+        for message, typed in [('UNANSWERED worker done', True), ('FLAG worker stuck', True),
+                               ('LAPSE worker step 1/2', True), ('NOT DONE worker waiting', False),
+                               ('STEP worker 1/2 started', False)]:
+            receipt = call('send', *history, *target, '--from', 'teerex-contract', '--message-file', '-', body=message)
+            self.assertEqual(receipt.get('paste', {}).get('attempted', receipt.get('terminal_input_attempted', False)), typed)
+            if typed:
+                wait_text(message)
+            self.assertEqual(received.read_text().count(message), int(typed))
+            self.assertEqual(sum(r['body'] == message for r in records()), 1)
+        cardfile = root / 'card.json'
+        cardfile.write_text(json.dumps(prepared_decision()))
+        call('ask', *history, *target, '--from', 'worker', '--card-file', str(cardfile))
+        wait_text('DECISION [cleanup-1]')
+        self.assertEqual(received.read_text().count('DECISION [cleanup-1]'), 1)
+        self.assertEqual(sum(r['kind'] == 'decision' for r in records()), 1)
+        clutch = ['--socket', str(self.socket), '--session', sid, '--pane', bid]
+        call('clutch', 'take', *clutch)
+        receipt = call('send', *history, *target, '--from', 'worker', '--message-file', '-', body='held wake')
+        self.assertEqual(receipt['outcome'], 'queued')
+        self.assertNotIn('held wake', received.read_text())
+        self.assertEqual(sum(r['body'] == 'held wake' for r in records()), 1)
+        call('clutch', 'release', *clutch)
+        wait_text('held wake')
+        self.assertEqual(received.read_text().count('held wake'), 1)
+        self.assertEqual(sum(r['body'] == 'held wake' for r in records()), 1)
 
     def seat_clear_fixture(self, socket=None, session=None, block=None):
         store = self.root / ("seat-clear-" + str(time.monotonic_ns()))
