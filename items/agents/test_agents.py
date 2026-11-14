@@ -21,6 +21,9 @@ import threading
 import unittest
 from unittest.mock import patch
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/acceptance'))
+import pane_authority
+
 BIN = str(Path(os.environ.get("TEEREX_BIN", "zig-out/bin/teerex")).resolve())
 REX = os.environ.get("REX_BIN")
 
@@ -694,12 +697,20 @@ class AgentsTest(unittest.TestCase):
         self.fixture = self.work / "fixture.py"
         self.fixture.write_text(FIXTURE)
         target = json.loads(subprocess.check_output(self.base + ["new", "--json", "--keep-open", "--shell=none", "--",
-                                                                 sys.executable, str(self.fixture), str(self.starter_log), "noack"], timeout=10))
+                                                                 '/bin/sleep', '120'], timeout=10))
         self.session = target["session_id"]
         self.starter = target["initial_windows"][0]["block_ids"][0]
-        wait_for(lambda: events(self.starter_log))
         self.env = dict(os.environ, HOME=str(self.root), TEEREX_CLUTCH_DIR=str(self.work / "clutch"), PATH=str(Path(REX).parent) + os.pathsep + os.environ.get("PATH", ""),
                         REX_SERVER="unix:///tmp/poison.sock", REX_SESSION="session:poison", REX_BLOCK="block:poison")
+        pane_authority.caller(self, self.rpc, self.env, self.work)
+        made = subprocess.run([BIN, 'surfaces', 'open', '--socket', str(self.socket), '--session', self.session,
+                               '--layout', 'tab', '--label', 'test starter', '--',
+                               sys.executable, str(self.fixture), str(self.starter_log), 'noack'],
+                              env=self.env, capture_output=True, text=True, timeout=10)
+        self.assertEqual(made.returncode, 0, made.stdout + made.stderr)
+        self.rpc('block.close', dict(session_id=self.session, block_id=self.starter))
+        self.starter = json.loads(made.stdout)['actual']['block_id']
+        wait_for(lambda: events(self.starter_log))
         self.config = self.work / "profiles.json"
         self.settings = dict(schema_version=1, defaults=dict(registry=str(self.registry), socket=str(self.socket),
                              session=self.session, cwd=str(self.work), starter_session=self.session, starter_block=self.starter,

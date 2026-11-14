@@ -218,7 +218,7 @@ fn run(allocator: std.mem.Allocator) !void {
         const resolver = try std.json.Stringify.valueAlloc(allocator, @import("fleet_sources").resolver, .{});
         const script = try std.fmt.allocPrint(allocator, "import types,sys\ntargets=types.ModuleType('targets')\nexec({s},targets.__dict__)\n{s}", .{ resolver, @import("waiting_source").source });
         var forwarded: std.ArrayList([]const u8) = .empty;
-        try forwarded.appendSlice(allocator, &.{ "python3", "-I", "-c", try @import("rex_boards").call_log.python(allocator, script) });
+        try forwarded.appendSlice(allocator, &.{ "python3", "-I", "-c", try @import("rex_boards").call_log.python(allocator, try @import("pane_guard").python(allocator, script)) });
         try forwarded.appendSlice(allocator, rest);
         return std.process.execv(allocator, forwarded.items);
     }

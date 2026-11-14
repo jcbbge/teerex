@@ -17,6 +17,9 @@ import time
 import threading
 import unittest
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/acceptance'))
+import pane_authority
+
 
 BIN = str(Path(os.environ.get("TEEREX_BIN", Path(__file__).resolve().parents[2] / "zig-out/bin/teerex")).resolve())
 
@@ -82,6 +85,7 @@ class SendTest(unittest.TestCase):
                         REX_SERVER="unix:///tmp/never-this-server.sock", REX_BLOCK="block:wrong",
                         REX_SESSION="session:wrong", REX_CLIENT="client:wrong",
                         PATH=str(Path(self.rex).parent) + os.pathsep + os.environ.get("PATH", ""))
+        pane_authority.caller(self, self.rpc, self.env, self.work)
 
     def fixture(self, redirect_stdout=False, status=""):
         raw = self.work / ("received-" + str(time.monotonic_ns()))

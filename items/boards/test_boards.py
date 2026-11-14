@@ -19,6 +19,8 @@ import unittest
 
 BIN = str(Path(os.environ.get("TEEREX_BIN", "zig-out/bin/teerex")).resolve())
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / 'tools/acceptance'))
+import pane_authority
 ZERO = "00000000-0000-0000-0000-000000000000"
 OTHER = "11111111-1111-1111-1111-111111111111"
 
@@ -1086,6 +1088,7 @@ class RexBoardsTest(unittest.TestCase):
         root = self.root / ("prepared-" + str(time.monotonic_ns()))
         root.mkdir()
         env = dict(os.environ, PATH=str(Path(self.rex).parent) + os.pathsep + os.environ["PATH"])
+        pane_authority.caller(self, lambda method, args: json.loads(subprocess.check_output(self.base + ['api', 'call', method, json.dumps(args)])), env, root)
         sid = json.loads(subprocess.check_output(self.base + ["api", "call", "session.create", "{}"]))["session_id"]
         self.addCleanup(subprocess.run, self.base + ["api", "call", "session.destroy", json.dumps(dict(session_id=sid))],
                         capture_output=True)
@@ -1456,10 +1459,15 @@ class RexBoardsTest(unittest.TestCase):
         registry.mkdir(mode=0o700)
         store.mkdir(mode=0o700)
         env = dict(os.environ, PATH=str(Path(self.rex).parent) + os.pathsep + os.environ["PATH"])
+        rpc = lambda method, args: json.loads(subprocess.check_output(self.base + ['api', 'call', method, json.dumps(args)]))
+        pane_authority.caller(self, rpc, env, root)
         def make(report=False):
             script = "import time; " + ("print('\\x1b]7501;state=done:app=rivet:title=RmluaXNoZWQ=\\x1b\\\\', flush=True); " if report else "") + "time.sleep(120)"
-            made = json.loads(subprocess.check_output(self.base + ["new", "--json", "--keep-open", "--shell=none", "--", sys.executable, "-c", script]))
-            return made["session_id"], made["initial_windows"][0]["block_ids"][0]
+            sid = pane_authority.session(BIN, self.socket, env, 'jobs subject ' + str(time.monotonic_ns()))
+            made = subprocess.run([BIN, 'surfaces', 'open', '--socket', str(self.socket), '--session', sid,
+                                   '--layout', 'tab', '--label', 'jobs subject', '--', sys.executable, '-c', script],
+                                  env=env, capture_output=True, text=True, check=True)
+            return sid, json.loads(made.stdout)['actual']['block_id']
         worker, untracked, vanished = make(True), make(), make()
         for _ in range(100):
             status = json.loads(subprocess.check_output(self.base + ["block", "call", "-s", worker[0], "-b", worker[1], "program_status", "{}"]))

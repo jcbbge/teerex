@@ -2,6 +2,7 @@
 import json
 import importlib.util
 import os
+import shlex
 from pathlib import Path
 import shutil
 import subprocess
@@ -9,6 +10,9 @@ import sys
 import tempfile
 import time
 import unittest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/acceptance'))
+import pane_authority
 
 BIN = str(Path(os.environ.get('TEEREX_BIN', Path(__file__).resolve().parents[2] / 'zig-out/bin/teerex')).resolve())
 REX = os.environ.get('REX_BIN') or shutil.which('rex')
@@ -43,6 +47,15 @@ class WaitingTest(unittest.TestCase):
         self.config = self.root / 'hosts.json'
         self.config.write_text(json.dumps(dict(schema_version=1, hosts=self.hosts)))
         self.state = self.root / 'navigation.json'
+        self.env = dict(os.environ, HOME=str(self.root), TEEREX_INTERNAL_REX=REX,
+                        PATH=str(Path(REX).parent) + os.pathsep + os.environ.get('PATH', ''))
+        pane_authority.caller(self, lambda method, args: self.rpc('hive', method, **args), self.env, self.root)
+        self.controller = self.root / 'caller-teerex'
+        keys = ('HOME', 'PATH', 'XDG_STATE_HOME', 'REX_SESSION', 'REX_BLOCK', 'LC_REX_SESSION', 'LC_REX_BLOCK',
+                'TEEREX_INTERNAL_REX', 'TEEREX_BOARDS_STORE', 'AGENT_REGISTRY')
+        environment = [key + '=' + self.env[key] for key in keys if key in self.env]
+        self.controller.write_text('#!/bin/sh\nexec ' + shlex.join(['/usr/bin/env', *environment, BIN]) + ' "$@"\n')
+        self.controller.chmod(0o700)
 
     def rex(self, host, *args):
         return json.loads(subprocess.check_output([REX, '--autostart=false', '--server',
@@ -57,19 +70,22 @@ class WaitingTest(unittest.TestCase):
             script += "print('\\x1b]7501;state=" + status + ":app=fixture\\x1b\\\\',flush=True); "
         script += 'time.sleep(120)'
         argv = [sys.executable, '-c', script]
-        if session:
-            made = self.rpc(host, 'session.new_block', session_id=session, flavor='com.superlogical.terminal.shell',
-                options=dict(shell='none', command=argv, exit=dict(on_completion=False)))
-            return session, made['block_id']
-        made = self.rex(host, 'new', '--json', '--shell=none', '--', *argv)
-        return made['session_id'], made['initial_windows'][0]['block_ids'][0]
+        detached = session is not None
+        session = session or pane_authority.session(BIN, self.hosts[host]['socket'], self.env, 'waiting subject ' + str(time.monotonic_ns()))
+        made = subprocess.run([BIN, '--rex', REX, 'surfaces', 'open', '--socket', self.hosts[host]['socket'],
+                               '--session', session, '--layout', 'tab', '--label', 'waiting subject', '--', *argv],
+                              env=self.env, capture_output=True, text=True, check=True, timeout=10)
+        block = json.loads(made.stdout)['actual']['block_id']
+        if detached:
+            self.rpc(host, 'session.detach_block', session_id=session, block_id=block)
+        return session, block
 
     def invoke(self, operation='list', **flags):
         argv = [BIN, 'waiting', operation, '--config', str(self.config), '--state', str(self.state)]
         for key, value in flags.items():
             argv.append('--' + key.replace('_', '-'))
             if value is not True: argv.append(str(value))
-        result = subprocess.run(argv, text=True, capture_output=True, timeout=40)
+        result = subprocess.run(argv, env=self.env, text=True, capture_output=True, timeout=40)
         return result, json.loads(result.stdout) if result.stdout else None
 
     def wait_rows(self, count):
@@ -111,7 +127,7 @@ class WaitingTest(unittest.TestCase):
         if fixture:
             source = Path(fixture).read_text()
             source = source.replace('(os.getenv("HOME") or "") .. "/.local/state/rexconfig"', json.dumps(str(self.root)))
-            source = source.replace('home .. "/.local/opt/teerex-managed/current/teerex"', json.dumps(BIN))
+            source = source.replace('home .. "/.local/opt/teerex-managed/current/teerex"', json.dumps(str(self.controller)))
             source = source.replace('home .. "/.config/teerex/hosts.json"', json.dumps(str(self.config)))
             source = source.replace('"--config", ' + json.dumps(str(self.config)),
                 '"--state", ' + json.dumps(str(self.state)) + ', "--config", ' + json.dumps(str(self.config)))
@@ -203,7 +219,7 @@ class WaitingTest(unittest.TestCase):
         source = Path(fixture).read_text()
         source = source.replace('(os.getenv("HOME") or "") .. "/.local/state/rexconfig"', json.dumps(str(self.root)))
         # Substitute only executable/config/state destinations in the scratch fixture.
-        source = source.replace('home .. "/.local/opt/teerex-managed/current/teerex"', json.dumps(BIN))
+        source = source.replace('home .. "/.local/opt/teerex-managed/current/teerex"', json.dumps(str(self.controller)))
         source = source.replace('home .. "/.config/teerex/hosts.json"', json.dumps(str(self.config)))
         source = source.replace('"--config", ' + json.dumps(str(self.config)),
             '"--state", ' + json.dumps(str(self.state)) + ', "--config", ' + json.dumps(str(self.config)))

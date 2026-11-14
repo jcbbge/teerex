@@ -68,6 +68,8 @@ class JobsTest(unittest.TestCase):
         self.registry.mkdir(mode=0o700)
         self.env = dict(os.environ, PATH=str(Path(self.rex).parent) + os.pathsep + os.environ.get("PATH", ""),
                         REX_SERVER="unix:///tmp/poison.sock", REX_SESSION="session:poison", REX_BLOCK="block:poison", REX_CLIENT="client:poison")
+        self.env.update(XDG_STATE_HOME=str(self.work / 'state'), TEEREX_BOARDS_STORE=str(self.work / 'boards'),
+                        AGENT_REGISTRY=str(self.work / 'agents'))
         made = json.loads(subprocess.check_output(self.base + ["new", "--json", "--keep-open", "--shell=none", "--", "/bin/sleep", "120"], timeout=10))
         self.session = made["session_id"]
         self.anchor = made["initial_windows"][0]["block_ids"][0]
@@ -84,7 +86,14 @@ class JobsTest(unittest.TestCase):
         return args
 
     def invoke(self, operation, **options):
-        r = subprocess.run(self.command(operation, **options), capture_output=True, text=True, env=self.env, timeout=20)
+        # These are explicit operator presentation tests of raw/native-owned panes.
+        if operation == 'present':
+            import sys
+            sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/acceptance'))
+            import pane_authority
+            r = pane_authority.operator(self.command(operation, **options), self.env, capture_output=True, text=True, timeout=20)
+        else:
+            r = subprocess.run(self.command(operation, **options), capture_output=True, text=True, env=self.env, timeout=20)
         return r, json.loads(r.stdout) if r.stdout else None
 
     def track(self, **options):
@@ -677,18 +686,17 @@ class JobsTest(unittest.TestCase):
         self.detached()
         self.track()
         ready = self.work / "ready"
-        self.shim(f"import os,signal,time\nfrom pathlib import Path\nPath({str(ready)!r}).write_text(str(os.getpid()))\n"
-                  "signal.signal(signal.SIGTERM,signal.SIG_IGN)\ntime.sleep(60)\n")
+        self.shim(f"import os,signal,time\nfrom pathlib import Path\nsignal.signal(signal.SIGTERM,signal.SIG_IGN)\n"
+                  f"Path({str(ready)!r}).write_text(str(os.getpid()))\ntime.sleep(60)\n")
         gen = 1
         for sig, code in [(None, 124), (signal.SIGINT, 130), (signal.SIGTERM, 143), (signal.SIGKILL, -signal.SIGKILL)]:
             ready.unlink(missing_ok=True)
             proc = subprocess.Popen(self.command("present", owner="operator α", generation=gen, reason="bounded transport lifetime", anchor=self.anchor,
-                                                 focus="no", timeout_ms=200 if sig is None else 5000),
+                                                 focus="no", timeout_ms=1000 if sig is None else 5000),
                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=self.env, start_new_session=True)
             try:
-                for _ in range(100):
-                    if ready.exists():
-                        break
+                deadline = time.monotonic() + 5
+                while not ready.exists() and proc.poll() is None and time.monotonic() < deadline:
                     time.sleep(.01)
                 self.assertTrue(ready.exists())
                 if sig is not None:

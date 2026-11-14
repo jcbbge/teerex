@@ -223,7 +223,7 @@ class Rex:
         self.base = [self.executable, "--autostart=false", "--server", self.server, "--timeout", "3s", "--color", "never"]
 
     def call(self, method, args=None):
-        script = __import__('teerex_pane_guard').prelude(self.server) + '\nlocal v,e=rex.call(rex.args.method,rex.args.params); if not v then error(e) end; return v'
+        script = __import__('teerex_pane_guard').prelude(self.server) + '\nlocal p=rex.args.params; if p.session_id then local a,e=rex.call("session.attach",{session_id=p.session_id}); if not a then error(e) end end; local v,e=rex.call(rex.args.method,p); if not v then error(e) end; return v'
         value = run_process(self.base + ["do", "-e", script, "--args", encoded(dict(method=method, params=args or {})).decode(), "--json"], self.timeout)
         require(isinstance(value, dict), "invalid_Rex_response_object")
         return value

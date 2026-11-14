@@ -1,7 +1,9 @@
 """Cooperative clutch contracts against a disposable Rex server only."""
 import fcntl
+import hashlib
 import json
 import os
+import shlex
 from pathlib import Path
 import subprocess
 import sys
@@ -13,6 +15,15 @@ import test_send as fixtures
 
 
 class ClutchTest(fixtures.SendTest):
+    def orphan_record(self, source, socket):
+        """Prune fixtures describe gone endpoints; they never take a nonexistent pane."""
+        value = json.loads(source.read_text())
+        value.update(socket=str(socket), held=False)
+        name = hashlib.sha256('\0'.join(value[k] for k in ('socket', 'session', 'pane')).encode()).hexdigest() + '.json'
+        path = Path(self.env['TEEREX_CLUTCH_DIR']) / name
+        path.write_text(json.dumps(value))
+        path.chmod(0o600)
+        return path
     @staticmethod
     def cleanup_process(process):
         if process.poll() is None:
@@ -229,11 +240,7 @@ class ClutchTest(fixtures.SendTest):
         self.rpc("block.close", {"session_id": dead[0], "block_id": dead[1]})
         self.rpc("block.close", {"session_id": held[0], "block_id": held[1]})
         missing = self.work / "gone.sock"
-        result = subprocess.run([fixtures.BIN, "clutch", "take", "--socket", str(missing),
-                                 "--session", live[0], "--pane", live[1]], env=self.env, capture_output=True, text=True)
-        orphan = Path(json.loads(result.stdout)["state_file"])
-        record = json.loads(orphan.read_text()); record["held"] = False
-        orphan.write_text(json.dumps(record))
+        orphan = self.orphan_record(files[0], missing)
         before = {p.name: p.read_bytes() for p in orphan.parent.iterdir()}
         result, plan = self.prune()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -270,18 +277,20 @@ class ClutchTest(fixtures.SendTest):
         file.unlink()
         # An existing non-socket endpoint is uncertain, never proof of disappearance.
         socket = self.work / "uncertain.sock"; socket.write_text("not a socket")
-        result = subprocess.run([fixtures.BIN, "clutch", "take", "--socket", str(socket),
-                                 "--session", target[0], "--pane", target[1]], env=self.env, capture_output=True, text=True)
-        file = Path(json.loads(result.stdout)["state_file"])
-        record = json.loads(file.read_text()); record["held"] = False
-        file.write_text(json.dumps(record))
+        source = self.work / 'prune-record-source.json'
+        source.write_bytes(original)
+        file = self.orphan_record(source, socket)
+        source.unlink()
         _, applied = self.prune("--apply")
         self.assertEqual(applied["removed"], [])
         self.assertTrue(file.exists())
 
     def test_palette_fragment_is_exclusive_and_uses_invoking_pane(self):
         fragment = self.work / "clutch.lua"
-        result = subprocess.run([fixtures.BIN, "clutch", "palette", "--file", str(fragment), "--socket", str(self.socket)],
+        controller = self.work / 'pinned-clutch'
+        controller.write_text('#!/bin/sh\nexec ' + shlex.join([fixtures.BIN, '--rex', self.rex]) + ' "$@"\n')
+        controller.chmod(0o700)
+        result = subprocess.run([fixtures.BIN, "clutch", "palette", "--file", str(fragment), "--socket", str(self.socket), '--teerex', str(controller)],
                                 capture_output=True, text=True, env=self.env, timeout=5)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         source = fragment.read_text()

@@ -24,6 +24,8 @@ from unittest import mock
 from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / 'tools/acceptance'))
+import pane_authority
 BIN = str(Path(os.environ.get('TEEREX_BIN', ROOT / 'zig-out/bin/teerex')).resolve())
 FIXTURE = Path(__file__).with_name('fixture.jsonl')
 
@@ -160,10 +162,12 @@ class BoardTest(unittest.TestCase):
         def rpc(method,args):
             return json.loads(subprocess.check_output([rex,'--autostart=false','--server','unix://'+str(socket),'api','call',method,json.dumps(args)],timeout=5))
         sid=rpc('session.create',dict(label='glyph fixture'))['session_id']
-        opened=json.loads(subprocess.check_output([BIN,'--rex',rex,'surfaces','open','--socket',str(socket),'--session',sid,'--layout','tab','--label','🟠 fixture','--','/bin/sh','-c','sleep 60'],timeout=10))['actual']
+        creator = dict(os.environ, HOME=str(self.root), PATH=str(Path(rex).parent)+os.pathsep+os.environ.get('PATH',''))
+        pane_authority.caller(self, rpc, creator, self.root)
+        opened=json.loads(subprocess.check_output([BIN,'--rex',rex,'surfaces','open','--socket',str(socket),'--session',sid,'--layout','tab','--label','🟠 fixture','--','/bin/sh','-c','sleep 60'],env=creator,timeout=10))['actual']
         fifo=self.root/'events';os.mkfifo(fifo)
         writer=os.open(fifo,os.O_RDWR|os.O_NONBLOCK);self.addCleanup(os.close,writer)
-        pane=Pane(self.root,fixture=fifo,extra_env=dict(REX_SERVER='unix://'+str(socket),REX_SESSION=sid,REX_BLOCK=opened['block_id'],LC_REX_SESSION=sid,LC_REX_BLOCK=opened['block_id'],PATH=str(Path(rex).parent)+os.pathsep+os.environ.get('PATH','')))
+        pane=Pane(self.root,fixture=fifo,extra_env=dict(creator,REX_SERVER='unix://'+str(socket),LC_REX_SESSION=sid,LC_REX_BLOCK=opened['block_id']))
         self.addCleanup(pane.close)
         def label():
             view=rpc('session.view',dict(session_id=sid))
@@ -503,7 +507,10 @@ class BoardTest(unittest.TestCase):
             self.assertNotIn('target_selection',content)
             self.assertNotIn('explicit Rex executable',content)
         finally:
-            subprocess.run([BIN,'--rex',rex,'surfaces','close','--socket',hosts['hive']['socket'],'--session',board_sid,'--pane',held_block],capture_output=True,timeout=5,check=True)
+            pane_authority.operator([BIN,'--rex',rex,'surfaces','close','--socket',hosts['hive']['socket'],'--session',board_sid,'--pane',held_block],
+                                    dict(os.environ, HOME=str(self.root), XDG_STATE_HOME=str(self.root / 'state'),
+                                         TEEREX_BOARDS_STORE=str(self.root / 'operator-boards'), AGENT_REGISTRY=str(self.root / 'operator-agents')),
+                                    capture_output=True,timeout=5,check=True)
         # Finite live JSON and the independent kept check use these disposable
         # servers and a private launch registry, never the operator's state.
         registry=self.root/'.local/state/teerex-agents';registry.mkdir(parents=True)
@@ -570,8 +577,9 @@ class BoardTest(unittest.TestCase):
         host=next(h for h in json.loads(snapshot.stdout)['hosts'] if h['host']=='hive')
         self.assertEqual({r['block'] for r in host['rows']},{targets['hive'][2]})
         self.assertEqual(host['counts']['total'],1)
-        subprocess.run([BIN,'surfaces','close','--socket',hosts['hive']['socket'],'--session',manual_created['session_id'],'--pane',manual_block],capture_output=True,timeout=5,check=True,
-                       env=dict(os.environ,PATH=os.path.dirname(rex)+os.pathsep+os.environ.get('PATH','')))  # surfaces close needs rex on PATH
+        pane_authority.operator([BIN,'surfaces','close','--socket',hosts['hive']['socket'],'--session',manual_created['session_id'],'--pane',manual_block],
+                                dict(private_env, PATH=os.path.dirname(rex)+os.pathsep+os.environ.get('PATH','')),
+                                capture_output=True,timeout=5,check=True)
         # The normal entrypoint must start the integrated feed, receive vitals,
         # and reap its foreground feed children when the board exits.
         live=Pane(self.root,fixture=None,config=config,extra_env=dict(TEEREX_ASK_STATE_DIR=str(self.root/'asks')))

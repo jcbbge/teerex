@@ -595,6 +595,9 @@ class LiveRecordsTest(RecordsFixture):
         super().setUp()
         self.env["TEEREX_INTERNAL_REX"] = self.rex
         self.env["PATH"] = str(Path(self.rex).parent) + os.pathsep + self.env["PATH"]
+        sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/acceptance'))
+        import pane_authority
+        pane_authority.caller(self, self.rpc, self.env, self.root)
         self.session = self.rpc("session.create", {"label": "records disposable"})["session_id"]
         self.addCleanup(self.destroy_session)
         self.anchor = self.open_pane("investigation")

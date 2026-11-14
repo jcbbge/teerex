@@ -163,7 +163,7 @@ pub fn context(allocator: std.mem.Allocator) ![]const u8 {
 /// Runs in the existing helper process; execs of foreign programs have no invented end.
 pub fn python(allocator: std.mem.Allocator, source: []const u8) ![]const u8 {
     const calls_source = try std.json.Stringify.valueAlloc(allocator, @embedFile("calls.py"), .{});
-    const helper_source = try std.json.Stringify.valueAlloc(allocator, try @import("pane_guard").python(allocator, source), .{});
+    const helper_source = try std.json.Stringify.valueAlloc(allocator, source, .{});
     return std.fmt.allocPrint(allocator, "import types,sys\n_calls=types.ModuleType('teerex_calls')\nexec({s}, _calls.__dict__)\nsys.modules['teerex_calls']=_calls\n_calls.run_helper({s}, {d}, {d}, '{s}')", .{ calls_source, helper_source, pid(), started_at, call_id });
 }
 

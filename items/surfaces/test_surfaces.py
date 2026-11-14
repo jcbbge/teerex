@@ -17,6 +17,9 @@ import tempfile
 import time
 import unittest
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/acceptance'))
+import pane_authority
+
 BIN = str(Path(os.environ.get("TEEREX_BIN", Path(__file__).resolve().parents[2] / "zig-out/bin/teerex")).resolve())
 
 
@@ -67,6 +70,7 @@ class SurfacesTest(unittest.TestCase):
         self.env = dict(os.environ, PATH=str(Path(self.rex).parent) + os.pathsep + os.environ.get("PATH", ""),
                         REX_SERVER="unix:///tmp/poison.sock", REX_SESSION="session:poison",
                         REX_BLOCK="block:poison", REX_CLIENT="client:poison", XDG_STATE_HOME=str(self.work / "state"))
+        pane_authority.caller(self, self.rpc, self.env, self.work)
         self.session = self.rpc("session.create", {"label": "surfaces disposable"})["session_id"]
         self.anchor = self.open("tab")["actual"]["block_id"]
         self.addCleanup(lambda: self.rpc("session.destroy", {"session_id": self.session}))
@@ -350,7 +354,7 @@ class SurfacesTest(unittest.TestCase):
         self.assertEqual(before, self.view())
 
     def test_session_close_empty_unattached_and_verify_absence(self):
-        sid = self.rpc('session.create', {'label': 'close empty ' + self.work.name})['session_id']
+        sid = pane_authority.session(BIN, self.socket, self.env, 'close empty ' + self.work.name)
         before = self.view()
         result, packet = self.surface('session close', '--session', sid)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)

@@ -278,11 +278,15 @@ class RexTest(unittest.TestCase):
         self.env = dict(os.environ, HOME=str(home), REX_SERVER="unix://" + str(self.socket), REX_SESSION=self.session,
                         PATH=str(Path(self.rex).parent) + os.pathsep + os.environ.get("PATH", ""),
                         TEEREX_INTERNAL_REX=self.rex, TEEREX_CALL_LOG_DIR=str(home / "calls"), TEEREX_CLUTCH_DIR=str(home / "clutch"), XDG_STATE_HOME=str(home / "state"))
+        sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/acceptance'))
+        import pane_authority
+        pane_authority.caller(self, lambda method, args: json.loads(subprocess.check_output(self.base + ['api', 'call', method, json.dumps(args)])), self.env, home, session_id=self.session)
         self.client = Client(self.env)
         self.addCleanup(self.client.close)
         self.client.initialize()
 
     def call(self, tool, args):
+        args = dict(session=self.session, **args)
         result = self.client.call(tool, args)
         self.assertNotIn("error", result, result)
         native = result["result"]["structuredContent"]

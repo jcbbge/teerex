@@ -141,7 +141,6 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     exe.root_module.addImport("rex_boards", boards);
-    boards.addImport("pane_guard", pane_guard);
     send.addImport("rex_boards", boards);
     surfaces.addImport("rex_boards", boards);
     rex_run.addImport("rex_boards", boards);
@@ -151,6 +150,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     recovery.addImport("supervised_child", child);
+    recovery.addImport("pane_guard", pane_guard);
     exe.root_module.addImport("rex_recovery", recovery);
     recovery.addImport("rex_boards", boards);
     const agents = b.createModule(.{
@@ -158,6 +158,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    agents.addImport("pane_guard", pane_guard);
     const scratch = b.createModule(.{ .root_source_file = b.path("items/scratch/main.zig"), .target = target, .optimize = optimize });
     exe.root_module.addImport("rex_scratch", scratch);
     scratch.addImport("pane_guard", pane_guard);

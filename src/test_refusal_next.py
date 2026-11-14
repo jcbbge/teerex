@@ -3,8 +3,12 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools/acceptance'))
+import pane_authority
 
 BIN = str(Path(os.environ.get('TEEREX_BIN', 'zig-out/bin/teerex')).resolve())
 SESSION = 'session:11111111-1111-1111-1111-111111111111'
@@ -28,26 +32,9 @@ class RefusalNextTest(unittest.TestCase):
 
     def run_at_terminal(self, *args):
         # Hints are for a person at a terminal: stdin and stderr are a pty here.
-        master, slave = os.openpty()
-        try:
-            p = subprocess.run([BIN, *map(str, args)], env=self.env, stdin=slave, stdout=subprocess.PIPE,
-                               stderr=slave, text=True, timeout=15)
-            os.close(slave); slave = None
-            chunks = []
-            while True:
-                try:
-                    chunk = os.read(master, 65536)
-                except OSError:
-                    break
-                if not chunk:
-                    break
-                chunks.append(chunk)
-            p.stderr = b''.join(chunks).decode(errors='replace').replace('\r\n', '\n')
-            return p
-        finally:
-            if slave is not None:
-                os.close(slave)
-            os.close(master)
+        p = pane_authority.terminal([BIN, *map(str, args)], self.env, text=True, timeout=15)
+        p.stderr = p.stderr.replace('\r\n', '\n')
+        return p
 
     def refusal(self, *args, expected=None):
         p = self.run_at_terminal(*args)
