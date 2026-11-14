@@ -79,6 +79,18 @@ Create an operator-selected private directory (`0700`) on a trusted local filesy
 
 These are **explicit examples of Joshua's requested standing flags**, not silently installed security changes or certified harness adapters. Review the actual harness's interactive prompt-argument semantics and flags. The first argv must be absolute; each configured standing flag is appended exactly once by exact-argument comparison. `protocol_mode:"argument"` is required; the launcher supplies no task text in that initial argument. Profile argv is trusted operator configuration, not parsed for hidden initial tasks or harness-specific prompt options. Do not put a task in profile argv. `resume_session_id` can be explicit metadata with an operator-authored resume argv, but generic resume/recovery is **not proven**.
 
+Profile `project_trust_toml` optionally names an absolute TOML config path on the
+execution host (Python 3.11+ is required for this opt-in). Before creating any
+launch record or pane, launch records `[projects."<canonical cwd>"]` with
+`trust_level = "trusted"`. Existing trusted entries cause no write. Other tables
+retain their original bytes; a same-directory temporary file preserves the
+config's mode and atomically replaces it under a sibling `.lock` file. A missing
+file is created with mode 0600; its parent must already exist. Invalid or unreadable
+TOML refuses the launch. Without this key, launch changes no trust configuration.
+Explicit SSH `execution` routes refuse this option with
+`project_trust_toml_requires_local_execution_host`; configure it in a profile
+launched on the execution host instead (including through `human_route`).
+
 `hook_events:true` supports explicit `harness:"claude"`, `"codex"`, and `"pi"`; false omits all turn callbacks. These profiles share schema1: absolute `argv`, optional string-array `standing_flags`, `harness`, required `protocol_mode:"argument"`, optional boolean `hook_events`. No extra Pi-specific profile field or global extension install is needed.
 
 | Harness | Per-launch adapter | Verified contract/source |

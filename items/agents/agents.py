@@ -1217,6 +1217,103 @@ def launch(o):
         raise
 
 
+def ensure_project_trust(profile, cwd, execution):
+    """Opt-in, execution-local TOML edit before any launch objects are created."""
+    if "project_trust_toml" not in profile:
+        return
+    require(execution is None, "project_trust_toml_requires_local_execution_host")
+    path = Path(absolute(profile["project_trust_toml"]))
+    try:
+        import fcntl
+        import tomllib
+    except ImportError:
+        raise Refusal("project_trust_toml_requires_python_3_11")
+    cwd = str(Path(cwd).resolve(strict=True))
+
+    def read():
+        try:
+            raw = path.read_bytes()
+            return raw, tomllib.loads(raw.decode("utf-8")), stat.S_IMODE(path.stat().st_mode)
+        except FileNotFoundError:
+            return b"", {}, 0o600
+
+    def trusted(data):
+        projects = data.get("projects", {})
+        require(isinstance(projects, dict), "invalid_project_trust_projects")
+        project = projects.get(cwd, {})
+        require(isinstance(project, dict), "invalid_project_trust_project")
+        return project.get("trust_level") == "trusted"
+
+    try:
+        # Refuse unreadable/invalid input before even creating the lock file.
+        raw, data, mode = read()
+        if trusted(data):
+            return
+        with open(str(path) + ".lock", "a+b") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            raw, data, mode = read()
+            if trusted(data):
+                return
+            source = raw.decode("utf-8")
+            lines = source.splitlines(keepends=True)
+            headers = []
+            offset = 0
+            for line in lines:
+                if line.lstrip().startswith("["):
+                    try:
+                        # A header-looking line inside a multiline string is not a boundary.
+                        tomllib.loads(source[:offset])
+                        header = tomllib.loads(line + "\n__teerex_probe__ = true\n")
+                        headers.append((offset, offset + len(line), header))
+                    except tomllib.TOMLDecodeError:
+                        pass
+                offset += len(line)
+            target = None
+            for i, (start, body, header) in enumerate(headers):
+                if header == {"projects": {cwd: {"__teerex_probe__": True}}}:
+                    target = (start, body, headers[i + 1][0] if i + 1 < len(headers) else len(source))
+                    break
+            if target is None:
+                addition = '\n[projects.' + json.dumps(cwd, ensure_ascii=False) + ']\ntrust_level = "trusted"\n'
+                result = source + addition
+            else:
+                start, body, end = target
+                table = source[start:end]
+                previous = len(source[start:body])
+                changed = False
+                pos = 0
+                for line in table.splitlines(keepends=True):
+                    pos += len(line)
+                    try:
+                        partial = tomllib.loads(table[:pos])["projects"][cwd]
+                    except (tomllib.TOMLDecodeError, KeyError):
+                        continue
+                    if "trust_level" in partial:
+                        result = source[:start + previous] + 'trust_level = "trusted"\n' + source[start + pos:]
+                        changed = True
+                        break
+                    previous = pos
+                if not changed:
+                    result = source[:body] + 'trust_level = "trusted"\n' + source[body:]
+            # Also catches unsupported inline/dotted table shapes without touching the file.
+            require(trusted(tomllib.loads(result)), "project_trust_update_failed")
+            temporary = None
+            try:
+                with tempfile.NamedTemporaryFile(dir=path.parent, prefix=path.name + ".", delete=False) as out:
+                    temporary = out.name
+                    os.fchmod(out.fileno(), mode)
+                    out.write(result.encode("utf-8"))
+                    out.flush()
+                    os.fsync(out.fileno())
+                os.replace(temporary, path)
+                temporary = None
+            finally:
+                if temporary is not None:
+                    os.unlink(temporary)
+    except (OSError, ValueError) as exc:
+        raise Refusal("project_trust_toml_update_failed: " + type(exc).__name__) from exc
+
+
 def launch_agent(o):
     cfg = config(o.config)
     human = o.operation == "human"
@@ -1282,6 +1379,7 @@ def launch_agent(o):
     name, owner, purpose = text(o.name or o.profile), text(o.owner), text(o.purpose, 256)
     host = text(o.host)
     cwd = absolute(o.cwd)
+    ensure_project_trust(profile, cwd, execution)
     review = o.review_at or now() + cfg.get("defaults", {}).get("review_after_ms", 3600000)
     require(type(review) is int and now() < review <= now() + 30 * 86400000, "invalid_review_at")
     brief = message(read_file(o.brief_file, 32768)) if o.brief_file else None

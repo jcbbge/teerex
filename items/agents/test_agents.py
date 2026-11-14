@@ -627,6 +627,43 @@ class AgentsTest(unittest.TestCase):
     def record(self, launch_id):
         return json.loads((self.registry / ("agents-" + launch_id + ".json")).read_text())
 
+    @unittest.skipUnless(sys.version_info >= (3, 11), "project trust opt-in requires Python 3.11+")
+    def test_project_trust_two_concurrent_launches_record_execution_cwds(self):
+        import tomllib
+        trust = self.work / "trust.toml"
+        self.settings["profiles"]["probe"]["project_trust_toml"] = str(trust)
+        self.config.write_text(json.dumps(self.settings))
+        cwds = [self.work / "first", self.work / "second"]
+        for cwd in cwds:
+            cwd.mkdir()
+        def start(cwd):
+            return self.run_cli("launch", "--config", str(self.config), "--profile", "probe",
+                                "--cwd", str(cwd), "--brief-file", str(self.brief),
+                                "--ack-timeout-ms", "5000", timeout=30)
+        with ThreadPoolExecutor() as pool:
+            results = list(pool.map(start, cwds))
+        for proc, packet in results:
+            self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+            self.assertTrue(packet["protocol_acknowledged"])
+            self.assertTrue(packet["brief_attempted"])
+        projects = tomllib.loads(trust.read_text())["projects"]
+        for cwd in cwds:
+            self.assertEqual(projects[str(cwd.resolve())]["trust_level"], "trusted")
+
+    @unittest.skipUnless(sys.version_info >= (3, 11), "project trust opt-in requires Python 3.11+")
+    def test_project_trust_invalid_toml_refuses_before_launch_creation(self):
+        trust = self.work / "trust.toml"
+        trust.write_text("bad = [")
+        self.settings["profiles"]["probe"]["project_trust_toml"] = str(trust)
+        self.config.write_text(json.dumps(self.settings))
+        before = set(self.registry.iterdir())
+        proc, packet = self.run_cli("launch", "--config", str(self.config), "--profile", "probe")
+        self.assertNotEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("project_trust_toml_update_failed", proc.stdout + proc.stderr)
+        self.assertEqual(set(self.registry.iterdir()), before)
+        self.assertFalse(self.worker_log.exists())
+        self.assertFalse(Path(str(trust) + ".lock").exists())
+
     def test_detached_launch_tracking_prune_present_and_come_forward(self):
         profile = self.settings['profiles']['probe']
         profile.update(layout='detached', come_forward=True)
