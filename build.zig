@@ -140,6 +140,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    boards.addImport("pane_guard", pane_guard);
     exe.root_module.addImport("rex_boards", boards);
     send.addImport("rex_boards", boards);
     surfaces.addImport("rex_boards", boards);

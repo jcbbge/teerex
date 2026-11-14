@@ -11,6 +11,7 @@ import unittest
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / 'src'))
 
 def load(name, path):
     spec = importlib.util.spec_from_file_location(name, ROOT / path)
@@ -33,6 +34,15 @@ class StopStatusTest(unittest.TestCase):
                               REX_SERVER='/tmp/rex.sock', REX_SESSION='session:test', REX_BLOCK='block:test')
         self.env.start()
         self.addCleanup(self.env.stop)
+
+    def test_question_origin_uses_shared_caller_precedence(self):
+        for environment, expected in [
+            (dict(LC_REX_SESSION='ssh', LC_REX_BLOCK='ssh-pane'), ('ssh', 'ssh-pane')),
+            (dict(REX_SESSION='rex', REX_BLOCK='rex-pane', LC_REX_SESSION='ssh', LC_REX_BLOCK='ssh-pane'), ('rex', 'rex-pane')),
+            (dict(AGENT_SESSION='agent', AGENT_PANE='agent-pane', REX_SESSION='rex', REX_BLOCK='rex-pane'), ('agent', 'agent-pane')),
+        ]:
+            with self.subTest(environment=environment), patch.dict(os.environ, environment, clear=True):
+                self.assertEqual(status.origin(), dict(zip(('session', 'block'), expected)))
 
     def test_idle_root(self):
         with patch.object(status, 'write_status', return_value='written') as write:

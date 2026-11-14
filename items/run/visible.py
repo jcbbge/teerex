@@ -94,6 +94,8 @@ def await_permission(root, config):
         time.sleep(.02)
     if load(root / "permit.json") != identity:
         return None
+    # The verified supervisor owns this new pane, rather than its inherited caller metadata.
+    os.environ.update(AGENT_SESSION=identity["session_id"], AGENT_PANE=identity["block_id"])
     return identity
 
 

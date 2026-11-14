@@ -11,6 +11,9 @@ import sys
 import hashlib
 import urllib.parse
 
+if "caller_identity" not in globals():
+    from caller_identity import caller_identity
+
 
 def read(path, default=None):
     try:
@@ -44,8 +47,7 @@ def snapshot(server):
     root = state_root()
     store = Path(os.environ.get('TEEREX_BOARDS_STORE', str(root / 'teerex-boards')))
     boards = read(store / 'state.json', {'seats': []})
-    actor = dict(session_id=os.environ.get('REX_SESSION') or os.environ.get('LC_REX_SESSION'),
-                 block_id=os.environ.get('REX_BLOCK') or os.environ.get('LC_REX_BLOCK'))
+    actor = caller_identity()
     directory = root / 'teerex/pane-creators' / hashlib.sha256(server.encode()).hexdigest()
     directory.mkdir(parents=True, mode=0o700, exist_ok=True)
     s = directory.lstat()

@@ -166,6 +166,7 @@ class VisibleTest(unittest.TestCase):
         sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/acceptance'))
         import pane_authority
         pane_authority.caller(self, self.rpc, self.runtime_env, self.work)
+        self.runtime_env.update(AGENT_SESSION=self.runtime_env['REX_SESSION'], AGENT_PANE=self.runtime_env['REX_BLOCK'])
         # The Rex server supplies this same state root to its supervisor, while
         # the controller supplies the real creator identity to surfaces open.
         self.runtime_env.pop('XDG_STATE_HOME')

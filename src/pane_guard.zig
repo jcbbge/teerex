@@ -1,5 +1,6 @@
 const std = @import("std");
-pub const source = @embedFile("pane_guard.py");
+pub const identity_source = @embedFile("caller_identity.py");
+pub const source = identity_source ++ "\n" ++ @embedFile("pane_guard.py");
 
 pub fn python(allocator: std.mem.Allocator, script: []const u8) ![]const u8 {
     const encoded = try std.json.Stringify.valueAlloc(allocator, source, .{});

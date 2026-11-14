@@ -119,6 +119,47 @@ class GuardTest(_fixtures.SurfacesTest):
         self.assertIn(other, blocks)
         self.assertIn(self.anchor, blocks)
 
+    def test_forwarded_only_creator_and_seat_authority(self):
+        for key in ('AGENT_SESSION', 'AGENT_PANE', 'REX_SESSION', 'REX_BLOCK', 'LC_REX_SESSION', 'LC_REX_BLOCK'):
+            self.env.pop(key, None)
+        self.env.update(LC_REX_SESSION=self.session, LC_REX_BLOCK=self.anchor)
+        own = self.open('tab', label='forwarded creator')['actual']['block_id']
+        self.assertEqual(self.control('rename', own, '--label', 'forwarded rename').returncode, 0)
+        self.register(own)
+        self.refused(self.control('close', own), 'registered_seat_tab')
+
+    def test_accept_uses_agent_rex_and_forwarded_identity_for_responsible_callers(self):
+        registry = self.work / 'accept-registry'
+        registry.mkdir(mode=0o700)
+        self.register(self.anchor)
+        other = self.open('tab', label='unrelated caller')['actual']['block_id']
+        address = dict(session_id=self.session, block_id=self.anchor)
+        foreign = dict(session_id=self.session, block_id=other)
+        keys = ('AGENT_SESSION', 'AGENT_PANE', 'REX_SESSION', 'REX_BLOCK', 'LC_REX_SESSION', 'LC_REX_BLOCK')
+        for relation in ('starter', 'report_to', 'seat'):
+            for prefix, pane_key in (('AGENT_', 'PANE'), ('REX_', 'BLOCK'), ('LC_REX_', 'BLOCK')):
+                with self.subTest(relation=relation, prefix=prefix):
+                    state = dict(schema_version=1, launch_id='e' * 32, name='pending', socket=str(self.socket),
+                                 starter=address if relation == 'starter' else foreign,
+                                 report_to=address if relation == 'report_to' else foreign,
+                                 contract=dict(awaiting_starter=dict(kind='flag', at=1), starter_lapses=2))
+                    path = registry / ('agents-' + state['launch_id'] + '.json')
+                    path.write_text(json.dumps(state)); path.chmod(0o600)
+                    env = {k: v for k, v in self.env.items() if k not in keys}
+                    env.update({prefix + 'SESSION': self.session, prefix + pane_key: self.anchor})
+                    result = self.cli('agents', 'accept', '--registry', str(registry), '--launch-id', state['launch_id'], env=env)
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    accepted = json.loads(path.read_text())
+                    self.assertIsNone(accepted['contract']['awaiting_starter'])
+                    self.assertEqual(accepted['starter_acceptance']['accepted_by'], dict(address, operator=False))
+        # Explicit agent identity wins over conflicting Rex metadata.
+        state['contract']['awaiting_starter'] = dict(kind='flag', at=1)
+        path.write_text(json.dumps(state))
+        env.update(AGENT_SESSION=self.session, AGENT_PANE='block:' + '0' * 8 + '-0000-0000-0000-000000000001',
+                   REX_SESSION=self.session, REX_BLOCK=self.anchor)
+        self.refused(self.cli('agents', 'accept', '--registry', str(registry), '--launch-id', state['launch_id'], env=env),
+                     'report_acceptance_requires_starter_report_to_seat_or_operator')
+
     def test_supervisor_closes_viewer(self):
         worker = self.open('tab', label='worker')['actual']['block_id']
         viewer = self.open('tab', label='viewer')['actual']['block_id']
@@ -372,6 +413,20 @@ class GuardTest(_fixtures.SurfacesTest):
                      'registered_seat_tab')
         self.refused(self.cli('surfaces', 'focus', '--socket', str(alias), '--session', self.session, '--pane', self.anchor),
                      'registered_seat_tab')
+
+
+class IdentityTest(unittest.TestCase):
+    def test_shared_identity_precedence_and_empty_values(self):
+        from caller_identity import caller_identity
+        pairs = [('AGENT_SESSION', 'AGENT_PANE'), ('REX_SESSION', 'REX_BLOCK'), ('LC_REX_SESSION', 'LC_REX_BLOCK')]
+        env = {}
+        self.assertEqual(caller_identity(env), dict(session_id=None, block_id=None))
+        for index in (2, 1, 0):
+            session, block = pairs[index]
+            env.update({session: 'session-' + str(index), block: 'block-' + str(index)})
+            self.assertEqual(caller_identity(env), dict(session_id=env[session], block_id=env[block]))
+        env['AGENT_SESSION'] = env['AGENT_PANE'] = ''
+        self.assertEqual(caller_identity(env), dict(session_id='session-1', block_id='block-1'))
 
 
 if __name__ == '__main__':

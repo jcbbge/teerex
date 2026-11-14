@@ -84,8 +84,12 @@ def native(socket, method, args):
 
 
 def origin():
-    return dict(session=os.environ.get('REX_SESSION') or os.environ.get('LC_REX_SESSION'),
-                block=os.environ.get('REX_BLOCK') or os.environ.get('LC_REX_BLOCK'))
+    if 'caller_identity' not in globals():
+        from caller_identity import caller_identity as resolve
+    else:
+        resolve = caller_identity
+    identity = resolve()
+    return dict(session=identity['session_id'], block=identity['block_id'])
 
 
 @contextlib.contextmanager
@@ -370,6 +374,7 @@ def apply(pid, report, context):
 
 if __name__ == '__main__':
     context = json.loads(sys.argv[3])
+    context['origin'] = origin()
     context['agent_input'] = len(sys.argv) > 4 and sys.argv[4] == '1'
     if context['agent_input']:
         context['input_at_ns'] = int(sys.argv[5])

@@ -2317,6 +2317,7 @@ def supervise_child(o):
     require(state["phase"] != "launch_failed", state.get("failure_reason", "launch_failed"))
     require(state["tracked"] and state["protocol_file"] and state["target"]["block_id"] == bid,
             "supervisor_requires_verified_tracked_pane_and_protocol")
+    os.environ.update(AGENT_SESSION=sid, AGENT_PANE=bid)
     def claim(s):
         require(not s.get("supervisor_claimed"), "supervisor_already_claimed")
         require(s["immediate_child_term"] is None, "child_already_exited")

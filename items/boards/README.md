@@ -286,7 +286,8 @@ For optional standalone ABI development checks, build this bridge with Zig0.15.2
 ```sh
 zig fmt --check items/boards
 zig build-exe -O ReleaseSmall --dep rex_boards -Mroot=items/boards/test_cli.zig \
-  -Mrex_boards=items/boards/main.zig -femit-bin=/absolute/private/boards-cli
+  --dep pane_guard -Mrex_boards=items/boards/main.zig \
+  -Mpane_guard=src/pane_guard.zig -femit-bin=/absolute/private/boards-cli
 TEEREX_BIN=/absolute/private/boards-cli REX_BIN=/absolute/test/rex python3 items/boards/test_boards.py -v
 # Combined CLI is the default test target; optional BOARDS_ROUTE_HELPER_BIN selects ABI scratch bridge.
 TEEREX_BIN="$PWD/zig-out/bin/teerex" REX_BIN=/absolute/test/rex python3 items/boards/test_boards.py -v

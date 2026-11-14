@@ -24,6 +24,11 @@ Open never asks for focus, retries creation, falls back to a different layout, o
 
 ## Pane authority
 
+Caller identity uses one shared resolver: `AGENT_SESSION` / `AGENT_PANE`,
+then `REX_SESSION` / `REX_BLOCK`, then `LC_REX_SESSION` / `LC_REX_BLOCK`.
+Empty values fall through. Pane creators, seat protection, report acceptance and
+question replies use this same precedence.
+
 Control dispatch protects the active registered seat and every pane in its tab,
 including its tasks and board companions. Close, rename, move, resize, focus,
 clutch takeover and raw input refuse there after label/suffix resolution. Splits
@@ -31,8 +36,8 @@ and floating layers anchored in that tab also refuse. Plain `send`/`ask` message
 retain the draft guard; `send --draft ignore` refuses on the protected tab.
 Historical seat registrations marked `inherited_to` do not protect dead tabs.
 
-Close, rename, move and empty-session close require the caller's `REX_SESSION` /
-`REX_BLOCK` (or `LC_REX_SESSION` / `LC_REX_BLOCK`) to match the recorded creator.
+Close, rename, move and empty-session close require the resolved caller identity
+to match the recorded creator.
 A recorded pane’s own supervisor may close that same pane, including a
 detached run-visible supervisor; this does not grant control of other panes.
 Creation receipts are stored under `$XDG_STATE_HOME/teerex/pane-creators` (default

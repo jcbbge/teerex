@@ -275,8 +275,8 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
     var timer = try std.time.Timer.start();
     const started_at = std.time.milliTimestamp();
     var env = try std.process.getEnvMap(allocator);
-    const status_context = try std.json.Stringify.valueAlloc(allocator, .{ .socket = path, .session = sid, .block = bid, .sender = sender, .id = status_id, .state = state, .origin = .{ .session = env.get("REX_SESSION") orelse env.get("LC_REX_SESSION"), .block = env.get("REX_BLOCK") orelse env.get("LC_REX_BLOCK") } }, .{});
-    for ([_][]const u8{ "REX_SERVER", "REX_SESSION", "REX_BLOCK", "REX_CLIENT" }) |key| env.remove(key);
+    const status_context = try std.json.Stringify.valueAlloc(allocator, .{ .socket = path, .session = sid, .block = bid, .sender = sender, .id = status_id, .state = state }, .{});
+    for ([_][]const u8{ "REX_SERVER", "REX_CLIENT" }) |key| env.remove(key);
     var clutch_failure: ?[]const u8 = null;
     var clutch = clutch_state.Store.openRead(allocator, &env, path, sid, bid) catch |err| blk: {
         clutch_failure = clutch_state.failureReason(err);
