@@ -216,6 +216,39 @@ teerex surfaces palette hosts --config /absolute/hosts.json --file /absolute/hos
 
 `--profiles` defaults to `~/.config/teerex/profiles.json`; host `--config` defaults to `~/.config/teerex/hosts.json`. `--teerex` is the installed absolute controller path on the palette server's machine; agent menus also require an absolute `--rex` pin. Generation reads caller-owned regular files with a 256KiB cap, creates one exclusive 0600 fragment, and never edits or reloads personal config. At most 128 actions/256KiB per fragment. Stable action names derive from profile or host/workspace identities. Generation freezes the menu entries; deliberately generate a new fragment and review a replacement inclusion to refresh. There is no always-on refresher or hidden config writer.
 
+The complete `profiles.json` schema and a launch-ready example are in
+[agents: Configure deliberately](../agents/README.md#configure-deliberately).
+Use its explicit defaults for the socket, registry, host, cwd and ownership.
+
+A minimal local `hosts.json` with one workspace is:
+
+```json
+{
+  "schema_version": 1,
+  "hosts": {
+    "local": {
+      "host_id": "local",
+      "transport": "local",
+      "platform": "linux-x86_64",
+      "home": "/home/operator",
+      "socket": "/absolute/existing/rex.sock",
+      "rex": "/absolute/bin/rex",
+      "teerex": "/absolute/bin/teerex",
+      "store": "/absolute/private/boards",
+      "workspaces": {
+        "Terminal": {"cwd": "/home/operator", "session": "work", "argv": ["/bin/sh"]}
+      }
+    }
+  }
+}
+```
+
+Replace paths with locations on the command host; use `macos-arm64` for that
+platform. Named-host fields are validated by [`src/targets.py`](../../src/targets.py);
+workspace fields are read by [`menu.py`](menu.py). A remote host additionally
+requires `transport:"ssh"`, literal `address:"user@host"`, integer `port`, and
+absolute `known_hosts` and `identity_file` paths.
+
 Each profile becomes **Start an agent: PROFILE**. Managed agent actions require API13 jobs; an older/unknown server revision refuses before opening either a form or worker. Invoked without arguments, the action opens and focuses one visible terminal form asking for an agent name and absolute brief-file path. That form runs `agents launch`, preserving the original invoking pane as starter and report-to; its controller tab closes after completion, and the actual worker remains a managed visible tab. Invoked through `rex do ACTION name=NAME brief_file=/absolute/brief`, it runs a synchronous controller with a 20-second command budget and immediate launch-queue refusal, leaving ACK-before-brief and responsibility tracking to `agents launch`. A timed-out/lost action is uncertainty, never authorization to retry. Profiles/defaults must already provide the selected socket, private registry, host, cwd and ownership settings; compute routing remains the profile's explicit execution/callback contract. A form-created receipt means the form opened, not that an agent started. No schema argument is treated as an inline task prompt.
 
 Host records may add `workspaces`, an object mapping menu labels to `{ "cwd": "/absolute/path", "argv": ["/absolute/program", "arg"], "session": "session label" }`. `session` defaults to the host's configured name; `argv` defaults to `/bin/sh`. A host without `workspaces` gets one **HOST: Terminal** action in its configured home. Each **HOST: WORKSPACE** action explicitly routes session ensure and then `surfaces open --layout tab` through the named-host config, returning the latter's verified receipt. File/program paths belong to that command host. It opens a new workspace tab on each invocation, with open's no-focus-request semantics; selecting a remote session in a GUI is not claimed. A failure after session creation can leave that empty session; there is no rollback or automatic retry.
@@ -281,6 +314,28 @@ Source contract additions were checked against `gh issue view 2`, `23`, `18`, th
 ### Prepared run-visible receipt publication
 
 `surfaces close --socket ABS --session session:UUID --pane block:UUID --publish-receipt-file ABS` is an additive close-only hook for detached run-visible. The visible pane first atomically writes its exit/output and jobs/channel evidence to its private `receipt.json`, with `receipt_state:cleanup_pending_or_unknown` and `cleanup.block_absence:unknown`. The same bounded native close reads that owned regular0600, single-link, no-follow file (at most1MiB, in an owned0700 directory), requires its exact server/session/block to match, then attempts one close. It atomically publishes the verified-absence result and returns. It starts no persistent helper and never retries a close. A separate watchdog thread hard-exits this invocation at `--timeout-ms + 2000ms`, covering publication as well as the existing bounded RPC cleanup. If it is killed or publication fails, prepared execution evidence remains with unknown absence; no later process invents a successful close. Normal close calls without this flag retain their existing output/behavior.
+
+
+The minimal prepared JSON accepted by the close publisher is below. The filename
+must be `receipt.json`; `receipt_path` must equal the absolute
+`--publish-receipt-file` value, `server` must equal `unix://` plus `--socket`,
+`session_id` must equal `--session`, and `created.block_id` must equal the resolved
+`--pane`. This is the publisher's minimum envelope; run-visible retains its exit,
+output, jobs and channel evidence alongside these fields.
+
+```json
+{
+  "schema_version": 1,
+  "kind": "run_visible_result",
+  "receipt_state": "cleanup_pending_or_unknown",
+  "cleanup_owner": "visible_supervisor",
+  "receipt_path": "/absolute/private/run/receipt.json",
+  "server": "unix:///absolute/existing/rex.sock",
+  "session_id": "session:01234567-89ab-cdef-0123-456789abcdef",
+  "created": {"block_id": "block:fedcba98-7654-3210-fedc-ba9876543210"},
+  "cleanup": {"block_absence": "unknown"}
+}
+```
 
 Palette help uses `teerex surfaces palette` for menu generation and `teerex surfaces palette install` for registration.
 
