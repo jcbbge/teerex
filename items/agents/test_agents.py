@@ -954,7 +954,8 @@ class AgentsTest(unittest.TestCase):
         closed = subprocess.run([BIN, "surfaces", "close", "--socket", str(self.socket), "--session", self.session, "--pane", gone_block],
                                 capture_output=True, text=True, env=self.env)
         self.assertIn("closed_and_absent", closed.stdout)
-        for launch_id in (alive, exited, gone):
+        wait_for(lambda: (self.registry / "archive" / gone / "retired.json").exists())
+        for launch_id in (alive, exited):
             self.backdate(launch_id)
         stale = self.backdate(alive)
         never = dict(stale, launch_id="e" * 32, phase="tracking_uncertain", tracked=False)
@@ -971,14 +972,15 @@ class AgentsTest(unittest.TestCase):
         self.assertEqual(plan["outcome"], "prune_plan")
         self.assertEqual(sorted(p.name for p in self.registry.iterdir()), before, "a plan must change nothing")
         reasons = {r["launch_id"]: r["reason"] for r in plan["retired"]}
-        self.assertEqual(reasons, {exited: "agent_exited", gone: "pane_gone", "e" * 32: "never_started"})
+        self.assertEqual(reasons, {exited: "agent_exited", "e" * 32: "never_started"})
         self.assertEqual(plan["kept"], 2)
         self.assertEqual(plan["orphans"], [orphan.name])
 
         p, done = self.run_cli("prune", "--registry", str(self.registry), "--apply", timeout=60)
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
         self.assertEqual(done["live_after"], 2)
-        scratch_archive = next(v["scratchpad_archive"] for v in done["retired"] if v["launch_id"] == gone)
+        gone_history = json.loads((self.registry / "archive" / gone / "retired.json").read_text())
+        scratch_archive = gone_history["retired"]["cleanup"]["scratchpad_archive"]
         self.assertTrue(Path(scratch_archive).is_file())
         self.assertFalse(Path(self.root / ".local/state/teerex/scratch" / self.session / (gone_block + ".md")).exists())
         for launch_id, reason in reasons.items():
@@ -1216,6 +1218,32 @@ class AgentsTest(unittest.TestCase):
         self.assertEqual(result["auto_prune"]["retired"], 0)
         self.assertEqual(len(list(self.registry.glob("agents-*.json"))), 33)
 
+    def test_closed_pane_retires_launch_and_owned_records_without_a_prune(self):
+        store = self.work / "boards"
+        store.mkdir(mode=0o700)
+        self.settings["defaults"]["store"] = str(store)
+        launch_id = self.launch()[1]["launch_id"]
+        state = self.record(launch_id)
+        p = subprocess.run([BIN, "surfaces", "close", "--socket", str(self.socket), "--session", self.session,
+                            "--pane", state["target"]["block_id"]], env=self.env, capture_output=True, text=True)
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        archived = self.registry / "archive" / launch_id / "retired.json"
+        wait_for(lambda: archived.exists())
+        self.assertFalse((self.registry / ("agents-" + launch_id + ".json")).exists())
+        retired = json.loads(archived.read_text())
+        self.assertEqual(retired["retired"]["reason"], "pane_gone")
+        self.assertEqual(retired["retired"]["evidence"]["basis"], "supervisor_exit_pane_absent")
+        self.assertFalse(Path(state["scratchpad"]).exists())
+        self.assertEqual(json.loads((store / "state.json").read_text())["fleet"], [])
+        p = subprocess.run([BIN, "jobs", "list", "--registry", str(self.registry)], env=self.env, capture_output=True, text=True)
+        self.assertEqual(json.loads(p.stdout)["entries"], [])
+        # TERM with a retained live pane must not remove that pane's record or board row.
+        live = self.launch()[1]["launch_id"]
+        os.kill(self.record(live)["supervisor_pid"], signal.SIGTERM)
+        wait_for(lambda: self.record(live)["immediate_child_term"])
+        self.assertFalse((self.registry / "archive" / live).exists())
+        self.assertEqual(len(json.loads((store / "state.json").read_text())["fleet"]), 1)
+
     def test_full_per_agent_histories_drop_oldest_and_continue_reporting_and_presenting(self):
         store = self.work / "boards"
         store.mkdir(mode=0o700)
@@ -1304,9 +1332,12 @@ class AgentsTest(unittest.TestCase):
                                 "--pane", record["target"]["block_id"]], env=self.env, capture_output=True, text=True)
             self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
         close(gone)
+        gone_history = self.registry / "archive" / gone / "retired.json"
+        wait_for(lambda: gone_history.exists())
+        self.assertEqual(json.loads(gone_history.read_text())["retired"]["cleanup"]["fleet_report"]["outcome"], "cleared")
         p, result = self.run_cli("prune", "--registry", str(self.registry), "--apply", timeout=60)
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
-        self.assertEqual([r["launch_id"] for r in result["retired"] if r.get("fleet_report", {}).get("outcome") == "cleared"], [gone])
+        self.assertNotIn(gone, [r["launch_id"] for r in result["retired"]])
         rows = json.loads((store / "state.json").read_text())["fleet"]
         self.assertEqual(len(rows), 1)
         close(live, archived=True)

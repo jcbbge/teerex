@@ -385,6 +385,42 @@ def forget_fleet(state):
     return dict(outcome="cleared" if code == 0 else "uncertain", client_exit=code, receipt=packet)
 
 
+
+def retire_record(root, state, reason, evidence):
+    launch_id = state["launch_id"]
+    item = dict(launch_id=launch_id, name=state.get("name"), owner=state.get("owner"), phase=state.get("phase"),
+                reason=reason, evidence=evidence)
+    if reason == "pane_gone" or pane_absent(state) is True:
+        for field, action in (("fleet_report", lambda: forget_fleet(state)), ("jobs", lambda: forget_job(root, state)),
+                              ("scratchpad_archive", lambda: scratch_archive(state["scratchpad"], state["target"]["session_id"],
+                                                                            state["target"]["block_id"]) if state.get("scratchpad") else None)):
+            try:
+                item[field] = action()
+            except Exception as exc:
+                item[field] = dict(outcome="uncertain", failure_reason=str(exc))
+    with Registry(root) as registry:
+        fd = archive_dir(registry)
+        try:
+            os.mkdir(launch_id, 0o700, dir_fd=fd)
+            state = registry.read(launch_id)
+            state["retired"] = dict(at=now(), reason=reason, evidence=evidence, by="teerex agents prune", cleanup=item)
+            raw = json.dumps(state, ensure_ascii=False, sort_keys=True).encode()
+            out = os.open(launch_id + "/retired.json", os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=fd)
+            with os.fdopen(out, "wb") as f:
+                f.write(raw)
+                f.flush()
+                os.fsync(f.fileno())
+            prefix = "agents-" + launch_id
+            for n in os.listdir(registry.fd):
+                if n.startswith(prefix):
+                    os.rename(n, launch_id + "/" + n, src_dir_fd=registry.fd, dst_dir_fd=fd)
+            os.fsync(fd)
+            os.fsync(registry.fd)
+        finally:
+            os.close(fd)
+    return item
+
+
 def prune_records(root, apply):
     """Move retired launch records (and their message files) to ROOT/archive/<launch_id>/; history is kept, never deleted."""
     with Registry(root) as registry:
@@ -404,32 +440,7 @@ def prune_records(root, apply):
         item = dict(launch_id=launch_id, name=state.get("name"), owner=state.get("owner"), phase=state.get("phase"),
                     reason=reason, evidence=evidence)
         if apply:
-            if reason == "pane_gone" or pane_absent(state) is True:
-                item["fleet_report"] = forget_fleet(state)
-            if reason == "pane_gone":
-                item["jobs"] = forget_job(root, state)
-            if state.get("scratchpad") and (reason == "pane_gone" or pane_absent(state) is True):
-                target = state["target"]
-                item["scratchpad_archive"] = scratch_archive(state["scratchpad"], target["session_id"], target["block_id"])
-            with Registry(root) as registry:
-                fd = archive_dir(registry)
-                try:
-                    os.mkdir(launch_id, 0o700, dir_fd=fd)
-                    state["retired"] = dict(at=now(), reason=reason, evidence=evidence, by="teerex agents prune")
-                    raw = json.dumps(state, ensure_ascii=False, sort_keys=True).encode()
-                    out = os.open(launch_id + "/retired.json", os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=fd)
-                    with os.fdopen(out, "wb") as f:
-                        f.write(raw)
-                        f.flush()
-                        os.fsync(f.fileno())
-                    prefix = "agents-" + launch_id
-                    for n in os.listdir(registry.fd):
-                        if n.startswith(prefix):
-                            os.rename(n, launch_id + "/" + n, src_dir_fd=registry.fd, dst_dir_fd=fd)
-                    os.fsync(fd)
-                    os.fsync(registry.fd)
-                finally:
-                    os.close(fd)
+            item = retire_record(root, state, reason, evidence)
         result["retired"].append(item)
     # Message files whose record is gone (crash residue) are archived too, after the settle window.
     live = set(ids) - {r["launch_id"] for r in result["retired"]} if apply else set(ids)
@@ -1769,6 +1780,7 @@ def contract_starter(root, launch_id):
 
 
 def supervise(o):
+    signal.signal(signal.SIGHUP, terminate)
     state = None
     try:
         state = load(o.registry, o.launch_id)
@@ -1782,6 +1794,15 @@ def supervise(o):
         if state is not None:
             try:
                 agent_input_path(state["socket"], os.environ["REX_SESSION"], os.environ["REX_BLOCK"]).unlink(missing_ok=True)
+            except Exception as exc:
+                supervisor_error(o, "last_supervisor_cleanup_error", exc)
+            try:
+                with Registry(o.registry, lock_name="launch.lock", wait_ms=60000):
+                    current = load(o.registry, o.launch_id)
+                    if pane_absent(current) is True:
+                        retire_record(o.registry, current, "pane_gone", dict(basis="supervisor_exit_pane_absent"))
+            except FileNotFoundError:
+                pass  # A concurrent launch/prune already archived it.
             except Exception as exc:
                 supervisor_error(o, "last_supervisor_cleanup_error", exc)
 
@@ -1861,6 +1882,7 @@ def supervise_child(o):
             with contextlib.suppress(ProcessLookupError):
                 child.send_signal(sig)
         signal.signal(signal.SIGTERM, forward)
+        signal.signal(signal.SIGHUP, forward)
         signal.signal(signal.SIGINT, forward)
         last_hook = None
         last_status = None
@@ -1933,6 +1955,9 @@ def supervise_child(o):
         program_status(state, "done" if term == {"Exited": 0} else "error",
                        "immediate child terminated; descendants not verified" if term is not None else
                        "supervision failed; immediate child termination unknown")
+    if pane_absent(state) is True:
+        # Closing the pane must not wait for starter messaging or board presentation.
+        return (code if code >= 0 else min(255, 128 - code)), None
     come_forward(state, "exit")
     state = load(o.registry, o.launch_id)
     last = state.get("last_hook", {}).get("text", "(no harness last words supplied)")
