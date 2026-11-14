@@ -339,7 +339,7 @@ def retirement(state, check_panes=True):
         return None, None
     if state.get("immediate_child_term") is not None:
         return "agent_exited", dict(immediate_child_term=state["immediate_child_term"])
-    if state.get("phase") in ("creation_uncertain", "tracking_uncertain"):
+    if state.get("phase") in ("creation_uncertain", "tracking_uncertain", "launch_failed"):
         return "never_started", dict(phase=state["phase"])
     return None, None
 
@@ -505,7 +505,7 @@ def receipt(state, outcome, **extra):
     result = {k: state.get(k) for k in ("launch_id", "name", "owner", "purpose", "review_at", "profile", "target",
                                         "starter", "report_to", "phase", "tracked", "protocol_acknowledged",
                                         "brief_attempted", "brief_outcome", "immediate_child_term", "remote_child_term", "notifications",
-                                        "auto_prune", "failure_reason", "fleet_report", "layout", "placement", "come_forward", "come_forward_last", "scratchpad", "scratch_pane_opened", "scratch_pane_receipt")}
+                                        "auto_prune", "failure_reason", "scratchpad_failure_reason", "fleet_report", "layout", "placement", "come_forward", "come_forward_last", "scratchpad", "scratch_pane_opened", "scratch_pane_receipt")}
     result["execution_host"] = state.get("execution", {}).get("host") if state.get("execution") else None
     result["immediate_child_role"] = "ssh_transport" if state.get("execution") else "agent_program"
     result.update(schema_version=1, kind="agents_result", outcome=outcome, agent_readiness="not_assessed",
@@ -862,17 +862,21 @@ def tint_config(value):
 
 
 def program_status(state, status, detail):
-    # Rex OSC7501 is colon-separated key=value, NOT JSON; text fields are base64.
-    def encoded(value):
-        clean = "".join(c if ord(c) >= 32 and not 127 <= ord(c) <= 159 else " " for c in value)
-        return base64.b64encode(" ".join(clean.split()).encode()).decode()
-    tint = state.get("tint", tint_config(None))
-    record_id = "teerex/tint" if tint is not False else "teerex"
-    if tint is not False:
-        sys.stdout.write("\x1b]11;" + tint[status] + "\x1b\\" if status in tint else "\x1b]111\x1b\\")
-    sys.stdout.write("\x1b]7501;state=" + status + ":id=" + record_id + ":app=teerex-agent:title=" + encoded(state["name"]) +
-                     ":msg=" + encoded(detail) + "\x07")
-    sys.stdout.flush()
+    try:
+        # Rex OSC7501 is colon-separated key=value, NOT JSON; text fields are base64.
+        def encoded(value):
+            clean = "".join(c if ord(c) >= 32 and not 127 <= ord(c) <= 159 else " " for c in value)
+            return base64.b64encode(" ".join(clean.split()).encode()).decode()
+        tint = state.get("tint", tint_config(None))
+        record_id = "teerex/tint" if tint is not False else "teerex"
+        if tint is not False:
+            sys.stdout.write("\x1b]11;" + tint[status] + "\x1b\\" if status in tint else "\x1b]111\x1b\\")
+        sys.stdout.write("\x1b]7501;state=" + status + ":id=" + record_id + ":app=teerex-agent:title=" + encoded(state["name"]) +
+                         ":msg=" + encoded(detail) + "\x07")
+        sys.stdout.flush()
+    except OSError as exc:
+        with contextlib.suppress(Exception):
+            update(state["registry"], state["launch_id"], lambda s: s.update(status_failure_reason=str(exc)[:600]))
 
 
 def remote_exec(o):
@@ -1164,13 +1168,29 @@ def launch_failed(root, launch_id, reason):
 
 
 def supervisor_launch_failed(o, reason):
-    state = launch_failed(o.registry, o.launch_id, reason)
-    line = f"teerex: launch failed before the agent started: {state['failure_reason']} (launch {o.launch_id})"
-    print(line, flush=True)
-    update(o.registry, o.launch_id, lambda s: s.update(launch_failure_displayed_at=now()))
+    if getattr(o, "launch_failure_displayed", False):
+        return
+    reason = " ".join(str(reason).split())[:600]
+    print(f"teerex: launch failed before the agent started: {reason} (launch {o.launch_id})", flush=True)
+    o.launch_failure_displayed = True
+    with contextlib.suppress(Exception):
+        launch_failed(o.registry, o.launch_id, reason)
+        update(o.registry, o.launch_id, lambda s: s.update(launch_failure_displayed_at=now()))
 
 
 def launch(o):
+    try:
+        return launch_agent(o)
+    except BaseException as exc:
+        if getattr(o, "launch_id", None):
+            with contextlib.suppress(Exception):
+                state = load(o.registry, o.launch_id)
+                if not state.get("protocol_file"):
+                    launch_failed(o.registry, o.launch_id, str(exc) or type(exc).__name__)
+        raise
+
+
+def launch_agent(o):
     cfg = config(o.config)
     human = o.operation == "human"
     if human and cfg.get("human_route") and not o.routed:
@@ -1263,6 +1283,7 @@ def launch(o):
             if brief is not None:
                 state["brief_file"] = registry.write_message(launch_id, "brief", brief)
             registry.save(state, new=True)
+        o.launch_id = launch_id  # Preserve the reason for every failure after the record exists.
         command = [RUNTIME, "agents", "supervise", "--registry", root, "--launch-id", launch_id]
         if layout == 'detached':
             try:
@@ -1283,12 +1304,15 @@ def launch(o):
                 s["target"]["block_id"] = address_id(packet["created"]["block_id"], "block")
         state = update(root, launch_id, created)
         if not succeeded(code, packet, "created_and_verified" if human or layout == "detached" else "created_and_attached"):
-            if state["target"].get("block_id"):
-                state = launch_failed(root, launch_id, "creation_uncertain")
+            state = launch_failed(root, launch_id, (packet or {}).get("failure_reason") or (packet or {}).get("reason") or "creation_uncertain")
             return 1, receipt(state, "creation_uncertain", client_exit=code)
         try:
             block = state["target"]["block_id"]
-            scratchpad = scratch_init(session, block, name, purpose, scratch_line(intent), (state.get("contract") or {}).get("done_when", ""))
+            try:
+                scratchpad = scratch_init(session, block, name, purpose, scratch_line(intent), (state.get("contract") or {}).get("done_when", ""))
+            except Exception as exc:
+                scratchpad = str(scratch_path(session, block))
+                state = update(root, launch_id, lambda s: s.update(scratchpad_failure_reason=str(exc)[:600]))
             state = update(root, launch_id, lambda s: s.update(scratchpad=scratchpad))
             if state["scratch_pane"] and layout != "detached":
                 side_code, side_packet = invoke(["surfaces", "open", "--socket", socket, "--session", session,
@@ -1305,7 +1329,7 @@ def launch(o):
                 s["phase"] = "protocol_pending" if s["tracked"] else "tracking_uncertain"
             state = update(root, launch_id, tracked)
             if not state["tracked"]:
-                state = launch_failed(root, launch_id, "tracking_uncertain")
+                state = launch_failed(root, launch_id, (packet or {}).get("failure_reason") or (packet or {}).get("reason") or "tracking_uncertain")
                 return 1, receipt(state, "tracking_uncertain", client_exit=code)
             publish_fleet(root, state, "launch", "unknown", "Visible agent registered; protocol not acknowledged; readiness not assessed")
             state = load(root, launch_id)
@@ -1348,7 +1372,8 @@ def launch(o):
                 state["phase"] = "awaiting_protocol_ack"
                 registry.save(state)
         except BaseException as exc:
-            launch_failed(root, launch_id, str(exc) or type(exc).__name__)
+            with contextlib.suppress(Exception):
+                launch_failed(root, launch_id, str(exc) or type(exc).__name__)
             raise
     end = time.monotonic() + o.ack_timeout_ms / 1000
     while time.monotonic() < end:

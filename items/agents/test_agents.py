@@ -235,6 +235,31 @@ class ContractHelpersTest(unittest.TestCase):
         exec(compile((base / "agents/input_events.py").read_text(), "input_events.py", "exec"), self.ns)
         exec(compile((base / "agents/agents.py").read_text(), "agents.py", "exec"), self.ns)
 
+    def test_status_display_error_is_recorded_without_stopping_work(self):
+        from unittest.mock import patch
+        state = dict(registry="root", launch_id="a" * 32, name="worker")
+        self.ns["update"] = lambda root, launch, change: change(state)
+        class ClosedDisplay:
+            def write(self, value):
+                raise BrokenPipeError("closed display")
+        with patch.object(self.ns["sys"], "stdout", ClosedDisplay()):
+            self.ns["program_status"](state, "working", "starting")
+        self.assertEqual(state["status_failure_reason"], "closed display")
+
+    def test_pre_start_diagnostic_is_once_even_if_recording_fails(self):
+        import contextlib
+        import io
+        from argparse import Namespace
+        def broken(*args):
+            raise OSError("record unavailable")
+        self.ns["update"] = broken
+        options = Namespace(registry="root", launch_id="a" * 32)
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            self.ns["supervisor_launch_failed"](options, "forced failure")
+            self.ns["supervisor_launch_failed"](options, "later failure")
+        self.assertEqual(output.getvalue(), "teerex: launch failed before the agent started: forced failure (launch " + "a" * 32 + ")\n")
+
     def test_record_compacts_old_history_without_refusing_large_live_metadata(self):
         record = dict(timeline=[dict(at=i, text="x" * 20000) for i in range(20)],
                       notifications={str(i): dict(attempted_at=i, text="y" * 20000) for i in range(20)})
@@ -1346,13 +1371,94 @@ class AgentsTest(unittest.TestCase):
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
         self.assertEqual(json.loads((store / "state.json").read_text())["fleet"], [])
 
-    def test_pre_protocol_failure_is_recorded_and_displayed_promptly(self):
+    def agents_namespace(self):
         ns = {"__name__": "launch_failure_test", "SCRATCH_LIBRARY": True}
         base = Path(__file__).resolve().parents[1]
         for path in (base / "scratch/scratch.py", base.parent / "src/scoped_channel.py",
                      base / "agents/input_events.py", base / "agents/agents.py"):
             exec(compile(path.read_text(), str(path), "exec"), ns)
         ns["RUNTIME"] = BIN
+        return ns
+
+    def assert_visible_launch_failure(self, launch_id, reason):
+        record = wait_for(lambda: self.record(launch_id) if self.record(launch_id).get("launch_failure_displayed_at") else None)
+        self.assertEqual(record["phase"], "launch_failed")
+        self.assertEqual(record["failure_reason"], reason)
+        p = subprocess.run([BIN, "observe", "--socket", str(self.socket), "--session", self.session,
+                            "--block", record["target"]["block_id"], "--tail"], env=self.env, capture_output=True, text=True)
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        capture = "".join(json.loads(p.stdout)["capture"]["content"].splitlines())
+        self.assertEqual(capture.count("teerex: launch failed before the agent started:"), 1)
+        self.assertIn(reason, capture)
+        self.assertIn(launch_id, capture)
+
+    def test_creation_tracking_and_exception_failures_keep_the_reason_visible(self):
+        from unittest.mock import patch
+        self.settings["profiles"]["probe"]["scratch_pane"] = False
+        self.config.write_text(json.dumps(self.settings))
+        for stage in ("creation", "tracking", "exception", "no-pane"):
+            with self.subTest(stage=stage):
+                ns = self.agents_namespace()
+                original = ns["invoke"]
+                reason = "forced " + stage + " failure"
+                def invoke(args, **kwargs):
+                    if args[0] == "spawn" and stage == "no-pane":
+                        return 1, dict(failure_reason=reason)
+                    if args[:2] == ["jobs", "track"]:
+                        if stage == "exception":
+                            raise OSError(reason)
+                        if stage == "tracking":
+                            return 1, dict(failure_reason=reason)
+                    code, packet = original(args, **kwargs)
+                    if args[0] == "spawn" and stage == "creation":
+                        return 1, dict(packet, failure_reason=reason)
+                    return code, packet
+                ns["invoke"] = invoke
+                o = ns["parser"]().parse_args(["launch", "--config", str(self.config), "--profile", "probe"])
+                with patch.dict(os.environ, self.env):
+                    if stage == "exception":
+                        with self.assertRaisesRegex(OSError, reason):
+                            ns["launch"](o)
+                    else:
+                        code, result = ns["launch"](o)
+                        self.assertEqual(code, 1)
+                        self.assertEqual(result["failure_reason"], reason)
+                if stage == "no-pane":
+                    record = self.record(o.launch_id)
+                    self.assertEqual(record["phase"], "launch_failed")
+                    record["created_at"] -= ns["SETTLE_MS"] + 1
+                    self.assertEqual(ns["retirement"](record)[0], "never_started")
+                else:
+                    self.assert_visible_launch_failure(o.launch_id, reason)
+        self.assertFalse(self.worker_log.exists())
+
+    def test_scratchpad_display_failure_does_not_stop_agent_start(self):
+        from unittest.mock import patch
+        ns = self.agents_namespace()
+        def broken(*args):
+            raise OSError("forced scratchpad failure")
+        ns["scratch_init"] = broken
+        self.settings["profiles"]["probe"]["scratch_pane"] = False
+        self.config.write_text(json.dumps(self.settings))
+        o = ns["parser"]().parse_args(["launch", "--config", str(self.config), "--profile", "probe"])
+        with patch.dict(os.environ, self.env):
+            code, result = ns["launch"](o)
+        self.assertEqual(code, 0, str(result))
+        self.assertEqual(result["scratchpad_failure_reason"], "forced scratchpad failure")
+        self.assertTrue(any(e["event"] == "started" for e in events(self.worker_log)))
+
+    def test_failed_child_exec_prints_one_line_and_records_why(self):
+        self.settings["profiles"]["probe"]["argv"] = [str(self.work / "missing-agent")]
+        self.settings["profiles"]["probe"]["scratch_pane"] = False
+        self.config.write_text(json.dumps(self.settings))
+        p, packet = self.run_cli("launch", "--config", str(self.config), "--profile", "probe", "--ack-timeout-ms", "2000")
+        self.assertEqual(p.returncode, 1, p.stdout + p.stderr)
+        record = self.record(packet["launch_id"])
+        self.assertIn("missing-agent", record["failure_reason"])
+        self.assert_visible_launch_failure(packet["launch_id"], record["failure_reason"])
+
+    def test_pre_protocol_failure_is_recorded_and_displayed_promptly(self):
+        ns = self.agents_namespace()
         original = ns["Registry"].write_message
         def fail_protocol(registry, launch_id, kind, body):
             if kind == "protocol":
@@ -1374,7 +1480,7 @@ class AgentsTest(unittest.TestCase):
         p = subprocess.run([BIN, "observe", "--socket", str(self.socket), "--session", self.session,
                             "--block", record["target"]["block_id"], "--tail"], env=self.env, capture_output=True, text=True)
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
-        capture = json.loads(p.stdout)["capture"]["content"]
+        capture = "".join(json.loads(p.stdout)["capture"]["content"].splitlines())
         self.assertEqual(capture.count("teerex: launch failed before the agent started:"), 1)
         self.assertIn("forced protocol write failure", capture)
         self.assertIn(launch_id, capture)
