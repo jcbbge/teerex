@@ -302,7 +302,8 @@ def invoke(runtime, pin, args, budget=5, interruptible=False):
     if args and args[0] == "jobs":
         budget = max(budget, 20)  # Native 10s registry wait + 5s live query + cleanup margin.
     env = dict(os.environ)
-    for key in ("REX_SERVER", "REX_SESSION", "REX_BLOCK", "REX_CLIENT"):
+    # Explicit selectors choose the target; retain pane identity for creator/self-close authority.
+    for key in ("REX_SERVER", "REX_CLIENT"):
         env.pop(key, None)
     command = [runtime] + (["--rex", pin] if pin else []) + args
     with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:

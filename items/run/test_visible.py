@@ -162,6 +162,46 @@ class VisibleTest(unittest.TestCase):
         rejected = subprocess.run([BIN, "run-visible", "receipt", "--file", str(link)], capture_output=True, text=True)
         self.assertEqual(rejected.returncode, 1)
 
+    def test_detached_supervisor_self_close_after_job_presentation(self):
+        sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/acceptance'))
+        import pane_authority
+        pane_authority.caller(self, self.rpc, self.runtime_env, self.work)
+        # The Rex server supplies this same state root to its supervisor, while
+        # the controller supplies the real creator identity to surfaces open.
+        self.runtime_env.pop('XDG_STATE_HOME')
+        self.runtime_env['HOME'] = str(self.root)
+        sentinel_result = subprocess.run([BIN, '--rex', self.rex, 'surfaces', 'open', '--socket', str(self.socket),
+                            '--session', self.session, '--layout', 'tab', '--label', 'unrelated sentinel',
+                            '--', '/bin/sleep', '60'], env=self.runtime_env, capture_output=True, text=True, timeout=10)
+        self.assertEqual(sentinel_result.returncode, 0, sentinel_result.stdout + sentinel_result.stderr)
+        sentinel = json.loads(sentinel_result.stdout)['created']['block_id']
+        registry = self.work / 'present-jobs'
+        registry.mkdir(mode=0o700)
+        gate = self.work / 'complete'
+        script = f"from pathlib import Path;import time\nwhile not Path({str(gate)!r}).exists():time.sleep(.02)\nprint('supervised completion')"
+        p, launch = self.invoke(script, extra=['--detach', '--no-deadline', '--registry', str(registry),
+                                               '--owner', 'fixture', '--purpose', 'docs-check fixture'])
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertEqual(launch['outcome'], 'launched')
+        bid = launch['created']['block_id']
+        # A later presentation must not change the recorded creator or supervisor.
+        inspected = json.loads(subprocess.check_output([BIN, '--rex', self.rex, 'jobs', 'inspect', '--registry', str(registry),
+                    '--socket', str(self.socket), '--session', self.session, '--block', bid], env=self.runtime_env))
+        present = subprocess.run([BIN, '--rex', self.rex, 'jobs', 'present', '--registry', str(registry),
+                    '--socket', str(self.socket), '--session', self.session, '--block', bid, '--owner', 'fixture',
+                    '--generation', str(inspected['entry']['generation']), '--reason', 'present completed fixture',
+                    '--anchor', sentinel, '--focus', 'yes', '--relocate', 'yes'],
+                    env=self.runtime_env, capture_output=True, text=True, timeout=10)
+        self.assertEqual(present.returncode, 0, present.stdout + present.stderr)
+        gate.touch()
+        final = self.receipt(launch, 10000)
+        self.assertTrue(final['success'], final)
+        self.assertTrue(final['cleanup']['block_absence_verified'], final)
+        self.assertNotIn(bid, self.blocks())
+        self.assertIn(sentinel, self.blocks())
+        self.assertEqual(raw(final['stdout']), b'supervised completion\n')
+        self.assertEqual(final['jobs']['forget_outcome'], 'forgotten')
+
     def test_detach_success_failure_and_deadline_close_owned_pane(self):
         sentinel = self.anchor_pane()
         for code in (0, 7):

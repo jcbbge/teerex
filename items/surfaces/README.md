@@ -33,6 +33,8 @@ Historical seat registrations marked `inherited_to` do not protect dead tabs.
 
 Close, rename, move and empty-session close require the caller's `REX_SESSION` /
 `REX_BLOCK` (or `LC_REX_SESSION` / `LC_REX_BLOCK`) to match the recorded creator.
+A recorded pane’s own supervisor may close that same pane, including a
+detached run-visible supervisor; this does not grant control of other panes.
 Creation receipts are stored under `$XDG_STATE_HOME/teerex/pane-creators` (default
 `~/.local/state/teerex/pane-creators`), separated by server. Existing managed panes
 without a receipt fall back to the agents registry: starter, report-to and the

@@ -196,6 +196,10 @@ rex.call=function(method,p)
    local supervisor=record.allowed[2]
    for _,b in ipairs(blocks.blocks or {}) do if b.block_id==supervisor.block_id then owner_present=true end end
    if owner_present then error('viewer_owner_still_live',0) end
+  elseif method=='block.close' and p.session_id==guard_policy.actor.session_id and
+   p.block_id==guard_policy.actor.block_id and guard_policy.creators[p.block_id] and
+   not guard_policy.creators[p.block_id].viewer then
+   -- A recorded pane's supervisor may close its own pane, never another pane.
   else guard_owner(p.block_id) end
  end
  if method=='teerex.guard.take' then return {allowed=true} end
@@ -254,6 +258,9 @@ def authorize(server, method, payload, rpc):
             creator = policy['creators'].get(id)
             if creator is None:
                 raise ValueError('no_recorded_spawner')
+            if (method == 'block.close' and not creator.get('viewer') and
+                    policy['actor'] == dict(session_id=payload.get('session_id'), block_id=id)):
+                continue
             if not policy['actor'].get('block_id') or policy['actor'] not in creator.get('allowed', []):
                 spawner = creator.get('spawner', {})
                 raise ValueError('pane control refused; recorded spawner: ' + str(spawner.get('session_id', 'unknown')) + ' ' + str(spawner.get('block_id', 'unknown')))

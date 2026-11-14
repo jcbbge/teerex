@@ -98,6 +98,27 @@ class GuardTest(_fixtures.SurfacesTest):
         self.env['REX_BLOCK'] = foreign_actor
         self.assertEqual(self.control('close', foreign).returncode, 0)
 
+    def test_recorded_pane_supervisor_closes_only_itself(self):
+        worker = self.open('tab', label='run-visible supervisor')['actual']['block_id']
+        other = self.open('tab', label='other creator pane')['actual']['block_id']
+        self.env['REX_BLOCK'] = worker
+        for op, extra in (('rename', ('--label', 'own rename')), ('move', ('--anchor', other, '--focus', 'yes'))):
+            self.refused(self.control(op, worker, *extra), 'recorded spawner:')
+        self.refused(self.control('close', other), 'recorded spawner:')
+        import pane_guard
+        from unittest.mock import patch
+        with patch.dict(os.environ, self.env):
+            pane_guard.authorize('unix://' + str(self.socket), 'block.close',
+                                 dict(session_id=self.session, block_id=worker), self.rpc)
+            with self.assertRaisesRegex(ValueError, 'recorded spawner:'):
+                pane_guard.authorize('unix://' + str(self.socket), 'block.close',
+                                     dict(session_id=self.session, block_id=other), self.rpc)
+        self.assertEqual(self.control('close', worker).returncode, 0)
+        blocks = {b['block_id'] for b in self.rpc('session.list_blocks', {'session_id': self.session})['blocks']}
+        self.assertNotIn(worker, blocks)
+        self.assertIn(other, blocks)
+        self.assertIn(self.anchor, blocks)
+
     def test_supervisor_closes_viewer(self):
         worker = self.open('tab', label='worker')['actual']['block_id']
         viewer = self.open('tab', label='viewer')['actual']['block_id']
