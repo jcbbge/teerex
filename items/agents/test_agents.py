@@ -223,6 +223,77 @@ class TimelineTest(unittest.TestCase):
             self.assertEqual(before, after)
 
 
+class ContractHelpersTest(unittest.TestCase):
+    def setUp(self):
+        self.ns = {"__name__": "contract_test", "SCRATCH_LIBRARY": True}
+        base = Path(__file__).resolve().parents[1]
+        exec(compile((base / "scratch/scratch.py").read_text(), "scratch.py", "exec"), self.ns)
+        exec(compile((base.parent / "src/scoped_channel.py").read_text(), "scoped_channel.py", "exec"), self.ns)
+        exec(compile((base / "agents/input_events.py").read_text(), "input_events.py", "exec"), self.ns)
+        exec(compile((base / "agents/agents.py").read_text(), "agents.py", "exec"), self.ns)
+
+    def test_init_precedence_and_interval_validation(self):
+        state = dict(starter=None, purpose="task", intent="intent")
+        init = self.ns["contract_init"]
+        self.assertEqual(init(state, {}, "Done when: proven", None, None)["done_when"], "proven")
+        self.assertEqual(init(state, {}, "done-when — proof", "explicit", 20)["interval_s"], 20)
+        self.assertEqual(init(state, {}, "brief", None, None)["done_when"], "intent")
+        self.assertEqual(init(state, {"contract_interval_s": 12}, "", None, None)["interval_s"], 12)
+        for invalid in (0, -1, True, "10"):
+            with self.assertRaises(self.ns["Refusal"]):
+                init(state, {"contract_interval_s": invalid}, "", None, None)
+
+    def test_snapshot_steps_declarations_and_flag_identity(self):
+        with tempfile.TemporaryDirectory() as directory:
+            pad = Path(directory) / "pad.md"
+            pad.write_text("# Worker\n## Now\n- [ ] Current\n## To-do\n- [ ] Later\n## Done\n- [x] Earlier\nBlocked: stuck; tried; need\n")
+            state = dict(scratchpad=str(pad), contract={})
+            snap = self.ns["contract_snapshot"](state)
+            self.assertEqual((snap["steps_total"], snap["step_n"], snap["declared"]), (3, 2, "blocked"))
+            state["contract"]["flag"] = dict(snap["flag"], delivered_at=123)
+            self.assertEqual(self.ns["contract_snapshot"](state)["flag"]["delivered_at"], 123)
+            pad.write_text("# Worker\n## Done\n- [x] Finished\n")
+            self.assertEqual(self.ns["contract_snapshot"](state)["declared"], "done")
+            pad.write_text("# Worker\nWaiting: review\nCheck: 2099-01-01T00:00:00Z\n")
+            self.assertEqual(self.ns["contract_snapshot"](state)["declared"], "waiting")
+
+    def test_tell_deduplicates_and_records_contact(self):
+        destination = dict(session_id="s", block_id="b")
+        state = dict(name="worker", starter=destination, report_to=destination, target=destination, contract={})
+        sent = []
+        self.ns["load"] = lambda *_: state
+        self.ns["update"] = lambda root, launch, change: change(state)
+        self.ns["send"] = lambda *args: (sent.append(args) or (0, {"outcome": "events_acknowledged"}))
+        code, packet = self.ns["contract_tell"]("root", "id", "done", "DONE worker: passed")
+        self.assertEqual(code, 0)
+        self.assertEqual(len(sent), 1)
+        self.assertEqual(sent[0][1]["name"], "teerex-contract")
+        self.assertEqual(state["contract"]["awaiting_starter"]["kind"], "done")
+        self.assertFalse(state["contract"]["stalled"])
+    def test_flag_claim_is_atomic_and_not_retried(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            pad = root / "pad.md"
+            pad.write_text("# Worker\nBlocked: stuck; tried; need\n")
+            launch = "a" * 32
+            destination = dict(session_id="s", block_id="b")
+            state = dict(schema_version=1, launch_id=launch, name="worker", scratchpad=str(pad),
+                         starter=destination, report_to=destination, contract={})
+            record = root / ("agents-" + launch + ".json")
+            record.write_text(json.dumps(state))
+            record.chmod(0o600)
+            sent = []
+            self.ns["send"] = lambda *args: (sent.append(args) or (0, {"outcome": "events_acknowledged"}))
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                results = list(pool.map(lambda _: self.ns["contract_tell"](str(root), launch, "flag", "FLAG worker step 0/0: stuck; tried; need"), range(2)))
+            self.assertEqual(len(sent), 1)
+            saved = json.loads(record.read_text())["contract"]
+            self.assertIsNotNone(saved["flag"]["delivered_at"])
+            self.assertEqual(saved["awaiting_starter"]["kind"], "flag")
+            self.assertEqual(sorted(r[1]["outcome"] for r in results), ["already_attempted", "transport_acknowledged"])
+
+
+
 class AgentsTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -533,6 +604,23 @@ class AgentsTest(unittest.TestCase):
             observed = subprocess.run(base, env=self.env, capture_output=True, text=True, timeout=10)
             return observed.stdout if "✓ Run gates" in observed.stdout else None
         self.assertIn("Read contracts", wait_for(displayed))
+
+    def test_contract_launch_options_and_scratch_done_when(self):
+        self.settings["profiles"]["probe"]["contract_interval_s"] = 25
+        self.config.write_text(json.dumps(self.settings))
+        self.brief.write_text("Task\nDone when: proof complete\n")
+        p, packet = self.run_cli("launch", "--config", str(self.config), "--profile", "probe", "--brief-file", str(self.brief),
+                                 "--done-when", "explicit proof", "--contract-interval-s", "30", "--ack-timeout-ms", "5000")
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        state = self.record(packet["launch_id"])
+        self.assertEqual(state["contract"]["done_when"], "explicit proof")
+        self.assertEqual(state["contract"]["interval_s"], 30)
+        self.assertEqual(state["contract"]["starter"], state["starter"])
+        self.assertIn("Done-when: explicit proof", Path(state["scratchpad"]).read_text())
+        p, packet = self.launch()
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertEqual(self.record(packet["launch_id"])["contract"]["done_when"], "proof complete")
+        self.assertEqual(self.record(packet["launch_id"])["contract"]["interval_s"], 25)
 
     def test_protocol_before_brief_exact_metadata_and_jobs(self):
         self.settings["profiles"]["probe"]["standing_flags"] *= 2

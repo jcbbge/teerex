@@ -70,6 +70,7 @@ class ScratchTest(unittest.TestCase):
         self.path.unlink()
         self.assertEqual(json.loads(self.hook("Stop").stdout)["decision"], "block")
         self.env.pop("AGENT_SCRATCHPAD")
+        self.env.pop("LC_AGENT_SCRATCHPAD", None)
         self.assertEqual(json.loads(self.hook("Stop").stdout)["scratchpad_check"]["status"], "not_checked")
 
     def test_init_path_permissions_and_idempotence(self):
@@ -94,6 +95,24 @@ class ScratchTest(unittest.TestCase):
         self.assertEqual(self.data()["waiting"], "")
         self.assertNotIn("Waiting:", self.path.read_text())
 
+    def test_contract_headers_flag_and_waiting_check(self):
+        self.init()
+        self.path.write_text(self.path.read_text() + "\nDone-when: All tests pass\n")
+        self.cli("flag", "stuck; tried tests; need review")
+        self.assertEqual(self.data()["blocked"], "stuck; tried tests; need review")
+        self.cli("todo", "Later")
+        self.assertEqual(self.data()["done_when"], "All tests pass")
+        self.cli("now", "Review", "--waiting", "reviewer", "--check", "10m")
+        self.assertEqual(self.data()["blocked"], "")
+        self.assertTrue(self.data()["check"].endswith("Z"))
+        self.cli("now", "Review", "--waiting", "", "--check", "2030-01-01T00:00:00Z")
+        self.assertEqual(self.data()["check"], "")
+        self.cli("flag", "raised")
+        self.cli("flag", "")
+        self.assertEqual(self.data()["blocked"], "")
+        self.assertNotEqual(self.cli("now", "Bad", "--check", "tomorrow", check=False).returncode, 0)
+        self.assertNotEqual(self.cli("now", "Bad", "--check", "2030-01-01", check=False).returncode, 0)
+
     def test_now_todo_done_and_previous_disposition(self):
         self.init()
         self.cli("todo", "Later")
@@ -108,7 +127,7 @@ class ScratchTest(unittest.TestCase):
         self.assertEqual(self.data()["done"], ["Third", "Second"])
         self.cli("now", "Later")
         self.assertEqual(self.data()["todo"], ["First"])
-        self.assertEqual(set(self.data()), {"purpose", "intent", "now", "todo", "done", "updated", "waiting"})
+        self.assertEqual(set(self.data()), {"purpose", "intent", "now", "todo", "done", "updated", "waiting", "done_when", "check", "blocked"})
 
     def test_handwritten_missing_sections_blank_lines_round_trip(self):
         self.init()

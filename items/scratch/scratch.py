@@ -70,7 +70,7 @@ def scratch_read(path):
         raw = stream.read(262145)
     if len(raw.encode()) > 262144:
         raise ScratchError("scratchpad_too_large")
-    result = dict(name="Scratchpad", purpose="", intent="", updated="", now=None, todo=[], done=[], waiting="")
+    result = dict(name="Scratchpad", purpose="", intent="", updated="", now=None, todo=[], done=[], waiting="", done_when="", check="", blocked="")
     section = None
     current = []
     for line in raw.splitlines():
@@ -79,9 +79,9 @@ def scratch_read(path):
             result["name"] = line[2:].strip()
         elif line.startswith("## "):
             section = {"Now": current, "To-do": result["todo"], "Done": result["done"]}.get(line[3:].strip())
-        elif any(line.startswith(k + ":") for k in ("Purpose", "Intent", "Updated", "Waiting")):
+        elif any(line.startswith(k + ":") for k in ("Purpose", "Intent", "Updated", "Waiting", "Done-when", "Check", "Blocked")):
             key, value = line.split(":", 1)
-            result[key.lower()] = value.strip()
+            result[key.lower().replace("-", "_")] = value.strip()
         elif section is not None:
             match = re.fullmatch(r"-\s+\[[ xX]\]\s+(.+)", line)
             if match:
@@ -99,6 +99,7 @@ def scratch_write(path, data):
            "".join(f"- [ ] {v}\n" for v in data["todo"]) + "\n## Done\n" +
            "".join(f"- [x] {v}\n" for v in data["done"]) +
            ("\nWaiting: " + data["waiting"] + "\n" if data.get("waiting") else ""))
+    raw += "".join(f"\n{label}: {data[key]}\n" for key, label in (("done_when", "Done-when"), ("check", "Check"), ("blocked", "Blocked")) if data.get(key))
     if len(raw.encode()) > 262144:
         raise ScratchError("scratchpad_too_large")
     fd, stage = tempfile.mkstemp(prefix=".scratch-", dir=path.parent)
@@ -118,7 +119,7 @@ def scratch_write(path, data):
             os.unlink(stage)
 
 
-def scratch_init(session, block, name, purpose, intent):
+def scratch_init(session, block, name, purpose, intent, done_when=""):
     path = scratch_path(session, block)
     for value in (name, purpose, intent):
         scratch_line(value)
@@ -127,7 +128,7 @@ def scratch_init(session, block, name, purpose, intent):
             # Repeated init preserves the pane's working list, including hand-written notes.
             scratch_write(path, scratch_read(path))
         else:
-            scratch_write(path, dict(name=name, purpose=purpose, intent=intent, now=None, todo=[], done=[], waiting=""))
+            scratch_write(path, dict(name=name, purpose=purpose, intent=intent, now=None, todo=[], done=[], waiting="", done_when=done_when, check="", blocked=""))
     return str(path)
 
 
@@ -168,8 +169,9 @@ def scratch_render(data, width=40):
     except (ValueError, TypeError):
         add("updated time unknown")
     lines.append("")
-    if data.get("waiting"):
-        add("Waiting: " + data["waiting"])
+    for key, label in (("done_when", "Done-when"), ("waiting", "Waiting"), ("check", "Check"), ("blocked", "Blocked")):
+        if data.get(key):
+            add(label + ": " + data[key])
     if data["now"]:
         add("▶ " + data["now"])
     for item in data["todo"]:
@@ -268,10 +270,20 @@ def scratch_seat_hook():
         print(json.dumps(dict(scratchpad_check=check)))
 
 
+def scratch_check_time(value):
+    if re.fullmatch(r"[0-9]+m", value):
+        parsed = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=int(value[:-1]))
+    else:
+        parsed = datetime.datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            raise ScratchError("check_requires_timezone")
+    return parsed.astimezone(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
+
+
 def scratch_main(argv=None):
     parser = argparse.ArgumentParser(prog="teerex scratch", description="Per-pane ephemeral Markdown scratchpads; palette prepares Show scratchpad for surfaces palette install.")
     subs = parser.add_subparsers(dest="operation", required=True)
-    for op in ("init", "now", "todo", "done", "show", "path", "watch"):
+    for op in ("init", "now", "todo", "done", "show", "path", "watch", "flag"):
         p = subs.add_parser(op)
         p.add_argument("--session", default=os.environ.get("REX_SESSION") or os.environ.get("LC_REX_SESSION"))
         p.add_argument("--block", default=os.environ.get("REX_BLOCK") or os.environ.get("LC_REX_BLOCK"))
@@ -279,9 +291,10 @@ def scratch_main(argv=None):
             p.add_argument("--name", default=os.environ.get("AGENT_NAME", "Scratchpad"))
             p.add_argument("--purpose", required=True)
             p.add_argument("--intent", required=True)
-        if op in ("now", "todo"):
+        if op in ("now", "todo", "flag"):
             p.add_argument("text")
         if op == "now":
+            p.add_argument("--check", help="waiting check time: Nm or ISO UTC time")
             p.add_argument("--waiting", help="scratchpad Waiting text; empty text clears it")
             p.add_argument("--done", action="store_true", help="finish the previous Now instead of returning it to To-do")
         if op == "show":
@@ -307,7 +320,7 @@ def scratch_main(argv=None):
         elif o.operation == "show":
             data = scratch_read(path)
             if o.json:
-                print(json.dumps({k: data[k] for k in ("purpose", "intent", "now", "todo", "done", "updated", "waiting")}, ensure_ascii=False))
+                print(json.dumps({k: data[k] for k in ("purpose", "intent", "now", "todo", "done", "updated", "waiting", "done_when", "check", "blocked")}, ensure_ascii=False))
             else:
                 print(scratch_render(data), end="")
         elif o.operation == "watch":
@@ -328,8 +341,13 @@ def scratch_main(argv=None):
                 data = scratch_read(path)
                 if o.operation == "todo":
                     data["todo"].append(scratch_line(o.text))
+                elif o.operation == "flag":
+                    data["blocked"] = scratch_line(o.text) if o.text else ""
                 elif o.operation == "now":
                     value = scratch_line(o.text)
+                    data["blocked"] = ""
+                    if o.check is not None:
+                        data["check"] = scratch_check_time(o.check)
                     if data["now"]:
                         data["done" if o.done else "todo"].insert(0, data["now"])
                     if value in data["todo"]:
@@ -337,6 +355,8 @@ def scratch_main(argv=None):
                     data["now"] = value
                     if o.waiting is not None:
                         data["waiting"] = scratch_line(o.waiting) if o.waiting else ""
+                        if not o.waiting:
+                            data["check"] = ""
                 elif data["now"]:
                     data["done"].insert(0, data["now"])
                     data["now"] = None

@@ -7,6 +7,7 @@ import argparse
 import base64
 import contextlib
 import datetime
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -525,6 +526,87 @@ def transport_ack(code, packet):
 def send_options(state):
     # Root send routes registered seats before terminal input; a failed store never falls back to paste.
     return ["--store", absolute(state["store"]), "--host", state["target"]["host"]] if state["store"] else []
+
+
+# Contract
+
+def contract_init(state, profile, brief_text, done_when_arg, interval_arg):
+    interval = interval_arg if interval_arg is not None else profile.get("contract_interval_s", 600)
+    require(type(interval) is int and interval > 0, "invalid_contract_interval_s")
+    fallback = next((m.group(1).strip(" :*—-\t") for line in (brief_text or "").splitlines()
+                     if (m := re.match(r"^\s*(?:done when|done-when)\b(.*)", line, re.I))), "")
+    done_when = done_when_arg if done_when_arg is not None else fallback or state.get("intent", state["purpose"])
+    scratch_line(done_when)
+    return dict(starter=state.get("starter"), task=state["purpose"], done_when=done_when, interval_s=interval,
+                steps_total=0, step_n=0, now=None, last_contact_at=now(), last_contact="",
+                declared=None, declared_at=None, check_at=None, flag=None, lapses=0, stalled=False,
+                awaiting_starter=None, starter_lapses=0)
+
+
+def contract_snapshot(state):
+    data = scratch_read(Path(state["scratchpad"]))
+    total = bool(data["now"]) + len(data["todo"]) + len(data["done"])
+    check_at = None
+    if data.get("check"):
+        try:
+            parsed = datetime.datetime.fromisoformat(data["check"].replace("Z", "+00:00"))
+            if parsed.tzinfo is not None:
+                check_at = int(parsed.timestamp() * 1000)
+        except ValueError:
+            pass
+    flag = None
+    if data.get("blocked"):
+        sha = hashlib.sha256(data["blocked"].encode()).hexdigest()
+        previous = (state.get("contract") or {}).get("flag") or {}
+        flag = dict(previous) if previous.get("sha") == sha else dict(text=data["blocked"], sha=sha, delivered_at=None)
+    declarations = [name for name, holds in (("done", not data["now"] and not data["todo"] and bool(data["done"])),
+                    ("blocked", bool(flag)), ("waiting", bool(data.get("waiting")) and check_at is not None and check_at > now())) if holds]
+    return dict(steps_total=int(total), step_n=len(data["done"]) + bool(data["now"]), now=data["now"],
+                declared=declarations[0] if len(declarations) == 1 else None, check_at=check_at, flag=flag)
+
+
+def contract_seat(state):
+    return None
+
+
+def contract_tell(root, launch_id, kind, line, to="starter"):
+    state = load(root, launch_id)
+    if kind == "flag" and to == "starter":
+        with Registry(root) as registry:
+            state = registry.read(launch_id)
+            flag = contract_snapshot(state)["flag"]
+            require(flag is not None, "contract_flag_required")
+            previous = state["contract"].get("flag") or {}
+            if previous.get("sha") == flag["sha"] and (previous.get("attempt") or previous.get("delivered_at") is not None):
+                return 0, dict(outcome="already_attempted", sha=flag["sha"])
+            flag["attempt"] = now()
+            state["contract"]["flag"] = flag
+            registry.save(state)
+    require(to in ("starter", "seat", "self"), "invalid_contract_destination")
+    scratch_line(line)
+    # Preserve the specified STEP/DONE/etc. prefix while ensuring every line identifies its worker.
+    if state["name"] not in line:
+        line = state["name"] + ": " + line
+    destinations = [state["target"]] if to == "self" else [state.get("starter"), state.get("report_to")]
+    if to == "seat":
+        destinations = [contract_seat(state)]
+    destinations = [d for i, d in enumerate(destinations) if d and d not in destinations[:i]]
+    results = []
+    for i, destination in enumerate(destinations):
+        sender = dict(state, name="teerex-contract")
+        code, packet = send(root, sender, destination, line, "contract-" + secrets.token_hex(16) + "-" + str(i))
+        results.append(dict(client_exit=code, receipt=packet))
+    ok = bool(results) and all(transport_ack(r["client_exit"], r["receipt"]) for r in results)
+    if to == "starter":
+        def told(s):
+            c = s["contract"]
+            c.update(last_contact_at=now(), last_contact=line, lapses=0, stalled=False)
+            if kind == "flag" and c.get("flag", {}).get("sha") == flag["sha"]:
+                c["flag"].update(delivered_at=now() if ok else None, receipt=results)
+            if kind in ("done", "flag"):
+                c.update(awaiting_starter=dict(kind=kind, at=now()), starter_lapses=0)
+        update(root, launch_id, told)
+    return (0 if ok else 1), dict(outcome="transport_acknowledged" if ok else "uncertain", results=results)
 
 
 def execution_config(profile):
@@ -1057,6 +1139,9 @@ def launch(o):
                      hook_events=profile.get("hook_events", False), client_path=os.environ.get("PATH", os.defpath),
                      rex_executable=os.environ.get("TEEREX_INTERNAL_REX"), delivery=delivery, execution=execution,
                      callbacks=callbacks, remote_child_term=None, human=human, scratch_pane=profile.get("scratch_pane", True), tint=tint, layout=layout, come_forward=profile.get("come_forward", False))
+        if not human:
+            state["intent"] = intent
+            state["contract"] = contract_init(state, profile, brief, o.done_when, o.contract_interval_s)
         # Retire exited/never-started/pane-gone records before the cap can refuse a launch; history is archived.
         pruned = prune_records(root, apply=True, at_least=AUTO_PRUNE_AT)
         state["auto_prune"] = dict(retired=len(pruned["retired"]), live_before=pruned["live_before"])
@@ -1086,7 +1171,7 @@ def launch(o):
         if not succeeded(code, packet, "created_and_verified" if human or layout == "detached" else "created_and_attached"):
             return 1, receipt(state, "creation_uncertain", client_exit=code)
         block = state["target"]["block_id"]
-        scratchpad = scratch_init(session, block, name, purpose, scratch_line(intent))
+        scratchpad = scratch_init(session, block, name, purpose, scratch_line(intent), (state.get("contract") or {}).get("done_when", ""))
         state = update(root, launch_id, lambda s: s.update(scratchpad=scratchpad))
         if state["scratch_pane"] and layout != "detached":
             side_code, side_packet = invoke(["surfaces", "open", "--socket", socket, "--session", session,
@@ -1747,6 +1832,8 @@ def parser():
     q.add_argument("--launch-wait-ms", type=bounded_int(0, 60000), default=60000, metavar="0..60000",
                    help="pre-creation launch queue wait, default60000ms; busy refuses retry-safe before pane creation; released before ACK wait")
     q.add_argument("--ack-timeout-ms", type=bounded_int(100, 60000), default=10000, metavar="100..60000")
+    q.add_argument("--done-when")
+    q.add_argument("--contract-interval-s", type=bounded_int(1, 2147483647))
     human_parser = sub.add_parser("human", parents=[q], add_help=False,
                                   help="human interactive launch: visible tracked pane, standing flags, no starter/brief/ACK")
     human_parser.set_defaults(operation="human")
