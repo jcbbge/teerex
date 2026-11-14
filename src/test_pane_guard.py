@@ -115,6 +115,7 @@ class GuardTest(_fixtures.SurfacesTest):
         neighbour = self.open('tiled', label='seat neighbour')['actual']['block_id']
         other = self.open('tab', label='other tab')['actual']['block_id']
         self.register(self.anchor)
+        self.env['REX_BLOCK'] = other
         for pane in (self.anchor, neighbour):
             for op, extra in (('close', ()), ('rename', ('--label', 'changed')),
                               ('focus', ()), ('move', ('--anchor', other, '--focus', 'yes'))):
@@ -125,6 +126,120 @@ class GuardTest(_fixtures.SurfacesTest):
         self.assertNotEqual(self.cli('surfaces', 'session', 'close', '--socket', str(self.socket), '--session', self.session).returncode, 0)
         self.refused(self.cli('clutch', 'take', '--socket', str(self.socket), '--session', self.session, '--pane', neighbour), 'registered_seat_tab')
         self.assertEqual({self.anchor, neighbour, other}, {b['block_id'] for b in self.rpc('session.list_blocks', {'session_id': self.session})['blocks']})
+
+    def guarded_call(self, method, **params):
+        import pane_guard
+        from unittest.mock import patch
+        params['session_id'] = self.session
+        endpoint = 'unix://' + str(self.socket)
+        # Check parity with the wire replay guard before executing the Lua path.
+        with patch.dict(os.environ, self.env, clear=True):
+            try:
+                pane_guard.authorize(endpoint, method, params, self.rpc)
+                wire_error = None
+            except ValueError as exc:
+                wire_error = str(exc)
+            script = pane_guard.prelude(endpoint) + '\nreturn rex.call(rex.args.method,rex.args.params)'
+        result = subprocess.run(self.base + ['do', '-e', script, '--args', json.dumps(dict(method=method, params=params)), '--json'],
+                                capture_output=True, text=True, timeout=10)
+        if wire_error:
+            self.assertNotEqual(result.returncode, 0, result.stdout)
+            self.assertIn('registered_seat_tab' if method == 'block.event' else wire_error, result.stderr)
+        else:
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        return result
+
+    def test_seat_companion_lifecycle(self):
+        self.register(self.anchor)
+        tasks = self.open('tiled', label='tasks companion', extra=('--ratio', '0.4'))['actual']['block_id']
+        self.rect(self.inspect(self.anchor)['rect'], [0, 0, .6, 1])
+        self.rect(self.inspect(tasks)['rect'], [.6, 0, .4, 1])
+        # Splitting a seat-owned companion is permitted too.
+        seat_anchor = self.anchor
+        self.anchor = tasks
+        board = self.open('tiled', label='board companion', extra=('--direction', 'down', '--ratio', '0.5'))['actual']['block_id']
+        self.anchor = seat_anchor
+        self.assertEqual(self.control('rename', tasks, '--label', 'tasks renamed').returncode, 0)
+        self.guarded_call('session.move_block', block_id=board, anchor_block_id=tasks,
+                          direction='vertical', side='after', ratio=.5)
+        self.guarded_call('session.resize_pane', before_block_id=seat_anchor, after_block_id=tasks,
+                          direction='horizontal', ratio=.6)
+        self.rect(self.inspect(seat_anchor)['rect'], [0, 0, .6, 1])
+        self.rect(self.inspect(tasks)['rect'], [.6, 0, .4, .5])
+        self.rect(self.inspect(board)['rect'], [.6, .5, .4, .5])
+        self.assertEqual(self.control('close', board).returncode, 0)
+        self.anchor = tasks
+        reopened = self.open('tiled', label='board reopened', extra=('--direction', 'down', '--ratio', '0.5'))['actual']['block_id']
+        self.anchor = seat_anchor
+        self.rect(self.inspect(reopened)['rect'], [.6, .5, .4, .5])
+        self.assertNotIn(board, {b['block_id'] for b in self.rpc('session.list_blocks', {'session_id': self.session})['blocks']})
+        print('SEAT COMPANION PROOF: tasks and board opened at 60/40; own rename/move/resize passed; board closed and reopened; geometry verified', flush=True)
+        # The seat and its session remain protected, including replay callers.
+        for method, params in (
+                ('block.close', dict(block_id=seat_anchor)),
+                ('session.set_block_label', dict(block_id=seat_anchor, label='refused')),
+                ('session.move_block', dict(block_id=seat_anchor, anchor_block_id=tasks)),
+                ('session.destroy', {}),
+                ('block.event', dict(block_id=tasks, event=dict(type='key', payload=dict(key='c', mods='ctrl')))),
+                ('com.superlogical.terminal.write', dict(block_id=tasks, text='refused'))):
+            result = self.guarded_call(method, **params)
+            self.assertNotEqual(result.returncode, 0)
+        for pane in (reopened, tasks):
+            self.assertEqual(self.control('close', pane).returncode, 0)
+
+    def test_seat_exception_refuses_foreign_and_outside_companions(self):
+        other = self.open('tab', label='bystander')['actual']['block_id']
+        self.env['REX_BLOCK'] = other
+        foreign = self.open('tiled', label='foreign companion')['actual']['block_id']
+        self.env['REX_BLOCK'] = self.anchor
+        outside = self.open('tab', label='outside seat tab')['actual']['block_id']
+        self.register(self.anchor)
+        for method, params in (
+                ('block.close', dict(block_id=foreign)),
+                ('session.set_block_label', dict(block_id=foreign, label='refused')),
+                ('session.move_block', dict(block_id=foreign, anchor_block_id=self.anchor)),
+                ('session.move_block', dict(block_id=outside, anchor_block_id=self.anchor)),
+                ('session.new_split', dict(anchor_id=foreign, direction='horizontal', side='after',
+                    layout=dict(block=dict(flavor='com.superlogical.terminal.shell')))),
+                ('session.resize_pane', dict(before_block_id=self.anchor, after_block_id=foreign, direction='horizontal', ratio=.6))):
+            self.assertNotEqual(self.guarded_call(method, **params).returncode, 0)
+
+    def test_seat_exception_requires_live_local_seat(self):
+        import socket
+        own = self.open('tiled', label='own companion')['actual']['block_id']
+        other = self.open('tab', label='other caller')['actual']['block_id']
+        self.register(self.anchor)
+        # Ordinary bystander and managed agent identities cannot use the exception.
+        original = dict(self.env)
+        for identity in (dict(REX_BLOCK=other), dict(AGENT_SESSION=self.session, AGENT_PANE=other),
+                         dict(TEEREX_CALLER_IDENTITY=json.dumps(dict(host='other-machine', session_id=self.session, block_id=self.anchor)))):
+            self.env = dict(original, **identity)
+            self.assertNotEqual(self.guarded_call('block.close', block_id=own).returncode, 0)
+            result = self.cli(*self.command('tiled')[1:])
+            self.refused(result, 'registered_seat_tab_is_operator_only')
+        self.env = dict(original, TEEREX_CALLER_IDENTITY=json.dumps(dict(host=socket.gethostname(), session_id=self.session, block_id=self.anchor)))
+        self.assertEqual(self.control('rename', own, '--label', 'local forwarded seat').returncode, 0)
+        # A stale active registration cannot grant authority from matching metadata.
+        stale = 'block:00000000-0000-0000-0000-000000000099'
+        self.register(stale)
+        self.env = dict(original, REX_BLOCK=stale)
+        self.assertNotEqual(self.guarded_call('block.close', block_id=own).returncode, 0)
+        # An inherited registration grants no seat authority to its old caller.
+        self.register(self.anchor)
+        state = json.loads((self.store / 'state.json').read_text())
+        state['seats'][0]['inherited_to'] = dict(state['seats'][0]['target'], block_id=other)
+        state['seats'].append(dict(target=dict(state['seats'][0]['target'], block_id=other)))
+        (self.store / 'state.json').write_text(json.dumps(state))
+        self.env = original
+        # The historical seat cannot control a companion in the successor seat tab.
+        self.env['REX_BLOCK'] = other
+        (self.store / 'state.json').write_text(json.dumps(dict(seats=[])))
+        self.anchor, old_anchor = other, self.anchor
+        successor_companion = self.open('tiled', label='successor companion')['actual']['block_id']
+        self.anchor = old_anchor
+        (self.store / 'state.json').write_text(json.dumps(state))
+        self.env['REX_BLOCK'] = old_anchor
+        self.assertNotEqual(self.guarded_call('block.close', block_id=successor_companion).returncode, 0)
 
     def test_spawner_ownership(self):
         own = self.open('tab', label='owned pane')['actual']['block_id']
@@ -502,6 +617,7 @@ class GuardTest(_fixtures.SurfacesTest):
         window = self.inspect(neighbour)['window_id']
         self.refused(self.cli('surfaces', 'rename', '--socket', str(self.socket), '--session', self.session,
                              '--window', window, '--label', 'changed tab'), 'registered_seat_tab')
+        self.env['REX_BLOCK'] = neighbour
         self.refused(self.control('close', neighbour[-12:]), 'registered_seat_tab')
 
     def test_spawn_receipt_and_operator_environment(self):
@@ -525,6 +641,7 @@ class GuardTest(_fixtures.SurfacesTest):
         neighbour = self.open('tiled', label='resize neighbour')['actual']['block_id']
         self.register(self.anchor)
         actual = self.inspect(self.anchor)
+        self.env['REX_BLOCK'] = neighbour
         endpoint = 'unix://' + str(self.socket)
         generated = subprocess.run([sys.executable, str(ROOT / 'src/pane_guard.py'), endpoint],
                                    env=self.env, capture_output=True, text=True, timeout=10)

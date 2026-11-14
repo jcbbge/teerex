@@ -179,6 +179,32 @@ local function guard_record(id,sid)
  local renamed,rename_err=os.rename(path..'.next',path)
  if not renamed then io.stderr:write('pane creator recording failed: '..tostring(rename_err)..'\n'); os.remove(path..'.next') end
 end
+-- The live seat may manage only its recorded companions in its own tab.
+-- Tab/session controls, the seat block and raw input never gain this authority.
+local function guard_seat_companion(seat,view,sw,method,p)
+ local actor=guard_policy.actor
+ if (actor.host or guard_policy.local_host)~=guard_policy.local_host or
+  actor.session_id~=seat.session_id or actor.block_id~=seat.block_id then return false end
+ local function own(bid)
+  local r=guard_policy.creators[bid] or {}; local who=r.spawner or {}
+  return bid~=seat.block_id and guard_window(view,bid)==sw and
+   (who.host or guard_policy.local_host)==guard_policy.local_host and
+   who.session_id==actor.session_id and who.block_id==actor.block_id
+ end
+ local function anchor(bid) return bid==seat.block_id or own(bid) end
+ if method=='session.new_split' then
+  return guard_window(view,p.anchor_id)==sw and anchor(p.anchor_id)
+ elseif method=='session.resize_pane' then
+  return guard_window(view,p.before_block_id)==sw and guard_window(view,p.after_block_id)==sw and
+   anchor(p.before_block_id) and anchor(p.after_block_id) and
+   (own(p.before_block_id) or own(p.after_block_id))
+ elseif method=='session.move_block' then
+  return own(p.block_id) and guard_window(view,p.anchor_block_id)==sw and anchor(p.anchor_block_id)
+ elseif method=='block.close' or method=='session.set_block_label' then
+  return not p.window_id and own(p.block_id)
+ end
+ return false
+end
 local guard_controls={['block.close']=true,['session.destroy']=true,
  ['session.set_window_label']=true,['session.set_block_label']=true,
  ['session.move_block']=true,['session.focus_block']=true,
@@ -228,7 +254,8 @@ rex.call=function(method,p)
        (event.type=='key' and (key.key=='enter' and (key.mods or '')=='' or
          key.key=='u' and key.mods=='ctrl')))
      if not allowed then error('registered_seat_tab_refuses_raw_input',0) end
-    elseif protected then error('registered_seat_tab_is_operator_only',0) end
+    elseif protected and not guard_seat_companion(seat,v,sw,method,p) then
+     error('registered_seat_tab_is_operator_only',0) end
    end
   end
  end
@@ -283,7 +310,7 @@ def authorize(server, method, payload, rpc):
     """Use the same guard for the replay controller's native wire connection."""
     guarded = {'block.close', 'session.destroy', 'session.set_window_label',
                'session.set_block_label', 'session.move_block', 'session.focus_block',
-               'session.resize_pane', 'com.superlogical.terminal.resize',
+               'session.resize_pane', 'session.new_split', 'com.superlogical.terminal.resize',
                'com.superlogical.terminal.key', 'com.superlogical.terminal.write',
                'com.superlogical.terminal.paste', 'block.event'}
     if method not in guarded:
@@ -305,7 +332,31 @@ def authorize(server, method, payload, rpc):
         sw = window(view, seat['block_id'])
         if not sw:
             raise ValueError('registered_seat_tab_unavailable')
-        if method == 'session.destroy' or (payload.get('window_id') or window(view, payload.get('block_id'))) == sw:
+        actor = policy['actor']
+        def own(bid):
+            creator = policy['creators'].get(bid, {})
+            who = creator.get('spawner') or {}
+            return (bid != seat['block_id'] and window(view, bid) == sw and
+                    who.get('host', policy['local_host']) == policy['local_host'] and
+                    who.get('session_id') == actor.get('session_id') and who.get('block_id') == actor.get('block_id'))
+        def anchor(bid):
+            return window(view, bid) == sw and (bid == seat['block_id'] or own(bid))
+        companion = False
+        if (actor.get('host', policy['local_host']) == policy['local_host'] and
+                actor.get('session_id') == seat['session_id'] and actor.get('block_id') == seat['block_id']):
+            if method == 'session.new_split':
+                companion = anchor(payload.get('anchor_id'))
+            elif method == 'session.resize_pane':
+                before, after = payload.get('before_block_id'), payload.get('after_block_id')
+                companion = anchor(before) and anchor(after) and (own(before) or own(after))
+            elif method == 'session.move_block':
+                companion = own(payload.get('block_id')) and anchor(payload.get('anchor_block_id'))
+            elif method in {'block.close', 'session.set_block_label'}:
+                companion = not payload.get('window_id') and own(payload.get('block_id'))
+        protected = (method == 'session.destroy' or
+                     (payload.get('window_id') or window(view, payload.get('block_id')) or window(view, payload.get('anchor_id'))) == sw or
+                     any(window(view, payload.get(key)) == sw for key in ('anchor_block_id', 'before_block_id', 'after_block_id')))
+        if protected and not companion:
             raise ValueError('registered_seat_tab_is_operator_only')
     if method in {'block.close', 'session.destroy', 'session.move_block', 'session.set_block_label', 'session.set_window_label'}:
         ids = [payload.get('session_id') if method == 'session.destroy' else payload.get('block_id')]
