@@ -335,6 +335,54 @@ class ContractHelpersTest(unittest.TestCase):
         self.assertEqual(sent[0][1]["name"], "teerex-contract")
         self.assertEqual(state["contract"]["awaiting_starter"]["kind"], "done")
         self.assertFalse(state["contract"]["stalled"])
+    def test_turn_answers_suppress_unchanged_per_destination_until_check_expires(self):
+        starter = dict(session_id="s", block_id="starter")
+        report_to = dict(session_id="s", block_id="report")
+        state = dict(name="worker", starter=starter, report_to=report_to,
+                     contract=dict(check_at=200))
+        sent = []
+        clock = [100]
+        self.ns["load"] = lambda *_: state
+        self.ns["update"] = lambda root, launch, change: change(state)
+        self.ns["now"] = lambda: clock[0]
+        self.ns["send"] = lambda *args: (sent.append(args) or (0, {"outcome": "events_acknowledged"}))
+        answer = dict(outcome="waiting", step_n=1, steps_total=2, reason="review")
+        def tell():
+            line = "NOT DONE worker step 1/2: " + answer["reason"]
+            return self.ns["contract_tell"]("root", "id", answer["outcome"], line, turn_report=dict(answer))
+        tell()
+        self.assertEqual(len(sent), 2)
+        self.assertEqual(tell()[1]["outcome"], "unchanged_turn_suppressed")
+        self.assertEqual(len(sent), 2)
+        state["contract"]["check_at"] = 300
+        tell()  # A changed check time alone does not count as progress.
+        self.assertEqual(len(sent), 2)
+        answer["reason"] = "review from maintainer"
+        tell()
+        self.assertEqual(len(sent), 4)
+        clock[0] = 301
+        tell()  # The last sent check expired with no step change.
+        self.assertEqual(len(sent), 6)
+        tell()
+        self.assertEqual(len(sent), 6)
+        answer["outcome"] = "blocked"
+        tell()
+        self.assertEqual(len(sent), 8)
+        answer["step_n"] = 2
+        tell()
+        self.assertEqual(len(sent), 10)
+        answer["outcome"] = "done"
+        tell()
+        self.assertEqual(len(sent), 12)
+        answer["outcome"] = "blocked"
+        tell()
+        self.assertEqual(len(sent), 14)
+        state["report_to"] = dict(session_id="s", block_id="new-report")
+        tell()  # The old starter remains quiet; the new destination gets its answer.
+        self.assertEqual(len(sent), 15)
+        self.assertEqual(sent[-1][2], state["report_to"])
+        self.assertEqual(len(state["contract"]["turn_reports"]), 3)
+
     def test_failed_contact_does_not_clear_lapse_and_timestamp_precedes_send(self):
         destination = dict(session_id="s", block_id="b")
         state = dict(name="worker", starter=destination, report_to=destination, contract=dict(last_contact_at=1, lapses=2, stalled=True))
@@ -2900,9 +2948,9 @@ Path('/work/network-harness').touch()
                 scratch("flag", "stuck; tried tests; need review")
                 settle(end())
                 exact = "NOT DONE probe step 2/2: stuck; tried tests; need review"
-                wait_for(lambda: sum(exact in text for text in messages()) == 2)
+                wait_for(lambda: any(exact in text for text in messages()))
                 reports = [text for text in messages() if exact in text]
-                self.assertEqual(len(reports), 2)
+                self.assertEqual(len(reports), 1)
                 self.assertEqual(sum("\nproof" in text for text in reports), 1)
                 start()
                 scratch("now", "Review", "--waiting", "reviewer", "--check", "10m")
@@ -2911,6 +2959,14 @@ Path('/work/network-harness').touch()
                 wait_for(lambda: any("NOT DONE probe step 2/2: reviewer; checks again " in text for text in messages()))
                 waits = [text for text in messages() if "NOT DONE probe step 2/2: reviewer;" in text]
                 self.assertTrue(all("proof" not in text for text in waits))
+                start()
+                scratch("now", "Review", "--waiting", "reviewer", "--check", "20m")
+                repeated = settle(end())
+                self.assertEqual(repeated["contract_delivery"]["outcome"], "unchanged_turn_suppressed")
+                start()
+                scratch("now", "Review", "--waiting", "maintainer", "--check", "20m")
+                settle(end())
+                wait_for(lambda: any("NOT DONE probe step 2/2: maintainer;" in text for text in messages()))
                 dones = [text for text in messages() if "DONE probe: TASK" in text]
                 self.assertTrue(any(text.endswith(last_words) for text in dones))
                 self.assertTrue(any(text.endswith(last_words) for text in reports))

@@ -667,7 +667,7 @@ def contract_seat(state):
     return seats[0] if seats else None
 
 
-def contract_tell(root, launch_id, kind, line, to="starter", last_message=None):
+def contract_tell(root, launch_id, kind, line, to="starter", last_message=None, turn_report=None):
     state = load(root, launch_id)
     if kind == "flag" and to == "starter":
         with Registry(root) as registry:
@@ -692,9 +692,28 @@ def contract_tell(root, launch_id, kind, line, to="starter", last_message=None):
     sent_at = now()
     results = []
     for i, destination in enumerate(destinations):
+        if turn_report is not None:
+            claimed = False
+            def claim(s):
+                nonlocal claimed
+                reports = s["contract"].setdefault("turn_reports", {})
+                key = destination["session_id"] + "/" + destination["block_id"]
+                previous = reports.get(key)
+                expired = previous and previous.get("check_at") is not None and previous["at"] < previous["check_at"] <= sent_at
+                if previous and previous["answer"] == turn_report and not expired and kind != "done":
+                    return
+                # Claim before input: an uncertain attempt must never be retried.
+                reports[key] = dict(answer=turn_report, line=line, at=sent_at,
+                                    check_at=state["contract"].get("check_at"))
+                claimed = True
+            update(root, launch_id, claim)
+            if not claimed:
+                continue
         sender = dict(state, name="teerex-contract")
         code, packet = send(root, sender, destination, line + ("\n" + last_message if last_message else ""), "contract-" + secrets.token_hex(16) + "-" + str(i))
         results.append(dict(client_exit=code, receipt=packet))
+    if turn_report is not None and not results and destinations:
+        return 0, dict(outcome="unchanged_turn_suppressed", results=[])
     ok = bool(results) and all(transport_ack(r["client_exit"], r["receipt"]) for r in results)
     if to == "starter":
         def told(s):
@@ -1720,7 +1739,13 @@ def report_stop(root, launch_id, event_id, event, allow_transcript=True):
                     flag["last_message_attempted"] = now()
                     last_message = details
                     registry.save(current)
-        code, delivery = contract_tell(root, launch_id, declared or "no_answer", body, last_message=last_message)
+        turn_report = dict(outcome="done", step_n=c["step_n"], steps_total=c["steps_total"], reason=c["done_when"])
+        if declared != "done":
+            reason = c["flag"]["text"] if declared == "blocked" else waiting if declared == "waiting" else "ended its turn without declaring done, blocked or waiting"
+            turn_report = dict(outcome=declared or "no_answer", step_n=c["step_n"],
+                               steps_total=c["steps_total"], reason=reason)
+        code, delivery = contract_tell(root, launch_id, declared or "no_answer", body,
+                                       last_message=last_message, turn_report=turn_report)
         update(root, launch_id, lambda s: s["notifications"][event_id].update(outcome="transport_acknowledged" if code == 0 else "uncertain", receipt=delivery))
         state = load(root, launch_id)
         publish_fleet(root, state, event_id, "completed" if declared == "done" else "blocked" if declared in ("blocked", "waiting") else "idle", body)
