@@ -243,3 +243,5 @@ counts and independent mismatch detection.
 Worker rows show the starter, contract step n/m and age since last contact. Stalled contracts use the problem colour on both row lines; labels retain cell-aware clipping at narrow widths.
 
 Expanded agent machines preserve step executor, `■ outcome` and `⇥ handoff` annotations when present. Plain scratchpads remain supported; absent executor evidence is labelled `agent`.
+
+Waiting edges (`⧗`) show the scratchpad Waiting text and its explicit check time. Existing stalled contracts stay red; a known idle/done/error agent target or an idle agent with no Now/Waiting is also shown as stalled. Missing target evidence is not treated as proof of death.

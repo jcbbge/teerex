@@ -222,6 +222,21 @@ fn priority(v: Value) usize {
     const state = text(v, "state");
     return if ((eq(state, "waiting") or eq(state, "blocked"))) 0 else if (eq(state, "error")) 1 else if (eq(state, "working")) 2 else 3;
 }
+fn stalled(model: *Model, row: Value) bool {
+    if (get(row, "stalled") == .bool and get(row, "stalled").bool) return true;
+    const waiting = text(row, "waiting");
+    if (eq(text(row, "state"), "idle") and text(row, "now").len == 0 and waiting.len == 0) return true;
+    if (waiting.len > 0) {
+        var parts = std.mem.splitSequence(u8, waiting, " · ");
+        const target = parts.next() orelse return false;
+        for (model.agents.items) |entry| {
+            if (!eq(text(row, "host"), text(entry.value, "host")) or !eq(target, text(entry.value, "name"))) continue;
+            const state = text(entry.value, "state");
+            if (eq(state, "idle") or eq(state, "done") or eq(state, "error")) return true;
+        }
+    }
+    return false;
+}
 fn less(_: void, a: Value, b: Value) bool {
     const pa = priority(a);
     const pb = priority(b);
@@ -400,8 +415,8 @@ const UI = struct {
     }
     fn agentLine(self: *UI, lines: *std.ArrayList(Line), a: A, model: *Model, r: Value, index: usize, now: []const u8, width: usize, role: Role) !void {
         const selected = index == self.selected;
-        const stalled = get(r, "stalled") == .bool and get(r, "stalled").bool;
-        const row_role: Role = if (stalled) .problem else role;
+        const broken = stalled(model, r);
+        const row_role: Role = if (broken) .problem else role;
         const done = num(get(r, "done"));
         const total = num(get(r, "total"));
         const progress = if (total > 0) try fmt(a, "{s} {d}/{d}", .{ try bar(a, done * 100 / total, if (width < 45) 5 else 8), integer(done), integer(total) }) else "░░░░░ —";
@@ -418,7 +433,14 @@ const UI = struct {
         const starter = try clip(a, text(r, "starter"), @min(16, width / 3));
         const step = get(r, "step_n");
         const contract = if (step == .null) "" else try fmt(a, "{s} {d}/{d}  ", .{ if (starter.len > 0) starter else "—", integer(num(step)), integer(num(get(r, "step_total"))) });
-        try add(lines, a, try fmt(a, "  {s}{s}{s}", .{ contract, if (stalled) "stalled: " else "", now }), row_role);
+        try add(lines, a, try fmt(a, "  {s}{s}{s}", .{ contract, if (broken) "stalled: " else "", now }), row_role);
+        const waiting = text(r, "waiting");
+        if (waiting.len > 0) {
+            if (lines.items.len < self.hit.len) self.hit[lines.items.len] = index;
+            try add(lines, a, try fmt(a, "  ⧗ {s}{s}{s}", .{ waiting, if (text(r, "check").len > 0) " · check " else "", text(r, "check") }), if (broken) .problem else .secondary);
+        } else if (eq(text(r, "state"), "idle") and text(r, "now").len == 0) {
+            try add(lines, a, "  stalled · waiting on nothing", .problem);
+        }
     }
     fn machine(_: *UI, lines: *std.ArrayList(Line), a: A, pad: Value, row: Value, width: usize) !void {
         const executor = if (text(row, "executor").len > 0) text(row, "executor") else "agent";

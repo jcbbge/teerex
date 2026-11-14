@@ -175,6 +175,19 @@ class BoardTest(unittest.TestCase):
         self.assertLess(p.view().index('✓ Read'),p.view().index('▶ Build'))
         self.assertLess(p.view().index('▶ Build'),p.view().index('Verify'))
 
+    def test_waiting_edge_and_idle_target_stalled(self):
+        path=self.root/'waiting.jsonl'
+        rows=[dict(v=1,t=200000,host='hive',kind='agent',id='worker',name='worker',state='working',now='Review',done=0,total=1,waiting='reviewer · approval',check='2030-01-01T00:00:00Z'),dict(v=1,t=200000,host='hive',kind='agent',id='reviewer',name='reviewer',state='working',now='Read',done=0,total=1)]
+        path.write_text('\n'.join(map(json.dumps,rows))+'\n')
+        p=Pane(self.root,fixture=path);self.addCleanup(p.close);p.settle()
+        self.assertIn('⧗ reviewer · approval',p.view());self.assertNotIn('stalled:',p.view())
+        rows[1].update(state='idle',now='')
+        path.write_text('\n'.join(map(json.dumps,rows))+'\n')
+        p2=Pane(self.root,fixture=path);self.addCleanup(p2.close);p2.settle()
+        self.assertIn('stalled: Review',p2.view());self.assertIn('stalled · waiting on nothing',p2.view())
+        p2.key(b'\x1b]10;rgb:ffff/ffff/ffff\x1b\\\x1b]11;rgb:0000/0000/0000\x1b\\\x1b]4;1;rgb:ffff/aaaa/aaaa\x1b\\')
+        self.assertRegex(p2.output,rb'\x1b\[31m[^\x1b]*stalled:')
+
     def test_contract_stalled_row_contact_and_width(self):
         path=self.root/'contract.jsonl'
         event=dict(v=1,t=200000,host='hive',kind='agent',id='worker',name='worker',state='working',now='Build',done=1,total=3,starter='starter界'*12,step_n=2,step_total=3,last_contact_at=80000,since=1,stalled=True)

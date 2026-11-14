@@ -200,7 +200,7 @@ class FeedTests(unittest.TestCase):
                 setattr(a,field,root/field);getattr(a,field).mkdir()
             session='session:test';block='block:worker';parent='block:123456789'
             (a.scratch/session).mkdir()
-            (a.scratch/session/(block+'.md')).write_text('## Now\n- Build\n## To-do\n- Test\n## Done\n- Read\n')
+            (a.scratch/session/(block+'.md')).write_text('## Now\n- Build\n## To-do\n- Test\n## Done\n- Read\nWaiting: reviewer · approval\nCheck: 2030-01-01T00:00:00Z\n')
             address=dict(session_id=session,block_id=parent)
             record=dict(name='worker',target=dict(session_id=session,block_id=block),starter=address,last_hook=dict(at=123))
             path=a.agents_registry/'worker.json'
@@ -210,11 +210,13 @@ class FeedTests(unittest.TestCase):
             with mock.patch.object(feed,'emit'):
                 state.scan()
                 row=state.rows[block]
+                self.assertEqual((row['waiting'],row['check']),('reviewer · approval','2030-01-01T00:00:00Z'))
                 self.assertEqual((row['starter'],row['step_n'],row['step_total'],row['last_contact_at'],row['stalled']),('parent pane',2,3,123,False))
                 (a.agents_registry/'parent.json').write_text(json.dumps(dict(name='starter agent',target=address)))
                 record['contract']=dict(starter=address,step_n=4,steps_total=7,last_contact_at=456,stalled=True)
                 path.write_text(json.dumps(record));state.scan()
                 row=state.rows[block]
+                self.assertEqual((row['waiting'],row['check']),('reviewer · approval','2030-01-01T00:00:00Z'))
                 self.assertEqual((row['starter'],row['step_n'],row['step_total'],row['last_contact_at'],row['stalled']),('starter agent',4,7,456,True))
                 (a.agents_registry/'parent.json').unlink();state.live.pop(parent);state.scan()
                 self.assertEqual(state.rows[block]['starter'],'12345678')
