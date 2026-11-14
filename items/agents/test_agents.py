@@ -2461,10 +2461,14 @@ Path('/work/network-harness').touch()
         state = self.record(launched["launch_id"])
         self.scratch_contract(state, "Read", ["Build"])
         wait_for(lambda: any("STEP probe 1/2 started: Read" in text for text in self.starter_messages()))
-        self.scratch_contract(state, "Build", done=["Read"])
+        result = subprocess.run([BIN, "scratch", "done", "--proof", "ran x: 0 failures",
+                                 "--session", state["target"]["session_id"], "--block", state["target"]["block_id"]],
+                                env=self.env, text=True, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.scratch_contract(state, "Build", done=["Read — proof: ran x: 0 failures"])
         wait_for(lambda: any("STEP probe 2/2 started: Build" in text for text in self.starter_messages()))
-        self.assertEqual(sum("STEP probe 1/2 finished: Read" in text for text in self.starter_messages()), 1)
-        self.scratch_contract(state, "Build", done=["Read"], blocked="missing input; read brief; need answer")
+        self.assertEqual(sum("STEP probe 1/2 finished: Read — proof: ran x: 0 failures" in text for text in self.starter_messages()), 1)
+        self.scratch_contract(state, "Build", done=["Read — proof: ran x: 0 failures"], blocked="missing input; read brief; need answer")
         wait_for(lambda: any("FLAG probe step 2/2:" in text for text in self.starter_messages()))
         time.sleep(.3)
         self.assertEqual(sum("FLAG probe step 2/2:" in text for text in self.starter_messages()), 1)
@@ -2473,6 +2477,11 @@ Path('/work/network-harness').touch()
                                 "--event-file", "-", input=json.dumps(dict(hook_event_name="Stop", last_assistant_message="blocked")))
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
         self.assertEqual(sum("FLAG probe step 2/2:" in text for text in self.starter_messages()), 1)
+        result = subprocess.run([BIN, "scratch", "done", "--session", state["target"]["session_id"],
+                                 "--block", state["target"]["block_id"]],
+                                env=self.env, text=True, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        wait_for(lambda: any("STEP probe 2/2 finished: Build — unproven" in text for text in self.starter_messages()))
 
     def contract_seat_fixture(self):
         store = self.work / "boards"

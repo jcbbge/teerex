@@ -297,6 +297,8 @@ def scratch_main(argv=None):
             p.add_argument("--check", help="waiting check time: Nm or ISO UTC time")
             p.add_argument("--waiting", help="scratchpad Waiting text; empty text clears it")
             p.add_argument("--done", action="store_true", help="finish the previous Now instead of returning it to To-do")
+        if op in ("done", "now"):
+            p.add_argument("--proof", help="completion evidence: command, path or short result")
         if op == "show":
             p.add_argument("--json", action="store_true")
         if op == "watch":
@@ -337,6 +339,8 @@ def scratch_main(argv=None):
                     break
                 time.sleep(.25)
         else:
+            proof = scratch_line(o.proof) if getattr(o, "proof", None) is not None else None
+            completion = " — proof: " + proof if proof else " — unproven"
             with scratch_lock(path):
                 data = scratch_read(path)
                 if o.operation == "todo":
@@ -349,7 +353,7 @@ def scratch_main(argv=None):
                     if o.check is not None:
                         data["check"] = scratch_check_time(o.check)
                     if data["now"]:
-                        data["done" if o.done else "todo"].insert(0, data["now"])
+                        data["done" if o.done else "todo"].insert(0, data["now"] + completion if o.done else data["now"])
                     if value in data["todo"]:
                         data["todo"].remove(value)
                     data["now"] = value
@@ -358,7 +362,7 @@ def scratch_main(argv=None):
                         if not o.waiting:
                             data["check"] = ""
                 elif data["now"]:
-                    data["done"].insert(0, data["now"])
+                    data["done"].insert(0, data["now"] + completion)
                     data["now"] = None
                 scratch_write(path, data)
         return 0

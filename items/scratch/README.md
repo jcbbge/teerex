@@ -9,7 +9,7 @@ teerex scratch init --name worker --purpose 'Build the feature' --intent 'Requir
 teerex scratch todo 'Run the gate'
 teerex scratch now 'Implement the feature'
 teerex scratch now 'Run the gate' --done
-teerex scratch done
+teerex scratch done --proof "ran x: 0 failures"
 teerex scratch show --json
 teerex scratch path
 teerex scratch watch
@@ -65,3 +65,5 @@ Contract headers survive every scratchpad write. `Done-when: TEXT` is supplied b
 `scratch flag "stuck; tried; need"` sets Blocked; `scratch flag ""` or the next `now` clears it.
 `show --json` uses empty strings for absent contract headers. A managed worker may end a turn
 only with all steps done, a flag, or Waiting with a future Check (exactly one of these).
+
+Completion accepts `done --proof TEXT` (also `now --done --proof TEXT`). The Done entry appends ` — proof: TEXT`; omitted proof appends ` — unproven` and never refuses completion. These same strings appear in JSON `done`, watch, and the starter contract STEP finished message. Proof is operator-supplied evidence, not independently verified by teerex. Existing hand-written Done entries remain unchanged.
