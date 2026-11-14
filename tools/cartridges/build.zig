@@ -34,6 +34,11 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
         });
         leaf.addImport("supervised_child", child);
+        if (std.mem.eql(u8, name, "send")) {
+            // Send embeds two Python sources; give it just those, not the full agents/boards modules.
+            leaf.addImport("rex_agents", b.createModule(.{ .root_source_file = b.path("../../items/agents/input_events.zig"), .target = target, .optimize = optimize }));
+            leaf.addImport("rex_boards", b.createModule(.{ .root_source_file = b.path("../../items/boards/seat_status.zig"), .target = target, .optimize = optimize }));
+        }
         const options = b.addOptions();
         options.addOption(bool, "uses_observations", std.mem.eql(u8, name, "filter") or std.mem.eql(u8, name, "maneuvers"));
         options.addOption(bool, "observation_entry", std.mem.eql(u8, name, "observe"));

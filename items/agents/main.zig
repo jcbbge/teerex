@@ -1,6 +1,6 @@
 // Python is an explicit runtime prerequisite; all long-lived agent code runs in the created Rex pane.
 const std = @import("std");
-pub const input_events_source = @embedFile("input_events.py");
+pub const input_events_source = @import("input_events.zig").input_events_source;
 pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
     const self = try @import("rex_boards").stableSelfPath(allocator);
     var argv: std.ArrayList([]const u8) = .empty;

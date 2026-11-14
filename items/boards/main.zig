@@ -59,7 +59,7 @@ pub fn tryRoute(allocator: std.mem.Allocator, args: []const []const u8) !?u8 {
     return if (sig != 0) 128 + sig else if (term == .Exited) term.Exited else if (term == .Signal) @intCast(@min(255, 128 + term.Signal)) else 1;
 }
 
-pub const seat_status_source = @embedFile("seat_status.py");
+pub const seat_status_source = @import("seat_status.zig").seat_status_source;
 
 pub const call_log = @import("calls.zig");
 
