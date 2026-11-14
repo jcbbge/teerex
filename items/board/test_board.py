@@ -123,7 +123,10 @@ class Pane:
     def close(self):
         if self.proc.poll() is None:
             os.write(self.master,b'q')
-            try: self.proc.wait(timeout=5)
+            deadline = time.monotonic() + 5
+            while self.proc.poll() is None and time.monotonic() < deadline:
+                self.read(min(.1, max(0, deadline - time.monotonic())))
+            try: self.proc.wait(timeout=0)
             except subprocess.TimeoutExpired:
                 self.proc.kill(); self.proc.wait(); raise
         self.read(0)
