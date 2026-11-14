@@ -1054,7 +1054,13 @@ class RexBoardsTest(unittest.TestCase):
             message.write_text(body)
             return json.loads(subprocess.check_output(command + ['send', *common, '--session', session, '--block', block,
                 '--from', 'worker', '--message-file', str(message)]))
-        self.assertEqual(send('seat', 'seat', 'before death')['outcome'], 'recorded')
+        delivered = send('seat', 'seat', 'before death')
+        self.assertEqual(delivered['outcome'], 'events_acknowledged')
+        self.assertTrue(delivered['paste']['acknowledged'])
+        self.assertTrue(delivered['enter']['acknowledged'])
+        self.assertEqual(delivered['history'], 'recorded')
+        state = json.loads((store / 'state.json').read_text())
+        self.assertEqual([r['body'] for r in state['seats'][0]['records']], ['before death'])
         # A successor cannot steal a still-live seat or its workers.
         refused = subprocess.run(command + ['seat', 'register', *common, '--session', new['session_id'], '--block', new['block_id'],
             '--owner', 'test', '--agents-registry', str(registry)], capture_output=True, text=True)
