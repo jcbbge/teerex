@@ -894,7 +894,7 @@ class RexBoardsTest(unittest.TestCase):
             self.assertEqual(sum(r['body'] == message for r in records()), 1)
         for message, typed in [('UNANSWERED worker done', True), ('FLAG worker stuck', True),
                                ('LAPSE worker step 1/2', True), ('NOT DONE worker waiting', False),
-                               ('STEP worker 1/2 started', False)]:
+                               ('STEP worker 1/2 started', False), ('DONE worker passed', False)]:
             receipt = call('send', *history, *target, '--from', 'teerex-contract', '--message-file', '-', body=message)
             self.assertEqual(receipt.get('paste', {}).get('attempted', receipt.get('terminal_input_attempted', False)), typed)
             if typed:

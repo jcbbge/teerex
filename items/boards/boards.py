@@ -564,7 +564,7 @@ def mutate(a):
                generation=store.state["generation"], store=a.store, provenance="report", terminal_input_attempted=False,
                application_consumption="not_assessed", global_atomicity=False)
             return 0
-    if a.sender == "teerex-contract" and body.startswith(("STEP ", "NOT DONE ")):
+    if a.sender == "teerex-contract" and body.startswith(("STEP ", "NOT DONE ", "DONE ")):
         result(kind="inbox_route", outcome="recorded", target=t, generation=generation,
                history="recorded", terminal_input_attempted=False)
         return 0
