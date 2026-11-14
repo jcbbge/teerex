@@ -136,6 +136,8 @@ class Replay(unittest.TestCase):
                    PATH=str(Path(self.rex).parent) + os.pathsep + os.environ.get("PATH", ""),
                    REX_SESSION=self.session,
                    REX_BLOCK="block:00000000-0000-0000-0000-000000000001")
+        for key in ("AGENT_SESSION", "AGENT_PANE", "LC_REX_SESSION", "LC_REX_BLOCK"):
+            env.pop(key, None)  # the runner's own identity outranks REX_*
         for layout in (None, "offstage", "tab"):
             with self.subTest(layout=layout):
                 command = [BIN, "replay", "live", "--socket", str(self.sock),
