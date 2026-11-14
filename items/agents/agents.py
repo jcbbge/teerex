@@ -2227,6 +2227,8 @@ def contract_lapse(root, launch_id):
     window = max(c["last_contact_at"], c.get("last_lapse_at", 0), c.get("last_lapse_check_at", 0))
     elapsed = timestamp - c["last_contact_at"]
     check = c.get("check_at")
+    if c.get("declared") == "waiting" and check is not None and timestamp < check:
+        return
     if timestamp - window <= c["interval_s"] * 1000 and not (check and window < check <= timestamp):
         return
     starter = state.get("starter")

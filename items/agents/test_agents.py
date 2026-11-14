@@ -691,6 +691,43 @@ class ContractHelpersTest(unittest.TestCase):
         self.assertEqual(state["contract"]["lapses"], 2)
         self.assertEqual(sent[-1][1], {"to": "seat"})
 
+    def test_future_wait_check_defers_interval_and_expires_once(self):
+        state = dict(name="worker", brief_attempted=True, contract=dict(declared="waiting",
+            check_at=5000, last_contact_at=0, interval_s=1, lapses=0, step_n=1, steps_total=1))
+        self.ns["load"] = lambda *_: json.loads(json.dumps(state))
+        self.ns["update"] = lambda root, launch, change: change(state)
+        self.ns["contract_observation"] = lambda _: (False, True)
+        sent = []
+        self.ns["contract_tell"] = lambda *args, **kwargs: sent.append((args, kwargs))
+        for timestamp in (1001, 2002, 4999):
+            self.ns["now"] = lambda: timestamp
+            self.ns["contract_lapse"]("root", "id")
+            self.assertEqual(sent, [])
+            self.assertEqual(state["contract"]["lapses"], 0)
+        for timestamp in (5000, 5001):
+            self.ns["now"] = lambda: timestamp
+            self.ns["contract_lapse"]("root", "id")
+        self.assertEqual([args[2] for args, _ in sent], ["wake", "lapse"])
+        self.assertEqual(state["contract"]["lapses"], 1)
+        self.ns["delivered_input"]("root", "id", dict(at_ns=5002_000_000))
+        self.assertEqual(state["contract"]["lapses"], 0)
+        self.assertFalse(state["contract"]["stalled"])
+        self.ns["now"] = lambda: 6000
+        self.ns["contract_lapse"]("root", "id")
+        self.assertEqual(len(sent), 2)
+
+    def test_check_without_waiting_does_not_defer_interval(self):
+        state = dict(name="worker", brief_attempted=True, contract=dict(declared=None,
+            check_at=5000, last_contact_at=0, interval_s=1, lapses=0, step_n=1, steps_total=1))
+        self.ns["load"] = lambda *_: json.loads(json.dumps(state))
+        self.ns["update"] = lambda root, launch, change: change(state)
+        self.ns["now"] = lambda: 1001
+        self.ns["contract_observation"] = lambda _: (False, True)
+        sent = []
+        self.ns["contract_tell"] = lambda *args, **kwargs: sent.append((args, kwargs))
+        self.ns["contract_lapse"]("root", "id")
+        self.assertEqual([args[2] for args, _ in sent], ["wake", "lapse"])
+
 
 
 class AgentsTest(unittest.TestCase):
@@ -3096,6 +3133,38 @@ Path('/work/network-harness').touch()
         wait_for(lambda: self.record(launched["launch_id"])["contract"]["lapses"] == 1)
         time.sleep(.3)
         self.assertEqual(sum("LAPSE probe" in text for text in self.starter_messages()), 1)
+
+    def test_contract_future_wait_check_suppresses_interval_until_due(self):
+        import datetime
+        self.settings["profiles"]["probe"]["contract_interval_s"] = 2
+        self.settings["profiles"]["probe"]["scratch_pane"] = False
+        p, launched = self.launch(behavior="quiet", contract=True)
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        launch_id = launched["launch_id"]
+        state = self.record(launch_id)
+        check_at = time.time() + 8
+        check = datetime.datetime.fromtimestamp(check_at, datetime.timezone.utc).isoformat()
+        self.scratch_contract(state, "Wait", waiting="dependency", check=check)
+        wait_for(lambda: self.record(launch_id)["contract"].get("declared") == "waiting")
+        event = json.dumps(dict(hook_event_name="Stop", last_assistant_message="waiting for dependency"))
+        result, _ = self.run_cli("stop", "--registry", str(self.registry), "--launch-id", launch_id,
+                                 "--event-file", "-", input=event)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        def nudges():
+            return [v for v in events(self.worker_log) if "tell your starter now what is stuck" in v.get("payload", "")]
+        while time.time() < check_at - .1:
+            self.assertEqual(self.record(launch_id)["contract"]["lapses"], 0)
+            self.assertEqual(sum("LAPSE probe" in text for text in self.starter_messages()), 0)
+            self.assertEqual(nudges(), [])
+            time.sleep(.1)
+        print("waiting proof: 8-second Check survived over two 2-second intervals; no wake or LAPSE", flush=True)
+        wait_for(lambda: sum("LAPSE probe" in text for text in self.starter_messages()) == 1, timeout=3)
+        wait_for(lambda: len(nudges()) == 1)
+        self.assertEqual(self.record(launch_id)["contract"]["lapses"], 1)
+        time.sleep(.3)
+        self.assertEqual(sum("LAPSE probe" in text for text in self.starter_messages()), 1)
+        self.assertEqual(len(nudges()), 1)
+        print("waiting proof: expired Check produced exactly one starter LAPSE and one worker nudge", flush=True)
 
     def test_contract_unanswered_done_escalates_and_acknowledged_input_clears(self):
         seat_records, seat_log = self.contract_seat_fixture()
