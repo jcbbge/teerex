@@ -202,6 +202,16 @@ Add `--config ABS --host NAME` to focus a label on a named host instead of the p
 
 For the registered seat, replace `--label seat` with `--seat --board-store ABS --socket ABS`. The explicit socket selects the board references for the palette's server; exactly one seat registration must match, and its canonical pane must still exist. A stale registration refuses without creating a replacement. Install either fragment with the normal palette install plan/apply workflow. (Jump to seat itself is native Rex Lua in rexconfig's `rex/seat.lua`.) Generation alone does not register it.
 
+Palette focus proof (2026-11-14): the following isolated command passed **2 tests** on hive (Linux x86_64, Rex API13 commit `348d751`) and the M5 (macOS arm64, Rex API13 commit `aa2db1b`):
+
+```sh
+REX_BIN=/absolute/rex python3 items/surfaces/test_surfaces.py \
+  SurfacesTest.test_focus_palette_resolves_server_wide_and_refuses_missing_or_ambiguous \
+  SurfacesTest.test_registered_seat_focus_palette_requires_live_registration
+```
+
+The checks invoke loaded native actions on private disposable servers: cross-session label focus, plain absent/ambiguous refusals with unchanged pane/focus state, registered seat focus, and stale registration refusal without replacement. The Mac executable was cross-built on hive with `uv run --with ziglang==0.15.2 python -m ziglang build -Doptimize=ReleaseSmall -Dtarget=aarch64-macos --prefix zig-out/mac`; Linux used the same command without target/prefix flags. After the checks, explicit assertions verified each disposable server had exited and its temporary root was absent; the M5 test copy was removed. This proves server focus/readback, not graphical Rex.app palette presentation or personal configuration installation.
+
 ### Prepare and register a palette action
 
 Generate complete native menus with:
