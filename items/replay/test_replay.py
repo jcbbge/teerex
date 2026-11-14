@@ -98,6 +98,32 @@ class Replay(unittest.TestCase):
         path.write_text(json.dumps(dict(schema_version=1, kind="teerex_display_facts", id="manual", authored_by="manual", at=facts)))
         return self.invoke("play", ["--fixture", fixture, "--facts", path, "--observations-out", self.path("observations"), *extra], code=code)
 
+    def test_missing_rex_client_diagnostic_reaches_play(self):
+        env = dict(os.environ, PATH="/usr/bin:/bin")
+        env.pop("TEEREX_INTERNAL_REX", None)
+        # Direct observe fails at the shared native Rex launch, before any server call.
+        command = [BIN, "observe", "--socket", str(self.sock), "--session", self.session,
+                   "--block", "block:00000000-0000-0000-0000-000000000000"]
+        direct = subprocess.run(command, env=env, capture_output=True, text=True, timeout=15)
+        self.assertEqual(direct.returncode, 1)
+        self.assertIn("Rex executable 'rex' not found", direct.stderr)
+        self.assertIn("--rex or TEEREX_INTERNAL_REX", direct.stderr)
+        pinned = subprocess.run(command, env=dict(env, TEEREX_INTERNAL_REX="/missing-rex-client"),
+                                capture_output=True, text=True, timeout=15)
+        self.assertEqual(pinned.returncode, 1)
+        self.assertIn("Rex executable '/missing-rex-client' not found", pinned.stderr)
+        fixture = Path(__file__).with_name("fixtures") / "utf8-split"
+        replay = subprocess.run([BIN, "replay", "play", "--socket", str(self.sock),
+            "--session", self.session, "--fixture", str(fixture), "--observations-out",
+            str(self.path("missing-rex")), "--timeout-ms", "7000"],
+            env=env, capture_output=True, text=True, timeout=15)
+        self.assertEqual(replay.returncode, 1, replay.stdout + replay.stderr)
+        packet = json.loads(replay.stdout)
+        self.assertEqual(packet["outcome"], "observation_failed")
+        self.assertIn("Rex executable 'rex' not found", packet["failure_reason"])
+        self.assertLessEqual(len(packet["failure_reason"]), 500)
+        self.assertTrue(packet["cleanup"]["block_absence_verified"])
+
     def test_live_layout_and_creator_close(self):
         script = self.path("script.json")
         script.write_text(json.dumps(dict(schema_version=1, kind="teerex_live_script",

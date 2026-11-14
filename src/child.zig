@@ -125,6 +125,14 @@ pub fn guardFailure(stderr: []const u8) ?[]const u8 {
     return null;
 }
 
+fn rexLaunchError(err: anyerror, original: []const []const u8, selected: []const []const u8) anyerror {
+    if (err == error.FileNotFound and original.len != 0 and std.mem.eql(u8, original[0], "rex")) {
+        std.debug.print("teerex: Rex executable '{s}' not found; set --rex or TEEREX_INTERNAL_REX (default rex is searched on PATH)\n", .{selected[0]});
+        return error.RexExecutableNotFound;
+    }
+    return err;
+}
+
 // macOS and Linux. Caller owns Signals and the receiver's stdout retention policy.
 // An optional isComplete() requests owned-group cleanup, not command success.
 // EOF stdin by default; a receiver may explicitly opt into inherited stdin.
@@ -168,7 +176,7 @@ pub fn collect(allocator: std.mem.Allocator, argv: []const []const u8, env: *con
     child.stderr_behavior = .Pipe;
     child.env_map = env;
     child.pgid = 0;
-    try child.spawn();
+    child.spawn() catch |err| return rexLaunchError(err, argv, selected_argv);
     const pid = child.id;
     var reaped = false;
     defer if (!reaped) {
@@ -234,7 +242,7 @@ pub fn collect(allocator: std.mem.Allocator, argv: []const []const u8, env: *con
     }
     if (group_kill == null) group_kill = try killOwned(pid);
     const stderr_eof = child.stderr == null;
-    const term = try child.wait();
+    const term = child.wait() catch |err| return rexLaunchError(err, argv, selected_argv);
     reaped = true;
     return .{
         .term = term,

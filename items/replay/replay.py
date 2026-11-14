@@ -356,6 +356,16 @@ class Runner:
                    "--session", self.args.session, "--block", self.block, "--max-bytes", str(self.args.max_bytes if self.args.mode == "play" else 65536)]
         result = subprocess.run(command, capture_output=True, text=True, timeout=min(10, max(.1, self.deadline - time.monotonic())))
         if result.returncode:
+            reason = None
+            try:
+                child = json.loads(result.stdout)
+                if isinstance(child, dict):
+                    reason = child.get("failure_reason")
+            except ValueError:
+                pass
+            if not isinstance(reason, str) or not reason.strip():
+                reason = result.stderr.split("\n", 1)[0].strip() or "observe_exit_" + str(result.returncode)
+            self.packet["failure_reason"] = reason[:500]
             raise Refused("observation_failed")
         observation = json.loads(result.stdout)
         path = Path(self.args.observations_out) / (name + ".observation.json")
