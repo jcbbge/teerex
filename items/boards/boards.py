@@ -393,6 +393,146 @@ def resolve_seat(a):
     return 0
 
 
+
+def seat_panes(a):
+    """Repair only companions in the freshly resolved seat's own tab."""
+    import teerex_pane_guard as guard
+    panes = {}
+    def emit(reason=None):
+        result(kind="seat_panes", outcome="refused" if reason or any(
+            p["outcome"] == "refused" for p in panes.values()) else "ready",
+            panes=panes, tasks_skipped=a.tasks is None, failure_reason=reason)
+    try:
+        check(os.path.isabs(a.socket) and os.path.isabs(a.teerex), "absolute_socket_and_teerex_required")
+        if a.tasks is not None:
+            check(os.path.isabs(a.tasks) and Path(a.tasks).is_dir(), "tasks_requires_absolute_directory")
+        # Every delegated surface call must see this same authority store.
+        os.environ["TEEREX_BOARDS_STORE"] = a.store
+        with contextlib.closing(Store(a.store)) as store:
+            seat = live_seat(store, a.host, a.socket)
+        check(seat is not None, "no_live_registered_seat")
+        target = seat["target"]
+        policy = guard.snapshot("unix://" + a.socket)
+        actor = policy["actor"]
+        check(policy["operator"] or (
+            actor.get("host", policy["local_host"]) == policy["local_host"] and
+            actor.get("session_id") == target["session_id"] and
+            actor.get("block_id") == target["block_id"]), "caller_is_not_live_registered_seat_or_operator")
+        config = a.board_config or str(Path.home() / ".config/teerex/hosts.json")
+        check(os.path.isabs(config), "absolute_board_config_required")
+        cfg = json_load(Path(config).read_text())
+        check(cfg.get("schema_version") == 1 and isinstance(cfg.get("hosts"), dict) and cfg["hosts"],
+              "invalid_board_hosts_config")
+        this_host = a.board_host or a.host
+        check(this_host in cfg["hosts"], "board_host_not_configured")
+        hosts = ",".join(cfg["hosts"])
+        base = [os.environ.get("TEEREX_INTERNAL_REX") or "rex", "--autostart=false", "--server",
+                "unix://" + a.socket, "--timeout", "3s", "do", "-e"]
+        inventory = bounded_command([*base, r"""
+local sid=rex.args.session_id
+rex.call('session.attach',{session_id=sid})
+local v,e=rex.call('session.view',{session_id=sid});if not v then error(e) end
+local rows={}
+for _,w in ipairs(v.windows or {}) do
+ local seat=false
+ for _,l in ipairs(w.layers or {}) do for _,b in ipairs(l.blocks or {}) do
+  if b.block_id==rex.args.block_id then seat=true end
+ end end
+ if seat then
+  for _,l in ipairs(w.layers or {}) do for _,b in ipairs(l.blocks or {}) do
+   if b.label=='tasks' or b.label=='board' then
+    local p,e=rex.call('com.superlogical.terminal.process',{session_id=sid,block_id=b.block_id,args={}})
+    if not p then error(e) end
+    table.insert(rows,{label=b.label,block_id=b.block_id,process=p})
+   end
+  end end
+ end
+end
+io.write(#rows==0 and '[]' or rex.json.encode(rows))
+""", "--args", json.dumps(dict(session_id=target["session_id"], block_id=target["block_id"]))])
+        companions = {}
+        for name in ("tasks", "board"):
+            matches = [r for r in inventory if r["label"] == name]
+            check(len(matches) <= 1, "ambiguous_" + name + "_companion")
+            companions[name] = matches[0] if matches else None
+
+        def board_running(row):
+            process = row["process"]
+            if process.get("last_exit") is not None:
+                return False
+            child = process.get("child") or {}
+            pid = child.get("pid")
+            if not pid:
+                return False
+            # Rex deliberately omits arguments. Read just this local child's argv,
+            # compare it in memory and never include it in diagnostics or receipts.
+            try:
+                if sys.platform.startswith("linux"):
+                    argv = Path("/proc/" + str(pid) + "/cmdline").read_bytes().split(b"\0")
+                    return len(argv) > 1 and os.path.basename(os.fsdecode(argv[0])) == os.path.basename(a.teerex) and argv[1] == b"board"
+                command = subprocess.check_output(["ps", "-ww", "-p", str(pid), "-o", "command="], text=True).strip()
+                executable = child.get("invoked_path") or child.get("path") or child.get("argv0")
+                return bool(executable and command.startswith(executable + " board") and
+                            command[len(executable + " board"):][:1] in ("", " "))
+            except (OSError, subprocess.CalledProcessError):
+                raise Refused("companion_program_unavailable") from None
+
+        def surface(operation, *options):
+            argv = [a.teerex]
+            if os.environ.get("TEEREX_INTERNAL_REX"):
+                argv += ["--rex", os.environ["TEEREX_INTERNAL_REX"]]
+            if policy["operator"]:
+                argv += ["--operator"]
+            argv += ["surfaces", operation, "--socket", a.socket, "--session", target["session_id"], *options]
+            completed = subprocess.run(argv, stdout=subprocess.PIPE,
+                                       stderr=None if policy["operator"] else subprocess.PIPE,
+                                       timeout=10, text=True)
+            receipt = json_load(completed.stdout)
+            return completed.returncode == 0, receipt
+
+        # Close replacements before creating so surviving companions are anchors.
+        for name in ("tasks", "board"):
+            if name == "tasks" and a.tasks is None:
+                continue
+            row = companions[name]
+            if row and not a.replace and board_running(row):
+                panes[name] = dict(outcome="kept", block_id=row["block_id"])
+            elif row:
+                ok, receipt = surface("close", "--pane", row["block_id"])
+                if not ok:
+                    panes[name] = dict(outcome="refused", block_id=row["block_id"],
+                                       failure_reason=receipt.get("failure_reason"), receipt=receipt)
+                else:
+                    companions[name] = None
+        for name in ("tasks", "board"):
+            if name in panes or name == "tasks" and a.tasks is None:
+                continue
+            other = companions["board" if name == "tasks" else "tasks"]
+            anchor = other["block_id"] if other else target["block_id"]
+            direction = ("up" if name == "tasks" else "down") if other else "right"
+            ratio = "0.6" if other and name == "tasks" else "0.4"
+            argv = [a.teerex, "board"]
+            if a.board_config:
+                argv += ["--config", config]
+            argv += ["--hosts", this_host if name == "tasks" else hosts]
+            if name == "tasks":
+                argv += ["--tasks", a.tasks]
+            ok, receipt = surface("open", "--layout", "tiled", "--anchor", anchor,
+                                  "--direction", direction, "--ratio", ratio, "--label", name, "--", *argv)
+            bid = (receipt.get("created") or {}).get("block_id")
+            existed = any(r["label"] == name for r in inventory)
+            panes[name] = dict(outcome=("reopened" if existed else "opened") if ok else "refused",
+                               block_id=bid, failure_reason=receipt.get("failure_reason"), receipt=receipt)
+            if ok:
+                companions[name] = dict(block_id=bid)
+        emit()
+        return 1 if any(p["outcome"] == "refused" for p in panes.values()) else 0
+    except (Refused, ValueError, OSError, subprocess.SubprocessError) as exc:
+        for name in (("tasks", "board") if a.tasks else ("board",)):
+            panes.setdefault(name, dict(outcome="refused", block_id=None, failure_reason=str(exc)))
+        emit(str(exc))
+        return 1
+
 def folded(seat):
     opened, done, activity = {}, [], []
     for r in seat["records"]:
@@ -1300,11 +1440,21 @@ def parser():
             q.add_argument("--generation", required=True, type=int)
             q.add_argument("--reason", required=True)
     history_policy = "Above 128 non-open records, archive oldest complete groups to 96; open decisions stay pinned. Immutable private archives retain all history, never deleted. Byte pressure also archives eligible records."
-    for cmd, operations in (("seat", ("register", "resolve", "inspect", "clear")), ("inbox", ("append", "inspect", "clear")), ("fleet", ("report", "forget"))):
+    for cmd, operations in (("seat", ("register", "resolve", "inspect", "clear", "panes")), ("inbox", ("append", "inspect", "clear")), ("fleet", ("report", "forget"))):
         c = commands.add_parser(cmd, description=history_policy if cmd == "inbox" else None)
         ops = c.add_subparsers(dest="operation", required=True)
         for op in operations:
             q = ops.add_parser(op, description=history_policy if cmd == "inbox" else None)
+            if cmd == "seat" and op == "panes":
+                common(q, False)
+                q.add_argument("--host", required=True)
+                q.add_argument("--socket", required=True)
+                q.add_argument("--tasks", help="absolute task directory; omitted skips tasks")
+                q.add_argument("--replace", action="store_true")
+                q.add_argument("--teerex", required=True)
+                q.add_argument("--board-config", help="named-host routing's board config on this host")
+                q.add_argument("--board-host", help="configured name for this host")
+                continue
             if cmd == "seat" and op == "resolve":
                 common(q, False)
                 q.add_argument("--host", required=True)
@@ -1423,6 +1573,8 @@ def main(argv=None):
     if argv[:2] == ["seat", "resolve"]:
         argv[:2] = ["seat-resolve"]
     a = parser().parse_args(argv)
+    if a.command == "seat" and a.operation == "panes":
+        return seat_panes(a)
     if a.command == "seat-resolve":
         return resolve_seat(a)
     if a.command == "boards" and a.view == "friction":

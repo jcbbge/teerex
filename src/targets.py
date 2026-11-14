@@ -34,7 +34,7 @@ SELECTORS = {("board", "feed"): ("socket",), **{(verb,): ("socket",) for verb in
              ("fleet",): ("store",), ("probe",): ("socket",),
              **{(verb,): ("socket", "host", "store") for verb in ("send", "ask", "try-route", "inbox")},
              **{(verb, op): ("socket", "host", "store") for verb, operations in
-                (("seat", ("register", "resolve", "inspect", "clear")), ("inbox", ("append", "inspect", "clear")),
+                (("seat", ("register", "resolve", "inspect", "clear", "panes")), ("inbox", ("append", "inspect", "clear")),
                  ("fleet", ("report", "forget"))) for op in operations},
              **{("clutch", op): ("socket",) for op in ("take", "release", "status", "queue", "palette")},
              **{("records", op): (("socket", "host", "records_store") if op in ("park", "resume", "navigate") else ("records_store",)) for op in
@@ -202,7 +202,11 @@ def main(argv=None):
         if args.operation == "resolve":
             print(json.dumps({"schema_version": 1, "host": host, "identity_basis": "explicit_configuration_not_observed_identity"}, separators=(",", ":")))
         else:
-            execute(host, args.command[1:] if args.command[:1] == ["--"] else args.command, tty=args.tty)
+            command = args.command[1:] if args.command[:1] == ["--"] else args.command
+            leaf = command[1:] if command[:1] == ["boards"] else command
+            if leaf[:2] == ["seat", "panes"]:
+                command = [*command, "--board-config", args.config, "--board-host", args.host]
+            execute(host, command, tty=args.tty)
         return 0
     except (OSError, ValueError, UnicodeError) as exc:
         print(json.dumps({"schema_version": 1, "kind": "target_error", "error": str(exc), "retry": False}), file=sys.stderr)

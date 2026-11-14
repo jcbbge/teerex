@@ -15,7 +15,7 @@ const usage =
     \\  tour                                        Six guided pages of live practice; cleans up on quit
     \\  board [--replay FILE] | feed              Live themed stream and machine vitals
     \\  boards inbox|fleet|calls|attention|friction|probe|state                Live boards, typed store and remap plans
-    \\  seat register|resolve|inspect|clear      Exact-address operator seat
+    \\  seat register|resolve|inspect|clear|panes      Exact-address operator seat
     \\  inbox append|inspect|clear                    Private retained messages
     \\  ask                                          Complete typed decisions or explicit resolution
     \\  waiting list|next|back|put-away [--hosts hive,m5] [--focus] Cross-host attention navigation
