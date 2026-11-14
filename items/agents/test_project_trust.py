@@ -8,9 +8,10 @@ try:
 except ImportError:
     tomllib = None
 import unittest
+from unittest.mock import patch
 
 
-@unittest.skipUnless(tomllib is not None, "project trust opt-in requires Python 3.11+")
+@unittest.skipUnless(tomllib is not None, "full TOML validation requires tomllib")
 class ProjectTrustTest(unittest.TestCase):
     def setUp(self):
         self.ns = {"__name__": "trust_test"}
@@ -95,6 +96,76 @@ class ProjectTrustTest(unittest.TestCase):
         with self.assertRaisesRegex(self.ns['Refusal'], 'requires_local_execution_host'):
             self.ns['ensure_project_trust'](self.profile, str(self.root), {'host': 'remote'})
         self.assertFalse(self.path.exists())
+
+
+class ProjectTrustFallbackTest(unittest.TestCase):
+    def setUp(self):
+        ProjectTrustTest.setUp(self)
+        self.block_tomllib = patch.dict('sys.modules', {'tomllib': None})
+        self.block_tomllib.start()
+        self.addCleanup(self.block_tomllib.stop)
+
+    ensure = ProjectTrustTest.ensure
+    test_already_trusted_has_no_write_or_lock = ProjectTrustTest.test_already_trusted_has_no_write_or_lock
+    test_absent_key_no_change_and_remote_explicit_refusal = ProjectTrustTest.test_absent_key_no_change_and_remote_explicit_refusal
+
+    def header(self, cwd=None):
+        return '[projects.' + json.dumps(str(cwd or self.root), ensure_ascii=False) + ']'
+
+    def test_fresh_and_escaped_path(self):
+        cwd = self.root / 'quote"back\\β'
+        cwd.mkdir()
+        self.ensure(cwd)
+        self.assertEqual(self.path.read_text(), '\n' + self.header(cwd) + '\ntrust_level = "trusted"\n')
+        self.assertEqual(self.path.stat().st_mode & 0o777, 0o600)
+
+    def test_other_bytes_and_mode_preserved(self):
+        raw = b'# untouched\r\nmodel = "example"\r\n[other]\r\nenabled = true\r\n'
+        self.path.write_bytes(raw)
+        self.path.chmod(0o640)
+        self.ensure()
+        self.assertEqual(self.path.read_bytes(), raw + ('\n' + self.header() + '\ntrust_level = "trusted"\n').encode())
+        self.assertEqual(self.path.stat().st_mode & 0o777, 0o640)
+
+    def test_existing_table_without_trust(self):
+        raw = self.header() + '\r\nkeep = true\r\n[other]\r\nvalue = 42\r\n'
+        self.path.write_bytes(raw.encode())
+        self.ensure()
+        self.assertEqual(self.path.read_bytes(), raw.replace('\r\n', '\r\ntrust_level = "trusted"\n', 1).encode())
+
+    def test_replace_untrusted_only_in_target(self):
+        before = '[other]\r\ntrust_level = "untrusted"\r\n' + self.header() + '\r\nkeep = true\r\n'
+        after = '[last]\r\nkeep = false\r\n'
+        self.path.write_bytes((before + 'trust_level = "untrusted" # old\r\n' + after).encode())
+        self.ensure()
+        self.assertEqual(self.path.read_bytes(), (before + 'trust_level = "trusted"\n' + after).encode())
+
+    def test_table_at_eof_without_newline(self):
+        self.path.write_text(self.header())
+        self.ensure()
+        self.assertEqual(self.path.read_text(), self.header() + '\ntrust_level = "trusted"\n')
+
+    def test_unsupported_forms_refuse_before_lock(self):
+        for raw in ('projects = {}\n', 'projects.' + json.dumps(str(self.root)) + '.trust_level = "untrusted"\n',
+                    '[projects.' + repr(str(self.root)) + ']\n', '["projects"."other"]\n',
+                    '["pro\\u006aects"."other"]\n', 'note = "unterminated\n',
+                    'note = """\n' + self.header() + '\n"""\n',
+                    self.header() + '\ntrust_level = "trusted"\ntrust_level = "untrusted"\n'):
+            with self.subTest(raw=raw):
+                self.path.write_text(raw)
+                with self.assertRaisesRegex(self.ns['Refusal'], 'unsupported_without_tomllib'):
+                    self.ensure()
+                self.assertEqual(self.path.read_text(), raw)
+                self.assertFalse(Path(str(self.path) + '.lock').exists())
+
+    def test_concurrent_writers(self):
+        dirs = [self.root / 'one', self.root / 'two']
+        for cwd in dirs:
+            cwd.mkdir()
+        with ThreadPoolExecutor() as pool:
+            list(pool.map(self.ensure, dirs))
+        for cwd in dirs:
+            self.assertIn(self.header(cwd) + '\ntrust_level = "trusted"\n', self.path.read_text())
 
 
 class ProjectTrustJsonTest(unittest.TestCase):

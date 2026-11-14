@@ -1273,6 +1273,60 @@ def ensure_project_trust_json(profile, cwd, execution):
         raise Refusal("project_trust_json_update_failed: " + type(exc).__name__) from exc
 
 
+def project_trust_lines(source, cwd):
+    """Conservative editor for canonical single-line tables without tomllib."""
+    reason = "project_trust_toml_unsupported_without_tomllib"
+    header = '[projects.' + json.dumps(cwd, ensure_ascii=False) + ']'
+    lines = source.splitlines(keepends=True)
+    target = trust = None
+    in_target = False
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if not stripped or stripped.startswith('#'):
+            continue
+        require('"""' not in line and "'''" not in line, reason)
+        if stripped.startswith('['):
+            in_target = False
+            require(re.fullmatch(r'\[[^\r\n]+\](?:\s*#.*)?', stripped), reason)
+            require(re.match(r'\[[A-Za-z0-9_-]+(?=[.\]])', stripped), reason)
+            if re.match(r'\[projects(?=[.\]])', stripped):
+                match = re.fullmatch(r'\[projects\.("(?:[^"\\]|\\.)*")\]', stripped)
+                require(match is not None, reason)
+                try:
+                    project_path = json.loads(match[1])
+                except ValueError:
+                    raise Refusal(reason)
+                require(stripped == '[projects.' + json.dumps(project_path, ensure_ascii=False) + ']', reason)
+            if stripped == header:
+                require(target is None, reason)
+                target, in_target = i, True
+            continue
+        assignment = re.fullmatch(r'([^=]+)=(.*)', stripped)
+        require(assignment is not None, reason)
+        key, value = (part.strip() for part in assignment.groups())
+        require(re.fullmatch(r'[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*', key), reason)
+        require(not re.match(r'projects(?=[.]|$)', key), reason)
+        # Collections spanning lines can disguise a header as their content.
+        require(value and not value.startswith(('[', '{')), reason)
+        require(re.fullmatch(r'''(?:"(?:[^"\\]|\\.)*"|'[^']*'|[^\s"'\[\]{}#]+)(?:\s*#.*)?''', value), reason)
+        if in_target and re.match(r'trust_level(?=[.]|$)', key):
+            require(key == 'trust_level' and trust is None, reason)
+            require(re.fullmatch(r'''("[^"\\]*"|'[^']*')(?:\s*#.*)?''', value), reason)
+            trust = i
+    if trust is not None:
+        value = lines[trust].split('=', 1)[1].strip()
+        if re.fullmatch(r'''(?:"trusted"|'trusted')(?:\s*#.*)?''', value):
+            return source
+        lines[trust] = 'trust_level = "trusted"\n'
+    elif target is not None:
+        if not lines[target].endswith(('\n', '\r')):
+            lines[target] += '\n'
+        lines.insert(target + 1, 'trust_level = "trusted"\n')
+    else:
+        lines.append('\n' + header + '\ntrust_level = "trusted"\n')
+    return ''.join(lines)
+
+
 def ensure_project_trust(profile, cwd, execution):
     """Opt-in, execution-local TOML edit before any launch objects are created."""
     if "project_trust_toml" not in profile:
@@ -1281,15 +1335,19 @@ def ensure_project_trust(profile, cwd, execution):
     path = Path(absolute(profile["project_trust_toml"]))
     try:
         import fcntl
+    except ImportError:
+        raise Refusal("project_trust_toml_requires_file_locking")
+    try:
         import tomllib
     except ImportError:
-        raise Refusal("project_trust_toml_requires_python_3_11")
+        tomllib = None
     cwd = str(Path(cwd).resolve(strict=True))
 
     def read():
         try:
             raw = path.read_bytes()
-            return raw, tomllib.loads(raw.decode("utf-8")), stat.S_IMODE(path.stat().st_mode)
+            data = tomllib.loads(raw.decode("utf-8")) if tomllib else None
+            return raw, data, stat.S_IMODE(path.stat().st_mode)
         except FileNotFoundError:
             return b"", {}, 0o600
 
@@ -1303,11 +1361,20 @@ def ensure_project_trust(profile, cwd, execution):
     try:
         # Refuse unreadable/invalid input before even creating the lock file.
         raw, data, mode = read()
-        if trusted(data):
+        if tomllib is None:
+            already_trusted = project_trust_lines(raw.decode("utf-8"), cwd) == raw.decode("utf-8")
+        else:
+            already_trusted = trusted(data)
+        if already_trusted:
             return
         with open(str(path) + ".lock", "a+b") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
             raw, data, mode = read()
+            if tomllib is None:
+                result = project_trust_lines(raw.decode("utf-8"), cwd)
+                if result != raw.decode("utf-8"):
+                    write_project_trust(path, result, mode)
+                return
             if trusted(data):
                 return
             source = raw.decode("utf-8")
