@@ -231,6 +231,8 @@ class SendTest(unittest.TestCase):
         self.assertEqual(packet["status_record"], "not_requested")
 
     def test_ask_resolve_reply_paths_never_paste_into_resolver(self):
+        if Path(BIN).name != "teerex":
+            self.skipTest("ask is a combined-CLI verb; the standalone send cartridge has no ask")
         seat, seat_raw = self.fixture()
         asker, asker_raw = self.fixture()
         for target, label in ((seat, 'seat'), (asker, 'asker')):
@@ -344,6 +346,8 @@ class SendTest(unittest.TestCase):
         self.assertEqual([json.loads(line) for line in typed_log.read_text().splitlines()], ["FROM worker: typed draft regression"])
 
     def test_detached_terminal_keeps_draft_guard_and_process(self):
+        if Path(BIN).name != "teerex":
+            self.skipTest("clutch is a combined-CLI verb; the standalone send cartridge has no clutch")
         target, log = self.prompt(mode='busy')
         self.type_draft(target, 'PRIVATE_DETACHED_DRAFT')
         child = self.rpc('com.superlogical.terminal.process', dict(session_id=target[0], block_id=target[1], args={}))['child']
