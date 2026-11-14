@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import stat
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -192,6 +193,32 @@ class ScratchTest(unittest.TestCase):
             finally:
                 proc.terminate()
                 proc.wait(timeout=5)
+
+    def test_watch_owner_checks_at_most_once_per_second(self):
+        self.init()
+        calls = self.root / 'owner-checks'
+        rex = self.root / 'rex'
+        rex.write_text('#!' + sys.executable + '\nimport os, time\n'
+                       + 'assert not any(k in os.environ for k in ("REX_SESSION", "REX_BLOCK", "REX_CLIENT", "REX_SERVER", "LC_REX_SESSION", "LC_REX_BLOCK"))\n'
+                       + 'with open(' + repr(str(calls)) + ', "a") as stream: stream.write(str(time.time()) + "\\n")\n'
+                       + 'print("live", end="")\n')
+        rex.chmod(0o700)
+        proc = subprocess.Popen([BIN, 'scratch', 'watch', '--socket', str(self.root / 'rex.sock')],
+                                env=dict(self.env, TEEREX_INTERNAL_REX=str(rex)),
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            end = time.monotonic() + 6
+            while time.monotonic() < end:
+                times = [float(v) for v in calls.read_text().splitlines()] if calls.exists() else []
+                if len(times) >= 3:
+                    break
+                self.assertIsNone(proc.poll())
+                time.sleep(.03)
+            self.assertGreaterEqual(len(times), 3)
+            self.assertTrue(all(b - a >= 1 for a, b in zip(times, times[1:])), times)
+        finally:
+            proc.terminate()
+            proc.wait(timeout=5)
 
     def test_explicit_target_and_lc_environment(self):
         self.init()

@@ -339,6 +339,29 @@ class SurfacesTest(unittest.TestCase):
                 self.assertIn(self.anchor, [v['block_id'] for v in self.rpc(
                     'session.list_blocks', dict(session_id=self.session))['blocks']])
 
+    def test_session_close_refuses_session_with_only_running_scratch_watcher(self):
+        result, packet = self.surface('close', '--session', self.session, '--pane', self.anchor)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        code = "import os; os.execv(" + repr(BIN) + ", [" + repr(BIN) + ", 'scratch', 'watch', '--socket', " + repr(str(self.socket)) + ", '--session', " + repr(self.session) + ", '--block', os.environ['REX_BLOCK']])"
+        watcher = self.open('tab', sys.executable, '-c', code, label='only scratch watcher')['actual']['block_id']
+        deadline = time.monotonic() + 5
+        while True:
+            capture = self.rpc('com.superlogical.terminal.format', dict(session_id=self.session, block_id=watcher, args={'format': 'text'}))
+            if 'Scratchpad archived or not initialized' in json.dumps(capture):
+                break
+            self.assertLess(time.monotonic(), deadline, 'watcher did not render')
+            time.sleep(.03)
+        blocks = self.rpc('session.list_blocks', dict(session_id=self.session))['blocks']
+        self.assertEqual([b['block_id'] for b in blocks], [watcher])
+        # Query globally: rex api call auto-joins a session named in its arguments.
+        self.assertEqual([c for c in self.rpc('client.list', {})['clients']
+                          if self.session in c.get('session_ids', [])], [])
+        result, packet = self.surface('session close', '--session', self.session)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertEqual(packet['failure_reason'], 'session_has_panes')
+        self.assertFalse(packet['control_attempted'])
+        self.assertEqual(len(result.stdout.splitlines()), 1)
+
     def test_session_close_refuses_empty_session_with_attached_client(self):
         sid = self.another_session('attached empty ' + self.work.name)
         client = subprocess.Popen(self.base + ['do', '--session', sid, '--for', '10m', '-e',

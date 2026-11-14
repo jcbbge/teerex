@@ -290,7 +290,7 @@ if type(sessions)~='table' or type(sessions.sessions)~='table' then error('sessi
 local exists=false
 for _,s in ipairs(sessions.sessions) do if s.session_id==a.session then exists=true end end
 if not exists then io.write('gone'); return end
-rex.call('session.attach',{session_id=a.session})
+rex.call('session.attach_all',{event_scope='session'})
 local blocks=rex.call('session.list_blocks',{session_id=a.session})
 if type(blocks)~='table' or type(blocks.blocks)~='table' then error('block_list_unavailable') end
 for _,b in ipairs(blocks.blocks) do if b.block_id==a.owner then io.write('live'); return end end
@@ -310,8 +310,11 @@ def scratch_watch_owner(socket, session, owner):
     command = [os.environ.get('TEEREX_INTERNAL_REX') or 'rex', '--autostart=false',
                '--server', 'unix://' + socket, '--timeout', '1s', '--color', 'never',
                'do', '-e', SCRATCH_WATCH_LUA, '--args', json.dumps(args)]
+    environment = dict(os.environ)
+    for key in ('REX_SERVER', 'REX_SESSION', 'REX_BLOCK', 'REX_CLIENT', 'LC_REX_SESSION', 'LC_REX_BLOCK'):
+        environment.pop(key, None)
     # Closing this viewer must not interrupt the server-side close request.
-    result = subprocess.run(command, capture_output=True, text=True, timeout=1.5, start_new_session=True)
+    result = subprocess.run(command, env=environment, capture_output=True, text=True, timeout=1.5, start_new_session=True)
     if result.returncode or result.stdout not in ('live', 'gone'):
         raise ScratchError('owner_check_unavailable: ' + result.stderr.strip())
     return result.stdout == 'live'
@@ -368,8 +371,10 @@ def scratch_main(argv=None):
                 raise ScratchError('absolute_socket_required')
             previous = None
             owner_error = None
+            next_owner_check = 0
             while True:
-                if o.socket and not o.once:
+                if o.socket and not o.once and time.monotonic() >= next_owner_check:
+                    next_owner_check = time.monotonic() + 1
                     try:
                         if not scratch_watch_owner(o.socket, o.session, o.block):
                             break
