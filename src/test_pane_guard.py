@@ -587,7 +587,6 @@ class GuardTest(_fixtures.SurfacesTest):
             os.close(master)
 
     def test_seat_message_guard(self):
-        seed()
         pane = self.open('tab', '/bin/sh', '-c', 'printf "\\n❯ "; exec cat', label='message target')['actual']['block_id']
         self.register(pane)
         message = self.work / 'message.txt'
