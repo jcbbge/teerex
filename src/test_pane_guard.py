@@ -42,6 +42,9 @@ class GuardTest(_fixtures.SurfacesTest):
                         REX_SERVER='unix:///tmp/poison.sock', REX_SESSION='session:poison',
                         REX_BLOCK='block:poison', REX_CLIENT='client:poison',
                         XDG_STATE_HOME=str(self.work / 'state'), AGENT_REGISTRY=str(self.work / 'registry'))
+        # A caller's own agent identity outranks REX_*; never let the test runner's leak in.
+        for key in ('AGENT_SESSION', 'AGENT_PANE', 'LC_REX_SESSION', 'LC_REX_BLOCK'):
+            self.env.pop(key, None)
         self.env['TEEREX_BOARDS_STORE'] = str(self.store)
         self.env['TEEREX_CLUTCH_DIR'] = str(self.work / 'clutch')
         self.session = self.rpc('session.create', {'label': 'guard disposable'})['session_id']
@@ -107,7 +110,7 @@ class GuardTest(_fixtures.SurfacesTest):
         self.refused(self.control('close', other), 'recorded spawner:')
         import pane_guard
         from unittest.mock import patch
-        with patch.dict(os.environ, self.env):
+        with patch.dict(os.environ, self.env, clear=True):
             pane_guard.authorize('unix://' + str(self.socket), 'block.close',
                                  dict(session_id=self.session, block_id=worker), self.rpc)
             with self.assertRaisesRegex(ValueError, 'recorded spawner:'):
