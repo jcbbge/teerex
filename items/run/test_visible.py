@@ -77,6 +77,10 @@ class VisibleTest(unittest.TestCase):
         self.addCleanup(lambda: self.rpc("session.destroy", {"session_id": self.session}))
         self.runtime_env = dict(isolated_environment(), HOME=str(self.root), REX_SERVER="unix:///tmp/wrong.sock", REX_BLOCK="block:wrong",
                                 PATH=str(Path(self.rex).parent) + os.pathsep + os.environ.get("PATH", ""))
+        # Guarded cleanup requires a real creator identity, independently of the
+        # explicit target socket/session. Keep all authority in disposable stores.
+        import pane_authority
+        pane_authority.caller(self, self.rpc, self.runtime_env, self.work)
         self.anchor = None
 
     def command(self, script="print('hello visible')", *, argv=None, extra=(), rex=None):
@@ -109,7 +113,7 @@ class VisibleTest(unittest.TestCase):
     def anchor_pane(self):
         r = subprocess.run([BIN, "--rex", self.rex, "surfaces", "open", "--socket", str(self.socket),
                             "--session", self.session, "--layout", "tab", "--label", "unrelated sentinel",
-                            "--", "/bin/sleep", "60"], capture_output=True, text=True, timeout=10)
+                            "--", "/bin/sleep", "60"], env=self.runtime_env, capture_output=True, text=True, timeout=10)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.anchor = json.loads(r.stdout)["created"]["block_id"]
         return self.anchor
@@ -311,7 +315,7 @@ os.write(1,b'\\x00\\xffdetached\\n');sys.exit(0)
                 f"  with open({str(log)!r},'a') as f:f.write(json.dumps(raw.removeprefix(b'\\x1b[200~').decode())+'\\n')\n")
         command = [BIN, "--rex", self.rex, "surfaces", "open", "--socket", str(self.socket), "--session", self.session,
                    "--layout", "tab", "--label", "channel recipient", "--", sys.executable, "-c", code]
-        result = subprocess.run(command, capture_output=True, text=True, timeout=10)
+        result = subprocess.run(command, env=self.runtime_env, capture_output=True, text=True, timeout=10)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         block = json.loads(result.stdout)["created"]["block_id"]
         for _ in range(100):
