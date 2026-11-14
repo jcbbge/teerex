@@ -309,6 +309,59 @@ class SurfacesTest(unittest.TestCase):
         self.assertEqual(value["failure_reason"], "target_not_found")
         self.assertTrue(value["candidates"])
 
+    def test_session_close_empty_unattached_and_verify_absence(self):
+        sid = self.rpc('session.create', {'label': 'close empty ' + self.work.name})['session_id']
+        before = self.view()
+        result, packet = self.surface('session close', '--session', sid)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(packet['outcome'], 'session_closed_and_absent')
+        self.assertTrue(packet['session_absence_verified'])
+        self.assertTrue(packet['control_attempted'])
+        self.assertTrue(packet['control_acknowledged'])
+        self.assertEqual(packet['resolved']['session_id'], sid)
+        self.assertEqual(len(result.stdout.splitlines()), 1)
+        self.assertNotIn(sid, [v['session_id'] for v in self.rpc('session.list', {})['sessions']])
+        self.assertEqual(before, self.view())
+
+    def test_session_close_refuses_attached_and_detached_panes(self):
+        for detached in (False, True):
+            with self.subTest(detached=detached):
+                if detached:
+                    self.rpc('session.detach_block', dict(session_id=self.session, block_id=self.anchor))
+                before = self.view()
+                result, packet = self.surface('session close', '--session', self.session)
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertEqual(packet['failure_reason'], 'session_has_panes')
+                self.assertFalse(packet['control_attempted'])
+                self.assertFalse(packet['session_absence_verified'])
+                self.assertEqual(len(result.stdout.splitlines()), 1)
+                self.assertEqual(before, self.view())
+                self.assertIn(self.anchor, [v['block_id'] for v in self.rpc(
+                    'session.list_blocks', dict(session_id=self.session))['blocks']])
+
+    def test_session_close_refuses_empty_session_with_attached_client(self):
+        sid = self.another_session('attached empty ' + self.work.name)
+        client = subprocess.Popen(self.base + ['do', '--session', sid, '--for', '10m', '-e',
+                                  "rex.on('session_changed',function() end)"],
+                                  env=self.env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        def stop_client():
+            client.terminate()
+            client.wait(timeout=5)
+        self.addCleanup(stop_client)
+        deadline = time.monotonic() + 5
+        while not self.rpc('client.list', dict(session_id=sid))['clients']:
+            self.assertIsNone(client.poll())
+            self.assertLess(time.monotonic(), deadline, 'fixture client did not attach')
+            time.sleep(.03)
+        result, packet = self.surface('session close', '--session', sid)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertEqual(packet['failure_reason'], 'session_has_attached_clients')
+        self.assertFalse(packet['control_attempted'])
+        self.assertFalse(packet['session_absence_verified'])
+        self.assertEqual(len(result.stdout.splitlines()), 1)
+        self.assertIn(sid, [v['session_id'] for v in self.rpc('session.list', {})['sessions']])
+        self.assertIsNone(client.poll())
+
     def test_session_ensure_empty_existing_and_ambiguous(self):
         label = "ensured α " + self.work.name
         before = self.view()

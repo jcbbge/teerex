@@ -12,7 +12,7 @@ Licensed under [Apache-2.0](LICENSE) for teerex's original material. Third-party
 | --- | --- |
 | Read a pane, or wait until it changes or reports done/error | `observe` (`--tail` for the newest output, `--state` for agent state), `watch`, `compare` |
 | Run a command in a visible tab and get its real exit and output | `run-visible` (`--detach` returns at once; `run-visible receipt` reads the result) |
-| Open, find, rename, move, focus or close panes and sessions | `surfaces open/ensure/resolve/rename/move/focus/close`, `surfaces session ensure` |
+| Open, find, rename, move, focus or close panes and sessions | `surfaces open/ensure/resolve/rename/move/focus/close`, `surfaces session ensure/close` |
 | Start an agent that acknowledges its protocol before its brief, is tracked, and reports its stop | `agents launch` (from profiles), `agents human` (Josh types `claude`/`codex`/`pi`) |
 | Keep the current task and later work visible beside each agent | `scratch init/now/todo/done/show/path/watch` |
 | Message a pane without clobbering what someone is typing | `send` (typing guard on by default), `ask` (decision cards) |

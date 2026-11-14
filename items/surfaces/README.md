@@ -238,3 +238,23 @@ Source contract additions were checked against `gh issue view 2`, `23`, `18`, th
 `surfaces close --socket ABS --session session:UUID --pane block:UUID --publish-receipt-file ABS` is an additive close-only hook for detached run-visible. The visible pane first atomically writes its exit/output and jobs/channel evidence to its private `receipt.json`, with `receipt_state:cleanup_pending_or_unknown` and `cleanup.block_absence:unknown`. The same bounded native close reads that owned regular0600, single-link, no-follow file (at most1MiB, in an owned0700 directory), requires its exact server/session/block to match, then attempts one close. It atomically publishes the verified-absence result and returns. It starts no persistent helper and never retries a close. A separate watchdog thread hard-exits this invocation at `--timeout-ms + 2000ms`, covering publication as well as the existing bounded RPC cleanup. If it is killed or publication fails, prepared execution evidence remains with unknown absence; no later process invents a successful close. Normal close calls without this flag retain their existing output/behavior.
 
 Palette help uses `teerex surfaces palette` for menu generation and `teerex surfaces palette install` for registration.
+
+### Close an empty session
+
+`teerex surfaces session close --socket ABS --session TEXT [--timeout-ms N]`
+resolves the existing session selector, checks all blocks (including detached
+panes) and explicitly attached clients, then attempts one session destroy and
+verifies absence from a fresh session list. It observes through `attach_all`
+without joining the session itself. A non-empty session refuses with
+`failure_reason=session_has_panes`; an attached client refuses with
+`failure_reason=session_has_attached_clients`. Both return exit 1 and a single
+JSON line without requesting closure. Unavailable evidence also refuses.
+Success returns exit 0, `outcome=session_closed_and_absent`,
+`session_absence_verified=true`, and the resolved session ID. Client/block
+checks are snapshots immediately before the destroy call, not a server-side
+conditional destroy; Rex exposes no conditional session-destroy method.
+
+Verification: `TEEREX_BIN=ABS REX_BIN=ABS python3 items/surfaces/test_surfaces.py
+SurfacesTest.test_session_close_empty_unattached_and_verify_absence
+SurfacesTest.test_session_close_refuses_attached_and_detached_panes
+SurfacesTest.test_session_close_refuses_empty_session_with_attached_client -v`.

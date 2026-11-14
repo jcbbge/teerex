@@ -91,6 +91,32 @@ local function surface(a, emit)
     if not selected then return result end
     a.session_id=selected.session_id
     result.resolved={session_id=a.session_id}
+    if a.operation=="session-close" then
+        -- Observe without joining: this CLI must not become an attached client
+        -- itself or cause an empty session to refuse its own closure.
+        local all=rex.call("session.attach_all",{event_scope="session"})
+        if type(all)~="table" then return fail("session_attach_unavailable") end
+        local blocks=rex.call("session.list_blocks",{session_id=a.session_id})
+        if type(blocks)~="table" or type(blocks.blocks)~="table" then return fail("session_block_list_unavailable") end
+        if #blocks.blocks>0 then return fail("session_has_panes") end
+        local clients=rex.call("client.list",{session_id=a.session_id})
+        if type(clients)~="table" or type(clients.clients)~="table" then return fail("session_client_list_unavailable") end
+        if #clients.clients>0 then return fail("session_has_attached_clients") end
+        result.previous=selected
+        result.control_attempted=true
+        progress({event="attempt",control=true})
+        local receipt=rex.call("session.destroy",{session_id=a.session_id})
+        if type(receipt)~="table" then return fail("session_close_receipt_unavailable") end
+        result.control_acknowledged=true
+        local after=rex.call("session.list")
+        if type(after)~="table" or type(after.sessions)~="table" then return fail("session_close_readback_unavailable") end
+        for _,s in ipairs(after.sessions) do
+            if s.session_id==a.session_id then return fail("closed_session_still_listed") end
+        end
+        result.session_absence_verified=true
+        result.outcome="session_closed_and_absent"
+        return result
+    end
     local attached=rex.call("session.attach",{session_id=a.session_id})
     if type(attached)~="table" then return fail("session_attach_unavailable") end
     local function locate(view, bid)

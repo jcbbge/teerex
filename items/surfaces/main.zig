@@ -11,6 +11,8 @@ const usage =
     \\(default ~/.local/state/teerex-surfaces). --timeout-ms bounds lock wait plus transport;
     \\ensure_busy refuses before mutation and is retry-safe. Successful receipts name ensure_lock.
     \\       teerex surfaces session ensure --socket ABS --label TEXT [--timeout-ms N]
+    \\       teerex surfaces session close --socket ABS --session TEXT [--timeout-ms N]
+    \\Session close refuses panes (including detached) or attached clients; verifies session absence.
     \\       teerex surfaces ensure --socket ABS --session TEXT --label TEXT [--focus yes|no]
     \\         [open options; layout defaults tab] -- ARGV...
     \\Resolve accepts canonical IDs, unique ID suffixes, exact labels; refuses ambiguity with candidates.
@@ -75,6 +77,7 @@ const SurfaceResult = struct {
     control_attempted: bool = false,
     control_acknowledged: bool = false,
     block_absence_verified: bool = false,
+    session_absence_verified: bool = false,
     creation_attempted: bool = false,
     requested_geometry_verified: bool = false,
     requested_label_verified: bool = false,
@@ -341,15 +344,16 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
         return paletteController(allocator, args[1..], source);
     }
     if (args.len >= 2 and std.mem.eql(u8, args[0], "palette") and (std.mem.eql(u8, args[1], "agents") or std.mem.eql(u8, args[1], "hosts"))) return paletteController(allocator, args[1..], @embedFile("menu.py"));
-    if (args.len == 0) return usageError("resolve, session ensure, ensure, open, inspect, rename, focus, close, move or palette is required");
-    if (args.len >= 2 and std.mem.eql(u8, args[0], "session") and std.mem.eql(u8, args[1], "ensure")) {
+    if (args.len == 0) return usageError("resolve, session ensure/close, ensure, open, inspect, rename, focus, close, move or palette is required");
+    if (args.len >= 2 and std.mem.eql(u8, args[0], "session") and (std.mem.eql(u8, args[1], "ensure") or std.mem.eql(u8, args[1], "close"))) {
         var translated: std.ArrayList([]const u8) = .empty;
-        try translated.append(allocator, "session-ensure");
+        try translated.append(allocator, if (std.mem.eql(u8, args[1], "close")) "session-close" else "session-ensure");
         try translated.appendSlice(allocator, args[2..]);
         return run(allocator, translated.items);
     }
     const resolve = std.mem.eql(u8, args[0], "resolve");
     const session_ensure = std.mem.eql(u8, args[0], "session-ensure");
+    const session_close = std.mem.eql(u8, args[0], "session-close");
     const ensure = std.mem.eql(u8, args[0], "ensure");
     const inspect = std.mem.eql(u8, args[0], "inspect");
     const focus = std.mem.eql(u8, args[0], "focus");
@@ -358,7 +362,7 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
     const rename = std.mem.eql(u8, args[0], "rename");
     const pane_control = focus or close or move or rename;
     const palette = std.mem.eql(u8, args[0], "palette");
-    if (!resolve and !session_ensure and !ensure and !inspect and !pane_control and !palette and !std.mem.eql(u8, args[0], "open")) return usageError("unknown subcommand");
+    if (!resolve and !session_ensure and !session_close and !ensure and !inspect and !pane_control and !palette and !std.mem.eql(u8, args[0], "open")) return usageError("unknown subcommand");
     if (args.len == 2 and std.mem.eql(u8, args[1], "--help")) {
         try std.fs.File.stdout().writeAll(usage);
         return 0;
@@ -412,11 +416,12 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
     var ratio: ?f64 = null;
     var bounds: ?[4]f64 = null;
     var command: ?[]const []const u8 = null;
-    if (resolve or session_ensure) {
-        if (i != args.len or options.count() > 4 or anchor != null or layout != null or cwd != null or options.contains("--focus") or options.contains("--direction") or options.contains("--ratio") or options.contains("--bounds")) return usageError("resolve/session ensure take only target options and timeout");
+    if (resolve or session_ensure or session_close) {
+        if (i != args.len or options.count() > 4 or anchor != null or layout != null or cwd != null or options.contains("--focus") or options.contains("--direction") or options.contains("--ratio") or options.contains("--bounds")) return usageError("resolve/session ensure/close take only target options and timeout");
         if (pane) |v| if (!selectorValid(v, "block:")) return usageError("invalid pane selector");
         if (window) |v| if (!selectorValid(v, "window:")) return usageError("invalid window selector");
         if (resolve and (pane != null and window != null or label != null)) return usageError("resolve takes session and at most one pane/window");
+        if (session_close and (pane != null or window != null or label != null or options.count() > 3)) return usageError("session close takes only socket, session and timeout");
         if (session_ensure and (session != null or pane != null or window != null or label == null or !labelValid(label.?))) return usageError("session ensure requires only --label TEXT");
     } else if (rename) {
         if ((pane == null) == (window == null)) return usageError("rename requires exactly one of --window or --pane");
@@ -460,7 +465,7 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
             for (command.?) |v| if (!std.unicode.utf8ValidateSlice(v)) return usageError("argv must be UTF-8");
         }
     }
-    const request = .{ .operation = if (resolve) "resolve" else if (session_ensure) "session-ensure" else if (ensure) "ensure" else if (inspect) "inspect" else if (focus) "focus" else if (close) "close" else if (move) "move" else if (rename) "rename" else "open", .focus = focus or move_focus, .session_id = session, .create_session = create_session, .block_id = pane, .window_id = window, .anchor = anchor, .layout = layout, .label = label, .direction = direction, .ratio = ratio, .bounds = bounds, .cwd = cwd, .argv = command };
+    const request = .{ .operation = if (resolve) "resolve" else if (session_ensure) "session-ensure" else if (session_close) "session-close" else if (ensure) "ensure" else if (inspect) "inspect" else if (focus) "focus" else if (close) "close" else if (move) "move" else if (rename) "rename" else "open", .focus = focus or move_focus, .session_id = session, .create_session = create_session, .block_id = pane, .window_id = window, .anchor = anchor, .layout = layout, .label = label, .direction = direction, .ratio = ratio, .bounds = bounds, .cwd = cwd, .argv = command };
     const encoded = try std.json.Stringify.valueAlloc(allocator, request, .{ .emit_null_optional_fields = false });
     if (encoded.len > 24000) return usageError("encoded arguments exceed 24000 bytes");
     if (palette) {
@@ -517,12 +522,16 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
     const deadline = transport != null and transport.?.deadline_exceeded;
     const ok = transport != null and !transport.?.stopped and transport.?.term == .Exited and transport.?.term.Exited == 0 and c.pending.items.len == 0 and c.result != null;
     const r = c.result orelse SurfaceResult{ .outcome = "uncertain" };
-    const success = ok and sig == 0 and ((resolve and std.mem.eql(u8, r.outcome, "resolved") and r.resolved == .object) or ((session_ensure or ensure) and (std.mem.eql(u8, r.outcome, "existing") or std.mem.eql(u8, r.outcome, "created")) and r.actual == .object and r.resolved == .object and (!ensure or !move_focus or ensureFocusVerified(r))) or ((!ensure and r.actual == .object and (std.mem.eql(u8, r.outcome, "created_and_verified") and r.requested_geometry_verified and r.created == .object or std.mem.eql(u8, r.outcome, "renamed_and_verified") and rename and r.control_acknowledged and r.requested_label_verified or std.mem.eql(u8, r.outcome, "inspected") and inspect or std.mem.eql(u8, r.outcome, "focused_and_verified") and focus and r.control_acknowledged or std.mem.eql(u8, r.outcome, "moved_and_verified") and move and r.control_acknowledged and r.requested_geometry_verified and r.move_receipt == .object and (!move_focus or r.focus_acknowledged))) or (close and std.mem.eql(u8, r.outcome, "closed_and_absent") and r.control_acknowledged and r.block_absence_verified)));
-    const reported_success = std.mem.eql(u8, r.outcome, "resolved") or std.mem.eql(u8, r.outcome, "existing") or std.mem.eql(u8, r.outcome, "created") or std.mem.eql(u8, r.outcome, "renamed_and_verified") or std.mem.eql(u8, r.outcome, "created_and_verified") or std.mem.eql(u8, r.outcome, "inspected") or std.mem.eql(u8, r.outcome, "focused_and_verified") or std.mem.eql(u8, r.outcome, "closed_and_absent") or std.mem.eql(u8, r.outcome, "moved_and_verified");
+    const success = ok and sig == 0 and ((session_close and std.mem.eql(u8, r.outcome, "session_closed_and_absent") and r.control_acknowledged and r.session_absence_verified) or (resolve and std.mem.eql(u8, r.outcome, "resolved") and r.resolved == .object) or ((session_ensure or ensure) and (std.mem.eql(u8, r.outcome, "existing") or std.mem.eql(u8, r.outcome, "created")) and r.actual == .object and r.resolved == .object and (!ensure or !move_focus or ensureFocusVerified(r))) or ((!ensure and r.actual == .object and (std.mem.eql(u8, r.outcome, "created_and_verified") and r.requested_geometry_verified and r.created == .object or std.mem.eql(u8, r.outcome, "renamed_and_verified") and rename and r.control_acknowledged and r.requested_label_verified or std.mem.eql(u8, r.outcome, "inspected") and inspect or std.mem.eql(u8, r.outcome, "focused_and_verified") and focus and r.control_acknowledged or std.mem.eql(u8, r.outcome, "moved_and_verified") and move and r.control_acknowledged and r.requested_geometry_verified and r.move_receipt == .object and (!move_focus or r.focus_acknowledged))) or (close and std.mem.eql(u8, r.outcome, "closed_and_absent") and r.control_acknowledged and r.block_absence_verified)));
+    const reported_success = std.mem.eql(u8, r.outcome, "session_closed_and_absent") or std.mem.eql(u8, r.outcome, "resolved") or std.mem.eql(u8, r.outcome, "existing") or std.mem.eql(u8, r.outcome, "created") or std.mem.eql(u8, r.outcome, "renamed_and_verified") or std.mem.eql(u8, r.outcome, "created_and_verified") or std.mem.eql(u8, r.outcome, "inspected") or std.mem.eql(u8, r.outcome, "focused_and_verified") or std.mem.eql(u8, r.outcome, "closed_and_absent") or std.mem.eql(u8, r.outcome, "moved_and_verified");
     const outcome = if (sig != 0) "cancel_requested" else if (deadline) "deadline_exceeded" else if (ok and (!reported_success or success)) r.outcome else "uncertain";
-    const public_result = .{ .schema_version = 1, .kind = "surface_result", .target = .{ .server = endpoint, .session_id = session }, .resolved = r.resolved, .candidates = r.candidates, .requested = request, .source = r.source, .created = if (r.created != .null) r.created else c.created, .actual = r.actual, .previous = r.previous, .previous_anchor = r.previous_anchor, .move_receipt = r.move_receipt, .focus_acknowledged = r.focus_acknowledged, .outcome = outcome, .creation_attempted = !c.control and c.attempt, .control_attempted = c.control and c.attempt, .control_acknowledged = r.control_acknowledged, .block_absence_verified = ok and r.block_absence_verified, .close_scope = "rex_block_absence_not_descendant_process_death", .attempt_evidence = "received_local_frame_not_server_dispatch_proof", .requested_geometry_verified = success and r.requested_geometry_verified, .requested_label_verified = success and r.requested_label_verified, .failure_reason = failure orelse r.failure_reason orelse if (!ok or reported_success and !success) @as(?[]const u8, "rex_transport_incomplete") else null, .backend_stderr_base64 = try encodedDiagnostic(allocator, if (transport) |v| v.stderr else ""), .retry_safe = false, .automatic_close = false, .focus_requested = focus or move_focus, .close_requested = close, .geometry_units = "window_fraction", .painted_visibility = "not_assessed", .program_readiness = "not_assessed", .ensure_lock = if (lock) |held| held.path else null, .timeout_ms = budget };
+    const public_result = .{ .schema_version = 1, .kind = "surface_result", .target = .{ .server = endpoint, .session_id = session }, .resolved = r.resolved, .candidates = r.candidates, .requested = request, .source = r.source, .created = if (r.created != .null) r.created else c.created, .actual = r.actual, .previous = r.previous, .previous_anchor = r.previous_anchor, .move_receipt = r.move_receipt, .focus_acknowledged = r.focus_acknowledged, .outcome = outcome, .creation_attempted = !c.control and c.attempt, .control_attempted = c.control and c.attempt, .control_acknowledged = r.control_acknowledged, .block_absence_verified = ok and r.block_absence_verified, .session_absence_verified = ok and r.session_absence_verified, .close_scope = if (session_close) "empty_unattached_session_absence" else "rex_block_absence_not_descendant_process_death", .attempt_evidence = "received_local_frame_not_server_dispatch_proof", .requested_geometry_verified = success and r.requested_geometry_verified, .requested_label_verified = success and r.requested_label_verified, .failure_reason = failure orelse r.failure_reason orelse if (!ok or reported_success and !success) @as(?[]const u8, "rex_transport_incomplete") else null, .backend_stderr_base64 = try encodedDiagnostic(allocator, if (transport) |v| v.stderr else ""), .retry_safe = false, .automatic_close = false, .focus_requested = focus or move_focus, .close_requested = close or session_close, .geometry_units = "window_fraction", .painted_visibility = "not_assessed", .program_readiness = "not_assessed", .ensure_lock = if (lock) |held| held.path else null, .timeout_ms = budget };
     const code: u8 = if (sig != 0) 128 + sig else if (deadline) 124 else if (success) 0 else 1;
     if (publisher) |*receipt_publisher| try receipt_publisher.publish(allocator, success and r.block_absence_verified, code, public_result);
-    try writeJson(allocator, public_result);
+    if (session_close) {
+        const line = try std.json.Stringify.valueAlloc(allocator, public_result, .{});
+        try std.fs.File.stdout().writeAll(line);
+        try std.fs.File.stdout().writeAll("\n");
+    } else try writeJson(allocator, public_result);
     return code;
 }
