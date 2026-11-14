@@ -42,3 +42,9 @@ Only valid owned single-link0600 records with `held:false` qualify, and only whe
 All sending test fixtures set `TEEREX_CLUTCH_DIR` in their own disposable directory. Regressions cover no-store sends/status, lock-independent reads, deletion on release, no-write planning, missing sockets/dead panes, held/live preservation, a take between plan/apply, corrupt records, links and unknown endpoints. Existing send/clutch/agents/boards CI suites include these checks.
 
 `teerex clutch palette --help` uses the public command name.
+
+## Durable held deliveries
+
+`clutch queue --socket ABS --session ID --pane ID --json` inspects the durable queue without changing it. Messages have ordered IDs, pending/inflight state, sender, age and first line; `--show` includes full bodies. Queue directories are owned0700 and records owned single-link0600, with symlinks refused. There is no entry-count or queue-size cap. Complete records are flushed and atomically renamed; acknowledged records are removed.
+
+Release deletes the hold and drains pending records through guarded native send in ID order, including on a repeated release. A record is durably claimed before dispatch. An uncertain dispatch stays inflight and stops the drain; later releases never replay that ID. This prevents duplicate input, but cannot establish application consumption or guarantee delivery after a crash during dispatch. No background drain or automatic retry runs.

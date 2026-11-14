@@ -1,6 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const supervised = @import("supervised_child");
+pub const queue_source = @embedFile("focus_queue.py");
 pub const clutch_state = @import("clutch_state.zig");
 
 const usage =
