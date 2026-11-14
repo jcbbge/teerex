@@ -205,7 +205,7 @@ def summary(row, now):
     age = '—' if delta is None or delta < 0 else str(delta // 1000) + 's' if delta < 60000 else str(delta // 60000) + 'm' if delta < 3600000 else str(delta // 3600000) + 'h' if delta < 86400000 else str(delta // 86400000) + 'd'
     done = len(pad.get('done', []))
     total = done + len(pad.get('todo', [])) + bool(pad.get('now'))
-    question = row.get('question') or record.get('title') or 'Needs your answer'
+    question = row.get('question') or record.get('title') or 'Open question'
     message = 'waiting on you  “' + question + '”' if state == 'blocked' else pad.get('now') or ('Checking activity' if state == 'unknown' else '—')
     return dict(name=clean(name), state=state, message=clean(message), progress=str(done) + '/' + str(total) if total else '', age=age)
 

@@ -26,9 +26,10 @@ feed and explicit named-host actions; the renderer itself is native Zig.
 
 The current host has CPU trend, memory/swap, load, disk and network bands.
 Wide panes add per-core heat, the other host's summary and top process trees
-grouped by agent. Needs-you rows precede working rows; words and glyphs carry
-meaning without colour. One new question flashes its callout once (180 ms),
-and OSC 7501's documented `blocked` state marks the board as needing attention.
+grouped by agent. One quiet `◇ N` in the header counts open decisions from
+that host's existing boards inbox store. `d` pulls the cards, j/k browses and
+1–8 answers through the existing ask resolution path. Cards never open on their
+own, flash or mark the board blocked. Unknown source availability is `◇ ?`.
 The board owns only its `teerex/board` status record and clears it on exit.
 
 The selected host filters agents. There is no event stream section: it
@@ -41,6 +42,7 @@ retain the last readings with an explicit unavailable notice.
 | Up/Down, j/k | Select a live agent |
 | Enter | `teerex --config … --host ROW_HOST surfaces focus` on that exact pane |
 | Space | Expand ordered Done → Now → To-do steps with the current step marked; inline scratchpad via the selected host's `scratch show --json`; the event's Now/progress remain available if the read fails |
+| d | Pull decisions; 1–8 answers; d returns |
 | m | Switch hive / M5 |
 | ? | Keys overlay |
 | q, Ctrl-C, Ctrl-D | Exit and restore terminal settings |
@@ -102,8 +104,7 @@ with [their licence](UNICODE-LICENSE.txt). Thus dependency resolution cannot
 silently change renderer behavior.
 
 The measured prototype redraws a changed row in a 60×30 frame. The UI uses
-`poll` indefinitely when idle, with a signal pipe for resize/shutdown; only
-the one-shot attention flash has a deadline. Text and optional kitty updates
+`poll` indefinitely when idle, with a signal pipe for resize/shutdown; without an attention timer. Text and optional kitty updates
 share one DEC 2026 transaction. No whole-screen clears or blank intermediary
 frames are emitted during redraw.
 
@@ -144,7 +145,7 @@ teerex board --benchmark 10000
 The 11 public-CLI tests cover PTYs at 40/60/120 columns, no scrolling/clear
 flashes, keys/inline scratchpads, mouse selection, fragmented palette and
 kitty replies, contrast fallback, terminal-control sanitizing, event removal,
-invalid-event visibility, blocked status, EOF hold, idle output and terminal
+invalid-event visibility, quiet decision status, EOF hold, idle output and terminal
 restoration on quit/signal. The integration case starts two **disposable** Rex
 servers and uses named-host routing to verify Enter's target, full scratchpad
 contents, normal live-feed startup/vitals and feed descendant cleanup.

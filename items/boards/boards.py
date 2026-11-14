@@ -575,6 +575,21 @@ def _deliver_ask(a):
                 check(any(r["body"]["id"] == a.resolve for r in folded(seat)[0]), "open_decision_not_found")
             else:
                 check(not any(r["kind"] == "decision" and r["body"]["id"] == value["id"] for r in seat["records"]), "decision_id_already_used")
+    if a.store and not answer_only and a.deliver is None:
+        # Stored operator decisions are pulled from the board, never typed or badged.
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8") as f:
+            json.dump(value, f);f.flush();a.card_file=f.name
+            with contextlib.redirect_stdout(__import__('io').StringIO()):mutate(a)
+        tracked=False
+        try:
+            import teerex_seat_status
+            teerex_seat_status.register(dict(socket=a.socket,session=a.session,block=a.block,
+                id='ask/'+value['id'],sender=a.sender,origin=teerex_seat_status.origin()))
+            tracked=True
+        except (OSError,ValueError,subprocess.SubprocessError):pass
+        result(kind='ask_result',outcome='recorded',decision_id=value['id'],terminal_input_attempted=False,
+               status_record='not_requested',reply_tracking='recorded' if tracked else 'unavailable',history='recorded')
+        return 0
     argv = [a.teerex, "send", "--socket", a.socket, "--session", a.session, "--block", a.block,
             "--from", a.sender, "--message-file", "-", "--draft", a.draft, "--draft-wait-ms", str(a.draft_wait_ms)]
     if not answer_only:
@@ -1192,7 +1207,7 @@ def parser():
     q.add_argument("--draft-wait-ms", type=bounded_int(0, 55000), default=30000, metavar="0..55000")
     q.add_argument("--timeout-ms", type=bounded_int(100, 115000), default=None, metavar="100..115000",
                    help="registered stdin must reach EOF; native fallback guard defaults to draft wait+10000ms, ignore10000")
-    q = commands.add_parser("ask", help="type complete decision through guarded send; seat child status stays blocked until resolution; optional store history")
+    q = commands.add_parser("ask", help="record stored decisions for operator pull; direct cards use guarded send")
     q.add_argument("--store", help="optional existing private history store; seat must be registered")
     for k in ("host", "socket", "session", "block"):
         q.add_argument("--" + k, required=True)

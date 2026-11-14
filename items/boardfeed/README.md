@@ -85,3 +85,5 @@ Example additions to an existing hive entry (retain its transport/path fields):
 Agent rows expose starter display name, contract step_n/step_total, last_contact_at (milliseconds) and stalled. Older launches use scratchpad steps, starter metadata and the last hook contact; absent contact is zero.
 
 Agent rows project ordered scratchpad steps (Done, Now, To-do), preserving optional executor, outcome and handoff annotations. Pane inventory and row-derived counts are unchanged.
+
+Decision snapshots read each configured host’s existing boards store through `boards state inspect`, fold resolutions and publish only open cards. The feed watches that store with the existing filesystem watcher; unavailable sources are explicit. No decision is sent or opened by the feed.

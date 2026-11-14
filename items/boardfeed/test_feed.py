@@ -185,6 +185,23 @@ class FeedTests(unittest.TestCase):
             self.assertEqual(len(agents),3);self.assertEqual(agents[0]['total'],3);self.assertEqual(agents[-1]['state'],'gone')
             self.assertIn('message delivered',out.getvalue());self.assertNotIn('SECRET',out.getvalue());self.assertNotIn('DO NOT PRINT',out.getvalue())
 
+    def test_decision_projection_folds_resolved_cards_without_push(self):
+        card=dict(id='open',title='Choice',ask='Choose?',context='Context',options=[],recommend='Wait')
+        records=[dict(kind='decision',at=1,body=dict(card,id='closed')),dict(kind='resolution',at=2,body=dict(id='closed')),dict(kind='decision',at=3,body=card)]
+        data=dict(state=dict(seats=[dict(target=dict(block_id='block:seat'),records=records)]))
+        a=SimpleNamespace(executable='/fixture',store=Path('/fixture/store'),host='hive')
+        decisions=feed.Decisions(a)
+        with mock.patch.object(feed,'tracked_output',return_value=json.dumps(data).encode()) as command,mock.patch.object(feed,'emit') as emit:
+            decisions.poll();decisions.poll()
+            self.assertEqual(emit.call_count,1)
+            snapshot=emit.call_args.kwargs
+            self.assertTrue(snapshot['available'])
+            self.assertEqual([r['id'] for r in snapshot['decisions']],['open'])
+            self.assertEqual(command.call_args.args[0],['/fixture','boards','state','inspect','--store','/fixture/store'])
+        decisions.signature=object()
+        with mock.patch.object(feed,'tracked_output',side_effect=ValueError()),mock.patch.object(feed,'emit') as emit:
+            decisions.poll();self.assertFalse(emit.call_args.kwargs['available'])
+
     def test_scratch_step_projection_preserves_annotations(self):
         steps=feed.scratch_steps({'Done':['Read · computer · ■ checked'],'Now':['Build · model · ⇥ reviewer'],'To-do':['Verify']})
         self.assertEqual([s['state'] for s in steps],['done','now','todo'])

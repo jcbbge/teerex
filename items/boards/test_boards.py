@@ -150,10 +150,10 @@ class BoardsTest(unittest.TestCase):
         for broken in [dict(self.decision, context=" "), dict(self.decision, options=self.decision["options"][:1]),
                        dict(self.decision, recommend="\x1b[31muntrusted"), dict(self.decision, extra="unexpected")]:
             self.card.write_text(json.dumps(broken))
-            self.invoke("ask", code=1, **{"from": "worker", "card_file": self.card})
+            self.invoke("ask", store=None, code=1, **{"from": "worker", "card_file": self.card})
         self.card.write_text(json.dumps(self.decision))
         self.ask()
-        self.invoke("ask", code=1, **{"from": "worker", "card_file": self.card})
+        self.invoke("ask", store=None, code=1, **{"from": "worker", "card_file": self.card})
         self.invoke("ask", code=1, **{"from": "operator", "resolve": "missing", "answer": "no"})
         self.assertEqual(len(self.inspect()["seats"][0]["records"]), 1)
         self.message.write_text("DECISION-JSON:" + json.dumps(self.decision))
@@ -226,6 +226,15 @@ class BoardsTest(unittest.TestCase):
         for path in self.store.glob("archive-*.json"):
             self.assertEqual(path.stat().st_mode & 0o777, 0o600)
 
+    def test_stored_decision_is_pull_only_without_terminal_input(self):
+        self.register()
+        result=self.ask()
+        self.assertEqual(result['outcome'],'recorded')
+        self.assertFalse(result['terminal_input_attempted'])
+        self.assertEqual(result['status_record'],'not_requested')
+        self.assertFalse(self.sent.exists())
+        self.assertIn('Deploy the reviewed fix now?',self.invoke('inbox',once=True))
+
     def test_ask_without_history_and_failure_does_not_record(self):
         args = self.argv("ask", store=None, **{"from": "worker", "card_file": self.card})
         r = subprocess.run(args, capture_output=True, text=True, env=self.env)
@@ -234,7 +243,7 @@ class BoardsTest(unittest.TestCase):
         self.assertFalse((self.store / "state.json").exists())
         self.register()
         self.native.write_text("#!/usr/bin/env python3\nimport json\nprint(json.dumps(dict(outcome='uncertain')))\nraise SystemExit(1)\n")
-        self.invoke("ask", code=1, **{"from": "worker", "card_file": self.card})
+        self.invoke("ask", store=None, code=1, **{"from": "worker", "card_file": self.card})
         self.assertEqual(self.inspect()["seats"][0]["records"], [])
 
     def test_inline_card_fields_share_validation_and_return_id(self):

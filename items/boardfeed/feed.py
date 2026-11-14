@@ -598,14 +598,44 @@ def open_held(a):
         if result.returncode:raise ValueError('held pane unavailable')
 
 
+class Decisions:
+    def __init__(self,a):
+        self.a=a;self.previous=None;self.signature=object()
+
+    def poll(self):
+        try:
+            info=(self.a.store/'state.json').stat()
+            signature=(info.st_ino,info.st_mtime_ns,info.st_size)
+        except OSError:signature=None
+        if signature==self.signature:return
+        self.signature=signature
+        try:
+            result=tracked_output([self.a.executable,'boards','state','inspect','--store',str(self.a.store)],timeout=5)
+            state=json.loads(result)['state'];rows=[]
+            for seat in state['seats']:
+                opened={}
+                for record in seat['records']:
+                    if record['kind']=='decision':opened[record['body']['id']]=record
+                    elif record['kind']=='resolution':opened.pop(record['body']['id'],None)
+                for record in opened.values():
+                    rows.append(dict(record['body'],target=seat['target'],store=str(self.a.store),opened_at=record['at']))
+            snapshot=dict(available=True,decisions=sorted(rows,key=lambda r:r['opened_at']))
+        except (OSError,ValueError,KeyError,TypeError,subprocess.SubprocessError):
+            snapshot=dict(available=False,decisions=[])
+        if snapshot!=self.previous:
+            emit(self.a.host,'decisions',**snapshot);self.previous=snapshot
+
+
 def local(a):
     state=State(a)
+    decisions=Decisions(a)
+    decisions.poll()
     held=Held(a.host,json.loads(a.held_command_json)) if a.held_command_json else None
     if a.once:
         if held:held.poll()
         state.scan()
         return
-    watcher=Watcher([a.agents_registry,a.jobs_registry,a.scratch,a.calls,a.profiles])
+    watcher=Watcher([a.agents_registry,a.jobs_registry,a.scratch,a.calls,a.profiles,a.store])
     sample=LinuxVitals() if sys.platform=='linux' else MacVitals()
     thread=threading.Thread(target=rex_events,args=(a,state),daemon=True);thread.start()
     state.scan();deadline=time.monotonic();held_deadline=0
@@ -621,7 +651,8 @@ def local(a):
                 except (OSError,ValueError,KeyError,IndexError,subprocess.SubprocessError):
                     emit(a.host,'stream',agent=None,text='Machine measurements unavailable',role='problem')
                 deadline=now+1
-            if watcher.wait(max(0,deadline-time.monotonic())):state.scan()
+            if watcher.wait(max(0,deadline-time.monotonic())):
+                state.scan();decisions.poll()
     finally:watcher.close()
 
 
@@ -634,6 +665,7 @@ def merge(a):
             selected=subprocess.run([a.executable,'targets','resolve','--config',a.config,'--host',host],capture_output=True,timeout=15)
             if selected.returncode:raise ValueError('host unavailable')
             source=json.loads(selected.stdout)['host']
+            command+=['--store',source['store']]
             configured='held_command' in source
             if configured:
                 try:
@@ -646,7 +678,7 @@ def merge(a):
                 if STOP.is_set():break
                 try:
                     event=json.loads(line)
-                    if event.get('v')!=1 or event.get('kind') not in ('host','agent','stream','vitals','held'):continue
+                    if event.get('v')!=1 or event.get('kind') not in ('host','agent','stream','vitals','held','decisions'):continue
                     event['host']=host
                     if event['kind']=='held':last_held=event.get('available')
                     with LOCK: print(json.dumps(event,separators=(',',':')),flush=True)
@@ -672,6 +704,7 @@ def main(argv=None):
     parser.add_argument('--held-id',help=argparse.SUPPRESS)
     parser.add_argument('--open-held',action='store_true',help=argparse.SUPPRESS)
     parser.add_argument('--held-pane',action='store_true',help=argparse.SUPPRESS)
+    parser.add_argument('--store',type=Path,default=Path.home()/'.local/state/teerex-boards',help=argparse.SUPPRESS)
     parser.add_argument('--once',action='store_true',help='finite pane snapshot, then exit (no vitals or event subscription)')
     parser.add_argument('--local',action='store_true',help='read this host only (transport worker)')
     parser.add_argument('--host-name',dest='host',default=platform.node().split('.')[0])

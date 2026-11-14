@@ -142,7 +142,7 @@ class BoardTest(unittest.TestCase):
     def pane(self, **kw):
         p = Pane(self.root, **kw)
         self.addCleanup(p.close)
-        p.until(lambda: b'Which sound' in p.output)
+        p.until(lambda: b'Choose a sound' in p.output)
         p.settle()
         return p
     def test_replaced_events_release_memory(self):
@@ -163,6 +163,23 @@ class BoardTest(unittest.TestCase):
             finally:pane.close()
         self.assertLessEqual(resident[1],resident[0]+2048,
                              'replaced events retained RSS (KiB): %r'%resident)
+    def test_decisions_are_quiet_counted_and_pulled(self):
+        events=[dict(v=1,t=1,host='hive',kind='agent',id='worker',name='worker',state='waiting',now='Continuing work',done=0,total=1,question='A question'),dict(v=1,t=2,host='hive',kind='decisions',available=True,decisions=[dict(id='choice',title='Choose deployment',ask='Deploy now?',context='Reviewed change',recommend='Wait',options=[dict(label='Go',gain='Available',lose='Interrupts'),dict(label='Wait',gain='Preserves work',lose='Delay')])])]
+        path=self.root/'decisions.jsonl';path.write_text('\n'.join(map(json.dumps,events))+'\n')
+        p=Pane(self.root,fixture=path);self.addCleanup(p.close);p.settle()
+        self.assertIn('◇ 1',p.view());self.assertNotIn('Deploy now?',p.view())
+        self.assertNotIn(b'7501;state=blocked',p.output)
+        self.assertNotIn(b'\x1b[7m',p.output)
+        p.key(b'd');self.assertIn('Deploy now?',p.view());self.assertIn('1. Go',p.view());self.assertIn('Preserves work',p.view())
+        p.key(b'2');self.assertIn('Replay · answer not sent',p.view())
+        p.key(b'd');self.assertNotIn('Deploy now?',p.view())
+        # Keep forbidden attention wording out of implementation, tests and docs.
+        forbidden='needs'+' you'
+        for directory in ('items/board','items/boardfeed','items/boards'):
+            for source in (ROOT/directory).rglob('*'):
+                if source.suffix in ('.py','.zig','.md'):
+                    self.assertNotIn(forbidden,source.read_text().lower(),str(source))
+
     def test_expanded_state_path_marks_current_step_and_outcomes(self):
         path=self.root/'steps.jsonl'
         row=dict(v=1,t=200000,host='hive',kind='agent',id='worker',name='worker',state='working',now='Build',done=1,total=3,executor='model',steps=[dict(state='done',text='Read',by='computer',outcome='checked'),dict(state='now',text='Build',by='model',handoff='reviewer'),dict(state='todo',text='Verify',by='computer')])
@@ -269,14 +286,14 @@ class BoardTest(unittest.TestCase):
         p = self.pane(width=width)
         view, scrolls = screen(p.output,width)
         self.assertEqual(scrolls,0,view)
-        for word in ['hive','REPLAY','cpu','mem','disk','net','needs you','working','Which sound','4/6','2/6','jump']:
+        for word in ['hive','REPLAY','cpu','mem','disk','net','working','Choose a sound','4/6','2/6','jump']:
             self.assertIn(word,view)
-        self.assertLess(view.index('Which sound'),view.index('codex-render'))
+        self.assertLess(view.index('Choose a sound'),view.index('codex-render'))
         # The event stream was noise (Josh, 2026-11-13): no stream section and no stream key.
         self.assertNotIn('Listening for the next event',view)
         self.assertNotIn(' stream',view)
         self.assertIn(b'\x1b[?2026h',p.output)
-        self.assertIn(b'7501;state=blocked:id=teerex/board',p.output)
+        self.assertNotIn(b'7501;state=blocked:id=teerex/board',p.output)
         self.assertNotIn(b'\x1b[2J',p.output)
         self.assertNotRegex(p.output,rb'\x1b\[(?:38|48);(?:2|5);')
         if width==120:
@@ -297,7 +314,7 @@ class BoardTest(unittest.TestCase):
         self.assertIn('jump',p.view())
     def test_idle_blocks_and_does_not_redraw(self):
         p=self.pane()
-        # Let the single 180 ms attention flash expire before idle measurement.
+        # Settle the initial event-driven frame before measuring idle output.
         p.read(.3); p.settle()
         before=len(p.output)
         self.assertFalse(select.select([p.master],[],[],.3)[0])
@@ -312,7 +329,7 @@ class BoardTest(unittest.TestCase):
         p.key(b'\x1b_Gi=31;OK\x1b\\')
         self.assertIn(b'a=T,f=32',p.output[start:])
         self.assertIn(b'\x1b[39m',p.output)
-        self.assertIn('Which sound',p.view())
+        self.assertIn('Choose a sound',p.view())
     def test_mouse_selects_and_controls_cannot_escape(self):
         events=[json.loads(line) for line in FIXTURE.read_text().splitlines()]
         for e in events:
@@ -422,6 +439,16 @@ class BoardTest(unittest.TestCase):
         for name, (_, sid, target, _) in targets.items():
             (registry/(name+'.json')).write_text(json.dumps(dict(name=name,launch_id=name,target=dict(session_id=sid,block_id=target))))
         private_env=dict(os.environ,HOME=str(self.root),TEEREX_CALL_LOG_DIR=str(self.root/'calls'))
+        private_env['TEEREX_ASK_STATE_DIR']=str(self.root/'asks')
+        _,decision_session,asker_block,seat_block=targets['hive']
+        Path(hosts['hive']['store']).mkdir(mode=0o700,exist_ok=True)
+        decision_base=[BIN,'--config',str(config),'--host','hive']
+        registered=subprocess.run(decision_base+['boards','seat','register','--session',decision_session,'--block',seat_block,'--owner','operator'],env=private_env,capture_output=True,text=True,timeout=10)
+        self.assertEqual(registered.returncode,0,registered.stdout+registered.stderr)
+        card=self.root/'decision.json'
+        card.write_text(json.dumps(dict(id='board-choice',title='Board decision',ask='Pick the release time?',context='Disposable board check',options=[dict(label='Now',gain='Available',lose='Interrupts'),dict(label='Later',gain='Preserves work',lose='Delay')],recommend='Later')))
+        asked=subprocess.run(decision_base+['ask','--session',decision_session,'--block',seat_block,'--from','worker','--card-file',str(card)],env=dict(private_env,REX_SESSION=decision_session,REX_BLOCK=asker_block),capture_output=True,text=True,check=True,timeout=10)
+        self.assertFalse(json.loads(asked.stdout)['terminal_input_attempted'])
         snapshot=subprocess.run([BIN,'board','--config',str(config),'--json'],env=private_env,capture_output=True,text=True,timeout=20)
         self.assertEqual(snapshot.returncode,0,snapshot.stderr)
         data=json.loads(snapshot.stdout)
@@ -476,11 +503,20 @@ class BoardTest(unittest.TestCase):
                        env=dict(os.environ,PATH=os.path.dirname(rex)+os.pathsep+os.environ.get('PATH','')))  # surfaces close needs rex on PATH
         # The normal entrypoint must start the integrated feed, receive vitals,
         # and reap its foreground feed children when the board exits.
-        live=Pane(self.root,fixture=None,config=config)
+        live=Pane(self.root,fixture=None,config=config,extra_env=dict(TEEREX_ASK_STATE_DIR=str(self.root/'asks')))
         self.addCleanup(live.close)
         live.until(lambda:b'net  ' in live.output,seconds=8)
         self.assertIn('LIVE',live.view())
         live.key(b'm');live.until(lambda:'m5  LIVE' in live.view(),seconds=5)
+        live.key(b'm')
+        live.until(lambda:'◇ 1' in live.view(),seconds=10)
+        self.assertNotIn('Pick the release time?',live.view())
+        live.key(b'd');live.until(lambda:'Pick the release time?' in live.view())
+        live.key(b'2');live.until(lambda:b'Answer recorded' in live.output,seconds=10)
+        self.assertIn('◇ 0',live.view())
+        history=subprocess.run(decision_base+['boards','state','inspect'],env=private_env,capture_output=True,text=True,check=True,timeout=10)
+        resolutions=[r for seat in json.loads(history.stdout)['state']['seats'] for r in seat['records'] if r['kind']=='resolution']
+        self.assertEqual(resolutions[-1]['body'],dict(id='board-choice',answer='Later'))
         processes={int(pid):int(ppid) for pid,ppid in (line.split() for line in subprocess.check_output(['ps','-axo','pid=,ppid='],text=True).splitlines())}
         descendants={live.proc.pid}
         for _ in range(10):
@@ -617,7 +653,7 @@ class BoardTest(unittest.TestCase):
         result=subprocess.run([BIN,'board','--replay',str(path),'--once'],env=dict(os.environ,TEEREX_CALL_LOG_DIR=str(self.root/'calls')),capture_output=True,text=True)
         self.assertEqual(result.returncode,0,result.stderr)
         self.assertIn('No agents working',result.stdout)
-        self.assertNotIn('Which sound',result.stdout)
+        self.assertNotIn('Choose a sound',result.stdout)
 
 
 if __name__=='__main__': unittest.main()

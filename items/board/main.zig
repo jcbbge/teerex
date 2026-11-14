@@ -14,7 +14,7 @@ const usage =
     \\Feed: teerex board feed --help
     \\Replay is JSONL v1; EOF holds the final frame, q exits. --once prints it and exits.
     \\Keys: j/k or arrows select; Enter jump; Space scratchpad; m machine;
-    \\      ? keys; q quit. Mouse selects; double-click jumps; wheel scrolls.
+    \\      d decisions; ? keys; q quit. Mouse selects; double-click jumps; wheel scrolls.
     \\Uses ANSI theme slots, queries contrast, and uses kitty charts when supported.
     \\NO_COLOR disables colour and graphics. --no-graphics forces Unicode marks.
     \\--benchmark N measures N changed 60-column frames without terminal output.
@@ -68,6 +68,7 @@ const Host = struct {
     vitals: ?Parsed = null,
     reachable: ?bool = null,
     held: ?Parsed = null,
+    decisions: ?Parsed = null,
     history: [48]f64 = @splat(0),
     count: usize = 0,
 };
@@ -80,10 +81,10 @@ const Model = struct {
     replay: bool = false,
     ended: bool = false,
     invalid: usize = 0,
-    attention: [2]bool = @splat(false),
     fn deinit(self: *Model) void {
         for (&self.hosts) |*h| if (h.vitals) |*v| v.deinit();
         for (&self.hosts) |*h| if (h.held) |*v| v.deinit();
+        for (&self.hosts) |*h| if (h.decisions) |*v| v.deinit();
         for (self.agents.items) |*v| v.deinit();
         for (self.stream.items) |*v| v.deinit();
         self.agents.deinit(self.allocator);
@@ -133,13 +134,20 @@ const Model = struct {
             if (self.hosts[host].held) |*old| old.deinit();
             self.hosts[host].held = parsed;
             retained = true;
+        } else if (eq(kind, "decisions")) {
+            if (get(v, "available") != .bool or get(v, "decisions") != .array) {
+                self.invalid += 1;
+                return false;
+            }
+            if (self.hosts[host].decisions) |*old| old.deinit();
+            self.hosts[host].decisions = parsed;
+            retained = true;
         } else if (eq(kind, "agent")) {
             const id = text(v, "id");
             if (id.len == 0 or id.len > 256) return false;
             const state = text(v, "state");
             for (self.agents.items, 0..) |*old, i| {
                 if (eq(text(old.value, "id"), id) and eq(text(old.value, "host"), name)) {
-                    if (priority(v) < 2 and (priority(old.value) >= 2 or !eq(text(v, "question"), text(old.value, "question")))) self.attention[host] = true;
                     old.deinit();
                     if (eq(state, "gone")) {
                         _ = self.agents.orderedRemove(i);
@@ -152,7 +160,6 @@ const Model = struct {
             }
             if (!eq(state, "gone") and self.agents.items.len < 256) {
                 try self.agents.append(self.allocator, parsed);
-                if (priority(v) < 2) self.attention[host] = true;
                 retained = true;
             }
         } else if (eq(kind, "stream")) {
@@ -283,7 +290,8 @@ const UI = struct {
     rows: std.ArrayList(Value) = .empty,
     held_rows: std.ArrayList(Value) = .empty,
     hit: [256]?usize = @splat(null),
-    flash: bool = false,
+    decisions_open: bool = false,
+    decision_index: usize = 0,
     fn visible(self: *UI, model: *Model) !void {
         self.rows.clearRetainingCapacity();
         for (model.agents.items) |entry| if (eq(text(entry.value, "host"), model.hosts[self.host].name)) {
@@ -322,7 +330,9 @@ const UI = struct {
         const host = model.hosts[self.host];
         const inner = width -| 4;
         const clock: u64 = @intCast(@mod(@divTrunc(model.timestamp, 1000), 86400));
-        const title = try fmt(a, " {s}  {s}  {d:0>2}:{d:0>2} ", .{ host.name, if (model.replay) "REPLAY" else "LIVE", clock / 3600, clock / 60 % 60 });
+        const decisions = if (host.decisions) |d| arr(get(d.value, "decisions")) else &.{};
+        const decision_count = if (host.decisions != null and get(host.decisions.?.value, "available") == .bool and get(host.decisions.?.value, "available").bool) try fmt(a, "{d}", .{decisions.len}) else "?";
+        const title = try fmt(a, " {s}  {s}  {d:0>2}:{d:0>2}  ◇ {s} ", .{ host.name, if (model.replay) "REPLAY" else "LIVE", clock / 3600, clock / 60 % 60, decision_count });
         try add(&lines, a, try fmt(a, "╭{s}{s}╮", .{ title, try repeat(a, "─", (width -| 3) -| cells(title)) }), .lines);
         if (host.reachable == false) try add(&lines, a, "! Connection lost · showing last readings", .problem);
         if (host.vitals) |v| {
@@ -365,25 +375,16 @@ const UI = struct {
                 }
             }
         }
-        try self.section(&lines, a, "needs you", width);
-        if (waiting + errors == 0) try add(&lines, a, "All clear · nothing needs an answer", .secondary);
-        const available = height -| (lines.items.len + 7);
-        const limit = @max(1, available / 2);
+        try self.section(&lines, a, "working", width);
+        const available = height -| (lines.items.len + 5);
+        const limit = @max(1, available / 3);
         const agent_selected = @min(self.selected, self.rows.items.len -| 1);
         const first = if (agent_selected < limit) 0 else agent_selected - limit + 1;
         for (self.rows.items, 0..) |r, i| {
-            if (priority(r) > 1 or (i < first or i >= first + limit)) continue;
-            const question = if (text(r, "question").len > 0) text(r, "question") else if (priority(r) == 1) "Needs a look" else "Waiting for your answer";
-            try self.agentLine(&lines, a, model, r, i, question, inner, .problem);
+            if (i < first or i >= first + limit) continue;
+            try self.agentLine(&lines, a, model, r, i, if (text(r, "now").len > 0) text(r, "now") else "No Now line yet", inner, if (eq(text(r, "state"), "error")) .problem else .words);
         }
-        try self.section(&lines, a, "working", width);
-        var shown: usize = 0;
-        for (self.rows.items, 0..) |r, i| {
-            if (priority(r) < 2 or i < first or i >= first + limit) continue;
-            try self.agentLine(&lines, a, model, r, i, if (text(r, "now").len > 0) text(r, "now") else "No Now line yet", inner, if (priority(r) == 2) .words else .secondary);
-            shown += 1;
-        }
-        if (shown == 0) try add(&lines, a, "No agents working here", .secondary);
+        if (self.rows.items.len == 0) try add(&lines, a, "No agents working here", .secondary);
         if (self.rows.items.len > limit) try add(&lines, a, try fmt(a, "{d} more · arrows to browse", .{self.rows.items.len - limit}), .secondary);
         if (self.inline_pad and self.selected < self.rows.items.len) {
             const r = self.rows.items[self.selected];
@@ -392,19 +393,38 @@ const UI = struct {
             try self.machine(&lines, a, if (pad == .object) pad else r, r, inner);
             try add(&lines, a, try fmt(a, "{d}/{d} steps done", .{ integer(num(get(r, "done"))), integer(num(get(r, "total"))) }), .secondary);
         }
+        if (self.decisions_open) {
+            lines.shrinkRetainingCapacity(@min(lines.items.len, 1));
+            self.hit = @splat(null);
+            try self.section(&lines, a, "decisions", width);
+            if (self.decision_index >= decisions.len) self.decision_index = 0;
+            if (decisions.len > 0) {
+                const d = decisions[self.decision_index];
+                try add(&lines, a, text(d, "title"), .accent);
+                try add(&lines, a, text(d, "ask"), .words);
+                try add(&lines, a, text(d, "context"), .secondary);
+                for (arr(get(d, "options")), 1..) |option, i| {
+                    try add(&lines, a, try fmt(a, "{d}. {s}", .{ i, text(option, "label") }), .words);
+                    try add(&lines, a, try fmt(a, "+ {s}", .{text(option, "gain")}), .secondary);
+                    try add(&lines, a, try fmt(a, "− {s}", .{text(option, "lose")}), .secondary);
+                }
+                try add(&lines, a, try fmt(a, "Recommendation: {s}", .{text(d, "recommend")}), .secondary);
+                try add(&lines, a, "1–8 answer · j/k browse · d returns", .secondary);
+            } else try add(&lines, a, if (eq(decision_count, "?")) "Decision source unavailable · d returns" else "No open decisions · d returns", .secondary);
+        }
         if (self.help) {
             lines.shrinkRetainingCapacity(@min(lines.items.len, 2));
             self.hit = @splat(null);
             try add(&lines, a, "↑↓ / j k  select · Enter  jump to pane", .accent);
             try add(&lines, a, "Space  Now + progress · m  hive / m5", .words);
-            try add(&lines, a, "wheel  browse · q  quit", .words);
+            try add(&lines, a, "d  decisions · wheel  browse · q  quit", .words);
             try add(&lines, a, "Click selects · double-click jumps", .words);
         }
         if (model.invalid > 0) try add(&lines, a, try fmt(a, "! {d} unreadable events ignored", .{model.invalid}), .problem);
         if (self.status.len > 0) try add(&lines, a, self.status, .accent);
         if (model.ended and !model.replay) try add(&lines, a, "! Live feed stopped · q quits", .problem);
         // Keep keys anchored and never let the terminal's bottom-right cell scroll.
-        const footer = if (width < 55) "╰ ⏎ jump  ␣ pad  m host  ? ╯" else "╰ ⏎ jump  ␣ scratchpad  m machine  ? keys ╯";
+        const footer = if (width < 55) "╰ ⏎ jump  ␣ pad  d ◇  m host  ? ╯" else "╰ ⏎ jump  ␣ pad  d decisions  m host  ? ╯";
         if (lines.items.len >= height) lines.shrinkRetainingCapacity(height - 1);
         while (lines.items.len + 1 < height) try add(&lines, a, "", .words);
         try add(&lines, a, footer, .lines);
@@ -428,7 +448,7 @@ const UI = struct {
         const name = try clip(a, text(r, "name"), @max(6, @min(20, width -| (cells(progress) + 10))));
         const header = try fmt(a, "{s} {s}  {s}  {s}{s}", .{ if (selected) "►" else if (priority(r) == 0) "●" else if (priority(r) == 1) "!" else "·", name, progress, age, if (eq(text(r, "placement"), "detached")) " detached" else "" });
         if (lines.items.len < 256) self.hit[lines.items.len] = index;
-        try lines.append(a, .{ .value = header, .role = row_role, .selected = priority(r) < 2 and self.flash });
+        try lines.append(a, .{ .value = header, .role = row_role, .selected = false });
         if (lines.items.len < 256) self.hit[lines.items.len] = index;
         const starter = try clip(a, text(r, "starter"), @min(16, width / 3));
         const step = get(r, "step_n");
@@ -832,11 +852,9 @@ pub fn run(_: A, args: []const []const u8) !u8 {
     var size = dimensions();
     var dirty = true;
     var kitty = false;
-    var flash_until: i64 = 0;
     var last_query: i64 = 0;
     var last_click: i64 = 0;
     var last_click_index: usize = 256;
-    var waiting_count: usize = 0;
     try query();
     while (!stopping) {
         const now = std.time.milliTimestamp();
@@ -846,32 +864,8 @@ pub fn run(_: A, args: []const []const u8) !u8 {
             dirty = true;
             try query();
         }
-        if (flash_until != 0 and now >= flash_until) {
-            flash_until = 0;
-            ui.flash = false;
-            dirty = true;
-        }
         if (dirty) {
             try ui.visible(&model);
-            const count = blk: {
-                var n: usize = 0;
-                for (ui.rows.items) |r| if (priority(r) < 2) {
-                    n += 1;
-                };
-                break :blk n;
-            };
-            if (model.attention[ui.host] and count > 0) {
-                ui.flash = true;
-                flash_until = now + 180;
-            }
-            model.attention[ui.host] = false;
-            var total_waiting: usize = 0;
-            for (model.agents.items) |entry| if (priority(entry.value) < 2) {
-                total_waiting += 1;
-            };
-            if (total_waiting > 0 and waiting_count == 0) try std.fs.File.stdout().writeAll(ESC ++ "]7501;state=blocked:id=teerex/board:app=teerex-board" ++ ESC ++ "\\");
-            if (total_waiting == 0 and waiting_count > 0) try std.fs.File.stdout().writeAll(ESC ++ "]7501;state=working:id=teerex/board:app=teerex-board" ++ ESC ++ "\\");
-            waiting_count = total_waiting;
             // Reuse only the last frame's scratch storage; no event history.
             _ = frame_arena.reset(.retain_capacity);
             const a = frame_arena.allocator();
@@ -887,8 +881,8 @@ pub fn run(_: A, args: []const []const u8) !u8 {
             dirty = false;
         }
         var fds = [_]p.pollfd{ .{ .fd = 0, .events = p.POLL.IN, .revents = 0 }, .{ .fd = if (model.ended) -1 else fd, .events = p.POLL.IN, .revents = 0 }, .{ .fd = signal_pipe[0], .events = p.POLL.IN, .revents = 0 } };
-        // The only deadline is a one-shot attention flash. At rest, poll sleeps indefinitely.
-        _ = try p.poll(&fds, if (flash_until > now) @intCast(flash_until - now) else -1);
+        // At rest, poll sleeps indefinitely.
+        _ = try p.poll(&fds, -1);
         if (fds[2].revents & p.POLL.IN != 0) {
             var signals: [64]u8 = undefined;
             _ = p.read(signal_pipe[0], &signals) catch 0;
@@ -988,6 +982,37 @@ pub fn run(_: A, args: []const []const u8) !u8 {
                 }
                 const key = input[0];
                 consumed += 1;
+                if (ui.decisions_open and key >= '1' and key <= '8') {
+                    if (model.hosts[ui.host].decisions) |*packet| {
+                        const list = packet.value.object.getPtr("decisions").?;
+                        if (ui.decision_index < list.array.items.len) {
+                            const d = list.array.items[ui.decision_index];
+                            const choices = arr(get(d, "options"));
+                            const choice: usize = key - '1';
+                            if (choice < choices.len) {
+                                if (model.replay) {
+                                    ui.status = "Replay · answer not sent";
+                                } else {
+                                    const target = get(d, "target");
+                                    const result = try std.process.Child.run(.{ .allocator = allocator, .argv = &.{ self, "--config", opts.config, "--host", model.hosts[ui.host].name, "ask", "--store", text(d, "store"), "--session", text(target, "session_id"), "--block", text(target, "block_id"), "--from", "operator", "--resolve", text(d, "id"), "--answer", text(choices[choice], "label") }, .max_output_bytes = 262144 });
+                                    defer allocator.free(result.stdout);
+                                    defer allocator.free(result.stderr);
+                                    if (result.term == .Exited and result.term.Exited == 0) {
+                                        _ = list.array.orderedRemove(ui.decision_index);
+                                        ui.status = "Answer recorded";
+                                    } else ui.status = "Answer not confirmed · inspect decision history";
+                                }
+                            }
+                        }
+                    }
+                    dirty = true;
+                    continue;
+                }
+                if (ui.decisions_open and (key == 'j' or key == 'k')) {
+                    if (key == 'j') ui.decision_index += 1 else ui.decision_index -|= 1;
+                    dirty = true;
+                    continue;
+                }
                 switch (key) {
                     'q', 3, 4 => {
                         stopping = true;
@@ -999,6 +1024,11 @@ pub fn run(_: A, args: []const []const u8) !u8 {
                     },
                     'k' => {
                         if (ui.stream_focus) ui.stream_offset += 1 else ui.selected -|= 1;
+                        dirty = true;
+                    },
+                    'd' => {
+                        ui.decisions_open = !ui.decisions_open;
+                        ui.status = "";
                         dirty = true;
                     },
                     'm' => {

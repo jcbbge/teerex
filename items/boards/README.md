@@ -345,7 +345,7 @@ Acceptance: `python3 items/boards/test_friction.py -v` uses only private tempora
 logs and synthetic joined episodes. CI runs it on both Linux and macOS lanes.
 
 
-`ask` terminal delivery uses the send status options: a seat-labelled target gets `ask/<card id>` in blocked/question state with the question line; `--resolve` clears that same child record. Delivery receipts retain `status_record`. Status is best effort and does not replace the decision history or delivery acknowledgement.
+Explicit direct `ask` terminal delivery uses the send status options: a seat-labelled target gets `ask/<card id>` in blocked/question state with the question line; `--resolve` clears that same child record. Delivery receipts retain `status_record`. Status is best effort and does not replace the decision history or delivery acknowledgement.
 
 ## Compact fleet view
 
@@ -445,3 +445,5 @@ read-only inputs. Senders exceeding their rolling-hour share are amber, with no
 delivery restriction. JSON exposes `senders` totals, `messages_last_hour`,
 `share_per_hour`, `over_share`, `color`, plus `hours` rows. Named-host invocation
 reads that host's counts; it does not combine independent host logs.
+
+Stored `ask --store` cards are pull-only: they append to the existing inbox and track the asker without typing into the target or setting blocked status. The live board shows only a quiet decision count until `d` is invoked. Explicit `--deliver paste` retains deliberate direct delivery; cards without a store retain agent-to-agent guarded messaging. Resolution continues through the existing ask path.
