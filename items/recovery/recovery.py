@@ -18,9 +18,6 @@ import sys
 import time
 import uuid
 
-LIMIT = 1024 * 1024
-MAX_PANES = 128
-MAX_SESSIONS = 32
 ADDRESS_KEYS = {"host", "server", "session_id", "block_id"}
 LAUNCH_KEYS = {"launch_id", "name", "owner", "purpose", "review_at", "target", "starter", "report_to",
                "profile", "argv", "cwd", "harness", "resume_session_id", "store", "created_at", "phase",
@@ -95,14 +92,11 @@ def private_stat(fd, directory=False):
 def read_fd(fd):
     private_stat(fd)
     chunks = []
-    size = 0
     while True:
-        chunk = os.read(fd, min(65536, LIMIT + 1 - size))
+        chunk = os.read(fd, 65536)
         if not chunk:
             break
         chunks.append(chunk)
-        size += len(chunk)
-        require(size <= LIMIT, "private_file_exceeds_1MiB")
     try:
         return json.loads(b"".join(chunks))
     except (ValueError, UnicodeError):
@@ -141,7 +135,6 @@ class Store:
 
     def create(self, name, value):
         data = encoded(value) + b"\n"
-        require(len(data) <= LIMIT, "state_exceeds_1MiB")
         fd = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=self.fd)
         try:
             private_stat(fd)
@@ -159,7 +152,6 @@ class Store:
         try:
             private_stat(fd)
             data = encoded(record) + b"\n"
-            require(os.fstat(fd).st_size + len(data) <= LIMIT, "restore_journal_exceeds_1MiB")
             with os.fdopen(fd, "wb", closefd=False) as stream:
                 stream.write(data)
                 stream.flush()
@@ -168,7 +160,7 @@ class Store:
             os.close(fd)
 
 
-def run_process(argv, timeout, cap=LIMIT):
+def run_process(argv, timeout, cap=None):
     """One attempt, bounded stdout/stderr and deadline; no stderr content in receipts."""
     env = dict(os.environ)
     for name in ("REX_SERVER", "REX_SESSION", "REX_BLOCK", "REX_CLIENT"):
@@ -192,7 +184,7 @@ def run_process(argv, timeout, cap=LIMIT):
                         selector.unregister(event.fileobj)
                     elif event.data == "out":
                         output.extend(data)
-                        require(len(output) <= cap, "transport_output_exceeds_bound_result_may_be_unknown")
+                        require(cap is None or len(output) <= cap, "transport_output_exceeds_bound_result_may_be_unknown")
                     else:
                         diagnostic_size += len(data)
                         require(diagnostic_size <= 65536, "transport_diagnostics_exceed_bound_result_may_be_unknown")
@@ -289,11 +281,9 @@ def load_metadata(args, server):
                 private_stat(lock)
                 fcntl.flock(lock, fcntl.LOCK_SH | fcntl.LOCK_NB)
                 names = sorted(n for n in os.listdir(registry.fd) if n.startswith("agents-") and n.endswith(".json"))
-                require(len(names) <= MAX_PANES, "agent_registry_exceeds_128_records")
                 entries.extend(registry.read(name) for name in names)
             finally:
                 os.close(lock)
-    require(len(entries) <= MAX_PANES, "metadata_exceeds_128_records")
     result = {}
     for entry in entries:
         clean = sanitize_launch(entry, server)
@@ -306,7 +296,7 @@ def snapshot(rex, args):
     source = rex.identity()
     launches = load_metadata(args, rex.server)
     sessions = rex.call("session.list").get("sessions") or []
-    require(isinstance(sessions, list) and len(sessions) <= MAX_SESSIONS, "snapshot_exceeds_32_sessions")
+    require(isinstance(sessions, list), "invalid_session_inventory")
     result = {"schema_version": 1, "kind": "recovery_snapshot", "captured_at_unix_ms": int(time.time() * 1000),
               "source": source, "sessions": [], "boards": None, "omissions": dict(OMISSIONS), "metadata_provenance": "explicit_private_caller_records_not_harness_verified",
               "consistency": "per_session_layout_double_checked; process_and_cross_session_state_not_atomic"}
@@ -325,11 +315,9 @@ def snapshot(rex, args):
             if t["server"] == rex.server:
                 require(key(t) not in targets or targets[key(t)] == t, "conflicting_board_host_alias_for_same_pane")
                 targets[key(t)] = t
-        require(len(targets) <= MAX_PANES, "boards_targets_exceed_128")
         # Only routing references, not inbox bodies/decision content, are copied.
         result["boards"] = {"store": args.board_store, "generation": state["generation"], "targets": list(targets.values()), "seats": seats,
                             "messages_copied": False, "provenance": "explicit_boards_state_inspect_report"}
-    count = 0
     used = set()
     for s in sessions:
         sid = s["session_id"]
@@ -337,8 +325,6 @@ def snapshot(rex, args):
         view = rex.call("session.view", {"session_id": sid})
         blocks = rex.call("session.list_blocks", {"session_id": sid}).get("blocks") or []
         require(view.get("session_id") == sid, "session_view_identity_mismatch")
-        count += len(blocks)
-        require(count <= MAX_PANES, "snapshot_exceeds_128_panes")
         panes = []
         for b in blocks:
             require(full_id(b.get("block_id"), "block"), "invalid_block_id")
@@ -390,7 +376,6 @@ def snapshot(rex, args):
     declared_addresses(result)
     require((rex.call("session.list").get("sessions") or []) == sessions, "session_inventory_changed_no_retry")
     require(rex.identity() == source, "server_identity_changed_no_retry")
-    require(len(encoded(result)) < LIMIT, "snapshot_exceeds_1MiB")
     with contextlib.closing(Store(args.directory)) as store:
         store.create("snapshot.json", result)
     return result
@@ -399,9 +384,8 @@ def snapshot(rex, args):
 def load_snapshot(store):
     value = store.read("snapshot.json")
     require(isinstance(value, dict) and value.get("schema_version") == 1 and value.get("kind") == "recovery_snapshot", "unsupported_snapshot_schema")
-    require(isinstance(value.get("sessions"), list) and len(value["sessions"]) <= MAX_SESSIONS, "invalid_snapshot_sessions")
+    require(isinstance(value.get("sessions"), list), "invalid_snapshot_sessions")
     require(isinstance(value.get("source"), dict) and value["source"].get("version", {}).get("api_revision") == 13, "snapshot_requires_API13_source")
-    total = 0
     session_ids = set()
     block_ids = set()
     for s in value["sessions"]:
@@ -416,8 +400,6 @@ def load_snapshot(store):
             if p.get("launch"):
                 p["launch"] = sanitize_launch(p["launch"], value["source"]["server"])
                 require(p["launch"]["target"]["session_id"] == sid and p["launch"]["target"]["block_id"] == bid, "snapshot_metadata_pane_mismatch")
-            total += 1
-    require(total <= MAX_PANES, "snapshot_exceeds_128_panes")
     boards = value.get("boards")
     if boards is not None:
         require(isinstance(boards, dict) and isinstance(boards.get("targets"), list) and isinstance(boards.get("seats"), list), "invalid_snapshot_boards_references")
@@ -720,14 +702,11 @@ def reconcile(rex, args):
             fcntl.flock(lock, (fcntl.LOCK_EX if args.apply else fcntl.LOCK_SH) | fcntl.LOCK_NB)
             source = rex.identity()
             sessions = rex.call("session.list").get("sessions") or []
-            require(len(sessions) <= MAX_SESSIONS, "reconcile_session_bound")
             present = set()
             for session in sessions:
                 for block in rex.call("session.list_blocks", {"session_id": session["session_id"]}).get("blocks") or []:
                     present.add((session["session_id"], block["block_id"]))
-                    require(len(present) <= MAX_PANES, "reconcile_pane_bound")
             names = sorted(n for n in os.listdir(registry.fd) if re.fullmatch(r"agents-[0-9a-f]{32}\.json", n))
-            require(len(names) <= MAX_PANES, "reconcile_record_bound")
             rows, files = [], []
             for name in names:
                 state = registry.read(name)
@@ -743,8 +722,8 @@ def reconcile(rex, args):
                         fd = os.open(n, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=registry.fd)
                         try:
                             private_stat(fd)
-                            require(os.fstat(fd).st_size <= LIMIT, "reconcile_file_bound")
-                            raw = os.read(fd, LIMIT + 1)
+                            with os.fdopen(os.dup(fd), "rb") as stream:
+                                raw = stream.read()
                             files.append(dict(name=n, sha256=hashlib.sha256(raw).hexdigest()))
                         finally:
                             os.close(fd)
@@ -868,11 +847,9 @@ def main(argv=None):
                 require(isinstance(installed, dict), "invalid_installed_Rex_version")
                 inventory = []
                 sessions = rex.call("session.list").get("sessions") or []
-                require(len(sessions) <= MAX_SESSIONS, "update_exceeds_32_sessions")
                 for s in sessions:
                     for b in rex.call("session.list_blocks", {"session_id": s["session_id"]}).get("blocks") or []:
                         inventory.append({"session_id": s["session_id"], **b})
-                        require(len(inventory) <= MAX_PANES, "update_exceeds_128_panes")
                 require(rex.identity(allow_older=True) == source, "server_identity_changed_during_update_inventory_no_retry")
                 running_commit = source["version"].get("commit")
                 installed_commit = installed.get("commit")

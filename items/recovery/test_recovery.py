@@ -29,7 +29,7 @@ class RecoveryTest(unittest.TestCase):
         self.store.mkdir(mode=0o700)
         self.socket = self.root / "rex.sock"
         self.base = [self.rex, "--autostart=false", "--server", "unix://" + str(self.socket), "--timeout", "3s"]
-        self.env = dict(os.environ, TEEREX_CLUTCH_DIR=str(self.root / "clutch"), PATH=str(Path(self.rex).parent) + os.pathsep + os.environ.get("PATH", ""),
+        self.env = dict(os.environ, HOME=str(self.root), TEEREX_CLUTCH_DIR=str(self.root / "clutch"), PATH=str(Path(self.rex).parent) + os.pathsep + os.environ.get("PATH", ""),
                         REX_SERVER="unix:///tmp/poison.sock", REX_SESSION="poison", REX_BLOCK="poison", REX_CLIENT="poison")
         self.server = None
         self.log = (self.root / "server.log").open("w")
@@ -84,6 +84,62 @@ class RecoveryTest(unittest.TestCase):
         result = subprocess.run(command + list(args), capture_output=True, text=True, env=self.env, timeout=60)
         self.assertEqual(result.returncode, code, result.stdout + result.stderr)
         return json.loads(result.stdout)
+
+    def test_snapshot_store_grows_past_old_byte_cap(self):
+        import runpy
+        api = runpy.run_path(str(SOURCE))
+        store = api["Store"](str(self.store))
+        try:
+            value = dict(history=["x" * 4096 for _ in range(300)])
+            store.create("large.json", value)
+            self.assertEqual(store.read("large.json"), value)
+            store.create("snapshot.json", dict(schema_version=1, kind="recovery_snapshot",
+                                              source=dict(version=dict(api_revision=13)), sessions=[], omissions=value))
+            self.assertEqual(self.invoke("inspect")["omissions"], value)
+            store.create("restore.jsonl", value)
+            store.journal(dict(event="finished"))
+            lines = (self.store / "restore.jsonl").read_text().splitlines()
+            self.assertEqual(json.loads(lines[0]), value)
+            self.assertEqual(json.loads(lines[1]), dict(event="finished"))
+            result = api["run_process"]([sys.executable, "-c", "import json; print(json.dumps('x' * 1200000))"], 10)
+            self.assertEqual(result, "x" * 1200000)
+        finally:
+            store.close()
+
+    def test_snapshot_exceeds_old_session_and_pane_counts(self):
+        entries = []
+        for n in range(33):
+            windows = [dict(window_label="capacity", layout=dict(block=dict(
+                flavor="com.superlogical.terminal.shell", label="pane",
+                options=dict(shell="none", command=["/bin/sleep", "120"])))) for _ in range(4)]
+            made = self.rpc("session.create", dict(label="capacity-" + str(n), initial_windows=windows))
+            sid = made["session_id"]
+            for block in self.rpc("session.list_blocks", dict(session_id=sid))["blocks"]:
+                entries.append(dict(target=dict(host="disposable", server="unix://" + str(self.socket),
+                                                session_id=sid, block_id=block["block_id"]),
+                                    argv=["/bin/sh", "-c", "exec sleep 120"], cwd=str(self.root), purpose="x" * 4000, owner="x" * 4000, profile="x" * 4000))
+        metadata = self.root / "large-metadata.json"
+        metadata.write_text(json.dumps(dict(schema_version=1, entries=entries)))
+        metadata.chmod(0o600)
+        saved = self.invoke("snapshot", "--metadata", str(metadata))
+        self.assertEqual((saved["sessions"], saved["panes"]), (33, 132))
+        self.assertGreater((self.store / "snapshot.json").stat().st_size, 1024 * 1024)
+        self.assertEqual(self.invoke("inspect")["panes"], 132)
+        self.restart()
+        plan = self.invoke("restore")
+        self.assertTrue(plan["can_apply"])
+        command = [BIN, "recovery", "restore", "--socket", str(self.socket), "--directory", str(self.store),
+                   "--apply", "--confirm", plan["confirmation"]]
+        result = subprocess.run(command, capture_output=True, text=True, env=self.env, timeout=180)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(json.loads(result.stdout)["mapped_panes"], 132)
+        sessions = self.rpc("session.list")["sessions"]
+        self.assertEqual(len(sessions), 33)
+        self.assertEqual(sum(len(self.rpc("session.list_blocks", dict(session_id=s["session_id"]))["blocks"])
+                             for s in sessions), 132)
+        remap = json.loads((self.store / "remap.json").read_text())
+        self.assertEqual(len(remap["mappings"]), 132)
+        self.assertEqual(len(remap["launches"]), 132)
 
     def test_reconcile_restart_read_only_confirmed_archive_and_lock(self):
         self.fixture()

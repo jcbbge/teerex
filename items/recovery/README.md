@@ -50,7 +50,7 @@ After a restart, preview against the explicitly selected **empty** server. Resto
 
 - Snapshot/store/metadata paths are absolute. Store/registry directory: owned by the invoking UID, exactly 0700. State/metadata files: owned regular files, exactly 0600, one hard link. Final symlinks are refused. Use trusted parent directories and a trusted local filesystem; this is not protection from a malicious same-UID process or a mutation lease.
 - `snapshot.json`, `restore.jsonl`, `remap.json` and `board-map.json` are never overwritten. Keep them off Git/public logs and back them up using your own private policy. No automatic retention/deletion is performed.
-- Maximum 32 sessions, 128 pane records, split depth 16, 1 MiB per private JSON/transport stdout/journal; argv at most 64 elements/16 KiB encoded and 4096 bytes per element; sanitized launch record at most 32 KiB. Stderr is consumed up to 64 KiB but not echoed in receipts.
+- Snapshots, inventories, private JSON, transport stdout and restore journals have no count or byte cap. Split depth 16; argv at most 64 elements/16 KiB encoded and 4096 bytes per element; sanitized launch record at most 32 KiB. Stderr is consumed up to 64 KiB but not echoed in receipts.
 - Rex requests/child invocations are bounded by `--timeout-ms` (100–60000, default 5000); the foreground native controller has a 15-minute outer bound. A deadline/uncertain ACK is not permission to retry. No background watcher or hidden agent is created.
 - The optional agent registry is read under its established `agents.lock`, a nonblocking shared advisory lock. Contention refuses without retry. Metadata is historical caller evidence, not proof a harness can resume.
 - Snapshot rechecks each session's layout, the session inventory and server identity without retries. Cwd/process/cross-session/board observations are not one atomic server-wide snapshot.
@@ -216,7 +216,7 @@ It re-observes the server and rehashes records and companion files under an
 exclusive nonblocking lock. A changed server, inventory/record plan or file
 refuses the old confirmation. Only absent-pane launch metadata is moved into
 `archive/reconcile-HASH/`, alongside the plan. Unknown/different-server records
-stay in place. Files must be bounded owned private regular files; symlinks refuse.
+stay in place. Files must be owned private regular files; symlinks refuse.
 No processes, jobs registrations, scratchpads or panes are changed; nothing is
 killed or relaunched and historical ACKs confer no new authority. Partial I/O
 failures retain the archive plan for inspection; never blindly retry an apply.

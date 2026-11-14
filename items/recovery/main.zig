@@ -6,7 +6,6 @@ const Output = struct {
     bytes: std.ArrayList(u8) = .empty,
 
     pub fn receive(self: *Output, bytes: []const u8) !void {
-        if (bytes.len > 1048576 - self.bytes.items.len) return error.RecoveryOutputExceedsBound;
         try self.bytes.appendSlice(self.allocator, bytes);
     }
 };
