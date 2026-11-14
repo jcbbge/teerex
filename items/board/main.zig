@@ -1025,8 +1025,18 @@ fn activate(allocator: A, self: []const u8, config: []const u8, model: *Model, u
     return if (result.term == .Exited and result.term.Exited == 0) "Opened held work" else "Held work unavailable";
 }
 
-fn scratch(allocator: A, self: []const u8, config: []const u8, row: Value) !?Parsed {
-    const result = try std.process.Child.run(.{ .allocator = allocator, .argv = &.{ self, "--config", config, "--host", text(row, "host"), "scratch", "show", "--session", text(row, "session"), "--block", text(row, "block"), "--json" }, .max_output_bytes = 262144 });
+fn scratch(allocator: A, _: []const u8, config: []const u8, row: Value) !?Parsed {
+    const bridge =
+        \\import os, sys, shlex
+        \\scope = {"__name__": "teerex_board_scratch"}
+        \\exec(sys.argv[1], scope)
+        \\host = scope["resolve_host"](sys.argv[2], sys.argv[3])
+        \\argv = [host["home"] + "/.local/bin/scratch", "show", "--session", sys.argv[4], "--block", sys.argv[5], "--json"]
+        \\if host["transport"] == "ssh":
+        \\    argv = [*scope["ssh_argv"](host), shlex.join(argv)]
+        \\os.execvp(argv[0], argv)
+    ;
+    const result = try std.process.Child.run(.{ .allocator = allocator, .argv = &.{ "python3", "-I", "-c", bridge, @import("fleet_sources").resolver, config, text(row, "host"), text(row, "session"), text(row, "block") }, .max_output_bytes = 262144 });
     defer allocator.free(result.stdout);
     defer allocator.free(result.stderr);
     if (result.term != .Exited or result.term.Exited != 0) return null;

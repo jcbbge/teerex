@@ -16,7 +16,6 @@ const usage =
     \\  seat register|resolve|inspect|clear|panes      Exact-address operator seat
     \\  inbox append|inspect|clear                    Private retained messages
     \\  ask                                          Complete typed decisions or explicit resolution
-    \\  scratch init|now|todo|done|show|path|watch|hook|hook-settings  Per-pane working scratchpad
     \\  records init|new|park|add|attach|set|close|show|resume|navigate|list|lint|export|forget|forget-scratchpad  Private evidence and reasoning
     \\  recovery snapshot|inspect|restore|update|reconcile      Private snapshots and reviewed restoration
     \\  snapshot|restore|update                       Recovery aliases; update is manual handoff
@@ -34,7 +33,7 @@ const usage =
     \\Where: configured command host; paths belong there, never silently uploaded.
     \\Why: report actual activity/results and unknowns, not infer readiness or completion.
     \\How: explicit config/host or socket/full IDs; no retries, fallback or autostart.
-    \\Python3.9+ is required for targets, boards, recovery, records, scratch and fleet.
+    \\Python3.9+ is required for targets, boards, recovery, records and fleet.
     \\Guarded Rex transports require Python3.9+ for seat and creator authority. SSH trust/key are explicit.
     \\Native call history adds no runtime dependency; missing end records stay unknown.
     \\Personal install/restart/close/config actions need their own authorization.
@@ -239,7 +238,6 @@ fn run(allocator: std.mem.Allocator) !void {
     if (std.mem.eql(u8, command, "send")) finish(allocator, try send(allocator, rest));
     if (std.mem.eql(u8, command, "boards")) finish(allocator, try @import("rex_boards").run(allocator, rest));
     if (std.mem.eql(u8, command, "seat") or std.mem.eql(u8, command, "inbox") or std.mem.eql(u8, command, "ask") or std.mem.eql(u8, command, "fleet")) finish(allocator, try @import("rex_boards").run(allocator, args));
-    if (std.mem.eql(u8, command, "scratch")) finish(allocator, try @import("rex_scratch").run(allocator, rest));
     if (eq(command, "observe") or eq(command, "compare") or eq(command, "watch")) finish(allocator, try @import("rex_observe").runObservations(allocator, args));
     std.debug.print("teerex: unknown command {s}; see teerex --help\n", .{command});
     finish(allocator, 2);

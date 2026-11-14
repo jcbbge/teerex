@@ -22,6 +22,12 @@ class PythonHelpTest(unittest.TestCase):
         self.assertNotIn("docs/alpha5.md", result.stdout)
         self.assertIn("seat register|resolve|inspect|clear", result.stdout)
 
+    def test_scratch_command_is_unknown(self):
+        result = subprocess.run([BIN, "scratch", "--help"], env=isolated_environment(),
+                                capture_output=True, text=True, timeout=10)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("unknown command", (result.stdout + result.stderr).lower())
+
     def test_agents_command_is_unknown(self):
         result = subprocess.run([BIN, "agents"], env=isolated_environment(),
                                 capture_output=True, text=True, timeout=10)
@@ -63,7 +69,6 @@ class PythonHelpTest(unittest.TestCase):
             ("boards", "friction"), ("ask",),
             ("fleet", "install"), ("fleet", "rollback"),
         ]
-        commands += [("scratch", op) for op in ("init", "now", "todo", "done", "show", "path", "watch", "hook", "hook-settings")]
         commands += [("records", op) for op in (
             "init", "new", "park", "add", "attach", "set", "close", "show",
             "resume", "navigate", "list", "lint", "export", "forget", "pin",

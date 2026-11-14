@@ -41,7 +41,7 @@ retain the last readings with an explicit unavailable notice.
 |---|---|
 | Up/Down, j/k | Select a live agent |
 | Enter | `teerex --config … --host ROW_HOST surfaces focus` on that exact pane |
-| Space | Expand ordered Done → Now → To-do steps with the current step marked; inline scratchpad via the selected host's `scratch show --json`; the event's Now/progress remain available if the read fails |
+| Space | Expand ordered Done → Now → To-do steps with the current step marked; inline scratchpad via the selected host's rexconfig `scratch show --json` using the configured named-host transport; the event's Now/progress remain available if the read fails |
 | d | Pull decisions; 1–8 answers; d returns |
 | 1–5 | Agent, project, waiting graph, cost, machine lenses |
 | m | Switch hive / M5 vitals and held work |

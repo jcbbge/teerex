@@ -22,7 +22,8 @@ pub fn build(b: *std.Build) void {
         else
             source);
     }
-    exe.root_module.addOptions("fleet_sources", fleet_sources);
+    const fleet_module = fleet_sources.createModule();
+    exe.root_module.addImport("fleet_sources", fleet_module);
     const observation = b.createModule(.{
         .root_source_file = b.path("items/observe/main.zig"),
         .target = target,
@@ -101,15 +102,13 @@ pub fn build(b: *std.Build) void {
     recovery.addImport("pane_guard", pane_guard);
     exe.root_module.addImport("rex_recovery", recovery);
     recovery.addImport("rex_boards", boards);
-    const scratch = b.createModule(.{ .root_source_file = b.path("items/scratch/main.zig"), .target = target, .optimize = optimize });
-    exe.root_module.addImport("rex_scratch", scratch);
-    scratch.addImport("pane_guard", pane_guard);
-    scratch.addImport("rex_boards", boards);
     const records = b.createModule(.{ .root_source_file = b.path("items/records/main.zig"), .target = target, .optimize = optimize });
     records.addImport("supervised_child", child);
     records.addImport("rex_boards", boards);
     exe.root_module.addImport("rex_records", records);
-    exe.root_module.addImport("rex_board", b.createModule(.{ .root_source_file = b.path("items/board/main.zig"), .target = target, .optimize = optimize }));
+    const board = b.createModule(.{ .root_source_file = b.path("items/board/main.zig"), .target = target, .optimize = optimize });
+    board.addImport("fleet_sources", fleet_module);
+    exe.root_module.addImport("rex_board", board);
     exe.root_module.addImport("rex_boardfeed", b.createModule(.{ .root_source_file = b.path("items/boardfeed/main.zig"), .target = target, .optimize = optimize }));
     b.installArtifact(exe);
 

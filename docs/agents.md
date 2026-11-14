@@ -23,11 +23,11 @@ Before work, copy every item from the brief into the scratchpad, one per command
 then confirm the numbered list to your starter. Keep at most one Now step:
 
 ```sh
-teerex scratch todo "First item from the brief"
-teerex scratch now "First item from the brief"
-teerex scratch done --proof "check command and observed result"
-teerex scratch flag "what is stuck; what you tried; what you need"
-teerex scratch now "Pending step" --waiting "on what" --check 10m
+scratch todo "First item from the brief"
+scratch now "First item from the brief"
+scratch done --proof "check command and observed result"
+scratch flag "what is stuck; what you tried; what you need"
+scratch now "Pending step" --waiting "on what" --check 10m
 ```
 
 These commands use your pane identity and update `AGENT_SCRATCHPAD`. Managed
@@ -38,11 +38,7 @@ dependency and a future check; check again yourself when it is due.
 
 Every turn ends declared: all steps done with To-do empty, blocked with a flag,
 or waiting with a future Check. A finished turn is idle, not process death.
-The Claude Stop hook blocks the first stale scratchpad stop and asks you to
-update Now/To-do/Done; a second stop records the stale exception. Codex notify
-runs after the turn and sends a reminder instead of vetoing it. Managed Pi
-continues settlement once. See the [scratch contract](../items/scratch/README.md)
-and the harness hooks supplied by rexconfig.
+The `scratch` command and `agent-hook` harness hooks are supplied by rexconfig.
 
 ## Find the seat
 

@@ -545,6 +545,11 @@ class BoardTest(unittest.TestCase):
         self.assertEqual(result.returncode,1)
         self.assertIn(b'2 unreadable events',result.stdout)
     def test_jump_uses_selected_named_server_and_reads_scratchpad(self):
+        scratch = shutil.which('scratch')
+        self.assertIsNotNone(scratch, 'rexconfig scratch must be installed')
+        bindir = self.root / '.local/bin'
+        bindir.mkdir(parents=True)
+        (bindir / 'scratch').symlink_to(scratch)
         rex=str(Path(os.environ.get('REX_BIN') or shutil.which('rex') or 'MISSING_REX').resolve())
         hosts={}
         events=[json.loads(line) for line in FIXTURE.read_text().splitlines()]

@@ -69,13 +69,6 @@ class RefusalNextTest(unittest.TestCase):
 
 
 
-    def test_scratch(self):
-        self.refusal('scratch', 'show', expected='teerex scratch init')
-        self.refusal('scratch', 'path', '--session', 'bad', expected='rex whoami --json')
-        self.refusal('scratch', 'now', expected='teerex scratch now --help')
-        self.refusal('scratch', 'palette', expected='teerex scratch palette --help')
-        self.refusal('scratch', 'palette', '--file', 'relative', '--socket', '/absent.sock', expected='teerex scratch palette --help')
-
     def test_surfaces(self):
         self.refusal('surfaces', 'open', '--not-an-option', expected='teerex surfaces --help')
         self.refusal('surfaces', 'resolve', '--socket', self.root / 'absent.sock',
