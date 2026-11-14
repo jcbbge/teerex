@@ -76,7 +76,7 @@ class GuardTest(_fixtures.SurfacesTest):
         self.assertIn(reason, output)
 
     def test_large_creator_store_guarded_round_trip(self):
-        directory = Path(self.env['XDG_STATE_HOME']) / 'teerex/pane-creators' / hashlib.sha256(('unix://' + str(self.socket)).encode()).hexdigest()
+        directory = Path(self.env['XDG_STATE_HOME']) / 'teerex/pane-creators' / hashlib.sha256(('unix://' + str(self.socket.resolve())).encode()).hexdigest()
         directory.mkdir(mode=0o700, parents=True, exist_ok=True)
         def seed():
             for index in range(3000):
