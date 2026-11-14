@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 import platform
 import pty
+import re
 import select
 import time
 import tty
@@ -88,7 +89,13 @@ class TargetsTest(unittest.TestCase):
 
     def test_version_and_explicit_resolution(self):
         version = self.call("--version")
-        self.assertEqual((version.returncode, version.stdout, version.stderr), (0, "teerex 0.1.0-alpha.6\n", ""))
+        expected = os.environ.get("TEEREX_BUILD_VERSION")
+        if expected is None:
+            root = Path(__file__).resolve().parents[1]
+            base = re.search(r'const base = "([^"]+)";', (root / "build.zig").read_text()).group(1)
+            revision = subprocess.check_output(["git", "rev-parse", "--short=12", "HEAD"], cwd=root, text=True).strip()
+            expected = base + ".main." + revision
+        self.assertEqual((version.returncode, version.stdout, version.stderr), (0, "teerex " + expected + "\n", ""))
         resolved = self.call("targets", "resolve", "--config", str(self.config), "--host", "hive")
         self.assertEqual(resolved.returncode, 0, resolved.stderr)
         result = json.loads(resolved.stdout)
@@ -224,7 +231,8 @@ class TargetsTest(unittest.TestCase):
     def test_embedded_fleet_installs_exact_native_bytes_without_source_tree(self):
         # The installed CLI must carry its reviewed support files, not locate this checkout.
         mac = platform.system() == "Darwin"
-        tag = "v0.1.0-alpha.6"
+        version = subprocess.check_output([str(BIN), "--version"], text=True)
+        tag = "v" + version.strip().removeprefix("teerex ")
         archive_platform = "aarch64-macos" if mac else "x86_64-linux"
         assets = self.root / "assets"
         assets.mkdir()
@@ -253,7 +261,7 @@ class TargetsTest(unittest.TestCase):
         self.assertTrue(applied["ok"])
         installed = prefix / "current/teerex"
         self.assertEqual(installed.read_bytes(), BIN.read_bytes())
-        self.assertEqual(subprocess.check_output([str(installed), "--version"], text=True), "teerex 0.1.0-alpha.6\n")
+        self.assertEqual(subprocess.check_output([str(installed), "--version"], text=True), version)
         # Executed away from source, this re-plans using only its embedded support bytes.
         self.assertTrue(invoke(installed)["ok"])
         self.assertFalse((self.root / "MUST_NOT_RUN").exists())
