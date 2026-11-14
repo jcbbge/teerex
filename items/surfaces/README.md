@@ -280,10 +280,10 @@ without joining the session itself. A non-empty session refuses with
 `failure_reason=session_has_panes`; an attached client refuses with
 `failure_reason=session_has_attached_clients`. Both return exit 1 and a single
 JSON line without requesting closure. If every attached client has
-`info.kind=app`, only the explicit operator path described above may close the
-empty session; without it the same failure reason includes an operator-only
-explanation. Any non-app or unreported client kind still refuses, including
-with `--operator`. The registered seat's session always refuses destruction,
+`info.kind=app`, the recorded session creator or the explicit operator path
+may close the empty session. A bystander refuses naming the recorded creator;
+a session without a creation receipt remains operator-only. Any non-app or
+unreported client kind still refuses, including with `--operator`. The registered seat's session always refuses destruction,
 including for the operator. Unavailable evidence also refuses.
 Success returns exit 0, `outcome=session_closed_and_absent`,
 `session_absence_verified=true`, and the resolved session ID. Client/block

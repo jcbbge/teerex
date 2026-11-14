@@ -141,41 +141,61 @@ class GuardTest(_fixtures.SurfacesTest):
         self.assertEqual(self.cli(*command).returncode, 0)
 
     def test_session_close_client_kind_decisions(self):
-        # client.list's documented info shapes; Rex exposes no public method
-        # for a CLI connection to identify itself as an app. Keep the real
-        # session inventory, pane checks, guard and destroy/readback calls.
+        # Simulate only client.list shapes: inventory, receipts, guard, destroy
+        # and absence readback still run against the disposable Rex server.
         import pane_guard
         from unittest.mock import patch
         source = (ROOT / 'items/surfaces/surfaces.lua').read_text()
         for kinds in (['app'], ['app', 'app'], ['cli'], ['app', 'cli'],
                       ['agent'], ['other'], ['future'], [None]):
-            for operator in (False, True):
-                with self.subTest(kinds=kinds, operator=operator):
-                    sid = self.rpc('session.create', {'label': 'client decision'})['session_id']
+            for actor in ('creator', 'bystander', 'unrecorded', 'operator', 'seat', 'pane'):
+                with self.subTest(kinds=kinds, actor=actor):
+                    made = self.cli('surfaces', 'session', 'ensure', '--socket', str(self.socket),
+                                    '--label', 'client decision ' + str(time.monotonic_ns()))
+                    self.assertEqual(made.returncode, 0, made.stdout + made.stderr)
+                    sid = json.loads(made.stdout)['resolved']['session_id']
+                    if actor == 'unrecorded':
+                        self.remove_creator(sid)
+                    if actor == 'pane':
+                        opened = self.cli('surfaces', 'open', '--socket', str(self.socket),
+                                          '--session', sid, '--layout', 'tab', '--label', 'present pane', '--', '/bin/sh', '-c', 'sleep 60')
+                        self.assertEqual(opened.returncode, 0, opened.stdout + opened.stderr)
                     with patch.dict(os.environ, self.env, clear=True):
                         policy = pane_guard.snapshot('unix://' + str(self.socket))
-                    policy['operator'] = operator
+                    policy['operator'] = actor == 'operator'
+                    if actor == 'bystander':
+                        policy['actor']['block_id'] = 'block:00000000-0000-0000-0000-000000000001'
+                    if actor == 'seat':
+                        policy['seats'] = [dict(session_id=sid)]
                     clients = [dict(client_id='client:fixture-' + str(n),
                                     info=dict(kind=kind)) if kind else dict(client_id='client:fixture-' + str(n))
                                for n, kind in enumerate(kinds)]
                     lua = "local native=rex.call; rex.call=function(m,p) if m=='client.list' then return rex.json.decode(" + json.dumps(json.dumps(dict(clients=clients))) + ") end return native(m,p) end\n"
                     lua += 'do local GUARD_DATA=' + json.dumps(json.dumps(policy)) + '\n' + pane_guard.LUA + '\nend\n'
-                    lua += source + '\nlocal r=surface(' + '{operation="session-close",session_id=' + json.dumps(sid) + '}); print(rex.json.encode(r))'
+                    lua += source + '\nlocal ok,r=pcall(surface,' + '{operation="session-close",session_id=' + json.dumps(sid) + '}); print(rex.json.encode({ok=ok,result=r}))'
                     result = subprocess.run(self.base + ['do', '-e', lua], env=self.env,
                                             capture_output=True, text=True, timeout=20)
                     self.assertEqual(result.returncode, 0, result.stderr)
                     packet = json.loads(result.stdout)
-                    expected = operator and all(kind == 'app' for kind in kinds)
-                    self.assertEqual(packet['outcome'], 'session_closed_and_absent' if expected else 'refused')
+                    apps = all(kind == 'app' for kind in kinds)
+                    expected = apps and actor in ('creator', 'operator')
                     present = sid in [v['session_id'] for v in self.rpc('session.list', {})['sessions']]
                     self.assertEqual(present, not expected)
                     if expected:
-                        self.assertTrue(packet['session_absence_verified'])
+                        self.assertTrue(packet['ok'], packet)
+                        self.assertEqual(packet['result']['outcome'], 'session_closed_and_absent')
+                        self.assertTrue(packet['result']['session_absence_verified'])
                     else:
-                        self.assertEqual(packet['failure_reason'], 'session_has_attached_clients')
-                        self.assertFalse(packet.get('control_attempted', False))
-                        if all(kind == 'app' for kind in kinds):
-                            self.assertIn('only the operator', packet['failure_detail'])
+                        if actor == 'pane' or not apps:
+                            self.assertTrue(packet['ok'], packet)
+                            self.assertEqual(packet['result']['failure_reason'],
+                                             'session_has_panes' if actor == 'pane' else 'session_has_attached_clients')
+                            self.assertFalse(packet['result'].get('control_attempted', False))
+                        else:
+                            self.assertFalse(packet['ok'], packet)
+                            reason = dict(bystander='recorded spawner: ' + self.session + ' ' + self.anchor,
+                                          unrecorded='no_recorded_spawner', seat='registered_seat_session_cannot_be_closed')[actor]
+                            self.assertIn(reason, packet['result'])
                         self.rpc('session.destroy', {'session_id': sid})
 
     def test_session_destroy_wire_guard_protects_seat(self):

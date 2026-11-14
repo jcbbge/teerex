@@ -108,10 +108,8 @@ local function surface(a, emit)
                     return fail("session_has_attached_clients")
                 end
             end
-            if not rex.call("teerex.guard.operator") then
-                result.failure_detail="only the operator may close app-attached sessions; use --operator from an interactive human terminal"
-                return fail("session_has_attached_clients")
-            end
+            -- App clients do not prevent closure; session.destroy still checks
+            -- the recorded creator (or operator) and always protects the seat.
         end
         result.previous=selected
         result.control_attempted=true
