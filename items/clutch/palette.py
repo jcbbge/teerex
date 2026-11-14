@@ -1,4 +1,4 @@
-"""Prepare the same native action fragment consumed by surfaces palette install."""
+"""Prepare a native action fragment for rexconfig installation."""
 import argparse
 import json
 import os

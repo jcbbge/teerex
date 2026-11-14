@@ -46,15 +46,14 @@ class TargetsTest(unittest.TestCase):
         return subprocess.run([str(BIN), *args], capture_output=True, text=True, timeout=10,
                               env=dict(isolated_environment(), REX_SERVER="unix:///poisoned", REX_SESSION="wrong"))
 
-    def test_identity_import_in_path_module_and_embedded_loads(self):
+    def test_import_in_path_module_and_embedded_loads(self):
         root = Path(__file__).resolve().parent
         path = root / 'targets.py'
         loader = "import importlib.util; spec=importlib.util.spec_from_file_location('isolated_targets', " + repr(str(path)) + "); targets=importlib.util.module_from_spec(spec); spec.loader.exec_module(targets)"
         module = "import sys; sys.path.insert(0, " + repr(str(root)) + "); import targets"
-        embedded = "import types; targets=types.ModuleType('embedded_targets'); exec(" + repr((root / 'caller_identity.py').read_text() + '\n' + path.read_text()) + ", targets.__dict__)"
+        embedded = "import types; targets=types.ModuleType('embedded_targets'); exec(" + repr(path.read_text()) + ", targets.__dict__)"
         for mode, source in (('path', loader), ('module', module), ('embedded', embedded)):
             with self.subTest(mode=mode):
-                source += "; assert targets.caller_identity({'REX_SESSION':'s','REX_BLOCK':'b'}) == {'session_id':'s','block_id':'b'}; assert targets.managed_agent({'AGENT_NAME':'probe'})"
                 proc = subprocess.run([sys.executable, '-I', '-c', source], cwd=self.root,
                                       capture_output=True, text=True, timeout=10)
                 self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
@@ -369,43 +368,7 @@ class TargetsTest(unittest.TestCase):
                 self.assertNotIn(literal, result.stderr)
                 self.assertIs(json.loads(result.stderr)["retry"], False)
 
-    def test_route_preserves_host_qualified_caller(self):
-        import socket
-        self.host['teerex'] = str(self.root / 'caller')
-        Path(self.host['teerex']).write_text("#!/usr/bin/env python3\nimport json,os\nfrom pathlib import Path\nPath(" + repr(str(self.output)) + ").write_text(json.dumps({key:os.environ.get(key) for key in ('TEEREX_CALLER_IDENTITY','TEEREX_CALLER_HUMAN')}))\n")
-        Path(self.host['teerex']).chmod(0o700)
-        self.save()
-        ssh = self.root / 'ssh'
-        ssh.write_text("#!/bin/sh\nfor arg do last=\"$arg\"; done\nexec /bin/sh -c \"$last\"\n")
-        ssh.chmod(0o700)
-        for transport in ('local', 'ssh'):
-            self.host.update(transport=transport, address='operator@example.invalid', port=2223,
-                             known_hosts=str(self.root / 'known hosts'), identity_file=str(self.root / 'identity'))
-            self.save()
-            for actor in (dict(session_id='session:caller', block_id='block:caller'),
-                          dict(session_id=None, block_id=None)):
-                env = {k: v for k, v in isolated_environment().items()
-                       if not k.startswith(('AGENT_', 'REX_', 'LC_AGENT_', 'LC_REX_', 'TEEREX_CALLER_'))}
-                if actor['session_id']:
-                    env.update(REX_SESSION=actor['session_id'], REX_BLOCK=actor['block_id'])
-                result = subprocess.run([str(BIN), '--config', str(self.config), '--host', 'hive', 'surfaces', 'inspect'],
-                                        env=dict(env, PATH=str(self.root) + os.pathsep + os.environ['PATH']), capture_output=True, text=True, timeout=10)
-                self.assertEqual(result.returncode, 0, result.stderr)
-                forwarded = json.loads(self.output.read_text())
-                self.assertEqual(json.loads(forwarded['TEEREX_CALLER_IDENTITY']), dict(actor, host=socket.gethostname()))
-                import pwd
-                human = json.loads(forwarded['TEEREX_CALLER_HUMAN'])
-                self.assertEqual(human['host'], socket.gethostname())
-                self.assertEqual(human['user'], pwd.getpwuid(os.getuid()).pw_name)
 
-    def test_forwarded_human_identity_is_validated(self):
-        import caller_identity
-        for value in ('null', '[]', '{}', '{"host":"mac","user":"operator","extra":"value"}',
-                      '{"host":"mac","user":3}'):
-            with self.subTest(value=value), self.assertRaisesRegex(ValueError, 'invalid_forwarded_human_identity'):
-                caller_identity.human_identity({'TEEREX_CALLER_HUMAN': value})
-        human = dict(host='source-mac', user='operator', ssh_client_host='192.0.2.8')
-        self.assertEqual(caller_identity.human_identity({'TEEREX_CALLER_HUMAN': json.dumps(human)}), human)
 
     def test_tty_on_local_transport_does_not_allocate_or_parse_program_options(self):
         result = self.call("targets", "exec", "--config", str(self.config), "--host", "hive", "--tty",
@@ -413,25 +376,6 @@ class TargetsTest(unittest.TestCase):
         self.assertEqual(result.returncode, 7, result.stderr)
         self.assertEqual(json.loads(self.output.read_text()), ["--rex", self.host["rex"], "filter", "--", "--tty"])
 
-    def test_generated_sender_survives_ssh_routing(self):
-        ssh_output = self.root / "generated-ssh.json"
-        ssh = self.root / "ssh"
-        ssh.write_text("#!/usr/bin/env python3\nimport json,sys\nfrom pathlib import Path\n"
-                       + "Path(" + repr(str(ssh_output)) + ").write_text(json.dumps(sys.argv[1:]))\n")
-        ssh.chmod(0o700)
-        self.host.update(transport="ssh", address="operator@example.invalid", port=2223,
-                         identity_file=str(self.root / "key"), known_hosts=str(self.root / "known"))
-        self.save()
-        env = dict(isolated_environment(), PATH=str(self.root) + os.pathsep + os.environ["PATH"],
-                   TEEREX_GENERATED_SENDER="teerex-contract", AGENT_NAME="registered-caller")
-        result = subprocess.run([str(BIN), "--config", str(self.config), "--host", "hive",
-                                 "send", "--session", "s", "--block", "b",
-                                 "--from", "teerex-contract", "--message-file", "-"],
-                                env=env, input="STEP proof", capture_output=True, text=True)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        import shlex
-        remote = shlex.split(json.loads(ssh_output.read_text())[-1])
-        self.assertIn("TEEREX_GENERATED_SENDER=teerex-contract", remote)
 
     def test_ssh_requires_explicit_pretrusted_fields_before_launch(self):
         self.host.update(transport="ssh", address="-oProxyCommand=evil", port=22)

@@ -303,7 +303,7 @@ def invoke(runtime, pin, args, budget=5, interruptible=False):
     if args and args[0] == "jobs":
         budget = max(budget, 20)  # Native 10s registry wait + 5s live query + cleanup margin.
     env = dict(os.environ)
-    # Explicit selectors choose the target; retain pane identity for creator/self-close authority.
+    # Explicit selectors choose the target.
     for key in ("REX_SERVER", "REX_CLIENT"):
         env.pop(key, None)
     command = [runtime] + (["--rex", pin] if pin else []) + args
@@ -459,12 +459,8 @@ def controller(runtime, source, args):
     config = dict(argv=o.argv[1:], cwd=o.cwd, environment=environment, timeout_ms=o.timeout_ms, startup_ms=o.startup_ms,
                   max_bytes=o.max_bytes, full_output=bool(o.output_dir), app=o.app, title=o.title)
     if o.detach:
-        # Rex starts the supervisor with its own environment. Control must read
-        # the same creator records and seat registrations as this controller.
-        state_root = Path(os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local/state")))
-        authority = dict(XDG_STATE_HOME=str(state_root),
-                         TEEREX_BOARDS_STORE=os.environ.get("TEEREX_BOARDS_STORE", str(state_root / "teerex-boards")),
-                         AGENT_REGISTRY=os.environ.get("AGENT_REGISTRY") or os.environ.get("LC_AGENT_REGISTRY") or str(state_root / "teerex-agents"))
+        # Keep the detached supervisor on the controller's selected state root.
+        authority = dict(XDG_STATE_HOME=os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local/state")))
         config["detach"] = dict(runtime=runtime, pin=pin, launch_id=secrets.token_hex(16),
                                 authority=authority,
                                 options={key: getattr(o, key) for key in ("socket", "session", "output_dir", "max_bytes", "keep_open", "app")})

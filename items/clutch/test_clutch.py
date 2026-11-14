@@ -288,6 +288,9 @@ class ClutchTest(fixtures.SendTest):
         self.assertEqual(applied["removed"], [])
         self.assertTrue(file.exists())
 
+
+
+
     def test_palette_fragment_is_exclusive_and_uses_invoking_pane(self):
         fragment = self.work / "clutch.lua"
         controller = self.work / 'pinned-clutch'
@@ -307,15 +310,8 @@ class ClutchTest(fixtures.SendTest):
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(fragment.read_text(), source)
         target, raw = self.fixture()
-        plan_file = self.work / "palette-plan.json"
-        command = [fixtures.BIN, "surfaces", "palette", "install", "--socket", str(self.socket),
-                   "--init", str(self.config), "--file", str(fragment), "--plan", str(plan_file)]
-        result = subprocess.run(command, capture_output=True, text=True, env=self.env, timeout=15)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        plan = json.loads(result.stdout)
-        result = subprocess.run(command + ["--apply", plan["plan_sha256"]], capture_output=True, text=True, env=self.env, timeout=15)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertEqual(json.loads(result.stdout)["outcome"], "registered_and_verified")
+        self.config.write_text(source)
+        self.rpc("server.config_reload", {})
         for action, expected in (("teerex_clutch_take", True), ("teerex_clutch_release", False)):
             result = self.rex_json("do", "--session", target[0], "--block", target[1], action)
             self.assertEqual(result["held"], expected)

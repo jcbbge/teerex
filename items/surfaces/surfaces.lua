@@ -126,8 +126,7 @@ local function surface(a, emit)
                     return fail("session_has_attached_clients")
                 end
             end
-            -- App clients do not prevent closure; session.destroy still checks
-            -- the recorded creator (or operator) and always protects the seat.
+            -- App clients do not prevent closure.
         end
         result.previous=selected
         result.control_attempted=true

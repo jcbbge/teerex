@@ -22,7 +22,7 @@ Licensed under [Apache-2.0](LICENSE) for teerex's original material. Third-party
 
 Managed workers report each turn end with one `DONE` or `NOT DONE` answer. Full last words accompany completion or a flag once; waiting answers contain the wait and next check time.
 
-An empty session attached only by app clients may be closed by its recorded creator or the operator; see the [session close contract](items/surfaces/README.md).
+An empty session attached only by app clients may be closed; see the [session close contract](items/surfaces/README.md).
 
 Command receipts are JSON; help output is text. It states what was verified and labels the rest `unknown`, `uncertain` or `not_assessed`. teerex never starts a hidden process, never retries on its own, never closes a pane you did not ask it to close, and never infers that work is done. Exact flags: `teerex COMMAND --help`. For `clutch take` and `clutch release`, use `teerex clutch --help`; their subcommand help currently prints usage with exit 2. Full contracts: each `items/*/README.md`.
 

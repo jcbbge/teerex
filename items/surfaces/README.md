@@ -22,50 +22,13 @@ Open never asks for focus, retries creation, falls back to a different layout, o
 
 ## Pane authority
 
-Caller identity uses one shared resolver: `AGENT_SESSION` / `AGENT_PANE`,
-then `REX_SESSION` / `REX_BLOCK`, then `LC_REX_SESSION` / `LC_REX_BLOCK`.
-Empty values fall through. Pane creators, seat protection, report acceptance and
-question replies use this same precedence.
-
-Control dispatch protects the active registered seat and every pane in its tab,
-including its tasks and board companions. Close, rename, move, resize, focus,
-clutch takeover and raw input refuse there after label/suffix resolution. Splits
-and floating layers anchored in that tab also refuse. Plain `send`/`ask` messages
-retain the draft guard; `send --draft ignore` refuses on the protected tab.
-Historical seat registrations marked `inherited_to` do not protect dead tabs.
-
-Close, rename, move and empty-session close require the resolved caller identity
-to match the recorded creator.
-A recorded pane’s own supervisor may close that same pane, including a
-detached run-visible supervisor; this does not grant control of other panes.
-Creation receipts are stored under `$XDG_STATE_HOME/teerex/pane-creators` (default
-`~/.local/state/teerex/pane-creators`), separated by server. Existing managed panes
-without a receipt fall back to the agents registry: starter, report-to and the
-pane's own supervisor can close them. A managed scratchpad viewer admits its
-starter and supervisor; its watcher can close only itself after its owner is gone.
-Human launches additionally record `human_launch:true` and `human_creator`
-(host, OS user, and SSH client host when present); named-host routes preserve
-that originating identity rather than replacing it with the destination's SSH
-login. A missing pane is never replaced with a fake address.
-For these receipts, close and rename also admit a human in the same tab, or
-that OS user on that host from a terminal with no pane identity. Managed-agent
-markers never acquire this human authority; seat protection still wins. Old
-receipts with an unknown spawner remain unchanged: outside that pane they
-require `--operator`; the existing supervisor self-close rule still applies.
-No authority record means `no_recorded_spawner`; a foreign caller's refusal names
-the recorded spawner. `AGENT_REGISTRY` selects a custom managed-agent registry.
-
-The explicit `--operator` flag requires `TEEREX_OPERATOR=1`, interactive stdin and
-stderr, and a human terminal without managed-agent markers. The registered seat
-pane is an agent, never that human terminal. Managed launches strip the operator
-markers. The flag permits protected control only for that interactive invocation.
-These are cooperative teerex checks, not an OS boundary against another program
-running as the same user. Python 3.9+ is required for guarded Rex transports.
-
-Seat registration defaults to `$XDG_STATE_HOME/teerex-boards` (default
-`~/.local/state/teerex-boards`); `TEEREX_BOARDS_STORE` selects a different store.
-The focused checks in `src/test_pane_guard.py` use disposable Rex servers and
-throwaway stores only, on Linux and macOS.
+Only close or move panes you opened: this is a written rule, not an ownership registry.
+The shared guard refuses closing, moving or detaching panes labelled `seat`, `tasks`,
+`board` or `alarm` in the tab containing a pane labelled `seat`. Window, layer and
+session closure cannot bypass that refusal. The same labels in other tabs are ordinary
+panes. Creator records and caller identity are neither read nor written.
+`--operator` remains accepted for compatibility and does not bypass this refusal.
+The focused checks in `src/test_pane_guard.py` use disposable Rex servers.
 
 ## When
 
@@ -109,7 +72,7 @@ teerex --config /absolute/hosts.json --host hive surfaces ensure --session any \
   --label seat --create-session rivet --focus yes -- /absolute/seat-program
 ```
 
-`--session any` is reserved for global resolve/ensure. Global resolve searches attached terminal panes in **every session on the selected server**, including inactive sessions. It accepts the usual pane selector; one match returns `resolved.session_id` and `resolved.block_id`, none refuses with no candidates or resolved IDs; several refuse with only matching `candidates` carrying `session_id`, `session_label`, `block_id`, pane `label` and `window_id`. Global ensure searches **exact pane labels**, rather than tab labels. One match is reused in its actual session, with optional verified focus. No match creates in the session selected by required `--create-session TEXT` (ID, suffix or exact label); an absent noncanonical selector creates a session with that exact label, verifies its identity, then creates the pane. An absent canonical session ID still refuses. Both new objects record the caller as creator through the same guard as session ensure and open. The creation target/anchor is unused when reusing a pane elsewhere. More than one match refuses `ambiguous_label`; an unreadable session refuses the entire search, never treating partial inventory as absence. Inventory bounds are 128 sessions and 1024 terminal panes; exceeding either refuses before creation. A literal session named `any` remains selectable by its canonical ID.
+`--session any` is reserved for global resolve/ensure. Global resolve searches attached terminal panes in **every session on the selected server**, including inactive sessions. It accepts the usual pane selector; one match returns `resolved.session_id` and `resolved.block_id`, none refuses with no candidates or resolved IDs; several refuse with only matching `candidates` carrying `session_id`, `session_label`, `block_id`, pane `label` and `window_id`. Global ensure searches **exact pane labels**, rather than tab labels. One match is reused in its actual session, with optional verified focus. No match creates in the session selected by required `--create-session TEXT` (ID, suffix or exact label); an absent noncanonical selector creates a session with that exact label, verifies its identity, then creates the pane. An absent canonical session ID still refuses. The creation target/anchor is unused when reusing a pane elsewhere. More than one match refuses `ambiguous_label`; an unreadable session refuses the entire search, never treating partial inventory as absence. Inventory bounds are 128 sessions and 1024 terminal panes; exceeding either refuses before creation. A literal session named `any` remains selectable by its canonical ID.
 
 All pane ensure calls, including ordinary session-scoped ones, hold one advisory exclusive lock across lookup, optional creation/focus, fresh readback and bounded transport cleanup. The exact stable path is **`$XDG_STATE_HOME/teerex-surfaces/server-<SHA256>.lock`**, falling back to **`$HOME/.local/state/teerex-surfaces/server-<SHA256>.lock`** when `XDG_STATE_HOME` is unset. The hash is lowercase SHA-256 of the canonical absolute Unix socket path, so socket symlink aliases share a lock; labels and creation sessions do not split it. The selected command host owns the lock under named-host routing. The directory must be caller-owned `0700`; the stable lock must be caller-owned, single-link regular `0600`; final symlinks and unsafe modes refuse without mutation. Successful ensure receipts include `ensure_lock`. Cooperating callers must use the same state directory and server endpoint; raw Rex/other writers do not take this lock.
 
@@ -257,11 +220,8 @@ without joining the session itself. A non-empty session refuses with
 `failure_reason=session_has_panes`; an attached client refuses with
 `failure_reason=session_has_attached_clients`. Both return exit 1 and a single
 JSON line without requesting closure. If every attached client has
-`info.kind=app`, the recorded session creator or the explicit operator path
-may close the empty session. A bystander refuses naming the recorded creator;
-a session without a creation receipt remains operator-only. Any non-app or
-unreported client kind still refuses, including with `--operator`. The registered seat's session always refuses destruction,
-including for the operator. Unavailable evidence also refuses.
+`info.kind=app`, the empty session may close. Any non-app or unreported client
+kind still refuses. Unavailable evidence also refuses.
 Success returns exit 0, `outcome=session_closed_and_absent`,
 `session_absence_verified=true`, and the resolved session ID. Client/block
 checks are snapshots immediately before the destroy call, not a server-side
@@ -272,13 +232,4 @@ SurfacesTest.test_session_close_empty_unattached_and_verify_absence
 SurfacesTest.test_session_close_refuses_attached_and_detached_panes
 SurfacesTest.test_session_close_refuses_empty_session_with_attached_client -v`.
 
-Operator/client-kind verification: `TEEREX_BIN=ABS REX_BIN=ABS PYTHONPATH=src
-python3 -m unittest test_pane_guard.GuardTest.test_session_close_client_kind_decisions
-test_pane_guard.GuardTest.test_session_close_operator_guards
-test_pane_guard.GuardTest.test_session_destroy_wire_guard_protects_seat
-test_pane_guard.GuardTest.test_operator_terminal -v` (from the repository root).
-The app-only cases inject documented `client.list` shapes into the guarded Lua
-flow on a disposable server, retaining real session destruction and absence
-readback. Rex has no public API to set a CLI connection's client kind; these
-checks do not claim a real Rex.app attachment. The separate operator checks use
-an actual PTY and a real attached CLI client.
+Label-guard verification: `TEEREX_BIN=ABS REX_BIN=ABS python3 src/test_pane_guard.py -v`.

@@ -17,10 +17,7 @@ pub fn build(b: *std.Build) void {
     const fleet_sources = b.addOptions();
     for ([_][]const u8{ "controller", "worker", "installer", "resolver" }, [_][]const u8{ "tools/fleet-install/fleet_install.py", "tools/fleet-install/worker.py", "tools/install/teerex-install", "src/targets.py" }) |name, path| {
         const source = b.build_root.handle.readFileAlloc(b.allocator, path, 1024 * 1024) catch @panic("fleet support source unavailable");
-        fleet_sources.addOption([]const u8, name, if (std.mem.eql(u8, name, "resolver"))
-            std.mem.concat(b.allocator, u8, &.{ @embedFile("src/caller_identity.py"), "\n", source }) catch @panic("resolver identity unavailable")
-        else
-            source);
+        fleet_sources.addOption([]const u8, name, source);
     }
     const fleet_module = fleet_sources.createModule();
     exe.root_module.addImport("fleet_sources", fleet_module);
@@ -60,7 +57,6 @@ pub fn build(b: *std.Build) void {
     clutch.addImport("rex_send", send);
     exe.root_module.addImport("rex_clutch", clutch);
     clutch.addImport("supervised_child", child);
-    clutch.addImport("pane_guard", pane_guard);
     exe.root_module.addImport("rex_send", send);
     const doctor = b.createModule(.{
         .root_source_file = b.path("items/doctor/main.zig"),

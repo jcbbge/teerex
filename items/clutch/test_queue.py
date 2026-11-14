@@ -128,8 +128,7 @@ sys.exit(p.returncode)
         store = self.work / "boards"
         store.mkdir(mode=0o700)
         start = time.monotonic()
-        process = subprocess.run(self.command(target) + ["--no-queue", "--draft-wait-ms", "200",
-                                 "--store", str(store), "--host", "test"], env=self.env,
+        process = subprocess.run(self.command(target) + ["--no-queue", "--draft-wait-ms", "200"], env=self.env,
                                  capture_output=True, text=True, timeout=5)
         self.assertEqual(process.returncode, 1)
         self.assertEqual(json.loads(process.stdout)["failure_reason"], "pane_held_by_human")
@@ -203,19 +202,6 @@ sys.exit(p.returncode)
                 process.kill()
                 process.communicate()
 
-    def test_ask_uses_same_queue(self):
-        target, raw = self.fixture()
-        self.clutch("take", target)
-        process = subprocess.run([fixtures.BIN, "ask", "--socket", str(self.socket), "--session", target[0],
-            "--block", target[1], "--host", "test", "--from", "worker", "--answer", "ASK_QUEUE_PROBE"],
-            env=self.env, capture_output=True, text=True, timeout=10)
-        self.assertEqual(process.returncode, 0, process.stdout + process.stderr)
-        packet = json.loads(process.stdout)
-        self.assertEqual(packet["outcome"], "queued")
-        self.assertEqual(raw.read_bytes(), b"")
-        _, released = self.clutch("release", target)
-        self.assertEqual(released["queue"]["delivered"], [packet["queue_id"]])
-        self.received(raw, self.pasted(b"Answer: ASK_QUEUE_PROBE"))
 
 
 def load_tests(loader, suite, pattern):

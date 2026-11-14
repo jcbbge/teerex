@@ -129,7 +129,7 @@ class SurfacesTest(unittest.TestCase):
         return [BIN, "surfaces", "ensure", "--socket", str(self.socket), "--session", "any", "--label", label,
                 "--create-session", create_session or self.session, *options, "--", "/bin/sh", "-c", "sleep 60"]
 
-    def test_global_ensure_creates_missing_session_and_records_both_creators(self):
+    def test_global_ensure_creates_missing_session(self):
         for focus in ("no", "yes"):
             label = "new destination " + focus + self.work.name
             command = self.global_command("new pane " + focus, label, "--focus", focus)
@@ -141,12 +141,6 @@ class SurfacesTest(unittest.TestCase):
             self.addCleanup(lambda sid=sid: self.rpc("session.destroy", {"session_id": sid}))
             self.assertEqual(next(s for s in self.rpc("session.list", {})["sessions"]
                                   if s["session_id"] == sid)["label"], label)
-            records = [json.loads(p.read_text()) for p in
-                       Path(self.env["XDG_STATE_HOME"]).glob("teerex/pane-creators/*/*.json")]
-            for target in (sid, bid):
-                record = next(v for v in records if v["id"] == target)
-                self.assertEqual(record["spawner"]["session_id"], self.env["REX_SESSION"])
-                self.assertEqual(record["spawner"]["block_id"], self.env["REX_BLOCK"])
             before = self.rpc("session.view", {"session_id": sid})
             r, reused = self.run_json(command)
             self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
@@ -414,28 +408,6 @@ class SurfacesTest(unittest.TestCase):
                 self.assertIn(self.anchor, [v['block_id'] for v in self.rpc(
                     'session.list_blocks', dict(session_id=self.session))['blocks']])
 
-    def test_session_close_refuses_session_with_only_running_scratch_watcher(self):
-        result, packet = self.surface('close', '--session', self.session, '--pane', self.anchor)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        code = "import os; os.execv(" + repr(BIN) + ", [" + repr(BIN) + ", 'scratch', 'watch', '--socket', " + repr(str(self.socket)) + ", '--session', " + repr(self.session) + ", '--block', os.environ['REX_BLOCK']])"
-        watcher = self.open('tab', sys.executable, '-c', code, label='only scratch watcher')['actual']['block_id']
-        deadline = time.monotonic() + 5
-        while True:
-            capture = self.rpc('com.superlogical.terminal.format', dict(session_id=self.session, block_id=watcher, args={'format': 'text'}))
-            if 'Scratchpad archived or not initialized' in json.dumps(capture):
-                break
-            self.assertLess(time.monotonic(), deadline, 'watcher did not render')
-            time.sleep(.03)
-        blocks = self.rpc('session.list_blocks', dict(session_id=self.session))['blocks']
-        self.assertEqual([b['block_id'] for b in blocks], [watcher])
-        # Query globally: rex api call auto-joins a session named in its arguments.
-        self.assertEqual([c for c in self.rpc('client.list', {})['clients']
-                          if self.session in c.get('session_ids', [])], [])
-        result, packet = self.surface('session close', '--session', self.session)
-        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertEqual(packet['failure_reason'], 'session_has_panes')
-        self.assertFalse(packet['control_attempted'])
-        self.assertEqual(len(result.stdout.splitlines()), 1)
 
     def test_session_close_refuses_empty_session_with_attached_client(self):
         sid = self.another_session('attached empty ' + self.work.name)

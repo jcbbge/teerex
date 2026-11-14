@@ -18,6 +18,11 @@ import sys
 import time
 import uuid
 
+# Embedded builds supply the shared guard; source-tree invocations use that same file.
+if "PANE_GUARD" not in globals():
+    from pathlib import Path
+    PANE_GUARD = (Path(__file__).resolve().parents[2] / "src/pane_guard.lua").read_text()
+
 ADDRESS_KEYS = {"host", "server", "session_id", "block_id"}
 LAUNCH_KEYS = {"launch_id", "name", "owner", "purpose", "review_at", "target", "starter", "report_to",
                "profile", "argv", "cwd", "harness", "resume_session_id", "store", "created_at", "phase",
@@ -223,7 +228,7 @@ class Rex:
         self.base = [self.executable, "--autostart=false", "--server", self.server, "--timeout", "3s", "--color", "never"]
 
     def call(self, method, args=None):
-        script = __import__('teerex_pane_guard').prelude(self.server) + '\nlocal p=rex.args.params; if p.session_id then local a,e=rex.call("session.attach",{session_id=p.session_id}); if not a then error(e) end end; local v,e=rex.call(rex.args.method,p); if not v then error(e) end; return v'
+        script = PANE_GUARD + '\nlocal p=rex.args.params; if p.session_id then local a,e=rex.call("session.attach",{session_id=p.session_id}); if not a then error(e) end end; local v,e=rex.call(rex.args.method,p); if not v then error(e) end; return v'
         value = run_process(self.base + ["do", "-e", script, "--args", encoded(dict(method=method, params=args or {})).decode(), "--json"], self.timeout)
         require(isinstance(value, dict), "invalid_Rex_response_object")
         return value

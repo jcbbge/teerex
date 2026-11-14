@@ -292,7 +292,7 @@ class RunTest(unittest.TestCase):
         result = subprocess.run(self.command(argv), env=dict(isolated_environment(), PATH="/no-rex-executable"),
                                 capture_output=True, text=True, timeout=5)
         self.assertEqual(result.returncode, 1)
-        self.assertIn("FileNotFound", result.stderr)
+        self.assertIn("RexExecutableNotFound", result.stderr)
         self.assertEqual(result.stdout, "")
         self.assertFalse(marker.exists())
 

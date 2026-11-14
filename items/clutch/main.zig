@@ -12,7 +12,7 @@ const usage =
     \\Store errors produce named failure_reason; send treats unreadable state as unknown and continues.
     \\Binds teerex writers only, never raw Rex writers or human keys. Not a server input lease.
     \\Palette: teerex clutch palette --file ABS --socket ABS [--teerex ABS]
-    \\Creates a new native two-action fragment; register with surfaces palette install plan/apply.
+    \\Creates a new native two-action fragment; rexconfig owns installation and key bindings.
     \\Palette generation does not reload config or type. Hand back calls release, which may drain queued input.
     \\Exit: 0 recorded/status/queue/drained/generated; 1 unavailable/refused or drain stopped; 2 usage.
     \\
@@ -80,7 +80,6 @@ fn execute(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
     const session = options.get("--session") orelse return usageError("ClutchSessionRequired");
     const pane = options.get("--pane") orelse return usageError("ClutchPaneRequired");
     const reason = options.get("--reason") orelse "";
-    if (std.mem.eql(u8, args[0], "take")) try @import("pane_guard").checkTake(allocator, socket, session, pane);
     if (!std.fs.path.isAbsolute(socket) or !valid(session, "session:") or !valid(pane, "block:") or reason.len > 512 or !std.unicode.utf8ValidateSlice(reason)) return usageError("InvalidClutchTargetOrReason");
     for (reason) |c| if (c < 32 or c == 127) return usageError("InvalidClutchReason");
     const env = try std.process.getEnvMap(allocator);

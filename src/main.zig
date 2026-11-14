@@ -30,7 +30,7 @@ const usage =
     \\Why: report actual activity/results and unknowns, not infer readiness or completion.
     \\How: explicit config/host or socket/full IDs; no retries, fallback or autostart.
     \\Python3.9+ is required for targets, recovery, records and fleet.
-    \\Guarded Rex transports require Python3.9+ for seat and creator authority. SSH trust/key are explicit.
+    \\Seat-tab label protection is shared by pane closing and moving paths. SSH trust/key are explicit.
     \\Personal install/restart/close/config actions need their own authorization.
     \\Guides: docs/agents.md and items/{surfaces,recovery,records}/README.md.
     \\
@@ -75,51 +75,12 @@ fn finish(_: std.mem.Allocator, code: u8) noreturn {
 
 fn python(allocator: std.mem.Allocator, args: []const []const u8) !void {
     var argv: std.ArrayList([]const u8) = .empty;
-    try argv.appendSlice(allocator, &.{ "python3", "-I", "-c", @import("pane_guard").identity_source ++ "\n" ++ @embedFile("targets.py") });
+    try argv.appendSlice(allocator, &.{ "python3", "-I", "-c", @embedFile("targets.py") });
     try argv.appendSlice(allocator, args);
     return std.process.execv(allocator, argv.items);
 }
 
 fn send(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
-    var socket: ?[]const u8 = null;
-    var sender: ?[]const u8 = null;
-    var session: ?[]const u8 = null;
-    var block: ?[]const u8 = null;
-    var index: usize = 0;
-    while (index < args.len) {
-        const arg = args[index];
-        if (std.mem.eql(u8, arg, "--no-queue")) {
-            index += 1;
-            continue;
-        }
-        if (index + 1 >= args.len) break;
-        if (std.mem.eql(u8, arg, "--socket")) socket = args[index + 1];
-        if (std.mem.eql(u8, arg, "--from")) sender = args[index + 1];
-        if (std.mem.eql(u8, arg, "--session")) session = args[index + 1];
-        if (std.mem.eql(u8, arg, "--block")) block = args[index + 1];
-        index += 2;
-    }
-    if (socket != null and sender != null) {
-        const endpoint = try std.fmt.allocPrint(allocator, "unix://{s}", .{socket.?});
-        if (try @import("pane_guard").checkSender(allocator, endpoint, sender.?)) |reason| {
-            try std.fs.File.stderr().writeAll(reason);
-            const packet = try std.json.Stringify.valueAlloc(allocator, .{
-                .schema_version = 1,
-                .kind = "send_result",
-                .target = .{ .server = endpoint, .session_id = session, .block_id = block },
-                .outcome = "refused",
-                .failure_reason = std.mem.trim(u8, reason, "\r\n"),
-                .backend_invoked = false,
-                .paste = .{ .attempted = false, .acknowledged = false },
-                .enter = .{ .attempted = false, .acknowledged = false },
-                .draft = .{ .cleared = @as(?bool, null) },
-                .retry_safe = false,
-            }, .{});
-            try std.fs.File.stdout().writeAll(packet);
-            try std.fs.File.stdout().writeAll("\n");
-            return 1;
-        }
-    }
     return @import("rex_send").run(allocator, args);
 }
 
@@ -137,7 +98,7 @@ fn run(allocator: std.mem.Allocator) !void {
     }
     if (eq(args[0], "doctor") and hasOption(args, "--all")) {
         const source = @embedFile("doctor_all.py");
-        const resolver = try std.json.Stringify.valueAlloc(allocator, @import("pane_guard").identity_source ++ "\n" ++ @embedFile("targets.py"), .{});
+        const resolver = try std.json.Stringify.valueAlloc(allocator, @embedFile("targets.py"), .{});
         const worker = try std.json.Stringify.valueAlloc(allocator, source, .{});
         const script = try std.fmt.allocPrint(allocator, "import types,sys\ntargets=types.ModuleType('targets')\nexec({s},targets.__dict__)\nWORKER_SOURCE={s}\n{s}\nsys.exit(main())", .{ resolver, worker, source });
         var forwarded: std.ArrayList([]const u8) = .empty;
@@ -209,32 +170,15 @@ fn eq(a: []const u8, b: []const u8) bool {
     return std.mem.eql(u8, a, b);
 }
 
-// Explicit human control is local to this interactive invocation. Managed agents
-// never inherit the marker, and the registered seat is still an agent pane.
+// Kept as a compatibility flag; pane authority no longer depends on the caller.
 fn withOperator(allocator: std.mem.Allocator, args: []const []const u8) ![]const []const u8 {
     var clean: std.ArrayList([]const u8) = .empty;
-    var requested = false;
     var program = false;
     for (args) |arg| {
         if (eq(arg, "--")) program = true;
-        if (!program and eq(arg, "--operator")) {
-            if (requested) return error.RepeatedOperatorFlag;
-            requested = true;
-        } else try clean.append(allocator, arg);
+        if (!program and eq(arg, "--operator")) continue;
+        try clean.append(allocator, arg);
     }
-    if (!requested) return args;
-    var env = try std.process.getEnvMap(allocator);
-    if (!eq(env.get("TEEREX_OPERATOR") orelse "", "1") or
-        !std.posix.isatty(std.posix.STDIN_FILENO) or !std.posix.isatty(std.posix.STDERR_FILENO) or
-        env.get("AGENT_LAUNCH_ID") != null or env.get("LC_AGENT_LAUNCH_ID") != null or
-        env.get("AGENT_NAME") != null or env.get("LC_AGENT_NAME") != null)
-    {
-        try std.fs.File.stderr().writeAll("--operator requires TEEREX_OPERATOR=1 in an interactive human terminal; managed agents cannot use it.\n");
-        return error.OperatorTerminalRequired;
-    }
-    try env.put("TEEREX_OPERATOR_ACTIVE", try std.fmt.allocPrint(allocator, "{d}", .{if (@import("builtin").os.tag == .linux) std.os.linux.getpid() else std.c.getpid()}));
-    const environ = try std.process.createNullDelimitedEnvMap(allocator, &env);
-    if (@import("builtin").link_libc) std.c.environ = environ.ptr else std.os.environ = @as([*][*:0]u8, @ptrCast(environ.ptr))[0..environ.len];
     return clean.items;
 }
 

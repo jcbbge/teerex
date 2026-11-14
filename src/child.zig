@@ -115,7 +115,7 @@ pub const Result = struct {
 };
 
 pub fn guardFailure(stderr: []const u8) ?[]const u8 {
-    const reasons = [_][]const u8{ "pane control refused; recorded spawner:", "no_recorded_spawner", "registered_seat_tab_", "registered_seat_session_cannot_be_closed", "registered_seat_pane_is_not_the_operator_terminal", "pane_guard_", "viewer_owner_" };
+    const reasons = [_][]const u8{"seat_tab_label_protected"};
     for (reasons) |reason| {
         if (std.mem.indexOf(u8, stderr, reason)) |start| {
             const end = std.mem.indexOfScalarPos(u8, stderr, start, '\n') orelse stderr.len;
@@ -162,24 +162,11 @@ pub fn collect(allocator: std.mem.Allocator, argv: []const []const u8, env: *con
         if (std.mem.eql(u8, arg, "--server") and i + 1 < selected_argv.len) endpoint = selected_argv[i + 1];
         if (std.mem.eql(u8, arg, "do")) lua = true;
     }
-    var guard_session: ?[]const u8 = null;
-    for (selected_argv, 0..) |arg, i| {
-        if (std.mem.eql(u8, arg, "--args") and i + 1 < selected_argv.len) {
-            const parsed = std.json.parseFromSlice(std.json.Value, allocator, selected_argv[i + 1], .{}) catch continue;
-            if (parsed.value == .object) {
-                if (parsed.value.object.get("session_id")) |sid| {
-                    if (sid == .string and std.mem.startsWith(u8, sid.string, "session:")) guard_session = sid.string;
-                }
-            }
-        }
-    }
     if (endpoint != null and lua) {
         for (selected_argv, 0..) |arg, i| {
             if (std.mem.eql(u8, arg, "-e") and i + 1 < selected_argv.len) {
                 const script = selected_argv[i + 1];
-                const prefix = try @import("pane_guard").prelude(allocator, endpoint.?, std.mem.startsWith(u8, script, "-- teerex-guarded-message\n"), guard_session);
-                defer allocator.free(prefix);
-                guard_source = try std.mem.concat(allocator, u8, &.{ prefix, script });
+                guard_source = try std.mem.concat(allocator, u8, &.{ @import("pane_guard").source, script });
                 script_file = try @import("pane_guard").ScriptFile.init(allocator, guard_source.?);
                 guarded.items[i] = script_file.?.path;
                 _ = guarded.orderedRemove(i + 1);

@@ -153,56 +153,21 @@ class SendTest(unittest.TestCase):
         return self.rpc("com.superlogical.terminal.format", {"session_id": target[0], "block_id": target[1],
                         "args": {"format": "text", "max_bytes": 65536}})["content"]
 
-    def test_registered_sender_protects_identities_and_accepts_service_labels(self):
-        target, raw = self.fixture()
-        registry = Path(self.env["AGENT_REGISTRY"])
-        registry.mkdir(mode=0o700, exist_ok=True)
-        for launch, name, address in (("a", "registered-worker", dict(
-                session_id=self.env["REX_SESSION"], block_id=self.env["REX_BLOCK"])),
-                ("b", "other-worker", dict(session_id=target[0], block_id=target[1]))):
-            record = dict(schema_version=1, launch_id=launch * 32, name=name,
-                          target=dict(server=self.endpoint, **address))
-            (registry / ("agents-" + launch * 32 + ".json")).write_text(json.dumps(record))
-        self.env["AGENT_NAME"] = "claimed-name-is-not-authority"
-        for sender in ("other-worker", "OTHER-WORKER", "seat", "human", "user", "operator"):
-            for marker in (None, sender):
-                if marker is None:
-                    self.env.pop("TEEREX_GENERATED_SENDER", None)
-                else:
-                    self.env["TEEREX_GENERATED_SENDER"] = marker
-                refused, packet = self.send(target, b"must not arrive", sender=sender)
-                self.assertEqual(refused.returncode, 1, refused.stdout + refused.stderr)
-                self.assertFalse(packet["backend_invoked"])
-                self.assertIn("use --from registered-worker", packet["failure_reason"])
-                self.assertEqual(raw.read_bytes(), b"")
-        expected = b""
-        for sender in ("registered-worker", "teerex-contract", "teerex-scratchpad",
-                       "teerex-launcher", "teerex-cost", "teerex-future-service", "unclaimed-label"):
-            for marker in (None, "different-marker", sender):
-                if marker is None:
-                    self.env.pop("TEEREX_GENERATED_SENDER", None)
-                else:
-                    self.env["TEEREX_GENERATED_SENDER"] = marker
-                sent, packet = self.send(target, b"compatible", sender=sender)
-                self.assertEqual(sent.returncode, 0, sent.stdout + sent.stderr)
-                self.assertEqual(packet["outcome"], "events_acknowledged")
-                expected += self.pasted(b"compatible", sender)
-                self.received(raw, expected)
 
-    def test_sender_refusal_preserves_both_input_lines(self):
+    def test_sender_name_does_not_require_caller_identity(self):
+        target, raw = self.fixture()
+        self.env.update(AGENT_NAME="different-caller", AGENT_SESSION="unrelated", AGENT_PANE="unrelated")
+        sent, packet = self.send(target, b"explicit sender", sender="seat")
+        self.assertEqual(sent.returncode, 0, sent.stdout + sent.stderr)
+        self.assertEqual(packet["outcome"], "events_acknowledged")
+        self.received(raw, self.pasted(b"explicit sender", "seat"))
+
+    def test_diagnostic_refusal_preserves_both_input_lines(self):
         caller, caller_log = self.prompt(mode="codex")
         target, target_log = self.prompt(mode="codex")
         self.env.update(REX_SESSION=caller[0], REX_BLOCK=caller[1],
                         LC_REX_SESSION=caller[0], LC_REX_BLOCK=caller[1],
                         AGENT_NAME="registered-a")
-        registry = Path(self.env["AGENT_REGISTRY"])
-        registry.mkdir(mode=0o700, exist_ok=True)
-        (registry / ("agents-" + "b" * 32 + ".json")).write_text(json.dumps(dict(
-            name="registered-a", target=dict(server=self.endpoint,
-                session_id=caller[0], block_id=caller[1]))))
-        (registry / ("agents-" + "c" * 32 + ".json")).write_text(json.dumps(dict(
-            name="registered-b", target=dict(server=self.endpoint,
-                session_id=target[0], block_id=target[1]))))
         self.type_draft(caller, "caller draft α")
         self.type_draft(target, "target draft β")
         for _ in range(100):
@@ -227,10 +192,7 @@ class SendTest(unittest.TestCase):
                            TEEREX_HOSTS=str(config), TEEREX_HOST="test")
         wrapper = shutil.which("agent-send")
         self.assertIsNotNone(wrapper, "installed agent-send required")
-        commands = [("native", self.command(target, sender="registered-b"), self.env),
-                    ("agent-send", [wrapper, *target, "registered-b", "must not arrive"], wrapper_env),
-                    ("identity-forged-marker", self.command(target, sender="registered-b"),
-                     dict(self.env, TEEREX_GENERATED_SENDER="registered-b"))]
+        commands = []
         for prefix in ("send refused:", "pane control refused;", "pane_guard_", "registered_seat_",
                        "agent-send: not delivered", "teerex send:"):
             commands.append(("relay-native-" + prefix,
@@ -242,14 +204,14 @@ class SendTest(unittest.TestCase):
                 result = subprocess.run(command, env=environment, capture_output=True,
                                         text=True, timeout=20)
                 self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-                if label != "agent-send" and not label.startswith("relay-wrapper-"):
+                if not label.startswith("relay-wrapper-"):
                     packet = json.loads(result.stdout)
                     self.assertEqual(packet["outcome"], "refused")
                     self.assertFalse(packet["backend_invoked"])
                     self.assertFalse(packet["paste"]["attempted"])
                     self.assertFalse(packet["enter"]["attempted"])
-                    self.assertIn("refusal_text_is_not_a_message" if label.startswith("relay-") else "use --from registered-a", packet["failure_reason"])
-                self.assertIn("refusal_text_is_not_a_message" if label.startswith("relay-") else "use --from registered-a", result.stderr)
+                    self.assertIn("refusal_text_is_not_a_message", packet["failure_reason"])
+                self.assertIn("refusal_text_is_not_a_message", result.stderr)
                 self.assertEqual([self.prompt_text(p) for p in (caller, target)], before)
                 self.assertEqual([p.read_bytes() for p in (caller_log, target_log)], logs_before)
                 print("REFUSAL PROOF:", label, "both input lines byte-identical; no submissions",
