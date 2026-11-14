@@ -131,7 +131,8 @@ def record_bytes(state):
             if len(history) <= 1:
                 continue
             if isinstance(history, list):
-                candidates.append((history[0].get("at", 0), field, 0))
+                key = min(range(len(history)), key=lambda i: history[i].get("at", 0))
+                candidates.append((history[key].get("at", 0), field, key))
             else:
                 key = min(history, key=lambda k: (history[k].get("attempted_at", history[k].get("at", 0)), k))
                 candidates.append((history[key].get("attempted_at", history[key].get("at", 0)), field, key))
@@ -139,6 +140,8 @@ def record_bytes(state):
             break
         _, field, key = min(candidates)
         del state[field][key]
+        if field == "timeline":
+            state["timeline_partial"] = True
         raw = json.dumps(state, ensure_ascii=False, sort_keys=True).encode()
     return raw
 
@@ -981,7 +984,8 @@ def delivery_config(value):
     grants = value["grants"]
     require(isinstance(grants, list) and grants and all(g in ("send", "ack", "stop") for g in grants)
             and len(set(grants)) == len(grants), "explicit_delivery_grants_required")
-    require(type(value["max_requests"]) is int and 1 <= value["max_requests"] <= 64, "invalid_delivery_count")
+    # Legacy field is accepted for profile compatibility; request counts never revoke a live channel.
+    require(type(value["max_requests"]) is int, "invalid_delivery_count")
     require(type(value["lifetime_ms"]) is int and 1000 <= value["lifetime_ms"] <= 86400000, "invalid_delivery_lifetime")
     # Validate the parent before creation, without putting a registry or lock inside the grant.
     fd = os.open(value["directory"], os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
@@ -1079,7 +1083,6 @@ class Channel(ChannelService):
             require(s["immediate_child_term"] is None, "channel_child_already_exited")
             history = s.setdefault("channel_requests", {})
             require(event_id not in history, "channel_request_already_attempted_no_retry")
-            require(len(history) < self.policy["max_requests"], "channel_request_limit")
             history[event_id] = dict(operation=operation, outcome="uncertain", attempted_at=now())
         update(self.root, self.state["launch_id"], intent)
         if operation == "send":
@@ -1450,7 +1453,7 @@ def turn_report_rule(root, state, kind):
             target = state.get("report_to") or state.get("starter")
             if target:
                 for record in Path(root).glob("agents-*.json"):
-                    candidate = json.loads(read_file(str(record), private=True))
+                    candidate = json.loads(read_file(str(record), limit=None, private=True))
                     address = candidate.get("target") or {}
                     if all(address.get(k) == target.get(k) for k in ("session_id", "block_id")):
                         names.add(candidate.get("name"))
@@ -2019,7 +2022,7 @@ def timeline(o):
     for path in sorted(root.iterdir()):
         match = RECORD.fullmatch(path.name)
         if match:
-            state = json.loads(read_file(str(path), private=True))
+            state = json.loads(read_file(str(path), limit=None, private=True))
             require(state.get("launch_id") == match.group(1), "invalid_lifecycle_record")
             states[state["launch_id"]] = state
     archive = root / "archive"
@@ -2030,7 +2033,7 @@ def timeline(o):
             path = directory / "retired.json"
             if not path.exists():
                 path = directory / ("agents-" + directory.name + ".json")
-            state = json.loads(read_file(str(path), private=True))
+            state = json.loads(read_file(str(path), limit=None, private=True))
             require(state.get("launch_id") == directory.name, "invalid_lifecycle_record")
             states[state["launch_id"]] = state
     rows = []

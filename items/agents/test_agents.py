@@ -241,6 +241,7 @@ class ContractHelpersTest(unittest.TestCase):
         raw = self.ns["record_bytes"](record)
         self.assertLessEqual(len(raw), self.ns["LIMIT"])
         self.assertEqual(record["timeline"][-1]["at"], 19)
+        self.assertTrue(record["timeline_partial"])
         self.assertIn("19", record["notifications"])
         self.assertNotIn("0", record["notifications"])
         # Essential live metadata has no count/size refusal, even above the compaction target.
@@ -1938,6 +1939,24 @@ Path('/work/network-harness').touch()
                         try:child.communicate(timeout=5)
                         except subprocess.TimeoutExpired:
                             child.kill();child.communicate(timeout=5)
+
+    def test_channel_count_never_refuses_work_and_dedupe_stays_active(self):
+        self.enable_channel(count=1)
+        p, packet = self.launch()
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        launch_id = packet["launch_id"]
+        for i in range(3):
+            p, result = self.channel_cli(launch_id, "--operation", "send", "--to", "starter", "--message-file", str(self.brief),
+                                         request_id="%032x" % (i + 1))
+            self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+            self.assertEqual(result["outcome"], "transport_acknowledged")
+        p, result = self.channel_cli(launch_id, "--operation", "send", "--to", "starter", "--message-file", str(self.brief),
+                                     request_id="%032x" % 1)
+        self.assertEqual(p.returncode, 1, p.stdout + p.stderr)
+        self.assertEqual(result["failure_reason"], "channel_request_already_attempted_no_retry")
+        state = self.record(launch_id)
+        self.assertEqual(len(state["channel_requests"]), 4)  # ACK plus three new sends.
+        self.assertEqual(state["channel_status"], "active")
 
     def enable_channel(self, count=32, lifetime=60000):
         self.delivery = self.work / "delivery"
