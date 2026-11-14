@@ -521,8 +521,11 @@ class SurfacesTest(unittest.TestCase):
         # Inject a second client-equivalent creation between receipt and fresh view.
         needle = 'local after=rex.call("session.view",{session_id=a.session_id})'
         injected = 'rex.call(method,params)\n' + needle
-        self.shim("import subprocess,sys\nargs=sys.argv[1:]\ni=args.index('-e')+1\n"
-                  + "args[i]=args[i].replace(" + repr(needle) + "," + repr(injected) + ")\n"
+        self.shim("import subprocess,sys\nfrom pathlib import Path\nargs=sys.argv[1:]\n"
+                  + "if '-e' in args:\n i=args.index('-e')+1\n args[i]=args[i].replace("
+                  + repr(needle) + "," + repr(injected) + ")\n"
+                  + "elif 'do' in args:\n p=Path(args[args.index('do')+1])\n p.write_text(p.read_text().replace("
+                  + repr(needle) + "," + repr(injected) + "))\n"
                   + f"sys.exit(subprocess.run([{self.rex!r},*args]).returncode)\n")
         r, value = self.surface("ensure", "--session", self.session, "--label", "racing label",
                                 "--", "/bin/sh", "-c", "sleep 60")
@@ -580,11 +583,14 @@ class SurfacesTest(unittest.TestCase):
     def test_rename_refuses_missing_server_method_before_mutation(self):
         before = self.view()
         # Simulate an older server's advertised methods in the local Lua controller.
-        self.shim("import subprocess,sys\n"
-                  "args=sys.argv[1:]\n"
-                  "i=args.index('-e')+1\n"
-                  "args[i]=args[i].replace('local help=rex.call(\"help.all\")','local help={methods={}}')\n"
-                  f"sys.exit(subprocess.run([{self.rex!r},*args]).returncode)\n")
+        needle = 'local help=rex.call("help.all")'
+        injected = 'local help={methods={}}'
+        self.shim("import subprocess,sys\nfrom pathlib import Path\nargs=sys.argv[1:]\n"
+                  + "if '-e' in args:\n i=args.index('-e')+1\n args[i]=args[i].replace("
+                  + repr(needle) + "," + repr(injected) + ")\n"
+                  + "elif 'do' in args:\n p=Path(args[args.index('do')+1])\n p.write_text(p.read_text().replace("
+                  + repr(needle) + "," + repr(injected) + "))\n"
+                  + f"sys.exit(subprocess.run([{self.rex!r},*args]).returncode)\n")
         r, refused = self.run_json(self.rename_command("--pane", self.anchor))
         self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
         self.assertEqual(refused["outcome"], "refused")
