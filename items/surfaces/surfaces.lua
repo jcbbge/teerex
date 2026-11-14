@@ -102,7 +102,17 @@ local function surface(a, emit)
         if #blocks.blocks>0 then return fail("session_has_panes") end
         local clients=rex.call("client.list",{session_id=a.session_id})
         if type(clients)~="table" or type(clients.clients)~="table" then return fail("session_client_list_unavailable") end
-        if #clients.clients>0 then return fail("session_has_attached_clients") end
+        if #clients.clients>0 then
+            for _,client in ipairs(clients.clients) do
+                if type(client.info)~="table" or client.info.kind~="app" then
+                    return fail("session_has_attached_clients")
+                end
+            end
+            if not rex.call("teerex.guard.operator") then
+                result.failure_detail="only the operator may close app-attached sessions; use --operator from an interactive human terminal"
+                return fail("session_has_attached_clients")
+            end
+        end
         result.previous=selected
         result.control_attempted=true
         progress({event="attempt",control=true})

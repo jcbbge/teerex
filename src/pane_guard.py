@@ -138,6 +138,12 @@ local guard_controls={['block.close']=true,['session.destroy']=true,
  ['com.superlogical.terminal.write']=true,['com.superlogical.terminal.paste']=true}
 rex.call=function(method,p)
  p=p or {}
+ if method=='teerex.guard.operator' then return guard_policy.operator end
+ if method=='session.destroy' then
+  for _,seat in ipairs(guard_policy.seats) do
+   if seat.session_id==p.session_id then error('registered_seat_session_cannot_be_closed',0) end
+  end
+ end
  local viewer_cleanup=method=='teerex.guard.viewerclose'
  if viewer_cleanup then method='block.close' end
  local control=guard_controls[method] or method=='teerex.guard.take'
@@ -225,6 +231,8 @@ def authorize(server, method, payload, rpc):
                 if any(b['block_id'] == bid for b in layer.get('blocks', [])):
                     return w['window_id']
     policy = snapshot(server)
+    if method == 'session.destroy' and any(seat['session_id'] == payload.get('session_id') for seat in policy['seats']):
+        raise ValueError('registered_seat_session_cannot_be_closed')
     if policy['operator']:
         return
     for seat in policy['seats']:

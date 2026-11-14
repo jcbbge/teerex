@@ -140,6 +140,90 @@ class GuardTest(_fixtures.SurfacesTest):
         self.refused(self.cli(*command, env=env), 'recorded spawner: ' + self.session + ' ' + self.anchor)
         self.assertEqual(self.cli(*command).returncode, 0)
 
+    def test_session_close_client_kind_decisions(self):
+        # client.list's documented info shapes; Rex exposes no public method
+        # for a CLI connection to identify itself as an app. Keep the real
+        # session inventory, pane checks, guard and destroy/readback calls.
+        import pane_guard
+        from unittest.mock import patch
+        source = (ROOT / 'items/surfaces/surfaces.lua').read_text()
+        for kinds in (['app'], ['app', 'app'], ['cli'], ['app', 'cli'],
+                      ['agent'], ['other'], ['future'], [None]):
+            for operator in (False, True):
+                with self.subTest(kinds=kinds, operator=operator):
+                    sid = self.rpc('session.create', {'label': 'client decision'})['session_id']
+                    with patch.dict(os.environ, self.env, clear=True):
+                        policy = pane_guard.snapshot('unix://' + str(self.socket))
+                    policy['operator'] = operator
+                    clients = [dict(client_id='client:fixture-' + str(n),
+                                    info=dict(kind=kind)) if kind else dict(client_id='client:fixture-' + str(n))
+                               for n, kind in enumerate(kinds)]
+                    lua = "local native=rex.call; rex.call=function(m,p) if m=='client.list' then return rex.json.decode(" + json.dumps(json.dumps(dict(clients=clients))) + ") end return native(m,p) end\n"
+                    lua += 'do local GUARD_DATA=' + json.dumps(json.dumps(policy)) + '\n' + pane_guard.LUA + '\nend\n'
+                    lua += source + '\nlocal r=surface(' + '{operation="session-close",session_id=' + json.dumps(sid) + '}); print(rex.json.encode(r))'
+                    result = subprocess.run(self.base + ['do', '-e', lua], env=self.env,
+                                            capture_output=True, text=True, timeout=20)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    packet = json.loads(result.stdout)
+                    expected = operator and all(kind == 'app' for kind in kinds)
+                    self.assertEqual(packet['outcome'], 'session_closed_and_absent' if expected else 'refused')
+                    present = sid in [v['session_id'] for v in self.rpc('session.list', {})['sessions']]
+                    self.assertEqual(present, not expected)
+                    if expected:
+                        self.assertTrue(packet['session_absence_verified'])
+                    else:
+                        self.assertEqual(packet['failure_reason'], 'session_has_attached_clients')
+                        self.assertFalse(packet.get('control_attempted', False))
+                        if all(kind == 'app' for kind in kinds):
+                            self.assertIn('only the operator', packet['failure_detail'])
+                        self.rpc('session.destroy', {'session_id': sid})
+
+    def test_session_destroy_wire_guard_protects_seat(self):
+        import pane_guard
+        from unittest.mock import patch
+        for operator in (False, True):
+            policy = dict(operator=operator, seats=[dict(session_id=self.session)])
+            with patch.object(pane_guard, 'snapshot', return_value=policy):
+                with self.assertRaisesRegex(ValueError, 'registered_seat_session_cannot_be_closed'):
+                    pane_guard.authorize('unused', 'session.destroy', dict(session_id=self.session),
+                                         lambda *_: self.fail('seat destruction must refuse before RPC'))
+
+    def test_session_close_operator_guards(self):
+        authority = _fixtures.pane_authority
+        args = [_fixtures.BIN, 'surfaces', 'session', 'close', '--socket', str(self.socket)]
+        # Even an operator cannot close a session containing a pane.
+        self.refused(authority.operator(args + ['--session', self.session], self.env,
+                                       text=True, timeout=20), 'session_has_panes')
+        sid = self.rpc('session.create', {'label': 'operator empty'})['session_id']
+        # The real operator path may close an unowned empty session.
+        result = authority.operator(args + ['--session', sid], self.env, text=True, timeout=20)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue(json.loads(result.stdout)['session_absence_verified'])
+        sid = self.rpc('session.create', {'label': 'operator seat'})['session_id']
+        self.addCleanup(lambda: self.rpc('session.destroy', {'session_id': sid}))
+        target = dict(server='unix://' + str(self.socket), session_id=sid, block_id=self.anchor)
+        (self.store / 'state.json').write_text(json.dumps(dict(seats=[dict(target=target)])))
+        result = authority.operator(args + ['--session', sid], self.env, text=True, timeout=20)
+        self.refused(result, 'registered_seat_session_cannot_be_closed')
+        self.assertIn(sid, [v['session_id'] for v in self.rpc('session.list', {})['sessions']])
+        # Real attached CLI clients remain protected in the operator path.
+        (self.store / 'state.json').write_text(json.dumps(dict(seats=[])))
+        client = subprocess.Popen(self.base + ['do', '--session', sid, '--for', '10m', '-e',
+                                  "rex.on('session_changed',function() end)"],
+                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            deadline = time.monotonic() + 5
+            while not self.rpc('client.list', dict(session_id=sid))['clients']:
+                self.assertIsNone(client.poll())
+                self.assertLess(time.monotonic(), deadline)
+                time.sleep(.03)
+            result = authority.operator(args + ['--session', sid], self.env, text=True, timeout=20)
+            self.refused(result, 'session_has_attached_clients')
+            self.assertIsNone(client.poll())
+        finally:
+            client.terminate()
+            client.wait(timeout=5)
+
     def test_operator_terminal(self):
         pane = self.open('tab', label='operator target')['actual']['block_id']
         self.register(pane)

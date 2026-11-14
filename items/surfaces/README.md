@@ -272,14 +272,19 @@ Palette help uses `teerex surfaces palette` for menu generation and `teerex surf
 
 ### Close an empty session
 
-`teerex surfaces session close --socket ABS --session TEXT [--timeout-ms N]`
+`teerex surfaces session close --socket ABS --session TEXT [--operator] [--timeout-ms N]`
 resolves the existing session selector, checks all blocks (including detached
 panes) and explicitly attached clients, then attempts one session destroy and
 verifies absence from a fresh session list. It observes through `attach_all`
 without joining the session itself. A non-empty session refuses with
 `failure_reason=session_has_panes`; an attached client refuses with
 `failure_reason=session_has_attached_clients`. Both return exit 1 and a single
-JSON line without requesting closure. Unavailable evidence also refuses.
+JSON line without requesting closure. If every attached client has
+`info.kind=app`, only the explicit operator path described above may close the
+empty session; without it the same failure reason includes an operator-only
+explanation. Any non-app or unreported client kind still refuses, including
+with `--operator`. The registered seat's session always refuses destruction,
+including for the operator. Unavailable evidence also refuses.
 Success returns exit 0, `outcome=session_closed_and_absent`,
 `session_absence_verified=true`, and the resolved session ID. Client/block
 checks are snapshots immediately before the destroy call, not a server-side
@@ -289,3 +294,14 @@ Verification: `TEEREX_BIN=ABS REX_BIN=ABS python3 items/surfaces/test_surfaces.p
 SurfacesTest.test_session_close_empty_unattached_and_verify_absence
 SurfacesTest.test_session_close_refuses_attached_and_detached_panes
 SurfacesTest.test_session_close_refuses_empty_session_with_attached_client -v`.
+
+Operator/client-kind verification: `TEEREX_BIN=ABS REX_BIN=ABS PYTHONPATH=src
+python3 -m unittest test_pane_guard.GuardTest.test_session_close_client_kind_decisions
+test_pane_guard.GuardTest.test_session_close_operator_guards
+test_pane_guard.GuardTest.test_session_destroy_wire_guard_protects_seat
+test_pane_guard.GuardTest.test_operator_terminal -v` (from the repository root).
+The app-only cases inject documented `client.list` shapes into the guarded Lua
+flow on a disposable server, retaining real session destruction and absence
+readback. Rex has no public API to set a CLI connection's client kind; these
+checks do not claim a real Rex.app attachment. The separate operator checks use
+an actual PTY and a real attached CLI client.
