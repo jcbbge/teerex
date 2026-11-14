@@ -1412,7 +1412,7 @@ with ThreadPoolExecutor() as pool:
         self.assertEqual(p.returncode, 1)
         self.assertIn("brief_already_attempted", again["failure_reason"])
 
-    def test_timeout_never_sends_brief_wrong_token_address_and_explicit_continue(self):
+    def test_timeout_never_sends_before_ack_and_supervisor_continues(self):
         p, packet = self.launch("noack", ack_timeout=250)
         self.assertEqual(p.returncode, 124, p.stderr + p.stdout)
         self.assertEqual(packet["outcome"], "protocol_ack_timeout")
@@ -1434,9 +1434,11 @@ with ThreadPoolExecutor() as pool:
         p, acked = acknowledge(state["token"], state["target"]["block_id"])
         self.assertEqual(p.returncode, 0, p.stderr + p.stdout)
         self.assertEqual(acked["outcome"], "protocol_acknowledged")
-        p, _ = self.run_cli("deliver", "--registry", str(self.registry), "--launch-id", state["launch_id"])
-        self.assertEqual(p.returncode, 0, p.stderr + p.stdout)
+        wait_for(lambda: self.record(state["launch_id"])["brief_outcome"] == "events_acknowledged")
         wait_for(lambda: len([v for v in events(self.worker_log) if v["event"] == "input"]) == 1)
+        p, failure = self.run_cli("deliver", "--registry", str(self.registry), "--launch-id", state["launch_id"])
+        self.assertEqual(p.returncode, 1)
+        self.assertIn("brief_already_attempted", failure["failure_reason"])
 
     def test_idle_error_hooks_and_real_exit_are_different(self):
         p, packet = self.launch()
@@ -2170,7 +2172,7 @@ with ThreadPoolExecutor() as pool:
             return value
         self.assertEqual(without_routes(protocol), without_routes(saved))
         self.assertIn("--config '/work/callbacks route.json' --host registry agents ack", protocol)
-        # A later explicit ACK can continue once; timeout never submits the brief by itself.
+        # The retained supervisor continues after a late ACK, without a second launcher.
         profile = self.settings["profiles"]["probe"]
         profile["argv"] = [sys.executable, "/work/fixture.py", "/work/late.jsonl", "lateack"]
         profile["hook_events"] = False
@@ -2180,9 +2182,7 @@ with ThreadPoolExecutor() as pool:
         self.assertEqual(p.returncode, 124, p.stderr + p.stdout)
         self.assertFalse(late["brief_attempted"])
         wait_for(lambda: self.record(late["launch_id"])["protocol_acknowledged"])
-        self.assertEqual([v for v in events(compute / "late.jsonl") if v["event"] == "input"], [])
-        p, result = self.run_cli("deliver", "--registry", str(self.registry), "--launch-id", late["launch_id"])
-        self.assertEqual(p.returncode, 0, p.stderr + p.stdout)
+        wait_for(lambda: self.record(late["launch_id"])["brief_outcome"] == "events_acknowledged")
         wait_for(lambda: [v for v in events(compute / "late.jsonl") if v["event"] == "input"])
         p, result = self.run_cli("deliver", "--registry", str(self.registry), "--launch-id", late["launch_id"])
         self.assertEqual(p.returncode, 1)

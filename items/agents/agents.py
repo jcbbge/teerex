@@ -1770,13 +1770,13 @@ def launch_agent(o):
     end = time.monotonic() + o.ack_timeout_ms / 1000
     while time.monotonic() < end:
         state = load(root, launch_id)
-        if state["protocol_acknowledged"] and state["protocol_outcome"] == "argument_supplied":
-            return deliver(root, launch_id)
+        if state["phase"] in ("brief_submitted", "brief_uncertain", "protocol_acknowledged_no_brief"):
+            return (0 if state["phase"] != "brief_uncertain" else 1), receipt(state, state["phase"])
         if state["immediate_child_term"] is not None:
             return 1, receipt(state, "child_exited_before_ack")
         time.sleep(.05)
     return 124, receipt(state, "protocol_ack_timeout", automatic_close=False,
-                        next_action="inspect_the_visible_pane_then_explicitly_deliver_only_if_acknowledged")
+                        next_action="supervisor_continues_waiting_for_ack_and_delivers_once; inspect_launch_state")
 
 
 def ack(o):
@@ -2422,6 +2422,20 @@ def supervise_child(o):
                     broker.service()
                 else:
                     time.sleep(.05)
+                ready = load(o.registry, o.launch_id)
+                if (not ready.get("human") and ready["protocol_acknowledged"]
+                        and not ready["brief_attempted"]
+                        and ready["phase"] != "protocol_acknowledged_no_brief"):
+                    # The retained supervisor outlives the launcher's ACK wait.
+                    # deliver claims the attempt under the registry lock before input.
+                    try:
+                        deliver(o.registry, o.launch_id)
+                    except Refusal as exc:
+                        latest = load(o.registry, o.launch_id)
+                        if not latest["brief_attempted"]:
+                            raise
+                    except Exception as exc:
+                        supervisor_error(o, "last_brief_delivery_error", exc)
                 if broker is not None and broker.closed and not channel_closed_reported:
                     update(o.registry, o.launch_id, lambda s: s.update(channel_status="revoked"))
                     channel_closed_reported = True
