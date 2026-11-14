@@ -14,6 +14,10 @@ another Rex build. Tickets and reconnect tokens are never logged.
 
 All modes require `--socket ABS --session session:UUID`; no environment target,
 focus selection, automatic retry or server autostart. Python3.9+ is required.
+Play and live checkpoints invoke native `observe`, which also needs the Rex
+client executable on PATH. Select a specific client with root `--rex ABS` or
+`TEEREX_INTERNAL_REX=ABS`; a working server socket alone is insufficient.
+`--teerex ABS` selects the observation CLI, not the Rex executable.
 The command host and selected Rex must share the local filesystem and Python,
 including the same writable `/tmp`: replay creates its gate and player files
 there. A sandbox with a private `/tmp` cannot drive a Rex server outside that
@@ -86,6 +90,9 @@ an empty complete interval and still exit 124. Live checkpoint observations are
 in `steps`; play checkpoint observations are in `checkpoints`.
 Exit 0: complete record / faithful replay with all facts true / live steps true.
 Exit 1: refusal, wire/creation/cleanup uncertainty, incomplete/hash mismatch.
+`observation_failed` means the checkpoint observation command failed; it does
+not establish corrupt recorded bytes. Check its child diagnostic and Rex-client
+selection separately from the shared-`/tmp` prerequisite.
 Exit 2: usage (no JSON). Exit 3: false/unknown facts, live divergence, or
 `steps_not_run`. Exit 124: deadline; 130/143: interruption. Without `--keep-open`,
 only this invocation's block is closed and absence verified. With it, the result
