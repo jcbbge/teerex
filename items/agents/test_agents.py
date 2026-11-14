@@ -330,6 +330,22 @@ class ContractHelpersTest(unittest.TestCase):
             self.assertEqual(saved["awaiting_starter"]["kind"], "flag")
             self.assertEqual(sorted(r[1]["outcome"] for r in results), ["already_attempted", "transport_acknowledged"])
 
+    def test_answer_consumed_during_report_dispatch_is_not_reopened(self):
+        destination = dict(session_id="s", block_id="b")
+        state = dict(name="worker", starter=destination, report_to=destination, target=destination,
+                     contract=dict(awaiting_starter=None, starter_lapses=0))
+        self.ns["load"] = lambda *_: state
+        self.ns["update"] = lambda root, launch, change: change(state)
+        self.ns["now"] = lambda: 10
+        def send(*args):
+            self.ns["delivered_input"]("root", "id", dict(at_ns=11_000_000))
+            return 0, {"outcome": "events_acknowledged"}
+        self.ns["send"] = send
+        code, _ = self.ns["contract_tell"]("root", "id", "done", "DONE worker: passed")
+        self.assertEqual(code, 0)
+        self.assertIsNone(state["contract"]["awaiting_starter"])
+
+
 
 
 class AgentsTest(unittest.TestCase):

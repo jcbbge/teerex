@@ -627,7 +627,7 @@ def contract_tell(root, launch_id, kind, line, to="starter"):
                 c["last_contact_failed"] = dict(at=sent_at, line=line, receipt=results)
             if kind == "flag" and c.get("flag", {}).get("sha") == flag["sha"]:
                 c["flag"].update(delivered_at=now() if ok else None, receipt=results)
-            if ok and kind in ("done", "flag"):
+            if ok and kind in ("done", "flag") and s.get("last_input_at_ns", 0) < sent_at * 1000000:
                 c.update(awaiting_starter=dict(kind=kind, at=sent_at), starter_lapses=0)
         update(root, launch_id, told)
     return (0 if ok else 1), dict(outcome="transport_acknowledged" if ok else "uncertain", results=results)
