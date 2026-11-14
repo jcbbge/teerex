@@ -26,6 +26,12 @@ ID = re.compile(r"^(session|block):[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$"
 HOST = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$")
 
 
+class ActionParser(argparse.ArgumentParser):
+    def error(self, message):
+        self.print_usage(sys.stderr)
+        self.exit(2, f"{self.prog}: error: {message}\nnext: {self.prog} --help\n")
+
+
 class Refused(Exception):
     pass
 
@@ -337,6 +343,10 @@ def socket_receipt(fields):
 
 
 def result(**fields):
+    if fields.get("kind") == "ask_result" and fields.get("outcome") in ("cancelled", "refused_or_unknown", "delivered_history_failed"):
+        print("next: Confirm delivery with the target pane owner and inspect the saved decision before sending again.", file=sys.stderr)
+    elif fields.get("kind") == "boards_error":
+        print("next: teerex ask --help" if "ask" in sys.argv else "next: teerex boards --help", file=sys.stderr)
     print(json.dumps(dict(schema_version=1, **fields), ensure_ascii=False), flush=True)
 
 
@@ -1126,7 +1136,7 @@ def bounded_int(minimum, maximum):
 
 
 def parser():
-    p = argparse.ArgumentParser(prog="teerex", description="Guarded decision delivery, private history and visible boards. Inbox history rotates above 128 non-open records to 96; open decisions pinned separately; immutable 0600 archives never deleted. Python3 required; no daemon. Reports never certify completion.")
+    p = ActionParser(prog="teerex", description="Guarded decision delivery, private history and visible boards. Inbox history rotates above 128 non-open records to 96; open decisions pinned separately; immutable 0600 archives never deleted. Python3 required; no daemon. Reports never certify completion.")
     commands = p.add_subparsers(dest="command", required=True)
 
     def common(q, needs_target=True):

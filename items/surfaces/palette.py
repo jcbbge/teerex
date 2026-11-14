@@ -14,6 +14,12 @@ import tempfile
 LIMIT = 262144
 
 
+class ActionParser(argparse.ArgumentParser):
+    def error(self, message):
+        self.print_usage(sys.stderr)
+        self.exit(2, f"{self.prog}: error: {message}\nnext: {self.prog} --help\n")
+
+
 def digest(data):
     return hashlib.sha256(data).hexdigest()
 
@@ -151,7 +157,7 @@ def execute(args, result):
 
 
 def main():
-    parser = argparse.ArgumentParser(prog='teerex surfaces palette install', description=__doc__)
+    parser = ActionParser(prog='teerex surfaces palette install', description=__doc__)
     for option in ("init", "file", "socket", "plan"):
         parser.add_argument("--" + option, required=True)
     parser.add_argument("--apply", metavar="PLAN_SHA256", help="approve the exact previously printed plan hash")
@@ -165,6 +171,8 @@ def main():
         result["failure_reason"] = str(error)
         result["outcome"] = "uncertain" if result["config_updated"] else "refused"
         code = 1
+    if code:
+        print("next: Inspect the selected configuration and action file before planning the palette installation again.", file=sys.stderr)
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return code
 

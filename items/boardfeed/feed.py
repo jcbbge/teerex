@@ -21,6 +21,12 @@ STOP = threading.Event()
 CHILDREN = []
 
 
+class ActionParser(argparse.ArgumentParser):
+    def error(self, message):
+        self.print_usage(sys.stderr)
+        self.exit(2, f"{self.prog}: error: {message}\nnext: {self.prog} --help\n")
+
+
 def tracked_output(command, timeout=None, text=False):
     """check_output, but registered in CHILDREN so a stopping feed terminates and reaps it."""
     if STOP.is_set():raise subprocess.SubprocessError('feed stopping')
@@ -36,6 +42,8 @@ def tracked_output(command, timeout=None, text=False):
 
 
 def emit(host, kind, **fields):
+    if fields.get('error'):
+        print('next: teerex doctor --all', file=sys.stderr)
     with LOCK:
         print(json.dumps(dict(v=1, t=time.time_ns() // 1000000, host=host, kind=kind, **fields), separators=(',', ':')), flush=True)
 
@@ -639,7 +647,7 @@ def merge(a):
 
 
 def main(argv=None):
-    parser=argparse.ArgumentParser(prog='teerex board feed',description=__doc__)
+    parser=ActionParser(prog='teerex board feed',description=__doc__)
     parser.add_argument('--config',default=os.path.expanduser('~/.config/teerex/hosts.json'),help='absolute named-host configuration')
     parser.add_argument('--hosts',default='hive,m5',help='comma-separated configured hosts; both by default')
     parser.add_argument('--held-command-json',help=argparse.SUPPRESS)
@@ -666,6 +674,7 @@ def main(argv=None):
         try:open_held(args)
         except (OSError,ValueError,KeyError,EOFError,subprocess.SubprocessError):
             print('Held work unavailable',file=sys.stderr)
+            print('next: teerex doctor --all',file=sys.stderr)
             raise SystemExit(1)
         return
     def stop(signum,frame):

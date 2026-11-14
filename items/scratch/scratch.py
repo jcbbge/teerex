@@ -17,6 +17,12 @@ import textwrap
 import time
 
 
+class ActionParser(argparse.ArgumentParser):
+    def error(self, message):
+        self.print_usage(sys.stderr)
+        self.exit(2, f"{self.prog}: error: {message}\nnext: {self.prog} --help\n")
+
+
 class ScratchError(ValueError):
     pass
 
@@ -321,7 +327,7 @@ def scratch_watch_owner(socket, session, owner):
 
 
 def scratch_main(argv=None):
-    parser = argparse.ArgumentParser(prog="teerex scratch", description="Per-pane ephemeral Markdown scratchpads; palette prepares Show scratchpad for surfaces palette install.")
+    parser = ActionParser(prog="teerex scratch", description="Per-pane ephemeral Markdown scratchpads; palette prepares Show scratchpad for surfaces palette install.")
     subs = parser.add_subparsers(dest="operation", required=True)
     for op in ("init", "now", "todo", "done", "show", "path", "watch", "flag"):
         p = subs.add_parser(op)
@@ -425,6 +431,17 @@ def scratch_main(argv=None):
         return 0
     except (OSError, ValueError) as exc:
         print("teerex scratch: " + str(exc), file=sys.stderr)
+        if isinstance(exc, FileNotFoundError):
+            action = 'teerex scratch init --name YOUR_NAME --purpose "YOUR_TASK" --intent "DONE_WHEN"'
+        elif "owned_" in str(exc):
+            action = "Inspect the scratchpad path and its owner; leave files owned by someone else untouched."
+        elif "canonical_" in str(exc):
+            action = "rex whoami --json"
+        elif "check" in str(exc):
+            action = "Use --check 10m or an ISO UTC time on the scratch now command."
+        else:
+            action = "teerex scratch " + o.operation + " --help"
+        print("next: " + action, file=sys.stderr)
         return 1
     except KeyboardInterrupt:
         return 130

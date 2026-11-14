@@ -9,6 +9,13 @@ import stat
 import sys
 
 
+class ActionParser(argparse.ArgumentParser):
+    def error(self, message):
+        self.print_usage(sys.stderr)
+        operation = sys.argv[1] if sys.argv[1:2] and sys.argv[1] in ("agents", "hosts", "focus") else "focus"
+        self.exit(2, f"{self.prog}: error: {message}\nnext: {self.prog} {operation} --help\n")
+
+
 def read_config(path):
     fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     with os.fdopen(fd, "rb") as f:
@@ -183,7 +190,7 @@ return invoke(argv)'''
 
 
 def main():
-    p = argparse.ArgumentParser(prog='teerex surfaces palette', description=__doc__)
+    p = ActionParser(prog='teerex surfaces palette', description=__doc__)
     p.add_argument("operation", choices=("agents", "hosts", "focus"))
     p.add_argument("--file", required=True)
     p.add_argument("--host", help="focus a label through this named host; --config selects its config")
@@ -204,6 +211,8 @@ def main():
     except (OSError, ValueError, KeyError, TypeError, AttributeError) as e:
         result = dict(schema_version=1, kind="surface_palette_result", outcome="refused", failure_reason=str(e), registered_in_running_server=False)
         code = 1
+    if code:
+        print("next: teerex surfaces palette " + o.operation + " --help", file=sys.stderr)
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return code
 

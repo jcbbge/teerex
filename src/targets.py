@@ -156,8 +156,14 @@ def execute(host, command, *, tty=False):
     os.execvpe(argv[0], argv, env)
 
 
+class ActionParser(argparse.ArgumentParser):
+    def error(self, message):
+        self.print_usage(sys.stderr)
+        self.exit(2, f"{self.prog}: error: {message}\nnext: {self.prog} --help\n")
+
+
 def main(argv=None):
-    parser = argparse.ArgumentParser(prog='teerex targets', description=__doc__)
+    parser = ActionParser(prog='teerex targets', description=__doc__)
     sub = parser.add_subparsers(dest="operation", required=True)
     for operation in ("resolve", "exec"):
         child = sub.add_parser(operation)
@@ -184,6 +190,7 @@ def main(argv=None):
         return 0
     except (OSError, ValueError, UnicodeError) as exc:
         print(json.dumps({"schema_version": 1, "kind": "target_error", "error": str(exc), "retry": False}), file=sys.stderr)
+        print("next: Check the selected host and configuration file; run teerex targets resolve --help for the required flags.", file=sys.stderr)
         return 1
 
 

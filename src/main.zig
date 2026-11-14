@@ -52,6 +52,31 @@ const usage =
     \\
 ;
 
+var active_command: []const u8 = "";
+
+fn nextAction(code: u8) void {
+    if (eq(active_command, "surfaces palette")) {
+        // Argument errors already include the selected palette command's help.
+        if (code != 2) std.debug.print("next: Inspect the selected configuration and action file before planning the palette installation again.\n", .{});
+        return;
+    }
+    if (code == 2) {
+        std.debug.print("next: teerex {s} --help\n", .{active_command});
+        return;
+    }
+    const action = if (eq(active_command, "send"))
+        "Confirm the target pane and whether the message arrived with its owner before sending again."
+    else if (eq(active_command, "surfaces"))
+        "Inspect the selected session and pane with teerex surfaces resolve before changing it again."
+    else if (eq(active_command, "board"))
+        "Check the selected hosts with teerex doctor --all; run teerex board --help for command options."
+    else if (eq(active_command, "doctor"))
+        "Check the selected Rex executable and server socket; run teerex doctor --help for selection flags."
+    else
+        "teerex --help";
+    std.debug.print("next: {s}\n", .{action});
+}
+
 pub fn main() void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
@@ -65,6 +90,7 @@ pub fn main() void {
 }
 
 fn finish(allocator: std.mem.Allocator, code: u8) noreturn {
+    if (code != 0) nextAction(code);
     @import("rex_boards").call_log.end(allocator, code);
     std.process.exit(code);
 }
@@ -109,6 +135,10 @@ fn send(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
 fn run(allocator: std.mem.Allocator) !void {
     const all = try std.process.argsAlloc(allocator);
     var args: []const []const u8 = all[1..];
+    if (args.len > 0) active_command = args[0];
+    if (args.len > 2 and eq(args[0], "surfaces") and eq(args[1], "palette") and
+        (eq(args[2], "install") or eq(args[2], "agents") or eq(args[2], "hosts") or eq(args[2], "focus")))
+        active_command = "surfaces palette";
     if (args.len == 1 and std.mem.eql(u8, args[0], "--version")) {
         try std.fs.File.stdout().writeAll("teerex " ++ version ++ "\n");
         return;

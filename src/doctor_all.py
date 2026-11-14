@@ -8,6 +8,12 @@ import subprocess
 import sys
 
 
+class ActionParser(argparse.ArgumentParser):
+    def error(self, message):
+        self.print_usage(sys.stderr)
+        self.exit(2, f"{self.prog}: error: {message}\nnext: {self.prog} --help\n")
+
+
 def run_command(argv):
     result = subprocess.run(argv, capture_output=True, text=True)
     return result.returncode, result.stdout.strip(), result.stderr.strip()
@@ -63,7 +69,7 @@ def inspect_host(host):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(prog='teerex doctor --all')
+    parser = ActionParser(prog='teerex doctor --all')
     parser.add_argument('--all', action='store_true', required=True)
     parser.add_argument('--config', default=str(Path.home() / '.config/teerex/hosts.json'))
     parser.add_argument('--json', action='store_true')
@@ -102,4 +108,8 @@ def main(argv=None):
                 detail = ' '.join(check['detail'].splitlines())
                 print(f"{'✓' if check['ok'] else '✗'} {host['host']} {check['check']}: {detail}" +
                       ('' if check['ok'] else ' | fix: ' + check['fix']))
+    for host in results:
+        for check in host['checks']:
+            if not check['ok']:
+                print("next: " + check['fix'], file=sys.stderr)
     return 0 if packet['ok'] else 1

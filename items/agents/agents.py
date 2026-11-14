@@ -23,6 +23,12 @@ import sys
 import time
 import tempfile
 
+class ActionParser(argparse.ArgumentParser):
+    def error(self, message):
+        self.print_usage(sys.stderr)
+        self.exit(2, f"{self.prog}: error: {message}\nnext: {self.prog} --help\n")
+
+
 LIMIT = 262144
 RUNTIME = sys.argv[1] if __name__ == "__main__" else None
 
@@ -2189,7 +2195,7 @@ def bounded_int(minimum, maximum):
 
 
 def parser():
-    p = argparse.ArgumentParser(prog="teerex agents", description=(
+    p = ActionParser(prog="teerex agents", description=(
         "Tracked tab/detached profiles, protocol ACK-before-one-brief, optional named SSH compute and opt-in bounded local fence channel. "
         "Python3.9+. API13 jobs. Profiles accept tint: false or {idle,error,done: #RRGGBB}; supervisor uses child status. "
         "Creation, transport ACK, agent ACK, idle and child exit are distinct. "
@@ -2271,6 +2277,24 @@ def parser():
     return p
 
 
+def refusal_next(o, reason=""):
+    if reason.startswith("[Errno 2]"):
+        return "Ask your starter for the current launch name and registry path; do not create replacement files."
+    if reason == "absolute_path_required":
+        return "Use an absolute path starting with / for the selected file or directory, then repeat the command."
+    if reason == "launch_queue_busy":
+        return "Wait for the current launch to finish, then repeat the launch command."
+    if o.operation == "ack":
+        return "Ask your starter for the current acknowledgment command; do not reuse an old token."
+    registry = getattr(o, "registry", None)
+    launch_id = getattr(o, "launch_id", None)
+    if registry and launch_id:
+        return shlex.join(["teerex", "agents", "inspect", "--registry", str(registry), "--launch-id", launch_id])
+    if registry:
+        return shlex.join(["teerex", "agents", "prune", "--registry", str(registry)])
+    return "teerex agents " + o.operation + " --help"
+
+
 def main():
     signal.signal(signal.SIGINT, terminate)
     signal.signal(signal.SIGTERM, terminate)
@@ -2294,6 +2318,8 @@ def main():
             code, result = globals()[o.operation](o)
         if result is not None and o.operation != "supervise":
             print(json.dumps(result, ensure_ascii=False))
+        if code:
+            print("next: " + refusal_next(o), file=sys.stderr)
         return code
     except (KeyboardInterrupt, Cancelled) as exc:
         sig = exc.args[0] if isinstance(exc, Cancelled) else signal.SIGINT
@@ -2301,6 +2327,7 @@ def main():
             supervisor_error(o, "last_supervisor_error", exc)
         else:
             print(json.dumps(dict(schema_version=1, kind="agents_result", outcome="cancelled_uncertain", retry_safe=False)))
+        print("next: " + refusal_next(o), file=sys.stderr)
         return 128 + sig
     except (Refusal, OSError, ValueError, KeyError, TypeError, RecursionError, subprocess.SubprocessError) as exc:
         queue_busy = o.operation == "launch" and isinstance(exc, Refusal) and str(exc) == "launch_queue_busy"
@@ -2312,6 +2339,7 @@ def main():
             supervisor_error(o, "last_supervisor_error", exc)
         else:
             print(json.dumps(result))
+        print("next: " + refusal_next(o, str(exc)), file=sys.stderr)
         return 1
 
 

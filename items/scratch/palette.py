@@ -5,12 +5,18 @@ import os
 import sys
 
 
+class ActionParser(argparse.ArgumentParser):
+    def error(self, message):
+        self.print_usage(sys.stderr)
+        self.exit(2, f"{self.prog}: error: {message}\nnext: {self.prog} --help\n")
+
+
 def quote(value):
     return '"' + ''.join('\\' + c if c in '\\"' else '\\%03d' % ord(c) if ord(c) < 32 or ord(c) == 127 else c for c in value) + '"'
 
 
 def main():
-    p = argparse.ArgumentParser(prog="teerex scratch palette", description=__doc__)
+    p = ActionParser(prog="teerex scratch palette", description=__doc__)
     p.add_argument("--file", required=True)
     p.add_argument("--socket", required=True)
     p.add_argument("--teerex", default=sys.argv[1])
@@ -45,4 +51,5 @@ if __name__ == "__main__":
         main()
     except (OSError, ValueError) as exc:
         print(str(exc), file=sys.stderr)
+        print("next: teerex scratch palette --help", file=sys.stderr)
         sys.exit(1)

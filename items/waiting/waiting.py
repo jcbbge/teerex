@@ -53,6 +53,11 @@ for path in (root/'teerex-agents').glob('agents-*.json'):
         position=dict(now=now,waiting=waiting,decision=decision)))
 print(json.dumps(rows))
 '''
+class ActionParser(argparse.ArgumentParser):
+    def error(self, message):
+        self.print_usage(sys.stderr)
+        self.exit(2, f"{self.prog}: error: {message}\nnext: {self.prog} --help\n")
+
 
 SCAN = r'''
 local function call(m,a) local v,e=rex.call(m,a); if not v then error(e) end; return v end
@@ -188,7 +193,7 @@ def scan(hosts, visited, here, circuit=False):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(prog="teerex waiting", description=__doc__)
+    parser = ActionParser(prog="teerex waiting", description=__doc__)
     parser.add_argument('operation', choices=('list', 'next', 'back', 'put-away'))
     parser.add_argument('--config', default=str(Path.home() / '.config/teerex/hosts.json'))
     parser.add_argument('--hosts', help='comma-separated names; default every configured host')
@@ -276,6 +281,8 @@ def main(argv=None):
                     json.dump(state, stream)
                 os.replace(temporary, state_path)
         print(json.dumps(result))
+        if not complete:
+            print("next: teerex doctor --all", file=sys.stderr)
         return 0 if complete else 1
 
 
@@ -284,4 +291,5 @@ if __name__ == '__main__':
         sys.exit(main())
     except (OSError, ValueError, KeyError, subprocess.TimeoutExpired) as exc:
         print(json.dumps(dict(kind='waiting_error', error=str(exc))), file=sys.stderr)
+        print("next: teerex doctor --all", file=sys.stderr)
         sys.exit(1)

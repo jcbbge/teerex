@@ -140,6 +140,7 @@ const Collector = struct {
 
 fn usageError(message: []const u8) noreturn {
     std.debug.print("teerex send: {s}\n{s}", .{ message, usage });
+    std.debug.print("next: teerex send --help\n", .{});
     std.process.exit(2);
 }
 

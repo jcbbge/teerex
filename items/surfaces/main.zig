@@ -329,6 +329,7 @@ fn publisherDeadline(done: *std.Thread.ResetEvent, milliseconds: u64) void {
     done.timedWait(milliseconds * std.time.ns_per_ms) catch {
         // Covers publication too, after the owned RPC's normal deadline/cleanup.
         // Never turn a watchdog exit into verified absence: the prepared file stays unknown.
+        std.debug.print("next: Inspect the saved completion file and selected pane before changing it again.\n", .{});
         std.process.exit(124);
     };
 }
