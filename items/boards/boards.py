@@ -19,10 +19,9 @@ import tempfile
 import secrets
 
 MAX_BYTES = 1048576
-MAX_SEATS = 32
 MAX_RECORDS = 128
 MAX_FLEET = 128
-STATES = ("working", "waiting_on_operator", "idle", "dead", "completed", "unknown")
+STATES = ("blocked", "working", "waiting_on_operator", "idle", "dead", "completed", "unknown")
 ID = re.compile(r"^(session|block):[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$")
 HOST = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$")
 
@@ -119,8 +118,8 @@ def private(fd, directory=False):
 def read_fd(fd, limit):
     check(stat.S_ISREG(os.fstat(fd).st_mode), "regular_file_required")
     with os.fdopen(os.dup(fd), "rb") as f:
-        raw = f.read(limit + 1)
-    check(len(raw) <= limit, "file_exceeds_bound")
+        raw = f.read() if limit is None else f.read(limit + 1)
+    check(limit is None or len(raw) <= limit, "file_exceeds_bound")
     return raw.decode("utf-8")
 
 
@@ -195,7 +194,7 @@ class Store:
                 return
             try:
                 private(fd)
-                self.state = json_load(read_fd(fd, MAX_BYTES))
+                self.state = json_load(read_fd(fd, None))
             finally:
                 os.close(fd)
             validate_state(self.state)
@@ -212,7 +211,7 @@ class Store:
             fd = self.open(name, os.O_RDONLY)
             try:
                 private(fd)
-                check(read_fd(fd, MAX_BYTES * 2).encode() == raw, "archive_generation_conflict_inspect_before_retry")
+                check(read_fd(fd, None).encode() == raw, "archive_generation_conflict_inspect_before_retry")
             finally:
                 os.close(fd)
             return
@@ -260,7 +259,8 @@ class Store:
                 _, done, activity = folded(seat)
                 choices.extend((r["at"], seat, [r]) for r in activity)
                 choices.extend((pair[0]["at"], seat, list(pair)) for pair in done)
-            check(choices, "open_decisions_exceed_store_capacity")
+            if not choices:
+                break
             _, seat, records = min(choices, key=lambda choice: choice[0])
             evict(seat, records)
         if archived:
@@ -269,7 +269,6 @@ class Store:
         validate_state(self.state)
         raw = json.dumps(self.state, ensure_ascii=False, indent=2).encode()
         reserved = sum(len(folded(s)[0]) for s in self.state["seats"]) * 16384
-        check(len(raw) + reserved <= MAX_BYTES, "store_full_clear_explicitly_resolution_space_reserved")
         # An unreconciled crash staging file is never overwritten or promoted.
         fd = self.open("state.next", os.O_WRONLY | os.O_CREAT | os.O_EXCL)
         renamed = False
@@ -292,8 +291,7 @@ def validate_state(s):
     exact(s, ("schema_version", "generation", "seats", "fleet"))
     check(s["schema_version"] == 1 and type(s["generation"]) is int and 0 <= s["generation"] < 2**53,
           "invalid_store_version_or_generation")
-    check(isinstance(s["seats"], list) and len(s["seats"]) <= MAX_SEATS and isinstance(s["fleet"], list)
-          and len(s["fleet"]) <= MAX_FLEET, "invalid_store_capacity")
+    check(isinstance(s["seats"], list) and isinstance(s["fleet"], list), "invalid_store_capacity")
     seen = []
     for seat in s["seats"]:
         exact(seat, ("target", "owner", "registered_at", "records"))
@@ -302,7 +300,7 @@ def validate_state(s):
         check(type(seat["registered_at"]) is int and seat["registered_at"] > 0, "invalid_timestamp")
         check(seat["target"] not in seen, "duplicate_seat")
         seen.append(seat["target"])
-        check(isinstance(seat["records"], list) and len(seat["records"]) <= MAX_RECORDS + 32, "invalid_records_capacity")
+        check(isinstance(seat["records"], list), "invalid_records_capacity")
         decisions = {}
         for r in seat["records"]:
             exact(r, ("kind", "at", "from", "body"))
@@ -380,7 +378,6 @@ def mutate(a):
         if a.command == "seat" and a.operation == "register":
             text(a.owner, 128, False)
             check(seat is None, "seat_already_registered_inspect_before_clear")
-            check(len(store.state["seats"]) < MAX_SEATS, "seat_capacity_reached")
             seat = dict(target=t, owner=a.owner, registered_at=stamp(), records=[])
             store.state["seats"].append(seat)
         elif a.command == "fleet":
@@ -391,7 +388,20 @@ def mutate(a):
                 r = dict(target=t, owner=a.owner, purpose=a.purpose, state=a.state, at=stamp(), detail=a.detail)
                 if existing:
                     store.state["fleet"].remove(existing)
-                check(len(store.state["fleet"]) < MAX_FLEET, "fleet_capacity_reached")
+                if len(store.state["fleet"]) >= MAX_FLEET:
+                    inventories = {}
+                    for old in sorted(store.state["fleet"], key=lambda row: row["at"]):
+                        server = old["target"]["server"]
+                        if server not in inventories:
+                            try:
+                                live = probe(server[7:])
+                                inventories[server] = {(row["session"], row["block"]) for row in live["rows"]}
+                            except (Refused, OSError, ValueError, subprocess.SubprocessError):
+                                inventories[server] = None
+                        present = inventories[server]
+                        if present is None or (old["target"]["session_id"], old["target"]["block_id"]) not in present:
+                            store.state["fleet"].remove(old)
+                            break
                 store.state["fleet"].append(r)
             else:
                 check(existing is not None, "fleet_report_not_found")
@@ -428,7 +438,6 @@ def mutate(a):
                     body = card(json_load(read_input(a.card_file, 49152)))
                     check(not any(r["kind"] == "decision" and r["body"]["id"] == body["id"] for r in seat["records"]),
                           "decision_id_already_used")
-                    check(len(folded(seat)[0]) < 32, "open_decision_limit_32")
                     kind = "decision"
                 seat["records"].append(dict(kind=kind, at=stamp(), **{"from": a.sender}, body=body))
         if getattr(a, "input_deadline", None) is not None and time.monotonic() >= a.input_deadline:
@@ -611,7 +620,7 @@ def bounded_command(argv, timeout=5, receipt=False):
                         selector.unregister(key.fileobj)
                         continue
                     key.data.extend(data)
-                    check(len(out) <= MAX_BYTES and len(err) <= 8192, "rex_response_exceeds_bound")
+                    check(len(err) <= 8192, "rex_diagnostics_exceeds_bound")
         code = p.wait(timeout=max(.001, deadline - time.monotonic()))
         if receipt:
             return dict(exit=code, receipt=json_load(out.decode()), stderr=err.decode("utf-8", errors="replace"))
@@ -637,8 +646,7 @@ def bounded_command(argv, timeout=5, receipt=False):
 READ_LUA = r'''
 local function call(m,a)
   local v,e=rex.call(m,a); if not v then error(e) end
-  if #rex.json.encode(v)>1048576 then error("response_exceeds_bound") end
-  return v
+    return v
 end
 local include_status=rex.args.include_status
 local version=call("server.version")
@@ -646,7 +654,6 @@ if version.api_revision~=13 then error("fleet_requires_API13") end
 local identity=call("server.status")
 local rows={}
 local sessions=call("session.list").sessions or {}
-if #sessions>32 then error("session_limit_32") end
 for _,s in ipairs(sessions) do
   call("session.attach",{session_id=s.session_id})
   local view=include_status and call("session.view",{session_id=s.session_id}) or {}
@@ -655,7 +662,6 @@ for _,s in ipairs(sessions) do
   local blocks=call("session.list_blocks",{session_id=s.session_id}).blocks or {}
   for _,b in ipairs(blocks) do
     if b.creator_name=="com.superlogical.terminal" then
-      if #rows>=128 then error("terminal_limit_128") end
       local status=nil
       if include_status then
         status=call("com.superlogical.terminal.program_status",{session_id=s.session_id,block_id=b.block_id,args={}})
@@ -712,7 +718,6 @@ def probe(socket, jobs_registry=None, teerex=None, dashboard=False, agents_regis
             teerex_seat_status.expire(socket, live['rows'])
         except (OSError, ValueError, subprocess.SubprocessError):
             live['dashboard']['errors'].append('ask_expiry_unavailable')
-    check(len(json.dumps(live).encode()) <= MAX_BYTES, "probe_response_exceeds_bound")
     return live
 
 
@@ -721,7 +726,7 @@ def status_evidence(raw):
     records = raw.get("records")
     if records == {}:  # Rex Lua encodes an empty table as an object.
         records = []
-    check(isinstance(records, list) and len(records) <= 128, "invalid_status_records")
+    check(isinstance(records, list), "invalid_status_records")
     projected = []
     seen = set()
     for record in records:
@@ -816,12 +821,11 @@ def fleet_snapshot(a, state):
                     registry = registry or os.path.expanduser('~/.local/state/teerex-agents')
                     agents_registry = agents_registry or os.path.expanduser('~/.local/state/teerex-agents')
                 live = probe(cfg["server"][7:], registry, a.teerex, dashboard, agents_registry, dashboard and not a.once)
-            check(live["version"]["api_revision"] == 13 and isinstance(live["rows"], list)
-                  and len(live["rows"]) <= MAX_FLEET, "invalid_live_response")
+            check(live["version"]["api_revision"] == 13 and isinstance(live["rows"], list), "invalid_live_response")
             text(live["identity"]["instance_id"], 128, False)
             text(live["identity"]["host_id"], 128, False)
             registrations = live["registrations"] if registry else []
-            check(isinstance(registrations, list) and len(registrations) <= 32, "invalid_jobs_response")
+            check(isinstance(registrations, list), "invalid_jobs_response")
             matched_registrations = []
             local_rows, local_found = [], set()
             for b in live["rows"]:
@@ -1114,7 +1118,7 @@ def bounded_int(minimum, maximum):
 
 
 def parser():
-    p = argparse.ArgumentParser(prog="teerex", description="Guarded decision delivery, private history and visible boards. Inbox history rotates above 128 non-open records to 96; open decisions pinned separately (max 32); immutable 0600 archives never deleted. Python3 required; no daemon. Reports never certify completion.")
+    p = argparse.ArgumentParser(prog="teerex", description="Guarded decision delivery, private history and visible boards. Inbox history rotates above 128 non-open records to 96; open decisions pinned separately; immutable 0600 archives never deleted. Python3 required; no daemon. Reports never certify completion.")
     commands = p.add_subparsers(dest="command", required=True)
 
     def common(q, needs_target=True):
@@ -1140,7 +1144,7 @@ def parser():
         if op == "remap-apply":
             q.add_argument("--generation", required=True, type=int)
             q.add_argument("--reason", required=True)
-    history_policy = "Above 128 non-open records, archive oldest complete groups to 96; open decisions stay pinned (max 32). Immutable private archives retain all history, never deleted. Byte pressure also archives eligible records."
+    history_policy = "Above 128 non-open records, archive oldest complete groups to 96; open decisions stay pinned. Immutable private archives retain all history, never deleted. Byte pressure also archives eligible records."
     for cmd, operations in (("seat", ("register", "inspect", "clear")), ("inbox", ("append", "inspect", "clear")), ("fleet", ("report", "forget"))):
         c = commands.add_parser(cmd, description=history_policy if cmd == "inbox" else None)
         ops = c.add_subparsers(dest="operation", required=True)
@@ -1274,7 +1278,7 @@ def main(argv=None):
                 fd = store.open(name, os.O_RDONLY)
                 try:
                     private(fd)
-                    batch = json_load(read_fd(fd, MAX_BYTES * 2))
+                    batch = json_load(read_fd(fd, None))
                 finally:
                     os.close(fd)
                 records.extend(r for r in reversed(batch) if r["target"] == t)

@@ -61,6 +61,34 @@ class BoardsTest(unittest.TestCase):
                                + "print(json.dumps(dict(outcome='events_acknowledged',terminal_input_attempted=True)))\n")
         self.native.chmod(0o700)
 
+    def test_blocked_report_is_accepted(self):
+        report = self.invoke('fleet', 'report', owner='worker', purpose='declared waiting', state='blocked', detail='Waiting for answer')
+        self.assertEqual(report['kind'], 'boards_result')
+        saved = json.loads((self.store / 'state.json').read_text())
+        self.assertEqual(saved['fleet'][0]['state'], 'blocked')
+
+    def test_board_state_retains_large_live_store(self):
+        api = runpy.run_path(str(ROOT / 'items/boards/boards.py'))
+        state = api['Store'](str(self.store))
+        try:
+            for n in range(300):
+                target = dict(host='fixture', server='unix:///tmp/fixture.sock', session_id='session:' + ZERO, block_id=f'block:{n:08x}-0000-0000-0000-000000000000')
+                state.state['fleet'].append(dict(target=target, owner='worker', purpose='capacity', state='working', at=n + 1, detail='x' * 4096))
+                if n < 33:
+                    state.state['seats'].append(dict(target=target, owner='worker', registered_at=1, records=[]))
+            state.state['seats'][0]['records'] = [dict(kind='decision', at=n + 1, **{'from': 'worker'}, body=dict(self.decision, id='decision-' + str(n))) for n in range(40)]
+            state.save()
+        finally:
+            state.close()
+        self.assertGreater((self.store / 'state.json').stat().st_size, 1048576)
+        state = api['Store'](str(self.store))
+        try:
+            self.assertEqual(len(state.state['fleet']), 300)
+            self.assertEqual(len(state.state['seats']), 33)
+            self.assertEqual(len(state.state['seats'][0]['records']), 40)
+        finally:
+            state.close()
+
     def argv(self, command, operation=None, target=True, **options):
         argv = [BIN, "boards", command]
         if operation is not None:
@@ -756,6 +784,31 @@ class RexBoardsTest(unittest.TestCase):
         cls.base = [cls.rex, "--autostart=false", "--server", "unix://" + str(cls.socket), "--timeout", "3s"]
         cls.version = json.loads(subprocess.check_output(cls.base + ["api", "call", "server.version"]))
         print("Disposable live Rex:", json.dumps(cls.version), flush=True)
+
+    def test_fleet_full_evicts_dead_and_all_live_grows(self):
+        store = self.root / 'capacity-store'
+        store.mkdir(mode=0o700)
+        made = json.loads(subprocess.check_output(self.base + ['new', '--json', '--keep-open', '--shell=none', '--', '/bin/sleep', '120']))
+        sid = made['session_id']
+        bids = [made['initial_windows'][0]['block_ids'][0]]
+        for n in range(128):
+            made = json.loads(subprocess.check_output(self.base + ['api', 'call', 'session.new_block', json.dumps(dict(session_id=sid, flavor='com.superlogical.terminal.shell', options=dict(shell='none', command=['/bin/sleep', '120'])))]))
+            bids.append(made['block_id'])
+        def row(bid, at):
+            return dict(target=dict(host='fixture', server='unix://' + str(self.socket), session_id=sid, block_id=bid), owner='worker', purpose='capacity', state='working', at=at, detail='capacity')
+        state = dict(schema_version=1, generation=1, seats=[], fleet=[row(b, n + 1) for n, b in enumerate(bids[:128])])
+        path = store / 'state.json'
+        path.write_text(json.dumps(state)); path.chmod(0o600)
+        command = [BIN, '--rex', self.rex, 'boards', 'fleet', 'report', '--store', str(store), '--host', 'fixture', '--socket', str(self.socket), '--session', sid, '--block', bids[128], '--owner', 'worker', '--purpose', 'capacity', '--state', 'working', '--detail', 'capacity']
+        result = subprocess.run(command, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(len(json.loads(path.read_text())['fleet']), 129)
+        state['fleet'][0]['target']['block_id'] = 'block:' + ZERO
+        path.write_text(json.dumps(state))
+        subprocess.run(command, check=True, capture_output=True)
+        saved = json.loads(path.read_text())['fleet']
+        self.assertEqual(len(saved), 128)
+        self.assertNotIn('block:' + ZERO, [r['target']['block_id'] for r in saved])
 
     def test_prepared_paste_live_acks_and_refusal_leaves_cat_unchanged(self):
         root = self.root / ("prepared-" + str(time.monotonic_ns()))
