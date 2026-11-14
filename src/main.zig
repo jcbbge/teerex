@@ -18,6 +18,7 @@ const usage =
     \\  inbox append|inspect|clear                    Private retained messages
     \\  ask                                          Complete typed decisions or explicit resolution
     \\  waiting list|next|back|put-away [--hosts hive,m5] [--focus] Cross-host attention navigation
+    \\  docs [COMMAND] | try ID                      Floating command guides and safe examples
     \\  scratch init|now|todo|done|show|path|watch|hook|hook-settings  Per-pane working scratchpad
     \\  agents launch|profiles|shell|ack|deliver|inspect|stop|present|timeline|prune
     \\         exec|exited|channel|fence-probe       Compute callbacks / local delivery / fence checks
@@ -215,6 +216,20 @@ fn run(allocator: std.mem.Allocator) !void {
     if (std.mem.eql(u8, command, "send")) finish(allocator, try send(allocator, rest));
     if (std.mem.eql(u8, command, "boards")) finish(allocator, try @import("rex_boards").run(allocator, rest));
     if (std.mem.eql(u8, command, "seat") or std.mem.eql(u8, command, "inbox") or std.mem.eql(u8, command, "ask") or std.mem.eql(u8, command, "fleet")) finish(allocator, try @import("rex_boards").run(allocator, args));
+    if (std.mem.eql(u8, command, "docs")) {
+        var names: std.ArrayList([]const u8) = .empty;
+        inline for (@typeInfo(@import("docs_sources")).@"struct".decls) |decl| {
+            if (rest.len == 2 and eq(rest[0], "_readme") and eq(rest[1], decl.name)) {
+                try std.fs.File.stdout().writeAll(@field(@import("docs_sources"), decl.name));
+                return;
+            }
+            try names.append(allocator, decl.name);
+        }
+        var forwarded: std.ArrayList([]const u8) = .empty;
+        try forwarded.appendSlice(allocator, &.{ "python3", "-I", "-c", @embedFile("docs.py"), try std.fs.selfExePathAlloc(allocator), try std.json.Stringify.valueAlloc(allocator, names.items, .{}) });
+        try forwarded.appendSlice(allocator, rest);
+        return std.process.execv(allocator, forwarded.items);
+    }
     if (std.mem.eql(u8, command, "scratch")) finish(allocator, try @import("rex_scratch").run(allocator, rest));
     if (std.mem.eql(u8, command, "agents")) finish(allocator, try @import("rex_agents").run(allocator, rest));
     if (std.mem.eql(u8, command, "spawn")) {

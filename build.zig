@@ -14,6 +14,24 @@ pub fn build(b: *std.Build) void {
     const build_version = b.addOptions();
     build_version.addOption([]const u8, "version", "0.1.0-alpha.6");
     exe.root_module.addOptions("build_version", build_version);
+    const docs_sources = b.addOptions();
+    var item_dir = b.build_root.handle.openDir("items", .{ .iterate = true }) catch @panic("items unavailable");
+    defer item_dir.close();
+    var item_iter = item_dir.iterate();
+    while (item_iter.next() catch @panic("items unreadable")) |entry| {
+        if (entry.kind != .directory) continue;
+        const path = b.fmt("items/{s}/README.md", .{entry.name});
+        const source = b.build_root.handle.readFileAlloc(b.allocator, path, std.math.maxInt(usize)) catch |err| {
+            if (err == error.FileNotFound) continue;
+            @panic("item guide unreadable");
+        };
+        docs_sources.addOption([]const u8, entry.name, source);
+    }
+    docs_sources.addOption([]const u8, "fleet", b.build_root.handle.readFileAlloc(b.allocator, "docs/fleet-install.md", std.math.maxInt(usize)) catch @panic("fleet guide unavailable"));
+    docs_sources.addOption([]const u8, "targets", b.build_root.handle.readFileAlloc(b.allocator, "README.md", std.math.maxInt(usize)) catch @panic("guide unavailable"));
+    docs_sources.addOption([]const u8, "cartridges", b.build_root.handle.readFileAlloc(b.allocator, "docs/cartridges.md", std.math.maxInt(usize)) catch @panic("cartridge guide unavailable"));
+    exe.root_module.addOptions("docs_sources", docs_sources);
+
     const cartridge_sources = b.addOptions();
     const manager = b.build_root.handle.readFileAlloc(b.allocator, "tools/cartridges/cartridges.py", 1024 * 1024) catch @panic("cartridge manager source unavailable");
     cartridge_sources.addOption([]const u8, "manager", manager);
