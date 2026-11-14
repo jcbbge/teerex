@@ -707,8 +707,12 @@ class LiveRecordsTest(RecordsFixture):
         self.assertNotIn(NOTES, json.dumps(value))
         self.assertNotIn("target", value)
         self.assertEqual(self.call("export", "--id", "a", "--include", "notes", code=1)["failure_reason"], "private_field_export_refused:notes")
-        self.set(fields=dict(uncertainty=dict(text="ghp_" + "A" * 36, confidence="low")))
-        self.assertEqual(self.call("export", "--id", "a", code=1)["failure_reason"], "secret_pattern:uncertainty.text")
+        token = "ghp_" + "A" * 36
+        self.set(fields=dict(uncertainty=dict(text=token, confidence="low")))
+        # Credentials are redacted before storage (41a6bda), so export carries no secret to refuse.
+        exported = self.call("export", "--id", "a")
+        self.assertNotIn(token, json.dumps(exported))
+        self.assertEqual(exported["uncertainty"]["text"], "[REDACTED]")
 
     def test_C07_real_run_failure_success_and_decision_card_without_answer(self):
         packets = []
