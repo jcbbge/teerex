@@ -101,7 +101,7 @@ fn finish(allocator: std.mem.Allocator, code: u8) noreturn {
 
 fn python(allocator: std.mem.Allocator, args: []const []const u8) !void {
     var argv: std.ArrayList([]const u8) = .empty;
-    try argv.appendSlice(allocator, &.{ "python3", "-I", "-c", try @import("rex_boards").call_log.namedHostPython(allocator, @embedFile("targets.py")) });
+    try argv.appendSlice(allocator, &.{ "python3", "-I", "-c", try @import("rex_boards").call_log.namedHostPython(allocator, @import("pane_guard").identity_source ++ "\n" ++ @embedFile("targets.py")) });
     try argv.appendSlice(allocator, args);
     return std.process.execv(allocator, argv.items);
 }
@@ -153,7 +153,7 @@ fn run(allocator: std.mem.Allocator) !void {
     }
     if (eq(args[0], "doctor") and hasOption(args, "--all")) {
         const source = @embedFile("doctor_all.py");
-        const resolver = try std.json.Stringify.valueAlloc(allocator, @embedFile("targets.py"), .{});
+        const resolver = try std.json.Stringify.valueAlloc(allocator, @import("pane_guard").identity_source ++ "\n" ++ @embedFile("targets.py"), .{});
         const worker = try std.json.Stringify.valueAlloc(allocator, source, .{});
         const script = try std.fmt.allocPrint(allocator, "import types,sys\ntargets=types.ModuleType('targets')\nexec({s},targets.__dict__)\nWORKER_SOURCE={s}\n{s}\nsys.exit(main())", .{ resolver, worker, source });
         var forwarded: std.ArrayList([]const u8) = .empty;

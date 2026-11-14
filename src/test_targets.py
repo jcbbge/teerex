@@ -449,6 +449,30 @@ class TargetsTest(unittest.TestCase):
                 self.assertNotIn(literal, result.stderr)
                 self.assertIs(json.loads(result.stderr)["retry"], False)
 
+    def test_route_preserves_host_qualified_caller(self):
+        import socket
+        self.host['teerex'] = str(self.root / 'caller')
+        Path(self.host['teerex']).write_text("#!/usr/bin/env python3\nimport json,os\nfrom pathlib import Path\nPath(" + repr(str(self.output)) + ").write_text(os.environ['TEEREX_CALLER_IDENTITY'])\n")
+        Path(self.host['teerex']).chmod(0o700)
+        self.save()
+        ssh = self.root / 'ssh'
+        ssh.write_text("#!/bin/sh\nfor arg do last=\"$arg\"; done\nexec /bin/sh -c \"$last\"\n")
+        ssh.chmod(0o700)
+        for transport in ('local', 'ssh'):
+            self.host.update(transport=transport, address='operator@example.invalid', port=2223,
+                             known_hosts=str(self.root / 'known hosts'), identity_file=str(self.root / 'identity'))
+            self.save()
+            for actor in (dict(session_id='session:caller', block_id='block:caller'),
+                          dict(session_id=None, block_id=None)):
+                env = {k: v for k, v in isolated_environment().items()
+                       if not k.startswith(('AGENT_', 'REX_', 'LC_AGENT_', 'LC_REX_', 'TEEREX_CALLER_'))}
+                if actor['session_id']:
+                    env.update(REX_SESSION=actor['session_id'], REX_BLOCK=actor['block_id'])
+                result = subprocess.run([str(BIN), '--config', str(self.config), '--host', 'hive', 'surfaces', 'inspect'],
+                                        env=dict(env, PATH=str(self.root) + os.pathsep + os.environ['PATH']), capture_output=True, text=True, timeout=10)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(json.loads(self.output.read_text()), dict(actor, host=socket.gethostname()))
+
     def test_tty_on_local_transport_does_not_allocate_or_parse_program_options(self):
         result = self.call("targets", "exec", "--config", str(self.config), "--host", "hive", "--tty",
                            "--", "filter", "--", "--tty")

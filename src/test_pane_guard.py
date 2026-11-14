@@ -161,6 +161,37 @@ class GuardTest(_fixtures.SurfacesTest):
             with self.assertRaisesRegex(ValueError, 'registered_seat_tab'):
                 pane_guard.authorize(endpoint, 'block.close', payload, self.rpc)
 
+    def test_cross_host_creator_authority(self):
+        from unittest.mock import patch
+        import pane_guard
+        actor = dict(host='source-host', session_id=self.session, block_id=self.anchor)
+        self.env['TEEREX_CALLER_IDENTITY'] = json.dumps(actor)
+        own = self.open('tab', label='remote creator')['actual']['block_id']
+        endpoint = 'unix://' + str(self.socket)
+        payload = dict(session_id=self.session, block_id=own)
+        for op, extra in (('rename', ('--label', 'remote renamed')), ('move', ('--anchor', self.anchor, '--focus', 'yes'))):
+            self.assertEqual(self.control(op, own, *extra).returncode, 0)
+        for changed in (dict(actor, block_id=own), dict(actor, host='different-host'),
+                        dict(actor, session_id=None, block_id=None)):
+            self.env['TEEREX_CALLER_IDENTITY'] = json.dumps(changed)
+            for op, extra in (('close', ()), ('rename', ('--label', 'refused')), ('move', ('--anchor', self.anchor, '--focus', 'yes'))):
+                self.refused(self.control(op, own, *extra), 'recorded spawner:')
+            with patch.dict(os.environ, self.env, clear=True):
+                with self.assertRaisesRegex(ValueError, 'recorded spawner:'):
+                    pane_guard.authorize(endpoint, 'block.close', payload, self.rpc)
+        self.env['TEEREX_CALLER_IDENTITY'] = json.dumps(actor)
+        with patch.dict(os.environ, self.env, clear=True):
+            pane_guard.authorize(endpoint, 'block.close', payload, self.rpc)
+        self.assertEqual(self.control('close', own).returncode, 0)
+        created = self.cli('surfaces', 'session', 'ensure', '--socket', str(self.socket), '--label', 'remote session')
+        self.assertEqual(created.returncode, 0, created.stderr)
+        sid = json.loads(created.stdout)['resolved']['session_id']
+        self.env['TEEREX_CALLER_IDENTITY'] = json.dumps(dict(actor, host='different-host'))
+        self.refused(self.cli('surfaces', 'session', 'close', '--socket', str(self.socket), '--session', sid), 'recorded spawner:')
+        self.env['TEEREX_CALLER_IDENTITY'] = json.dumps(actor)
+        closed = self.cli('surfaces', 'session', 'close', '--socket', str(self.socket), '--session', sid)
+        self.assertEqual(closed.returncode, 0, closed.stdout + closed.stderr)
+
     def test_forwarded_only_creator_and_seat_authority(self):
         for key in ('AGENT_SESSION', 'AGENT_PANE', 'REX_SESSION', 'REX_BLOCK', 'LC_REX_SESSION', 'LC_REX_BLOCK'):
             self.env.pop(key, None)

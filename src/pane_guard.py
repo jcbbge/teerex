@@ -9,6 +9,7 @@ from pathlib import Path
 import stat
 import sys
 import hashlib
+import socket
 import urllib.parse
 
 if "caller_identity" not in globals():
@@ -84,7 +85,7 @@ def snapshot(server, human_launch=False):
                 not any(os.environ.get(k) for k in ('AGENT_LAUNCH_ID', 'LC_AGENT_LAUNCH_ID', 'AGENT_NAME', 'LC_AGENT_NAME')))
     if operator and any(actor['block_id'] == seat['block_id'] and actor['session_id'] == seat['session_id'] for seat in seats):
         raise ValueError('registered_seat_pane_is_not_the_operator_terminal')
-    return dict(server=server, actor=actor, creators=creators, directory=str(directory), operator=operator, seats=seats, human_actor=human_creator,
+    return dict(server=server, actor=actor, local_host=socket.gethostname(), creators=creators, directory=str(directory), operator=operator, seats=seats, human_actor=human_creator,
                 human_launch=human_launch)
 
 
@@ -111,7 +112,7 @@ local function guard_owner(id,method,sid)
   local actor=guard_policy.actor
   local creator=r.human_creator or {}
   local human=guard_policy.human_actor
-  if actor.session_id==sid and actor.block_id then
+  if (not actor.host or actor.host==guard_policy.local_host) and actor.session_id==sid and actor.block_id then
    if actor.block_id==id then return end
    local view=guard_view(sid)
    local own_window=guard_window(view,actor.block_id)
@@ -125,6 +126,7 @@ local function guard_owner(id,method,sid)
   if type(who.block_id)=='string' and type(who.session_id)=='string' and
    who.block_id:match('^block:[0-9a-f%-]+$') and #who.block_id==42 and
    who.session_id:match('^session:[0-9a-f%-]+$') and #who.session_id==44 and
+   (who.host or guard_policy.local_host)==(guard_policy.actor.host or guard_policy.local_host) and
    who.block_id==guard_policy.actor.block_id and who.session_id==guard_policy.actor.session_id then allowed=true end
  end
  if not allowed then error('pane control refused; recorded spawner: '..(spawner.session_id or 'unknown')..' '..(spawner.block_id or 'unknown'),0) end
@@ -205,7 +207,7 @@ rex.call=function(method,p)
    for _,w in ipairs(v.windows or {}) do if w.window_id==p.window_id then
     for _,l in ipairs(w.layers or {}) do for _,b in ipairs(l.blocks or {}) do guard_owner(b.block_id,method,p.session_id) end end
    end end
-  elseif viewer_cleanup and p.block_id==guard_policy.actor.block_id and
+  elseif viewer_cleanup and (not guard_policy.actor.host or guard_policy.actor.host==guard_policy.local_host) and p.block_id==guard_policy.actor.block_id and
    guard_policy.creators[p.block_id] and guard_policy.creators[p.block_id].viewer then
    -- The watcher may close only itself after its recorded owner disappears.
    local owner_present=false
@@ -215,7 +217,7 @@ rex.call=function(method,p)
    local supervisor=record.allowed[2]
    for _,b in ipairs(blocks.blocks or {}) do if b.block_id==supervisor.block_id then owner_present=true end end
    if owner_present then error('viewer_owner_still_live',0) end
-  elseif method=='block.close' and p.session_id==guard_policy.actor.session_id and
+  elseif method=='block.close' and (not guard_policy.actor.host or guard_policy.actor.host==guard_policy.local_host) and p.session_id==guard_policy.actor.session_id and
    p.block_id==guard_policy.actor.block_id and guard_policy.creators[p.block_id] and
    not guard_policy.creators[p.block_id].viewer then
    -- A recorded pane's supervisor may close its own pane, never another pane.
@@ -282,7 +284,7 @@ def authorize(server, method, payload, rpc):
             owner = creator.get('human_creator') or {}
             if (creator.get('human_launch') and human and
                     method in {'block.close', 'session.set_block_label', 'session.set_window_label'}):
-                if actor.get('session_id') == payload.get('session_id') and actor.get('block_id'):
+                if actor.get('host', policy['local_host']) == policy['local_host'] and actor.get('session_id') == payload.get('session_id') and actor.get('block_id'):
                     if actor['block_id'] == id:
                         continue
                     view = rpc('session.view', {'session_id': payload['session_id']})
@@ -293,9 +295,13 @@ def authorize(server, method, payload, rpc):
                       owner.get('host') == human['host'] and owner.get('user') == human['user']):
                     continue
             if (method == 'block.close' and not creator.get('viewer') and
-                    policy['actor'] == dict(session_id=payload.get('session_id'), block_id=id)):
+                    actor.get('host', policy['local_host']) == policy['local_host'] and
+                    actor.get('session_id') == payload.get('session_id') and actor.get('block_id') == id):
                 continue
-            if not policy['actor'].get('block_id') or policy['actor'] not in creator.get('allowed', []):
+            if not actor.get('block_id') or not any(
+                    dict(who, host=who.get('host', policy['local_host'])) ==
+                    dict(actor, host=actor.get('host', policy['local_host']))
+                    for who in creator.get('allowed', [])):
                 spawner = creator.get('spawner', {})
                 raise ValueError('pane control refused; recorded spawner: ' + str(spawner.get('session_id', 'unknown')) + ' ' + str(spawner.get('block_id', 'unknown')))
 

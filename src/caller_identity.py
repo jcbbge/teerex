@@ -1,9 +1,18 @@
 """Caller authorization identity: agent metadata, local Rex, then forwarded Rex."""
 import os
+import json
 
 
 def caller_identity(environment=None):
     env = os.environ if environment is None else environment
+    if env.get('TEEREX_CALLER_IDENTITY'):
+        actor = json.loads(env['TEEREX_CALLER_IDENTITY'])
+        if (not isinstance(actor, dict) or set(actor) != {'host', 'session_id', 'block_id'} or
+                not isinstance(actor['host'], str) or not actor['host'] or
+                any(value is not None and (not isinstance(value, str) or not value)
+                    for value in (actor['session_id'], actor['block_id']))):
+            raise ValueError('invalid_forwarded_caller_identity')
+        return actor
     return dict(session_id=env.get('AGENT_SESSION') or env.get('REX_SESSION') or env.get('LC_REX_SESSION'),
                 block_id=env.get('AGENT_PANE') or env.get('REX_BLOCK') or env.get('LC_REX_BLOCK'))
 
@@ -12,7 +21,7 @@ def managed_agent(environment=None):
     env = os.environ if environment is None else environment
     markers = ('AGENT_LAUNCH_ID', 'AGENT_NAME', 'AGENT_SESSION', 'AGENT_PANE',
                'AGENT_CHANNEL', 'AGENT_STARTER', 'AGENT_REPORT_TO')
-    return any(env.get(prefix + key) for prefix in ('', 'LC_') for key in markers)
+    return env.get('TEEREX_CALLER_MANAGED') == '1' or any(env.get(prefix + key) for prefix in ('', 'LC_') for key in markers)
 
 
 def human_identity(environment=None):

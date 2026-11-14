@@ -39,7 +39,9 @@ pub fn build(b: *std.Build) void {
     const fleet_sources = b.addOptions();
     for ([_][]const u8{ "controller", "worker", "installer", "resolver" }, [_][]const u8{ "tools/fleet-install/fleet_install.py", "tools/fleet-install/worker.py", "tools/install/teerex-install", "src/targets.py" }) |name, path| {
         const source = b.build_root.handle.readFileAlloc(b.allocator, path, 1024 * 1024) catch @panic("fleet support source unavailable");
-        fleet_sources.addOption([]const u8, name, source);
+        fleet_sources.addOption([]const u8, name, if (std.mem.eql(u8, name, "resolver"))
+            std.mem.concat(b.allocator, u8, &.{@embedFile("src/caller_identity.py"), "\n", source}) catch @panic("resolver identity unavailable")
+        else source);
     }
     exe.root_module.addOptions("fleet_sources", fleet_sources);
     const waiting_source = b.addOptions();

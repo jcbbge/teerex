@@ -8,6 +8,9 @@ import re
 import shlex
 import sys
 
+if "caller_identity" not in globals():
+    from caller_identity import caller_identity, managed_agent
+
 MAX_CONFIG = 1024 * 1024
 NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}\Z")
 PATH_FIELDS = ("home", "socket", "rex", "teerex", "store")
@@ -16,7 +19,7 @@ PATH_FIELDS = ("home", "socket", "rex", "teerex", "store")
 SELECTORS = {("board", "feed"): ("socket",), **{(verb,): ("socket",) for verb in
                 ("observe", "watch", "spawn", "run", "run-visible", "doctor", "offstage", "snapshot", "restore", "update")},
              **{("surfaces", op): ("socket",) for op in ("open", "ensure", "resolve", "inspect", "rename", "move", "focus", "close")},
-             ("surfaces", "session", "ensure"): ("socket",),
+             **{("surfaces", "session", op): ("socket",) for op in ("ensure", "close")},
              ("surfaces", "palette", "install"): ("socket",),
              **{("adapters", op): ("socket",) for op in ("generate", "call")},
              **{("jobs", op): ("socket",) for op in ("track", "inspect", "adopt", "present", "forget")},
@@ -147,12 +150,19 @@ def receipt(host, argv):
 def execute(host, command, *, tty=False):
     argv = command_argv(host, command)
     print(json.dumps(receipt(host, argv), separators=(",", ":")), file=sys.stderr, flush=True)
+    actor = caller_identity()
+    # Qualify source ids before crossing hosts; never borrow a remote shell's identity.
+    import socket
+    forwarded = {'TEEREX_CALLER_IDENTITY': json.dumps(dict(actor, host=actor.get('host') or socket.gethostname()), separators=(',', ':'))}
+    forwarded['TEEREX_CALLER_MANAGED'] = '1' if managed_agent() else '0'
     if host["transport"] == "ssh":
+        argv = ['env', *[key + '=' + value for key, value in forwarded.items()], *argv]
         # SSH's remote interface is a shell string; quote each literal argument exactly once.
         argv = [*ssh_argv(host, tty=tty), shlex.join(argv)]
     env = dict(os.environ)
     for key in ("REX_SERVER", "REX_SESSION", "REX_BLOCK", "REX_CLIENT", "TEEREX_INTERNAL_REX"):
         env.pop(key, None)
+    env.update(forwarded)
     os.execvpe(argv[0], argv, env)
 
 
