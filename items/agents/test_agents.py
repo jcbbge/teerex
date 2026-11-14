@@ -22,6 +22,9 @@ import unittest
 BIN = str(Path(os.environ.get("TEEREX_BIN", "zig-out/bin/teerex")).resolve())
 REX = os.environ.get("REX_BIN")
 
+CONTRACT_REFUSAL = 'Turn not ended: declare one — finished: every step checked off, To-do empty (teerex scratch done) | blocked: teerex scratch flag "what is stuck; what you tried; what you need" | waiting: teerex scratch now STEP --waiting "on what" --check 10m'
+CONTRACT_PROTOCOL = 'Contract: write your steps first; every turn after the brief ends declared — finished (every step checked off, To-do empty), blocked (teerex scratch flag "what is stuck; what you tried; what you need"; never check off steps you could not do), or waiting (teerex scratch now STEP --waiting "on what" --check 10m). teerex tells your starter each step and each declaration.'
+
 # A synthetic interactive agent consumes exact PTY input; only it executes the explicit ACK command.
 # No screen-scraped token, transport receipt or creation receipt stands in for the ACK.
 FIXTURE = r'''
@@ -757,6 +760,8 @@ class AgentsTest(unittest.TestCase):
         self.assertEqual(state["contract"]["interval_s"], 30)
         self.assertEqual(state["contract"]["starter"], state["starter"])
         self.assertIn("Done-when: explicit proof", Path(state["scratchpad"]).read_text())
+        protocol = Path(state["protocol_file"]).read_text()
+        self.assertIn(f'(AGENT_SCRATCHPAD).\n{CONTRACT_PROTOCOL}\n', protocol)
         p, packet = self.launch(contract=True)
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
         self.assertEqual(self.record(packet["launch_id"])["contract"]["done_when"], "proof complete")
@@ -776,6 +781,7 @@ class AgentsTest(unittest.TestCase):
         self.assertEqual(len(inputs), 2)
         self.assertIn("Messaging protocol (not a task brief):", inputs[0])
         self.assertNotIn("TASK β", inputs[0])
+        self.assertIn(CONTRACT_PROTOCOL, inputs[0])
         self.assertEqual(inputs[1], "FROM probe: " + self.brief.read_text())
         self.assertEqual([v["code"] for v in worker if v["event"] == "ack"], [0])
         env = worker[0]["env"]
@@ -2422,7 +2428,7 @@ Path('/work/network-harness').touch()
                 # Fresh but empty is still an undeclared first turn.
                 scratch("flag", "")
                 reason = blocked(end())
-                self.assertIn("write your steps first", reason)
+                self.assertEqual(reason, CONTRACT_REFUSAL + "; write your steps first")
                 settle(end(reminder=True))
                 wait_for(lambda: any("NO ANSWER probe:" in text for text in messages()))
                 start()
@@ -2467,12 +2473,12 @@ await handlers.before_agent_start({prompt:'work'});
 const pad=process.argv[2];
 writeFileSync(pad,readFileSync(pad,'utf8').replace(/^Updated:.*$/m,'Updated: '+new Date().toISOString()));
 const first=await handlers.agent_before_settle({outcome:'completed',entries:[]});
-if (!first?.continue || !first.entries[0].content.startsWith('Turn not ended: declare one')) throw new Error('contract did not continue');
+if (!first?.continue || first.entries[0].content !== process.argv[3] + '; write your steps first') throw new Error('contract did not continue');
 const second=await handlers.agent_before_settle({outcome:'completed'});
 if (second?.continue) throw new Error('contract refused twice');
 await handlers.agent_settled({}, {sessionManager:{getBranch:()=>[]}});
 """
-        result = subprocess.run(["node", "--input-type=module", "-e", script, str(extension), state["scratchpad"]],
+        result = subprocess.run(["node", "--input-type=module", "-e", script, str(extension), state["scratchpad"], CONTRACT_REFUSAL],
                                 env=dict(self.env, AGENT_SCRATCHPAD=state["scratchpad"]), text=True, capture_output=True, timeout=30)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         wait_for(lambda: any("NO ANSWER probe:" in v.get("payload", "") for v in events(self.starter_log)))
@@ -2609,6 +2615,7 @@ await handlers.agent_settled({}, {sessionManager:{getBranch:()=>[]}});
         self.assertIsNone(state["report_to"])
         self.assertFalse(state["protocol_acknowledged"])
         self.assertFalse(state["brief_attempted"])
+        self.assertNotIn("Contract:", Path(state["protocol_file"]).read_text())
         self.assertEqual(state["immediate_child_term"], {"Exited": 0})
         started = next(v for v in events(self.worker_log) if v["event"] == "started")
         self.assertEqual(started["argv"], ["--explicit-standing-flag"])
