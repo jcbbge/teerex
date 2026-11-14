@@ -78,13 +78,22 @@ class TargetsTest(unittest.TestCase):
     def test_recovery_store_default_and_explicit_directory(self):
         self.host["recovery_store"] = str(self.root / "snapshots")
         self.save()
-        for command in (("snapshot",), ("restore",), ("recovery", "inspect")):
+        for command in (("snapshot",), ("restore",), ("recovery", "snapshot"), ("recovery", "restore"), ("recovery", "inspect")):
             r = self.call("--config", str(self.config), "--host", "hive", *command)
             self.assertEqual(r.returncode, 7, r.stderr)
             argv = json.loads(self.output.read_text())
             self.assertEqual(argv[argv.index("--root") + 1], self.host["recovery_store"])
         self.call("--config", str(self.config), "--host", "hive", "snapshot", "--directory", "/explicit")
         self.assertNotIn("--root", json.loads(self.output.read_text()))
+        self.call("--config", str(self.config), "--host", "hive", "recovery", "snapshot", "--root", "/explicit-root")
+        argv = json.loads(self.output.read_text())
+        self.assertEqual(argv.count("--root"), 1)
+        self.assertEqual(argv[argv.index("--root") + 1], "/explicit-root")
+        del self.host["recovery_store"]
+        self.save()
+        self.call("--config", str(self.config), "--host", "hive", "recovery", "snapshot")
+        argv = json.loads(self.output.read_text())
+        self.assertEqual(argv[argv.index("--root") + 1], self.host["home"] + "/.local/state/teerex-recovery")
 
     def test_palette_named_focus_resolve_and_focus_route_same_host(self):
         for operation, target in (("resolve", ["--session", "any", "--pane", "seat"]),

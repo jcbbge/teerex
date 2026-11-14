@@ -463,15 +463,39 @@ class RecoveryTest(unittest.TestCase):
 
     def test_root_creates_private_snapshots_and_selects_newest(self):
         self.fixture()
+        # Keep the disposable controller's identity across the server restart;
+        # recovery-created surfaces record this actor as their spawner.
+        self.env.update(AGENT_SESSION=self.sid, AGENT_PANE=self.blocks[0]["block_id"],
+                        XDG_STATE_HOME=str(self.root / "private-state"))
         root = self.root / "snapshots"
         first = self.invoke("snapshot", "--root", str(root), directory=False)
         second = self.invoke("snapshot", "--root", str(root), directory=False)
         self.assertNotEqual(first["path"], second["path"])
+        self.assertEqual(root.stat().st_mode & 0o777, 0o700)
         self.assertEqual(Path(second["path"]).parent.stat().st_mode & 0o777, 0o700)
+        self.assertEqual(Path(second["path"]).stat().st_mode & 0o777, 0o600)
+        config = self.root / "hosts.json"
+        config.write_text(json.dumps({"schema_version": 1, "hosts": {"fixture": {
+            "host_id": "fixture", "transport": "local", "home": str(self.root),
+            "platform": "macos-arm64" if sys.platform == "darwin" else "linux-x86_64",
+            "socket": str(self.socket), "rex": self.rex, "teerex": BIN,
+            "store": str(self.root / "boards"), "recovery_store": str(root)}}}))
+        routed = subprocess.run([BIN, "--config", str(config), "--host", "fixture", "recovery", "snapshot"],
+                                capture_output=True, text=True, env=self.env, timeout=60)
+        self.assertEqual(routed.returncode, 0, routed.stdout + routed.stderr)
+        second = json.loads(routed.stdout)
+        self.assertEqual(Path(second["path"]).parent.parent, root)
+        # A newer, unfinished capture is not selected for inspect/restore.
+        (root / "99991231T235959-99999999999999999999").mkdir(mode=0o700)
         inspected = self.invoke("inspect", "--root", str(root), directory=False)
         self.assertEqual(inspected["snapshot_sha256"], second["snapshot_sha256"])
         self.restart()
-        self.assertTrue(self.invoke("restore", "--root", str(root), "--accept-omissions", directory=False)["can_apply"])
+        plan = self.invoke("restore", "--root", str(root), "--accept-omissions", directory=False)
+        self.assertTrue(plan["can_apply"])
+        self.invoke("restore", "--root", str(root), "--accept-omissions", "--apply",
+                    "--confirm", plan["confirmation"], directory=False, code=3)
+        self.assertTrue((Path(second["path"]).parent / "remap.json").exists())
+        self.assertFalse((Path(first["path"]).parent / "restore.jsonl").exists())
 
     def test_absent_registry_launch_is_omitted_but_identity_contradiction_refuses(self):
         self.fixture()

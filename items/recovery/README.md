@@ -82,6 +82,22 @@ teerex recovery snapshot --socket /ABS/rex.sock --directory /ABS/new-recovery-di
 teerex recovery inspect --directory /ABS/new-recovery-directory
 ```
 
+For a fresh private timestamped directory on each capture, use an absolute root:
+
+```sh
+teerex recovery snapshot --socket /ABS/rex.sock --root /ABS/recovery
+teerex recovery inspect --root /ABS/recovery
+teerex recovery restore --socket /ABS/rex.sock --root /ABS/recovery
+```
+
+Snapshot creates ROOT if missing (0700) and a new timestamped child (0700),
+with `snapshot.json` (0600). Existing ROOT must be owned and exactly 0700.
+Inspect and restore select the newest timestamped child containing a valid
+snapshot; unfinished children without `snapshot.json` are skipped. Preview
+and confirmed apply both select anew, so a newer capture invalidates an older
+confirmation. `--directory` selects one exact existing private directory;
+it cannot be combined with `--root`.
+
 `--registry` and `--board-store` are optional and explicit. Registry input is schema1 `agents-LAUNCHID.json`; tokens, briefs, hook details and arbitrary fields are discarded. `protocol_outcome`, `protocol_acknowledged` and measured immediate-child exit codes remain historical declared evidence, never new readiness/death claims. No token-bearing protocol argument is copied from the live process: the agents registry's argv is the pre-protocol profile argv.
 
 For independently owned non-agent panes, an optional private `--metadata /ABS/metadata.json` has this shape (illustrative IDs only):

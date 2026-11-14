@@ -33,6 +33,24 @@ An empty session attached only by app clients may be closed by its recorded crea
 
 Command receipts are JSON; help and interactive tour output are text, and `mcp --print-config` emits the selected client’s registration format. It states what was verified and labels the rest `unknown`, `uncertain` or `not_assessed`. teerex never starts a hidden process, never retries on its own, never closes a pane you did not ask it to close, and never infers that work is done. Exact flags: `teerex COMMAND --help`. For `clutch take` and `clutch release`, use `teerex clutch --help`; their subcommand help currently prints usage with exit 2. Full contracts: each `items/*/README.md`.
 
+## Named-host recovery stores
+
+In `hosts.json`, each host may set `"recovery_store": "/absolute/private/recovery"`,
+like `records_store`. It is a path on the selected command host. If omitted,
+recovery uses `<host.home>/.local/state/teerex-recovery`.
+
+```sh
+teerex --config ~/.config/teerex/hosts.json --host m5 recovery snapshot
+teerex --config ~/.config/teerex/hosts.json --host m5 recovery inspect
+teerex --config ~/.config/teerex/hosts.json --host m5 recovery restore
+```
+
+Routing supplies `--root` and the selected host's socket where needed.
+Explicit `--root` or `--directory` takes precedence. Snapshot creates a fresh
+private timestamped folder; inspect/restore select the newest complete capture.
+Restore previews first and still requires its exact confirmation to apply;
+see the [recovery contract](items/recovery/README.md).
+
 ## Build, test, install
 
 From the checkout root, with Python 3 and `uv` installed and on `PATH` (check
