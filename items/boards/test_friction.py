@@ -28,6 +28,15 @@ class FrictionTest(unittest.TestCase):
         self.control_env=dict(self.env,TEEREX_CALL_LOG_DIR=str(self.admin))
         self.counter=0
 
+    def test_large_history_remains_readable(self):
+        import runpy
+        api = runpy.run_path(str(ROOT / 'items/boards/friction.py'))
+        path = self.log / 'friction.jsonl'
+        path.write_bytes(b'{}\n' * (4 * 1024 * 1024 // 3 + 1))
+        path.chmod(0o600)
+        with api['locked'](str(self.log)) as directory:
+            self.assertGreater(len(api['read'](directory, 'friction.jsonl')), 4 * 1024 * 1024)
+
     def cli(self, operation, *options, code=0):
         p=subprocess.run([str(BIN),'boards','friction',operation,'--log-dir',str(self.log),*map(str,options)],env=self.control_env,capture_output=True,text=True,timeout=10)
         self.assertEqual(p.returncode,code,p.stderr+p.stdout)

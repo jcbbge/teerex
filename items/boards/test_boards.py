@@ -494,6 +494,16 @@ class CallsTest(unittest.TestCase):
     def call(self, *args, **kw):
         return subprocess.run([BIN, *args], env=self.env, capture_output=True, text=True, timeout=15, **kw)
 
+    def test_oversize_old_segment_does_not_refuse_recent_history(self):
+        from unittest.mock import patch
+        api = runpy.run_path(str(ROOT / 'items/boards/calls.py'))
+        with patch.dict(os.environ, TEEREX_CALL_LOG_DIR=str(self.log)):
+            self.log.mkdir(mode=0o700, exist_ok=True)
+            path = self.log / 'calls-00000000000000000001-1.jsonl'
+            path.write_bytes(b'{}\n' * (1048576 // 3 + 1)); path.chmod(0o600)
+            api['append'](dict(pid=1, start_at=1, phase='start'))
+            self.assertEqual(api['recent'](1)[0]['pid'], 1)
+
     def test_provider_credentials_in_caller_metadata_never_persist(self):
         enabled = self.call("boards", "friction", "enable", "--log-dir", str(self.log), "--for-days", "1", "--scope", "all")
         self.assertEqual(enabled.returncode, 0, enabled.stdout + enabled.stderr)

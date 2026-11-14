@@ -52,19 +52,19 @@ def locked(path):
         os.close(directory)
 
 
-def read(directory, name, cap=LIMIT):
+def read(directory, name, cap=None):
     fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
     try:
         private(fd)
         with os.fdopen(os.dup(fd), "rb") as stream:
-            value = stream.read(cap + 1)
-        require(len(value) <= cap, "file_limit_exceeded")
+            value = stream.read() if cap is None else stream.read(cap + 1)
+        require(cap is None or len(value) <= cap, "file_limit_exceeded")
         return value
     finally:
         os.close(fd)
 
 
-def optional(directory, name, cap=LIMIT):
+def optional(directory, name, cap=None):
     try:
         return read(directory, name, cap)
     except FileNotFoundError:
@@ -110,7 +110,7 @@ def timestamp(value):
 
 
 def consent(directory):
-    raw = optional(directory, "friction-consent.json", 32768)
+    raw = optional(directory, "friction-consent.json")
     if raw is None:
         return None
     try:
@@ -121,7 +121,7 @@ def consent(directory):
         scope(value["scope"])
         require(NAME.fullmatch(value["enabled_by"]) is not None, "invalid_consent")
         labels = value.get("labels", {})
-        require(isinstance(labels, dict) and len(labels) <= 128 and all(KEY.fullmatch(k) and isinstance(v,str) and NAME.fullmatch(v) for k,v in labels.items()), "invalid_consent")
+        require(isinstance(labels, dict) and all(KEY.fullmatch(k) and isinstance(v,str) and NAME.fullmatch(v) for k,v in labels.items()), "invalid_consent")
         return dict(value, enabled_at=enabled, expires_at=expires)
     except (ValueError, TypeError, KeyError):
         return None  # malformed consent never enables collection
@@ -133,7 +133,7 @@ def scope(value):
         return value
     require(value.startswith("callers:") and 0 < len(value) <= 4096, "invalid_scope")
     names = value[8:].split(",")
-    require(len(names) <= 64 and all(NAME.fullmatch(n) for n in names) and len(names) == len(set(names)), "invalid_scope")
+    require(all(NAME.fullmatch(n) for n in names) and len(names) == len(set(names)), "invalid_scope")
     return value
 
 
@@ -184,9 +184,8 @@ def join(directory, records):
     ids = {r["call_id"] for r in records}
     starts, ends = {}, {}
     names = sorted(n for n in os.listdir(directory) if re.fullmatch(r"calls-[0-9]{20}-[0-9]+\.jsonl", n)) + ["calls.jsonl"]
-    require(len(names) <= 100000, "call_segment_limit")
     for name in names:
-        raw = optional(directory,name,1048576)
+        raw = optional(directory,name)
         if raw is None:
             continue
         for line in raw.splitlines():
@@ -370,7 +369,6 @@ def execute(args):
             salt=read(directory,"friction-salt",32)
             key="k:"+hmac.new(salt,os.path.realpath(args.path).encode(),hashlib.sha256).hexdigest()[:16]
             current.setdefault("labels",{})[key]=args.name
-            require(len(current["labels"])<=128,"label_limit")
             atomic(directory,"friction-consent.json",encode(current))
             return dict(kind="friction_label",key=key,name=args.name)
         if op=="forget":

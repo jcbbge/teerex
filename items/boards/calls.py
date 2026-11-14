@@ -89,9 +89,7 @@ def recent(limit):
             try:
                 private(fd)
                 with os.fdopen(os.dup(fd), "rb") as f:
-                    raw = f.read(LIMIT + 1)
-                if len(raw) > LIMIT:
-                    raise ValueError("call segment exceeds bound")
+                    raw = f.read()
                 for line in reversed(raw.splitlines()):
                     try:
                         record = json.loads(line)
@@ -152,8 +150,7 @@ def resolved_target(server):
                     lines.append(line)
                 if changed:
                     rewritten=b"".join(lines)
-                    if len(rewritten)<=friction.LIMIT:
-                        friction.atomic(fd,name,rewritten)
+                    friction.atomic(fd,name,rewritten)
     except (OSError,ValueError,TypeError,KeyError,ImportError):
         pass
 
