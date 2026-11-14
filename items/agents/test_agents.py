@@ -250,6 +250,25 @@ class ContractHelpersTest(unittest.TestCase):
         exec(compile((base / "agents/input_events.py").read_text(), "input_events.py", "exec"), self.ns)
         exec(compile((base / "agents/agents.py").read_text(), "agents.py", "exec"), self.ns)
 
+    def test_forget_job_reads_metadata_without_observing_unrelated_jobs(self):
+        with resources.temporary_directory(prefix="forget-job-") as folder:
+            root = Path(folder)
+            root.chmod(0o700)
+            target = dict(session_id="session:old", block_id="block:old")
+            state_path = root / "state.json"
+            state_path.write_text(json.dumps(dict(entries=[
+                dict(target, socket="/tmp/test.sock", owner="worker", generation=7),
+                dict(session_id="session:unreachable", block_id="block:unreachable")])))
+            state_path.chmod(0o600)
+            calls = []
+            def invoke(args):
+                calls.append(args)
+                return 0, dict(outcome="record_forgotten")
+            self.ns["invoke"] = invoke
+            self.assertEqual(self.ns["forget_job"](str(root), dict(target=target, socket="/tmp/test.sock")), "record_forgotten")
+            self.assertEqual(len(calls), 1)
+            self.assertEqual(calls[0][:2], ["jobs", "forget"])
+
     def test_harness_app_and_launch_flourish_keep_record_identity(self):
         import base64
         import io
@@ -1899,7 +1918,19 @@ with ThreadPoolExecutor() as pool:
         self.assertNotIn(dead_session, p.stderr)
         self.assertLess(elapsed, 10)
         self.assertEqual(len(json.loads(path.read_text())["entries"]), 1)
-        self.assertEqual(packet["outcome"], "brief_delivered")
+        self.assertEqual(packet["outcome"], "brief_submitted")
+
+    def test_launch_missing_own_session_fails_with_reason_within_budget(self):
+        self.settings["defaults"]["session"] = "session:00000000-0000-0000-0000-000000000000"
+        self.config.write_text(json.dumps(self.settings))
+        started = time.monotonic()
+        p, packet = self.run_cli("launch", "--config", str(self.config), "--profile", "probe",
+                                "--ack-timeout-ms", "2000", timeout=10)
+        elapsed = time.monotonic() - started
+        self.assertNotEqual(p.returncode, 0)
+        self.assertTrue((packet or {}).get("failure_reason") or p.stderr.strip(), p.stdout)
+        self.assertLess(elapsed, 8)
+        print("missing own session launch: %.3fs, exit %s" % (elapsed, p.returncode), flush=True)
 
     def test_registry_of_live_panes_grows_past_old_count_limit(self):
         original = self.record(self.launch()[1]["launch_id"])

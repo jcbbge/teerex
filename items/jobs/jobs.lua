@@ -4,7 +4,6 @@ local function emit(v) io.write(rex.json.encode(v), "\n"); io.flush() end
 local function call(method, args)
     local v, err = rex.call(method, args)
     if not v then error(err) end
-    if #rex.json.encode(v) > 131072 then error("response_exceeds_128KiB") end
     return v
 end
 local function refuse(reason) emit({event="refused", reason=reason}) end
@@ -21,6 +20,23 @@ emit({event="source", source=source})
 if a.instance_id and (status.instance_id ~= a.instance_id or status.host_id ~= a.host_id) then
     refuse("stale_server_identity"); return
 end
+-- No CLI session selection: it would reject a deleted session before this
+-- inventory can establish absence. A failed/incomplete read proves nothing.
+local function inventory(field, rows)
+    if type(rows) ~= "table" then error("invalid_" .. field .. "_list") end
+    local found={}
+    for k,row in pairs(rows) do
+        if type(k) ~= "number" or k % 1 ~= 0 or k < 1 or k > #rows or
+            type(row) ~= "table" or type(row[field]) ~= "string" then
+            error("invalid_" .. field .. "_list")
+        end
+        found[row[field]]=true
+    end
+    return found
+end
+local sessions = inventory("session_id", call("session.list", {}).sessions)
+if not sessions[a.session_id] then refuse("target_absent_at_observation"); return end
+call("session.attach", {session_id=a.session_id})
 local blocks = call("session.list_blocks", {session_id=a.session_id})
 if type(blocks.blocks) ~= "table" then error("invalid_block_list") end
 local target, anchor
@@ -52,9 +68,34 @@ local window = visible(before, a.block_id)
 local process, process_error = rex.call("com.superlogical.terminal.process", {session_id=a.session_id, block_id=a.block_id, args={}})
 local exit_code
 if type(process) == "table" and type(process.last_exit) == "table" then exit_code=process.last_exit.exit_code end
+local absent={}
+if a.operation == "track" and a.entries and #a.entries > 0 then
+    local known={}
+    known[a.session_id]=inventory("block_id", blocks.blocks)
+    -- Only this server's jobs are supplied, and identity is checked again by
+    -- the writer. Maintenance errors never turn a verified target into failure.
+    for _,entry in ipairs(a.entries) do
+        if entry.instance_id == status.instance_id and entry.host_id == status.host_id then
+            if not sessions[entry.session_id] then
+                absent[#absent+1]=entry.block_id
+            else
+                if known[entry.session_id] == nil then
+                    local ok, found=pcall(function()
+                        call("session.attach", {session_id=entry.session_id})
+                        return inventory("block_id", call("session.list_blocks", {session_id=entry.session_id}).blocks)
+                    end)
+                    known[entry.session_id]=ok and found or false
+                end
+                if known[entry.session_id] and not known[entry.session_id][entry.block_id] then
+                    absent[#absent+1]=entry.block_id
+                end
+            end
+        end
+    end
+end
 emit({event="observed", observation={placement=target.placement, window_id=target.window_id,
     block_host_id=target.host_id, native_owner=target.owner, visible_in_view=window ~= nil,
-    last_exit_code_reported=exit_code, process_available=process ~= nil, revision=before.revision}})
+    absent_blocks=#absent>0 and absent or nil, last_exit_code_reported=exit_code, process_available=process ~= nil, revision=before.revision}})
 if a.kind == "agent" and target.placement ~= "detached" and (target.placement ~= "placed" or not window) then
     refuse("agent_not_visible_in_view"); return
 end

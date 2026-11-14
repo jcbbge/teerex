@@ -647,6 +647,38 @@ class JobsTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(len(json.loads(path.read_text())['entries']), 299)
 
+    def test_track_retires_absent_jobs_and_preserves_live_expired_and_unreachable(self):
+        live = self.track()["entry"]
+        self.detached()
+        gone = self.track()["entry"]
+        self.rpc("block.close", session_id=self.session, block_id=self.block)
+        made = json.loads(subprocess.check_output(self.base + [
+            "new", "--json", "--keep-open", "--shell=none", "--", "/bin/sleep", "120"], timeout=10))
+        self.session, self.block = made["session_id"], made["initial_windows"][0]["block_ids"][0]
+        dead = self.track()["entry"]
+        self.rpc("session.destroy", session_id=self.session)
+        self.session, self.block = live["session_id"], live["block_id"]
+        state_path = self.registry / "state.json"
+        state = json.loads(state_path.read_text())
+        # The previous track already retired the absent pane below the old threshold.
+        self.assertNotIn(gone["block_id"], [e["block_id"] for e in state["entries"]])
+        offline = dict(live, socket=str(self.work / "unreachable.sock"),
+                       session_id="session:" + ZERO, block_id="block:" + ZERO)
+        state["entries"].append(offline)
+        state["entries"][0]["deadline_unix_ms"] = 1
+        state_path.write_text(json.dumps(state))
+        self.detached()
+        started = time.monotonic()
+        result = self.track()
+        elapsed = time.monotonic() - started
+        kept = json.loads(state_path.read_text())["entries"]
+        self.assertLess(elapsed, 3)
+        self.assertNotIn(dead["block_id"], [e["block_id"] for e in kept])
+        self.assertIn(offline, kept)
+        self.assertEqual(next(e for e in kept if e["block_id"] == live["block_id"])["deadline_unix_ms"], 1)
+        self.assertEqual(len(kept), 3)
+        print("retire/live/unreachable track: %.3fs" % elapsed, flush=True)
+
     def test_all_live_registry_grows_past_32(self):
         for n in range(34):
             if n:
@@ -671,7 +703,7 @@ class JobsTest(unittest.TestCase):
         r, p = self.invoke("track", owner="operator α", kind="command", purpose="capacity", deadline_unix_ms=int(time.time()*1000)+60000, cleanup="manual")
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertEqual(p["evicted_absent_entry"]["block_id"], "block:00000001-0000-0000-0000-000000000000")
-        self.assertEqual(len(self.invoke("list")[1]["entries"]), 32)
+        self.assertEqual(len(self.invoke("list")[1]["entries"]), 2)
         state.write_text(good)
         self.block = old_block
         (self.registry / "state.next").write_text("retained crash intent")

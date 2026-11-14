@@ -80,10 +80,10 @@ Every finding includes an exact `next_command` argv array. Use the supplied `job
 
 - Registry directory: already-existing, owned by the current UID, exact mode **0700**, final component not a symlink. Files: owned, single-link regular files, exact mode **0600**, opened without following final symlinks. Parents, ACLs, mounts and same-account/root access are not a confidentiality or sandbox guarantee; use a trusted private local location.
 - One stable `lock` file uses advisory `flock`, held across read/check/write/live operation. Exclusive operations (`track`, `inspect`, `adopt`, `present`, `forget`) wait up to **10000 ms** with short sleeps before reading state or contacting Rex. On timeout, exit1 reports `failure_reason:registry_busy`, `retry_safe:true`, `remote_effect:not_attempted`; no record/live mutation began. SIGINT/TERM interrupt that wait with130/143 and no mutation. The existing live `--timeout-ms` budget starts separately after lock acquisition. `list` and `doctor` take a read-only shared lock with the same bounded 10000 ms wait (it never creates files), so a concurrent launch or forget delays a reader instead of failing it with WouldBlock. No operation waits indefinitely or steals/deletes a lock. This assumes cooperating processes and local filesystem lock/rename/sync semantics; it is not a distributed lock. A crashed process releases its OS lock. SIGKILL can leave an owned Rex transport client until it exits; that does not become a daemon or authority to kill arbitrary processes.
-- `state.json`: schema1, maximum **32 entries / 262144 bytes**. No eviction or auto-forget. The registry retains purpose/owner/target/source/deadline and one latest action/reason, not an append-only history. It saves no screen text, raw output, argv, credentials, environment or process inventory. Explicit free text and target/host identities can still be private. Stdout is unredacted JSON; save it deliberately.
+- `state.json`: schema1, no fixed entry or byte cap. Track retires only jobs proven absent on its selected server; it never evicts live or unknown jobs. The registry retains purpose/owner/target/source/deadline and one latest action/reason, not an append-only history. It saves no screen text, raw output, argv, credentials, environment or process inventory. Explicit free text and target/host identities can still be private. Stdout is unredacted JSON; save it deliberately.
 - Updates write one exclusive **`state.next`**, sync its file, rename over `state.json`, then sync the directory. Normal write failures remove only the newly created staging file. A crash can leave at most one staging file created by this item; it is never overwritten or automatically promoted. Existing `state.next` blocks all saves without destroying the last committed state. `list`/`inspect` can still read committed state. For recovery, an operator must retain the staging file privately, inspect exact resources, and reconcile/remove the staged write while no jobs operation is active. Treat committed `state.json` as authoritative, not a staged success claim. Disk/fsync failure after rename can still yield uncertain persistence; inspect before retrying.
 - Labels/owner: **1–128 UTF-8 bytes**; purpose/reason: **1–256**. Control bytes refuse. Full lowercase UUID addresses, absolute paths, unknown/repeated/missing options and operation-specific flags are checked before Rex contact. Review deadlines are absolute future Unix milliseconds, at most **30 days** ahead; they depend on the CLI host's wall clock, not a monotonic remote process timer. Existing expired records remain inspectable, never silently renewed.
-- Live transport: **100–60000 ms**, default **5000**, plus shared bounded owned-client cleanup and scheduling/OS/output waits. Four bounded frames and an **8192-byte** pending frame buffer; individual Lua API responses are rejected above **128 KiB after decoding/encoding** (not a server-side allocation cap). Inherited `REX_SERVER/SESSION/BLOCK/CLIENT` hints are removed; every call selects the endpoint/session with autostart disabled. The trusted Rex executable/configuration and server remain authoritative. A forwarded socket and host labels are not physical-locality proof or authentication.
+- Live transport: **100–60000 ms**, default **5000**, plus shared bounded owned-client cleanup and scheduling/OS/output waits. Four protocol frames; inventory and frame storage grow with the actual records rather than imposing an entry or byte cap. Inherited `REX_SERVER/SESSION/BLOCK/CLIENT` hints are removed; every call selects the endpoint with autostart disabled and attaches to the session only after verifying its existence. The trusted Rex executable/configuration and server remain authoritative. A forwarded socket and host labels are not physical-locality proof or authentication.
 
 Every ordinary result is one JSON object. Check process status too: **0** requested record/evidence verified; **1** error/refusal/uncertainty; **2** usage (normally no JSON); **124** deadline; **130/143** INT/TERM. `task_completion=not_assessed`, `all_processes_verified_gone=false`, `exclusive_control=false`, `deadline_enforced=false` and owner-liveness unknown remain explicit. Local filesystem errors do not prove a remote effect did or did not happen. There is no process-tree stop operation, background reaper, enforced ownership, native renderer, isolation or input injection here.
 
@@ -122,3 +122,20 @@ placement back into the registry. Existing identity and generation checks remain
 `jobs present` places a detached agent in the right third beside its explicit
 anchor; detached commands retain their half-width placement. Minimized or zoom-hidden
 placed agents still refuse presentation. Detached does not mean absent or dead.
+
+## Verified stale-job retirement
+
+On track, the target's bounded server query also reads a complete session list
+and complete block lists for recorded jobs on that same endpoint. It retires
+all jobs proven absent, below or above the former 32-entry threshold. A live
+job, an expired review deadline, an incomplete inventory, a changed server
+identity, or an unreachable endpoint never qualifies. Other endpoints are not
+contacted by track. The first retired entry remains available in the legacy
+`evicted_absent_entry` receipt field; the observation's `absent_blocks` carries
+the absence evidence. Retirement removes responsibility metadata only.
+
+List and doctor remain read-only. Their probes no longer select a CLI session
+before running Lua: a complete session list can now prove a deleted session
+absent, while transport failures remain unknown. Agent receipt cleanup reads
+local jobs metadata before a generation-checked forget; it does not run a live
+list of every unrelated job.

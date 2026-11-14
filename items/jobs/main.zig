@@ -18,7 +18,7 @@ const usage =
     \\Live operations optionally take --timeout-ms N (100..60000, default 5000).
     \\Registry locks (shared for list/doctor, exclusive otherwise) wait up to10000ms; registry_busy is retry-safe.
     \\List/doctor open existing files read-only and create no files, including no lock file.
-    \\Registry must already be an absolute, private 0700 owned directory. Dead entries evicted above 32 records; live records retained.
+    \\Registry must already be an absolute, private 0700 owned directory. Track retires same-server verified-absent entries; live/unknown records retained.
     \\API13 Mac-arm64/Linux-amd64 only; no autostart, agents, daemon, automatic close or enforced deadlines.
     \\Ownership is recorded responsibility, not authority, native ownership, isolation or process control.
     \\Exit: 0 requested evidence/record verified, 1 error/refusal/unknown, 2 usage, 124 deadline, 130/143 signal.
@@ -35,6 +35,7 @@ const Observation = struct {
     last_exit_code_reported: ?i64 = null,
     process_available: bool,
     revision: u64,
+    absent_blocks: []const []const u8 = &.{},
 };
 const Action = struct { operation: []const u8, reason: []const u8, at_unix_ms: i64, outcome: []const u8 };
 const Entry = struct {
@@ -219,7 +220,6 @@ const Collector = struct {
     finished: bool = false,
     frames: u8 = 0,
     pub fn receive(self: *Collector, bytes: []const u8) !void {
-        if (bytes.len > 8192 - self.pending.items.len) return error.InvalidJobsFrame;
         try self.pending.appendSlice(self.allocator, bytes);
         while (std.mem.indexOfScalar(u8, self.pending.items, '\n')) |end| {
             if (self.finished or self.frames >= 4) return error.InvalidJobsFrame;
@@ -249,8 +249,26 @@ const Collector = struct {
 };
 const Live = struct { collector: Collector, outcome: []const u8, code: u8, failure: ?[]const u8, backend_term: ?std.process.Child.Term };
 fn query(allocator: std.mem.Allocator, o: Options, entry: ?Entry) !Live {
+    return queryWithRegistry(allocator, o, entry, &.{});
+}
+fn queryWithRegistry(allocator: std.mem.Allocator, o: Options, entry: ?Entry, entries: []const Entry) !Live {
+    var targets: std.ArrayList(struct {
+        session_id: []const u8,
+        block_id: []const u8,
+        instance_id: []const u8,
+        host_id: []const u8,
+    }) = .empty;
+    for (entries) |existing| {
+        if (eq(existing.socket, o.socket.?)) try targets.append(allocator, .{
+            .session_id = existing.session_id,
+            .block_id = existing.block_id,
+            .instance_id = existing.source.instance_id,
+            .host_id = existing.source.host_id,
+        });
+    }
     const request = try std.json.Stringify.valueAlloc(allocator, .{
         .operation = o.operation,
+        .entries = targets.items,
         .session_id = o.session.?,
         .block_id = o.block.?,
         .kind = if (entry) |e| e.kind else o.kind.?,
@@ -265,7 +283,7 @@ fn query(allocator: std.mem.Allocator, o: Options, entry: ?Entry) !Live {
     var env = try std.process.getEnvMap(allocator);
     for ([_][]const u8{ "REX_SERVER", "REX_SESSION", "REX_BLOCK", "REX_CLIENT" }) |key| env.remove(key);
     const endpoint = try std.fmt.allocPrint(allocator, "unix://{s}", .{o.socket.?});
-    const argv = [_][]const u8{ "rex", "--autostart=false", "--server", endpoint, "--timeout", "3s", "--color", "never", "do", "--session", o.session.?, "-e", @embedFile("jobs.lua"), "--args", request };
+    const argv = [_][]const u8{ "rex", "--autostart=false", "--server", endpoint, "--timeout", "3s", "--color", "never", "do", "-e", @embedFile("jobs.lua"), "--args", request };
     var c: Collector = .{ .allocator = allocator };
     var failure: ?[]const u8 = null;
     const r = supervised.collect(allocator, &argv, &env, o.timeout_ms orelse 5000, &c) catch |err| blk: {
@@ -522,29 +540,31 @@ fn execute(allocator: std.mem.Allocator, o: Options) !u8 {
         registry.state.entries[index.?] = entry.?;
         try registry.save(allocator);
     }
-    const live = try query(allocator, o, entry);
+    const live = try queryWithRegistry(allocator, o, entry, if (track) registry.state.entries else &.{});
     if (live.code == 0 and track) {
         for (registry.state.entries) |existing| {
             if (eq(existing.session_id, o.session.?) and eq(existing.block_id, o.block.?) and
                 eq(existing.source.instance_id, live.collector.source.?.instance_id) and
                 eq(existing.source.host_id, live.collector.source.?.host_id)) return error.TargetAlreadyTrackedThroughAnotherEndpoint;
         }
-        if (registry.state.entries.len >= 32) {
-            // Only proven absent targets qualify; unknown and live entries remain.
-            var oldest: ?usize = null;
-            for (registry.state.entries, 0..) |existing, at| {
-                const probe: Options = .{ .operation = "inspect", .registry = o.registry, .socket = existing.socket, .session = existing.session_id, .block = existing.block_id, .timeout_ms = 1000 };
-                const observed = query(allocator, probe, existing) catch continue;
-                if ((eq(observed.outcome, "verified") or eq(observed.outcome, "refused")) and observed.failure != null and eq(observed.failure.?, "target_absent_at_observation")) {
-                    if (oldest == null or existing.registered_at_unix_ms < registry.state.entries[oldest.?].registered_at_unix_ms) oldest = at;
-                }
-            }
-            if (oldest) |at| {
-                evicted = registry.state.entries[at];
-                std.mem.copyForwards(Entry, registry.state.entries[at .. registry.state.entries.len - 1], registry.state.entries[at + 1 ..]);
-                registry.state.entries = registry.state.entries[0 .. registry.state.entries.len - 1];
+        // The target's own bounded query carries a same-server inventory. Never
+        // open another endpoint or spend a timeout on each registered job.
+        var absent = std.StringHashMap(void).init(allocator);
+        for (live.collector.observation.?.absent_blocks) |id| try absent.put(id, {});
+        var kept: usize = 0;
+        for (registry.state.entries) |existing| {
+            const gone = eq(existing.socket, o.socket.?) and
+                eq(existing.source.instance_id, live.collector.source.?.instance_id) and
+                eq(existing.source.host_id, live.collector.source.?.host_id) and
+                absent.contains(existing.block_id);
+            if (gone) {
+                if (evicted == null) evicted = existing;
+            } else {
+                registry.state.entries[kept] = existing;
+                kept += 1;
             }
         }
+        registry.state.entries = registry.state.entries[0..kept];
         entry = .{ .socket = o.socket.?, .session_id = o.session.?, .block_id = o.block.?, .source = live.collector.source.?, .block_host_id = live.collector.observation.?.block_host_id, .owner = o.owner.?, .kind = o.kind.?, .purpose = o.purpose.?, .deadline_unix_ms = o.deadline_unix_ms.?, .generation = try registry.generation(), .registered_at_unix_ms = now, .receipt_path = o.receipt_file };
         registry.state.entries = try std.mem.concat(allocator, Entry, &.{ registry.state.entries, &.{entry.?} });
         try registry.save(allocator);

@@ -271,6 +271,16 @@ local function call(method,args)
 end
 local version=call("server.version")
 if version.api_revision~=13 then error("detached_requires_API13") end
+if a.operation=="inspect" then
+ local listed=call("session.list",{})
+ if type(listed.sessions)~="table" then error("invalid_session_inventory") end
+ local found=false
+ for k,s in pairs(listed.sessions) do
+  if type(k)~="number" or k%1~=0 or k<1 or k>#listed.sessions or type(s)~="table" or type(s.session_id)~="string" then error("invalid_session_inventory") end
+  if s.session_id==a.session_id then found=true end
+ end
+ if not found then io.write(rex.json.encode({placement="absent",block_id=a.block_id}),"\n"); return end
+end
 call("session.attach",{session_id=a.session_id})
 if a.operation=="create" then
  local command={"/bin/sh","-c",'cd -- "$1" || exit 125\nshift\nexec "$@"',"teerex-agent",a.cwd}
@@ -279,9 +289,13 @@ if a.operation=="create" then
   options={shell="none",login=false,interactive=false,cwd=a.cwd,command=command,exit={on_completion=false}}})
  a.block_id=made.block_id
 end
-local blocks=call("session.list_blocks",{session_id=a.session_id}).blocks or {}
+local blocks=call("session.list_blocks",{session_id=a.session_id}).blocks
+if type(blocks)~="table" then error("invalid_block_inventory") end
 local target
-for _,b in ipairs(blocks) do if b.block_id==a.block_id then target=b end end
+for k,b in pairs(blocks) do
+ if type(k)~="number" or k%1~=0 or k<1 or k>#blocks or type(b)~="table" or type(b.block_id)~="string" then error("invalid_block_inventory") end
+ if b.block_id==a.block_id then target=b end
+end
 local result={placement=target and target.placement or "absent",block_id=a.block_id,focus_requested=false}
 if a.operation=="forward" and target and target.placement=="detached" then
  local view=call("session.view",{session_id=a.session_id})
@@ -371,9 +385,15 @@ def archive_dir(registry):
 def forget_job(root, state):
     """The pane is gone, so its jobs registration is history too. Local record only; never closes anything."""
     t = state["target"]
-    code, listed = invoke(["jobs", "list", "--registry", root])
+    # Read only metadata here: jobs list observes every job, including unrelated
+    # endpoints. The forget command validates the registry, owner and generation.
+    try:
+        listed = json.loads(read_file(str(Path(root) / "state.json"), limit=None, private=True))
+    except FileNotFoundError:
+        return "no_jobs_record"
     entry = next((e for e in (listed or {}).get("entries", []) if isinstance(listed, dict)
-                  and e.get("block_id") == t["block_id"] and e.get("session_id") == t["session_id"]), None)
+                  and e.get("block_id") == t["block_id"] and e.get("session_id") == t["session_id"]
+                  and e.get("socket") == state["socket"]), None)
     if entry is None:
         return "no_jobs_record"
     code, packet = invoke(["jobs", "forget", "--registry", root, "--socket", state["socket"], "--session", t["session_id"],
