@@ -159,9 +159,9 @@ end}
     fd, path = tempfile.mkstemp(prefix=(o.command or 'index') + '-', suffix='.md', dir=root)
     with os.fdopen(fd, 'w') as output:
         output.write(text)
-    viewer = "import os,subprocess,sys\ntry:\n subprocess.run(sys.argv[1:],check=True)\nfinally:\n os.unlink(sys.argv[-1])"
+    viewer = "import os,subprocess,sys\ntry:\n subprocess.run(sys.argv[3:],check=True)\nfinally:\n os.unlink(sys.argv[-1])\n subprocess.run([sys.argv[1],'surfaces','close','--socket',sys.argv[2],'--session',os.environ.get('REX_SESSION') or os.environ['LC_REX_SESSION'],'--pane',os.environ.get('REX_BLOCK') or os.environ['LC_REX_BLOCK']])"
     try:
-        surface(o, 'teerex docs ' + (o.command or 'index'), ['python3', '-I', '-c', viewer, leaf, 'open', path])
+        surface(o, 'teerex docs ' + (o.command or 'index'), ['python3', '-I', '-c', viewer, SELF, o.socket, leaf, 'open', path])
     except BaseException:
         # An uncertain open may have a reader: retain its private path for inspection.
         print('Guide retained at ' + path, file=sys.stderr)
