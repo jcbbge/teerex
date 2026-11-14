@@ -1953,6 +1953,38 @@ Path('/work/network-harness').touch()
                     self.assertEqual(self.record(launch_id)["immediate_child_term"], expected)
                     wait_for(lambda: self.program_state(block) == ("done" if ending == "exit0" else "error"))
 
+    def scratch_contract(self, state, now_text="", todo=(), done=(), blocked="", waiting="", check=""):
+        Path(state["scratchpad"]).write_text(
+            "# probe\nBlocked: " + blocked + "\nWaiting: " + waiting + "\nCheck: " + check +
+            "\n## Now\n" + ("- [ ] " + now_text + "\n" if now_text else "") +
+            "## To-do\n" + "".join("- [ ] " + text + "\n" for text in todo) +
+            "## Done\n" + "".join("- [x] " + text + "\n" for text in done))
+
+
+    def starter_messages(self):
+        return [v["payload"] for v in events(self.starter_log) if v["event"] == "input"]
+
+
+    def test_contract_steps_and_flag_are_delivered_once(self):
+        p, launched = self.launch(contract=True)
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        state = self.record(launched["launch_id"])
+        self.scratch_contract(state, "Read", ["Build"])
+        wait_for(lambda: any("STEP probe 1/2 started: Read" in text for text in self.starter_messages()))
+        self.scratch_contract(state, "Build", done=["Read"])
+        wait_for(lambda: any("STEP probe 2/2 started: Build" in text for text in self.starter_messages()))
+        self.assertEqual(sum("STEP probe 1/2 finished: Read" in text for text in self.starter_messages()), 1)
+        self.scratch_contract(state, "Build", done=["Read"], blocked="missing input; read brief; need answer")
+        wait_for(lambda: any("FLAG probe step 2/2:" in text for text in self.starter_messages()))
+        time.sleep(.3)
+        self.assertEqual(sum("FLAG probe step 2/2:" in text for text in self.starter_messages()), 1)
+        # A turn-end callback observing the same flag must not send a second copy.
+        p, packet = self.run_cli("stop", "--registry", str(self.registry), "--launch-id", launched["launch_id"],
+                                "--event-file", "-", input=json.dumps(dict(hook_event_name="Stop", last_assistant_message="blocked")))
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertEqual(sum("FLAG probe step 2/2:" in text for text in self.starter_messages()), 1)
+
+
     def test_scratch_waiting_blocks_with_text_and_clears_for_all_harnesses(self):
         for harness in ("claude", "codex", "pi"):
             self.settings["profiles"]["probe"].update(harness=harness, hook_events=True)

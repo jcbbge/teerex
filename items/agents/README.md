@@ -400,7 +400,7 @@ The in-pane supervisor publishes `app=teerex-agent` program status for every man
 Codex needs no per-launch start hook. After `send` acknowledges paste and Enter (including brief, ask and queue delivery), it records a private input event keyed by canonical socket/session/block under `~/.local/state/teerex/agent-input`. The supervisor consumes that event and emits its own OSC 7501 status. Nanosecond event ordering prevents delayed input bookkeeping or an older stop callback from overwriting a newer state. Input events contain no message text and are removed when the supervisor exits. No watcher process or daemon is added.
 
 
-## Worker contracts
+## The contract
 
 Managed launches record a contract with their starter, purpose, done-when and contact interval.
 `--done-when TEXT` overrides the brief's first `Done when` / `done-when` line, then Intent.
@@ -415,3 +415,5 @@ Declared turns send `DONE`, `FLAG` or `WAITING` lines to the starter and distinc
 Flag sends claim their content hash before dispatch so concurrent checks send once.
 Only acknowledged sends count as contact; an uncertain flag attempt is retained without retry.
 Legacy launch records without a contract retain the previous turn-report rules.
+
+Managed workers keep their starter informed through the existing supervisor. Scratchpad Now changes and new Done items send one STEP line; a Blocked flag sends one FLAG per distinct SHA through the shared contract helper. Human launches have no worker contract.

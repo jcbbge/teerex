@@ -1579,6 +1579,42 @@ def supervisor_error(o, field, exc):
                 registry.save(state)
 
 
+def contract_steps(root, launch_id, previous):
+    state = load(root, launch_id)
+    if not state.get("contract"):
+        return previous
+    try:
+        snapshot = contract_snapshot(state)
+        done = scratch_read(Path(state["scratchpad"]))["done"]
+    except (OSError, ValueError):
+        return previous
+    old_now, old_done = previous
+    name = state["name"]
+    n, total = snapshot["step_n"], snapshot["steps_total"]
+    # Done is newest first. Count repeated labels separately rather than treating them as a set.
+    remaining = list(old_done)
+    added = []
+    for item in reversed(done):
+        if item in remaining:
+            remaining.remove(item)
+        else:
+            added.append(item)
+    finished_n = len(done) - len(added)
+    for item in added:
+        finished_n += 1
+        contract_tell(root, launch_id, "step", f"STEP {name} {finished_n}/{total} finished: {item}")
+    if snapshot["now"] and snapshot["now"] != old_now:
+        contract_tell(root, launch_id, "step", f"STEP {name} {n}/{total} started: {snapshot['now']}")
+    flag = snapshot.get("flag")
+    if flag:
+        contract_tell(root, launch_id, "flag", f"FLAG {name} step {n}/{total}: {flag['text']}")
+    # contract_tell owns delivery/contact fields; never replace them with a stale snapshot.
+    fields = {key: snapshot[key] for key in ("steps_total", "step_n", "now", "declared", "check_at")}
+    if any(state["contract"].get(key) != value for key, value in fields.items()):
+        update(root, launch_id, lambda s: s["contract"].update(fields))
+    return snapshot["now"], list(done)
+
+
 def supervise(o):
     state = None
     try:
@@ -1673,6 +1709,7 @@ def supervise_child(o):
         last_status = None
         last_input_ns = 0
         channel_closed_reported = False
+        previous_steps = (None, [])
         while True:
             try:
                 if child.poll() is not None:
@@ -1692,6 +1729,7 @@ def supervise_child(o):
                 if incoming is not None and incoming["at_ns"] > last_input_ns:
                     delivered_input(o.registry, o.launch_id, incoming)
                     last_input_ns = incoming["at_ns"]
+                previous_steps = contract_steps(o.registry, o.launch_id, previous_steps)
                 current = load(o.registry, o.launch_id).get("last_hook")
                 try:
                     waiting = scratch_read(Path(state["scratchpad"])).get("waiting", "")
