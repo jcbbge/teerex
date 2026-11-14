@@ -96,3 +96,21 @@ local function draft_from_vt(text)
     end
     return draft
 end
+
+-- Shell prompts need not have an arrow. Rex's cursor identifies the active
+-- screen line; only a foreground shell may use the styled directory prefix.
+-- Keep historical output and agent editors out of this fallback.
+local function shell_draft_from_vt(text, rows)
+    local row = tonumber(text:match("\27%[(%d+);%d+H$"))
+    if not row or not rows or row > rows then return nil end
+    text = text:gsub("\27%[%d+;%d+H$", "")
+    local lines = {}
+    for line in (text .. "\n"):gmatch("([^\n]*)\n") do table.insert(lines, line) end
+    local line = lines[#lines - rows + row]
+    if not line then return nil end
+    -- The directory-only zsh prompt: bold blue path, reset, one separator.
+    -- Match its style and path shape, rather than treating '~' in output as a prompt.
+    local path, body = line:match("^\27%[0m\27%[1m\27%[38;5;4m([^\27]+)\27%[0m (.*)$")
+    if body == nil or not (path:match("^~") or path:match("^/")) then return nil end
+    return draft_from_vt("> " .. body)
+end

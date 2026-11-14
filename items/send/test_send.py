@@ -523,6 +523,23 @@ class SendTest(unittest.TestCase):
         result = self.rex_json("do", "--session", target[0], "--block", target[1], "-e", lua, "--args", json.dumps(dict(cases=[f[0] for f in fixtures])))
         self.assertEqual(result, [f[1] for f in fixtures])
 
+    def test_m5_directory_prompt_cursor_capture(self):
+        # Real M5 capture, with public draft/suggestion text substituted.
+        prefix = "\x1b[0m\x1b[1m\x1b[38;5;4m~\x1b[0m "
+        line = prefix + "\x1b[0m\x1b[38;5;2mecho\x1b[0m DRAFT-M5\x1b[0m\x1b[38;5;8m suggestion\x1b[0m"
+        screen = "Last login\r\n" + line + "\r\n" * 22 + "\x1b[2;16H"
+        cases = [(screen, "echo DRAFT-M5"),
+                 ("scrollback\r\n" + screen, "echo DRAFT-M5"),
+                 (prefix + "\r\n" * 23 + "\x1b[1;3H", ""),
+                 (line + "\r\noutput\r\n" + "\r\n" * 21 + "\x1b[2;7H", None),
+                 ("❯ draft\r\n" * 23 + "\x1b[1;8H", None),
+                 (screen.replace("~\x1b[0m", "output\x1b[0m"), None)]
+        lua = Path(__file__).with_name("draft.lua").read_text() + "\nlocal out={} for _,v in ipairs(rex.args.cases) do table.insert(out,{draft=shell_draft_from_vt(v,24)}) end io.write(rex.json.encode(out))"
+        target, _ = self.fixture()
+        result = self.rex_json("do", "--session", target[0], "--block", target[1], "-e", lua,
+                               "--args", json.dumps(dict(cases=[f[0] for f in cases])))
+        self.assertEqual([r.get("draft") for r in result], [f[1] for f in cases])
+
     def test_codex_dim_placeholder_does_not_clear_and_real_text_is_restored(self):
         target, log = self.prompt("Ask Codex to do anything", mode="codex-ignore-clear")
         result, packet = self.send(target, b"placeholder regression")

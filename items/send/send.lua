@@ -48,11 +48,22 @@ local function report(stage)
 end
 local function read_draft()
     local capture = rex.call("com.superlogical.terminal.format", {
-        session_id=a.session_id, block_id=a.block_id, args={format="vt"},
+        session_id=a.session_id, block_id=a.block_id, args={format="vt", extra_cursor=true},
     })
     if type(capture) ~= "table" then return nil end
     local text = capture.text or capture.content
     if type(text) ~= "string" or #text > 1048576 then return nil end
+    local process = rex.call("com.superlogical.terminal.process", {
+        session_id=a.session_id, block_id=a.block_id, args={},
+    })
+    local foreground = type(process) == "table" and process.foreground
+    if type(foreground) == "table" and foreground.name == "zsh" then
+        local size = rex.call("com.superlogical.terminal.size", {
+            session_id=a.session_id, block_id=a.block_id, args={},
+        })
+        local shell = shell_draft_from_vt(text, type(size) == "table" and size.rows)
+        if shell ~= nil then return shell end
+    end
     return draft_from_vt(text)
 end
 -- Cooperative state is local to the command/Rex host. No server input lease is implied.
