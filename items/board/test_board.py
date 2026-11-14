@@ -527,7 +527,10 @@ class BoardTest(unittest.TestCase):
         card=self.root/'decision.json'
         card.write_text(json.dumps(dict(id='board-choice',title='Board decision',ask='Pick the release time?',context='Disposable board check',options=[dict(label='Now',gain='Available',lose='Interrupts'),dict(label='Later',gain='Preserves work',lose='Delay')],recommend='Later')))
         asked=subprocess.run(decision_base+['ask','--session',decision_session,'--block',seat_block,'--from','worker','--card-file',str(card)],env=dict(private_env,REX_SESSION=decision_session,REX_BLOCK=asker_block),capture_output=True,text=True,check=True,timeout=10)
-        self.assertFalse(json.loads(asked.stdout)['terminal_input_attempted'])
+        asked_receipt=json.loads(asked.stdout)
+        self.assertEqual(asked_receipt['outcome'],'events_acknowledged')
+        self.assertTrue(asked_receipt['paste']['attempted'])
+        self.assertEqual(asked_receipt['history'],'recorded')
         snapshot=subprocess.run([BIN,'board','--config',str(config),'--json'],env=private_env,capture_output=True,text=True,timeout=20)
         self.assertEqual(snapshot.returncode,0,snapshot.stderr)
         data=json.loads(snapshot.stdout)
