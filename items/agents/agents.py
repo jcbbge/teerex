@@ -607,33 +607,31 @@ def delivery_destination(root, state, destination):
     while destination and destination not in visited:
         visited.append(destination)
         if registered_seat(state, destination):
-            return seat_address(state)
+            destination = seat_address(state)
+            break
         if pane_presence(state, destination):
-            if absent:
-                def rerouted(s):
-                    s.setdefault("starter_faults", []).append(dict(at=now(), absent=absent, rerouted_to=destination))
-                    c = s.get("contract")
-                    if c:
-                        c.update(stalled=False, lapses=0, last_contact_at=now())
-                update(root, state["launch_id"], rerouted)
-            return destination
+            break
         absent.append(destination)
         with Registry(root) as registry:
             parent = None
             for path in list(Path(root).glob("agents-*.json")) + list(Path(root).glob("archive/*/agents-*.json")):
+                if not RECORD.fullmatch(path.name):
+                    continue
                 candidate = json.loads(read_file(str(path), limit=None, private=True))
                 if candidate.get("target") == destination:
                     parent = candidate.get("starter")
                     break
         destination = parent
+    else:
+        require(state.get("store"), "no_live_starter_or_seat_store")
+        destination = seat_address(state)
     if absent:
-        def orphaned(s):
-            s.setdefault("starter_faults", []).append(dict(at=now(), absent=absent, rerouted_to="seat"))
+        def rerouted(s):
+            s.setdefault("starter_faults", []).append(dict(at=now(), absent=absent, rerouted_to=destination))
             if s.get("contract"):
                 s["contract"].update(stalled=False, lapses=0, last_contact_at=now())
-        update(root, state["launch_id"], orphaned)
-    require(state.get("store"), "no_live_starter_or_seat_store")
-    return seat_address(state)
+        update(root, state["launch_id"], rerouted)
+    return destination
 
 
 def send(root, state, destination, body, label):
@@ -775,7 +773,7 @@ def contract_tell(root, launch_id, kind, line, to="starter", last_message=None, 
             update(root, launch_id, claim)
             if not claimed:
                 continue
-        sender = dict(state, name="teerex-contract")
+        sender = dict(state, name="teerex-scratchpad" if to == "self" else "teerex-contract")
         code, packet = send(root, sender, destination, line + ("\n" + last_message if last_message else ""), "contract-" + secrets.token_hex(16) + "-" + str(i))
         results.append(dict(client_exit=code, receipt=packet))
     if turn_report is not None and not results and destinations:
@@ -786,9 +784,9 @@ def contract_tell(root, launch_id, kind, line, to="starter", last_message=None, 
     if to == "starter":
         def told(s):
             c = s["contract"]
-            if ok:
+            if ok and kind != "lapse":
                 c.update(last_contact_at=sent_at, last_contact=line, lapses=0, stalled=False)
-            else:
+            elif not ok:
                 c["last_contact_failed"] = dict(at=sent_at, line=line, receipt=results)
             if kind == "flag" and c.get("flag", {}).get("sha") == flag["sha"]:
                 c["flag"].update(delivered_at=now() if ok else None, receipt=results)
@@ -1951,8 +1949,13 @@ def validate_hook_event(event, allow_transcript=True):
 
 def delivered_input(root, launch_id, event):
     def started(s):
+        if event.get("reminder"):
+            s["last_reminder_at_ns"] = event["at_ns"]
+            return
         s["last_input_at_ns"] = event["at_ns"]
         c = s.get("contract")
+        if c and event["at_ns"] >= c.get("last_contact_at", 0) * 1000000:
+            c.update(stalled=False, lapses=0, last_contact_at=event["at_ns"] // 1000000)
         pending = (c or {}).get("awaiting_starter")
         if pending and event["at_ns"] >= pending["at"] * 1000000:
             c.update(awaiting_starter=None, starter_lapses=0)
@@ -1978,6 +1981,8 @@ def report_stop(root, launch_id, event_id, event, allow_transcript=True):
                 return
             scratch_turn(s, event, s.get("scratchpad"))
             s["contract_reminded"] = False
+            if s.get("contract"):
+                s["contract"].update(stalled=False, lapses=0, last_contact_at=now())
             s["last_hook"] = dict(kind=kind, state="working", at=now(), at_ns=event_at_ns, text="turn started")
         state = update(root, launch_id, started)
         return 0, receipt(state, "turn_started")
@@ -2073,6 +2078,8 @@ def report_stop(root, launch_id, event_id, event, allow_transcript=True):
         if event_at_ns < previous.get("at_ns", previous.get("at", 0) * 1000000):
             return
         s["contract_turn_ended"] = True
+        if s.get("contract"):
+            s["contract"].update(stalled=False, lapses=0, last_contact_at=now())
         s["last_hook"] = dict(kind=kind, state=turn_state, at=now(), at_ns=event_at_ns, text=details, event_id=event_id, evidence="harness_report_not_process_death", scratchpad_check=check, delivery_rule=delivery_rule)
     update(root, launch_id, remembered)
     if delivery_rule.startswith("contract_"):
@@ -2160,40 +2167,62 @@ def contract_steps(root, launch_id, previous):
     return snapshot["now"], list(done)
 
 
+def contract_observation(state):
+    code, packet = invoke(["observe", "--state", "--socket", state["socket"],
+                           "--session", state["target"]["session_id"], "--block", state["target"]["block_id"]],
+                          client_path=state["client_path"], rex_executable=state["rex_executable"])
+    require(code == 0 and isinstance(packet, dict), "worker_activity_unknown_no_stall")
+    records = packet.get("osc7501", {}).get("records", [])
+    busy = packet.get("state") == "working" or any(record.get("state") == "working" for record in records)
+    quiet = not busy and packet.get("state") in ("idle_prompt", "awaiting_choice", "awaiting_text", "error", "exited")
+    return busy, quiet
+
+
 def contract_lapse(root, launch_id):
     state = load(root, launch_id)
     c = state.get("contract")
     if not c or not contract_active(state) or c.get("declared") == "done":
         return
-    starter = state.get("starter")
-    if starter and not pane_presence(state, starter):
-        contract_tell(root, launch_id, "starter_absent",
-                      f"STARTER ABSENT {state['name']}: starter pane is gone; responsibility rerouted")
-        return
     timestamp = now()
-    window = max(c["last_contact_at"], c.get("last_lapse_at", 0))
+    window = max(c["last_contact_at"], c.get("last_lapse_at", 0), c.get("last_lapse_check_at", 0))
     elapsed = timestamp - c["last_contact_at"]
     check = c.get("check_at")
     if timestamp - window <= c["interval_s"] * 1000 and not (check and window < check <= timestamp):
         return
+    starter = state.get("starter")
+    if starter and not pane_presence(state, starter):
+        def starter_fault(s):
+            current = s["contract"]
+            if current.get("absent_starter") != starter:
+                s.setdefault("starter_faults", []).append(dict(at=timestamp, absent=[starter], fault="starter_absent"))
+            current.update(absent_starter=starter, stalled=False, lapses=0, last_lapse_check_at=timestamp)
+        update(root, launch_id, starter_fault)
+        contract_tell(root, launch_id, "starter_absent",
+                      f"STARTER ABSENT {state['name']}: starter pane is gone; responsibility rerouted")
+        return
+    busy, quiet = contract_observation(state)
+    def observed(s):
+        current = s["contract"]
+        current["last_lapse_check_at"] = timestamp
+        if busy:
+            current.update(stalled=False, lapses=0)
+    update(root, launch_id, observed)
+    if busy or not quiet:
+        return
     lapses = c["lapses"] + 1
     name = state["name"]
-    line = f"LAPSE {name} step {c['step_n']}/{c['steps_total']}: no contact for {elapsed // 60000} min; woken"
+    instruction = "tell your starter now what is stuck, what you tried, what you need"
+    line = f"LAPSE {name} step {c['step_n']}/{c['steps_total']}: no contact for {elapsed // 60000} min; {instruction}"
     def lapsed(s):
-        # LAPSE is a supervisor report, not contact from the worker. Preserve the streak.
-        if (s["contract"]["last_contact_at"] == c["last_contact_at"]
-                or s["contract"].get("last_contact") == line):
+        # Supervisor delivery is not contact from the worker; real contact wins a dispatch race.
+        if s["contract"]["last_contact_at"] == c["last_contact_at"]:
             s["contract"].update(lapses=lapses, stalled=True, last_lapse_at=timestamp)
-    # Start the next window before dispatch, even when delivery raises or is uncertain.
     update(root, launch_id, lapsed)
-    try:
-        contract_tell(root, launch_id, "wake", f"Contract check: {name}, done? If yes run teerex scratch done. "
-                      'If no: teerex scratch flag "why not" or --waiting with --check.', to="self")
-        contract_tell(root, launch_id, "lapse", line)
-        if lapses == 2:
-            contract_tell(root, launch_id, "lapse", line, to="seat")
-    finally:
-        update(root, launch_id, lapsed)
+    if lapses == 1:
+        contract_tell(root, launch_id, "wake", instruction, to="self")
+    contract_tell(root, launch_id, "lapse", line)
+    if lapses == 2:
+        contract_tell(root, launch_id, "lapse", line, to="seat")
 
 
 def contract_starter(root, launch_id):
@@ -2558,6 +2587,7 @@ def rebind_seat(o):
                     c["starter"] = new
                 c.update(stalled=False, lapses=0, starter_lapses=0, last_contact_at=now())
                 c.pop("last_lapse_at", None)
+                c.pop("absent_starter", None)
                 c.pop("starter_reminded_at", None)
             state.setdefault("seat_inheritance", []).append(dict(at=now(), previous=old, target=new, fields=fields))
             registry.save(state)

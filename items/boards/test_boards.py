@@ -980,6 +980,60 @@ class RexBoardsTest(unittest.TestCase):
         self.assertEqual([r['body'] for r in inbox['records']], ['before death', 'between seats', 'historical address'])
         self.assertEqual(len(json.loads(record.read_text())['seat_inheritance']), 1)
 
+    def test_quiet_worker_wakes_once_and_next_check_reaches_seat(self):
+        sys.path.insert(0, str(ROOT / 'items/agents'))
+        from test_agents import ContractHelpersTest
+        helper = ContractHelpersTest()
+        helper.setUp()
+        api = helper.ns
+        api['RUNTIME'] = BIN
+        root = self.root / ('quiet-worker-' + str(time.monotonic_ns()))
+        root.mkdir(mode=0o700)
+        store, registry = root / 'store', root / 'agents'
+        store.mkdir(mode=0o700)
+        registry.mkdir(mode=0o700)
+        def pane(argv):
+            made = json.loads(subprocess.check_output(self.base + ['new', '--json', '--keep-open', '--shell=none', '--', *argv]))
+            return dict(host='fixture', server='unix://' + str(self.socket), session_id=made['session_id'],
+                        block_id=made['initial_windows'][0]['block_ids'][0])
+        starter = pane(['/bin/sleep', '120'])
+        seat = pane(['/bin/sleep', '120'])
+        received = root / 'received'
+        script = "import os,tty;tty.setraw(0);os.write(1,b'\\x1b[?2004h\\x1b]7501;state=blocked:kind=question:app=synthetic\\x07');f=open(" + repr(str(received)) + ", 'ab',buffering=0)\nwhile True:\n b=os.read(0,65536)\n if not b:break\n f.write(b)\n"
+        worker = pane([sys.executable, '-u', '-c', script])
+        state = dict(schema_version=1, launch_id='c' * 32, name='quiet-worker', target=worker, starter=starter, report_to=starter,
+            store=str(store), socket=str(self.socket), client_path=os.environ.get('PATH', ''), rex_executable=self.rex,
+            brief_attempted=True, contract=dict(declared=None, last_contact_at=1, interval_s=1, lapses=0, stalled=False,
+                                                step_n=1, steps_total=2))
+        with api['Registry'](str(registry)) as records:
+            records.save(state, new=True)
+        subprocess.check_output([BIN, '--rex', self.rex, 'seat', 'register', '--store', str(store), '--host', 'fixture',
+            '--socket', str(self.socket), '--session', seat['session_id'], '--block', seat['block_id'], '--owner', 'test', '--agents-registry', str(registry)])
+        end = time.monotonic() + 3
+        while api['contract_observation'](state) != (False, True):
+            self.assertLess(time.monotonic(), end, 'fixture question status was not observed')
+            time.sleep(.02)
+        clock = [10000]
+        api['now'] = lambda: clock[0]
+        api['contract_lapse'](str(registry), state['launch_id'])
+        first = api['load'](str(registry), state['launch_id'])
+        self.assertTrue(first['contract']['stalled'])
+        self.assertEqual(first['contract']['lapses'], 1)
+        instruction = 'tell your starter now what is stuck, what you tried, what you need'
+        end = time.monotonic() + 3
+        while not received.exists() or instruction not in received.read_text():
+            self.assertLess(time.monotonic(), end, 'wake instruction was not received')
+            time.sleep(.02)
+        clock[0] += 1001
+        api['contract_lapse'](str(registry), state['launch_id'])
+        second = api['load'](str(registry), state['launch_id'])
+        self.assertEqual(second['contract']['lapses'], 2)
+        inbox = json.loads((store / 'state.json').read_text())['seats'][0]['records']
+        self.assertEqual(sum(instruction in record['body'] for record in inbox), 1)
+        self.assertEqual(received.read_text().count(instruction), 1)
+        api['delivered_input'](str(registry), state['launch_id'], dict(at_ns=(clock[0] + 1) * 1000000))
+        self.assertFalse(api['load'](str(registry), state['launch_id'])['contract']['stalled'])
+
     def test_fleet_full_evicts_dead_and_all_live_grows(self):
         store = self.root / 'capacity-store'
         store.mkdir(mode=0o700)

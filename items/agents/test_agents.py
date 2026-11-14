@@ -541,6 +541,7 @@ class ContractHelpersTest(unittest.TestCase):
                      contract=dict(declared=None, last_contact_at=0, interval_s=1, lapses=0, stalled=False))
         self.ns["load"] = lambda *_: state
         self.ns["pane_presence"] = lambda *_: False
+        self.ns["update"] = lambda root, launch, change: change(state)
         sent = []
         self.ns["contract_tell"] = lambda *a, **kw: sent.append((a, kw))
         self.ns["contract_lapse"]("root", "id")
@@ -563,7 +564,47 @@ class ContractHelpersTest(unittest.TestCase):
         self.assertIsNone(state["contract"]["awaiting_starter"])
         self.assertEqual(state["contract"]["starter_lapses"], 0)
 
+    def test_busy_or_unknown_worker_is_never_marked_stalled(self):
+        for activity in ((True, False), (False, False)):
+            state = dict(name="worker", brief_attempted=True, contract=dict(declared=None,
+                last_contact_at=0, interval_s=1, lapses=0, stalled=False))
+            self.ns["load"] = lambda *_: json.loads(json.dumps(state))
+            self.ns["update"] = lambda root, launch, change: change(state)
+            self.ns["now"] = lambda: 2000
+            self.ns["contract_observation"] = lambda _: activity
+            self.ns["contract_tell"] = lambda *a, **kw: self.fail("busy or unknown worker was woken")
+            self.ns["contract_lapse"]("root", "id")
+            self.assertFalse(state["contract"]["stalled"])
+            self.assertEqual(state["contract"]["lapses"], 0)
+            self.assertEqual(state["contract"]["last_lapse_check_at"], 2000)
+
+    def test_busy_observation_clears_a_previous_stall(self):
+        state = dict(name="worker", brief_attempted=True, contract=dict(declared=None,
+            last_contact_at=0, interval_s=1, lapses=2, stalled=True))
+        self.ns["load"] = lambda *_: json.loads(json.dumps(state))
+        self.ns["update"] = lambda root, launch, change: change(state)
+        self.ns["now"] = lambda: 2000
+        self.ns["contract_observation"] = lambda _: (True, False)
+        self.ns["contract_lapse"]("root", "id")
+        self.assertFalse(state["contract"]["stalled"])
+        self.assertEqual(state["contract"]["lapses"], 0)
+
+    def test_named_program_working_overrides_an_idle_screen(self):
+        state = dict(socket="/tmp/test", target=dict(session_id="s", block_id="b"), client_path="/bin", rex_executable="/bin/rex")
+        self.ns["invoke"] = lambda *a, **kw: (0, dict(state="idle_prompt", osc7501=dict(records=[dict(id="harness", state="working")])))
+        self.assertEqual(self.ns["contract_observation"](state), (True, False))
+
+    def test_real_contact_clears_stall_but_supervisor_reminder_does_not(self):
+        state = dict(contract=dict(stalled=True, lapses=2, last_contact_at=1))
+        self.ns["update"] = lambda root, launch, change: change(state)
+        self.ns["delivered_input"]("root", "id", dict(at_ns=2_000_000, reminder=True))
+        self.assertTrue(state["contract"]["stalled"])
+        self.ns["delivered_input"]("root", "id", dict(at_ns=3_000_000))
+        self.assertFalse(state["contract"]["stalled"])
+        self.assertEqual(state["contract"]["lapses"], 0)
+
     def test_failed_lapse_delivery_still_starts_a_fresh_window(self):
+        self.ns["contract_observation"] = lambda _: (False, True)
         state = dict(name="worker", brief_attempted=True, brief_attempt_at=1, turn_started_at=1,
                      contract=dict(declared=None, last_contact_at=0,
                      interval_s=2, lapses=0, step_n=1, steps_total=2))
