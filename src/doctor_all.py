@@ -30,13 +30,9 @@ def inspect_host(host):
 
     current = home / '.local/opt/teerex-managed/current'
     try:
-        pin = (root / host['host_id'] / 'teerex/build-pin.txt').read_text().strip()
+        pin = (root / 'teerex.version').read_text().strip()
         actual = os.readlink(current)
-        tag = pin[len('versions/'):] if pin.startswith('versions/') else pin
-        installer = home / 'teerex/tools/install/teerex-install'
-        operation = 'rollback' if (current.parent / 'versions' / tag).is_dir() else 'upgrade'
-        add('teerex_build', pin == actual, f'installed {actual}; pinned {pin}',
-            shlex.join(['bash', str(installer), operation, '--prefix', str(current.parent), '--version', tag]))
+        add('teerex_build', pin == actual, f'installed {actual}; pinned {pin}', install)
     except OSError as exc:
         add('teerex_build', False, str(exc), install)
     try:
