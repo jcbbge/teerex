@@ -155,6 +155,7 @@ pub fn build(b: *std.Build) void {
     const scratch = b.createModule(.{ .root_source_file = b.path("items/scratch/main.zig"), .target = target, .optimize = optimize });
     exe.root_module.addImport("rex_scratch", scratch);
     agents.addImport("rex_scratch", scratch);
+    scratch.addImport("rex_boards", boards);
     exe.root_module.addImport("rex_agents", agents);
     send.addImport("rex_agents", agents);
     const channel = b.createModule(.{ .root_source_file = b.path("src/scoped_channel.zig"), .target = target, .optimize = optimize });

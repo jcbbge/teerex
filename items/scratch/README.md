@@ -1,6 +1,6 @@
 # Per-pane session scratchpad
 
-`teerex scratch` keeps one ephemeral working list for each Rex pane, separate from project task lists. Python 3.9+ is required. Only an owner-bound `watch --socket ABS` contacts Rex. The fixed path is `~/.local/state/teerex/scratch/<session:UUID>/<block:UUID>.md`, preserving colons. Scratch/session/archive directories are 0700; Markdown and lock files are 0600.
+`teerex scratch` keeps one ephemeral working list for each Rex pane, separate from project task lists. Python 3.9+ is required. The turn-end hook and an owner-bound `watch --socket ABS` contact Rex. The fixed path is `~/.local/state/teerex/scratch/<session:UUID>/<block:UUID>.md`, preserving colons. Scratch/session/archive directories are 0700; Markdown and lock files are 0600.
 
 All seven verbs accept `--session session:UUID --block block:UUID`. Omitted targets come from `REX_SESSION`/`REX_BLOCK`, falling back to `LC_REX_SESSION`/`LC_REX_BLOCK` over SSH. They require full canonical IDs. HOME selects the local user's home; XDG_STATE_HOME does not change this established path.
 
@@ -53,6 +53,8 @@ Verification: `TEEREX_BIN=ABS python3 items/scratch/test_scratch.py -v`; launch/
 `teerex scratch hook-settings --teerex /absolute/stable/teerex` prints a Claude settings fragment with UserPromptSubmit and Stop command hooks. Merge its groups through rexconfig; it does not write configuration. Both hooks invoke `teerex scratch hook`, which reads a bounded JSON event from stdin. A seat must export `AGENT_SCRATCHPAD` (or `LC_AGENT_SCRATCHPAD`); without it the hook reports not_checked and allows the stop.
 
 Prompt submit records a private turn-start time. First stale Stop returns Claude's JSON blocking decision with `update your scratchpad (Now/To-do/Done) before ending the turn`; a second Stop in that turn passes and records the stale exception. Missing or invalid Updated is stale. An update during the turn passes. Scratch writes now use microsecond ISO timestamps so an update in the same second as turn start can count.
+
+An allowed Claude Stop writes the pane's root program-status record as `idle`. A scratchpad Waiting line or an open teerex ask for the pane instead writes `blocked`, `kind=question`, with the waiting text or ask question. A stale Stop that is being blocked writes nothing. This applies to both `scratch hook` and the managed Claude `agents hook`; other harnesses keep their existing behavior. Claude writes its own `done` after Stop hooks return, so a short detached hook child waits for that record and replaces it once. It has a three-second observation deadline plus bounded native reads, exits if a new working turn appears, and is not a daemon. Status failures remain best effort and report their reason.
 
 Seat enforcement state is `<scratchpad>.turn.json`, mode0600, atomically replaced under the existing scratchpad lock. It records the start time, whether the reminder has been issued, and the last check. Managed agents keep equivalent state in their existing private launch record, described in [agents](../agents/README.md#scratchpad-enforcement-at-turn-end). Neither path installs a daemon or changes project task lists.
 

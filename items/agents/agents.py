@@ -933,6 +933,8 @@ def hook(o):
     if o.harness == "claude" and check.get("action") == "block":
         print(json.dumps(dict(decision="block", reason=check["reason"] if check.get("contract") else SCRATCH_REMINDER)))
         return 0, None
+    if o.harness == "claude":
+        claude_stop_status(event, check, os.environ.get("AGENT_SCRATCHPAD") or os.environ.get("LC_AGENT_SCRATCHPAD"))
     return 0, packet
 
 

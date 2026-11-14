@@ -1,4 +1,5 @@
 """Best-effort local tty report. The caller bounds this process independently of delivery."""
+import base64
 import contextlib
 import datetime
 import fcntl
@@ -14,39 +15,48 @@ import subprocess
 import sys
 
 
+def status_tty(pid):
+    if sys.platform == "linux":
+        tty = None
+        for number in (0, 1, 2):
+            try:
+                candidate = os.readlink('/proc/%d/fd/%d' % (pid, number))
+            except OSError:
+                continue
+            if re.fullmatch(r'/dev/pts/[0-9]+', candidate):
+                tty = candidate
+                break
+        if tty is None:
+            fields = Path('/proc/%d/stat' % pid).read_text().rsplit(')', 1)[1].split()
+            number = int(fields[4]) & 0xffffffff
+            device = os.makedev((number >> 8) & 0xfff, (number & 0xff) | ((number >> 12) & 0xfff00))
+            if number:
+                for name in os.listdir('/dev/pts'):
+                    if name.isdigit():
+                        candidate = '/dev/pts/' + name
+                        if os.stat(candidate).st_rdev == device:
+                            tty = candidate
+                            break
+        if tty is None:
+            return None
+    elif sys.platform == "darwin":
+        name = subprocess.check_output(['ps', '-p', str(pid), '-o', 'tty='], timeout=.1).decode().strip()
+        if not re.fullmatch(r'ttys[0-9A-Za-z]+', name):
+            return None
+        tty = '/dev/' + name
+    else:
+        return None
+    if not re.fullmatch(r'/dev/(pts/[0-9]+|ttys[0-9A-Za-z]+)', tty):
+        return None
+    return tty
+
+
 def write_status(pid, report):
+    if sys.platform not in ("linux", "darwin"):
+        return 'unsupported_platform'
     try:
-        if sys.platform == "linux":
-            tty = None
-            for number in (0, 1, 2):
-                try:
-                    candidate = os.readlink('/proc/%d/fd/%d' % (pid, number))
-                except OSError:
-                    continue
-                if re.fullmatch(r'/dev/pts/[0-9]+', candidate):
-                    tty = candidate
-                    break
-            if tty is None:
-                fields = Path('/proc/%d/stat' % pid).read_text().rsplit(')', 1)[1].split()
-                number = int(fields[4]) & 0xffffffff
-                device = os.makedev((number >> 8) & 0xfff, (number & 0xff) | ((number >> 12) & 0xfff00))
-                if number:
-                    for name in os.listdir('/dev/pts'):
-                        if name.isdigit():
-                            candidate = '/dev/pts/' + name
-                            if os.stat(candidate).st_rdev == device:
-                                tty = candidate
-                                break
-            if tty is None:
-                return 'tty_unavailable'
-        elif sys.platform == "darwin":
-            name = subprocess.check_output(['ps', '-p', str(pid), '-o', 'tty='], timeout=.1).decode().strip()
-            if not re.fullmatch(r'ttys[0-9A-Za-z]+', name):
-                return 'tty_unavailable'
-            tty = '/dev/' + name
-        else:
-            return 'unsupported_platform'
-        if not re.fullmatch(r'/dev/(pts/[0-9]+|ttys[0-9A-Za-z]+)', tty):
+        tty = status_tty(pid)
+        if tty is None:
             return 'tty_unavailable'
         fd = os.open(tty, os.O_WRONLY | os.O_NOCTTY | os.O_NONBLOCK | os.O_NOFOLLOW)
         try:
@@ -247,6 +257,90 @@ def expire(socket, live_rows):
     for target, record_id in expired:
         resolve(socket, target, record_id)
     return len(expired)
+
+
+def claude_stop_report(waiting):
+    fields = 'state=blocked:kind=question:msg=' + base64.b64encode(waiting.encode()).decode() if waiting else 'state=idle'
+    return '\x1b]7501;' + fields + '\x1b\\'
+
+
+def claude_stopped(waiting):
+    """Write a root record; child records cannot replace Claude's done record."""
+    socket = os.environ.get('REX_SERVER') or ('/run/user/%d/rex/server.sock' % os.getuid() if sys.platform == 'linux'
+              else os.path.expanduser('~/Library/Application Support/rex/server.sock'))
+    socket = socket.removeprefix('unix://')
+    target = origin()
+    try:
+        with ledger(socket) as cards:
+            matches = [dict(c) for c in cards if (c.get('asker') == target or c.get('seat') == target) and not c.get('resolved')
+                       and c.get('expires', float('inf')) > time.time()]
+        for card in matches:
+            records = native(socket, 'com.superlogical.terminal.program_status',
+                             dict(session_id=card['seat']['session'], block_id=card['seat']['block'], args={})).get('records', [])
+            question = next((r.get('msg', '') for r in records if r.get('id') == card['id'] and r.get('state') == 'blocked'), '')
+            if question:
+                waiting = waiting or question
+                break
+    except (OSError, ValueError, subprocess.SubprocessError) as exc:
+        print('teerex stop status: ask lookup unavailable: ' + str(exc), file=sys.stderr)
+    report = claude_stop_report(waiting)
+    outcome = write_status(os.getpid(), report)
+    if outcome != 'written' and target.get('session') and target.get('block'):
+        try:
+            process = native(socket, 'com.superlogical.terminal.process',
+                             dict(session_id=target['session'], block_id=target['block'], args={}))
+            pid = (process.get('child') or {}).get('pid')
+            if pid:
+                outcome = write_status(pid, report)
+        except (OSError, ValueError, subprocess.SubprocessError) as exc:
+            print('teerex stop status: pane tty unavailable: ' + str(exc), file=sys.stderr)
+    if outcome == 'written':
+        # Claude emits its done record after the Stop command exits. This child
+        # owns no pipe back to the hook; a three-second observation deadline
+        # plus bounded native reads ends it after at most one write.
+        source = globals().get('__source__')
+        if source:
+            command = "__name__ = 'teerex_stop_followup'\n" + source + "\nclaude_stop_followup(" + repr(socket) + "," + repr(target) + "," + repr(waiting) + ")\n"
+            try:
+                # Hooks may have no controlling tty; the pane process retains one.
+                process = native(socket, 'com.superlogical.terminal.process',
+                                 dict(session_id=target['session'], block_id=target['block'], args={}))
+                pid = (process.get('child') or {}).get('pid')
+                tty = status_tty(pid)
+                if tty is None:
+                    raise ValueError('pane_tty_unavailable')
+                diagnostic = os.open(tty, os.O_WRONLY | os.O_NOCTTY | os.O_NONBLOCK | os.O_NOFOLLOW)
+                try:
+                    subprocess.Popen([sys.executable, '-I', '-c', command], stdin=subprocess.DEVNULL,
+                                     stdout=subprocess.DEVNULL, stderr=diagnostic, start_new_session=True)
+                finally:
+                    os.close(diagnostic)
+            except (OSError, ValueError, TypeError, subprocess.SubprocessError) as exc:
+                print('teerex stop status: follow-up unavailable: ' + str(exc), file=sys.stderr)
+    return outcome
+
+
+def claude_stop_followup(socket, target, waiting):
+    end = time.monotonic() + 3
+    while time.monotonic() < end:
+        try:
+            args = dict(session_id=target['session'], block_id=target['block'], args={})
+            records = native(socket, 'com.superlogical.terminal.program_status', args).get('records', [])
+            root = next((r for r in records if not r.get('id')), {})
+            if root.get('state') == 'working':
+                return
+            if root.get('state') == 'done' and root.get('app') == 'claude-code':
+                process = native(socket, 'com.superlogical.terminal.process', args)
+                pid = (process.get('child') or {}).get('pid')
+                if pid:
+                    outcome = write_status(pid, claude_stop_report(waiting))
+                    if outcome != 'written':
+                        print('teerex stop status: follow-up ' + outcome, file=sys.stderr)
+                return
+        except (OSError, ValueError, subprocess.SubprocessError) as exc:
+            print('teerex stop status: follow-up read unavailable: ' + str(exc), file=sys.stderr)
+            return
+        time.sleep(.05)
 
 
 def apply(pid, report, context):

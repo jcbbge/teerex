@@ -219,6 +219,20 @@ def scratch_turn(state, event, path):
                 turn_started_at=start, updated=updated, reason=reason)
 
 
+def claude_stop_status(event, check, path):
+    """Only an allowed Claude Stop replaces the harness's root status."""
+    if event.get("hook_event_name") != "Stop" or check.get("action") == "block":
+        return
+    import teerex_seat_status
+    waiting = ""
+    if path:
+        try:
+            waiting = scratch_read(Path(path)).get("waiting", "")
+        except (OSError, ValueError):
+            pass
+    teerex_seat_status.claude_stopped(waiting)
+
+
 def scratch_hook_settings(executable):
     if not os.path.isabs(executable) or any(ord(c) < 32 for c in executable):
         raise ScratchError("absolute_teerex_required")
@@ -236,6 +250,7 @@ def scratch_seat_hook():
         raise ScratchError("unsupported_scratch_hook_event")
     path = os.environ.get("AGENT_SCRATCHPAD") or os.environ.get("LC_AGENT_SCRATCHPAD")
     if not path:
+        claude_stop_status(event, {}, None)
         print(json.dumps(dict(scratchpad_check=dict(status="not_checked", action="allow"))))
         return
     path = Path(path)
@@ -274,6 +289,7 @@ def scratch_seat_hook():
     if check["action"] == "block":
         print(json.dumps(dict(decision="block", reason=SCRATCH_REMINDER)))
     else:
+        claude_stop_status(event, check, path)
         print(json.dumps(dict(scratchpad_check=check)))
 
 
