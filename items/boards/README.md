@@ -50,6 +50,34 @@ teerex boards inbox inspect --store "$STORE" --host "$HOST_ID" \
 
 Live boards require a TTY and refresh every 2000 ms by default (`--interval-ms 500..60000`). A pipe must use `--once`; it cannot accidentally become a hidden live watcher. `--once --json` emits one structured snapshot; `--width 32..160` selects one-shot text wrapping. Live width follows the actual terminal. Fresh reads happen sequentially each refresh; there is no atomic fleet snapshot. Full message text and board output are private and unredacted.
 
+## Live seat role and successor
+
+Resolve the role at send time, with a fresh read of the registered pane's presence:
+
+```sh
+teerex seat resolve --store "$STORE" --host "$HOST_ID" --socket "$SOCKET" --json
+# Named host supplies all three selectors:
+teerex --config "$HOSTS" --host hive seat resolve --json
+teerex send --store "$STORE" --host "$HOST_ID" --socket "$SOCKET" \
+  --session seat --block seat --from worker --message-file /absolute/private/report.txt
+```
+
+The resolver returns `outcome=resolved` and `target`, or `outcome=no_seat` and
+`target=null`. Unavailable Rex reads refuse; they never establish absence.
+Role sends and historical registered seat addresses reach the current live
+seat's inbox. With no live seat, `outcome=queued` means the message is durably
+retained in `pending_seat`, without terminal input. The fleet view shows a red
+`NO SEAT` line until a seat is available.
+
+Registering a successor refuses while the previous seat is live. After verified
+absence, registration moves its remaining inbox and pending role messages into
+the successor inbox in one store save. Repeating registration does not duplicate
+them. Historical seat entries remain with `inherited_to` and empty `records`;
+only entries without `inherited_to` are active registrations. Under the managed
+registry lock, matching agents' `starter`, `report_to`, and contract starter are
+rebound, and stalled/lapse state clears. `--agents-registry ABS` selects a private
+registry; otherwise registration uses the local managed agents registry.
+
 ## Append without typing; route send fail-closed
 
 ```sh
@@ -63,7 +91,7 @@ Messages preserve LF/tab, max **65536 UTF-8 bytes**; other C0/DEL controls refus
 
 The root send integration owns `teerex send --store ABS --host HOST_ID --socket ABS --session ID --block ID --from NAME --message-file ABS|-`. It calls `rex_boards.tryRoute` **before paste**. The leaf's public equivalent is `teerex boards try-route` with those same flags:
 
-- **Exit 0 / `outcome=recorded`:** appended to the exact registered seat, `terminal_input_attempted=false`, `application_consumption=not_assessed`. Persistence receipt is not a terminal-event acknowledgement, operator approval, or agent consumption.
+- **Exit 0 / `outcome=recorded`:** appended to the current live registered seat, `terminal_input_attempted=false`, `application_consumption=not_assessed`. Persistence receipt is not a terminal-event acknowledgement, operator approval, or agent consumption.
 - **Exit 3 / `outcome=not_registered`:** that exact tuple was absent in the selected store. Stdin has not been touched. The Zig helper returns null and suppresses this receipt so root native send can read stdin once and emit its own single receipt.
 - **Any error:** refuse, never fall back to typing. Missing/corrupt/insecure/busy storage and failed saves are not evidence of an unregistered seat.
 - `--timeout-ms 100..115000`, default **draft wait + 10000** (40000 by default; ignore10000), bounds registered stdin through EOF and checks the deadline before save. A stalled producer or partial stdin does not append. Root send accepts `--draft guard|ignore` and `--draft-wait-ms 0..55000`; registered routes never type, while unregistered fallback uses the native draft guard. **124/130/143** preserve deadline/INT/TERM, including through the Zig helper. Filesystem scheduling/fsync and interpreter startup are not hard real-time guarantees; a signal or failure during save can leave persistence uncertain. Inspect before retrying.

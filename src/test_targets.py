@@ -171,6 +171,14 @@ class TargetsTest(unittest.TestCase):
         self.assertEqual(r.returncode, 7, r.stderr)
         self.assertEqual(json.loads(self.output.read_text())[-1], self.host["home"] + "/.local/state/teerex-records")
 
+    def test_seat_role_resolver_receives_named_store_host_and_socket(self):
+        for prefix in ([], ["boards"]):
+            path = [*prefix, "seat", "resolve"]
+            result = self.call("--config", str(self.config), "--host", "hive", *path, "--json")
+            self.assertEqual(result.returncode, 7, result.stderr)
+            self.assertEqual(json.loads(self.output.read_text()), ["--rex", self.host["rex"], *path,
+                "--socket", self.host["socket"], "--host", "fixture", "--store", self.host["store"], "--json"])
+
     def test_nested_leaves_receive_only_their_supported_selectors(self):
         socket = ["--socket", self.host["socket"]]
         store = ["--store", self.host["store"]]
