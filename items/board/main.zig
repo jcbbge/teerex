@@ -422,6 +422,12 @@ fn lensLess(lens: usize, a: Value, b: Value) bool {
     const y = group(b, lens);
     return if (!eq(x, y)) std.ascii.lessThanIgnoreCase(x, y) else less({}, a, b);
 }
+// Scratchpad Waiting text often starts "waiting on"; the row already says "⧗ on".
+fn waitingText(row: Value) []const u8 {
+    const value = text(row, "waiting");
+    const prefix = "waiting on ";
+    return if (value.len > prefix.len and std.ascii.eqlIgnoreCase(value[0..prefix.len], prefix)) value[prefix.len..] else value;
+}
 fn waitTarget(row: Value) []const u8 {
     var parts = std.mem.splitSequence(u8, text(row, "waiting"), " · ");
     return parts.next() orelse "";
@@ -497,6 +503,10 @@ const UI = struct {
     stream_focus: bool = false,
     stream_offset: usize = 0,
     status: []const u8 = "",
+    // A status note shows for 30 s of feed time after it changes, then fades;
+    // judged on redraw, so no timer runs. Replay time never advances, so it stays.
+    status_shown: []const u8 = "",
+    status_at: i64 = 0,
     rows: std.ArrayList(Value) = .empty,
     held_rows: std.ArrayList(Value) = .empty,
     hit: [256]?usize = @splat(null),
@@ -506,6 +516,16 @@ const UI = struct {
     held_open: bool = false,
     decisions_open: bool = false,
     decision_index: usize = 0,
+    fn note(self: *UI, model: *Model) ?[]const u8 {
+        if (self.status.len == 0) return null;
+        if (self.status.ptr != self.status_shown.ptr or self.status.len != self.status_shown.len) {
+            self.status_shown = self.status;
+            self.status_at = model.timestamp;
+        }
+        // A note set before the first event is stamped when feed time starts.
+        if (self.status_at == 0) self.status_at = model.timestamp;
+        return if (model.timestamp - self.status_at < 30000) self.status else null;
+    }
     fn visible(self: *UI, model: *Model) !void {
         self.rows.clearRetainingCapacity();
         for (model.agents.items) |entry| if (eq(text(entry.value, "host"), model.hosts[self.host].name)) {
@@ -681,7 +701,7 @@ const UI = struct {
             try add(&lines, a, "Click selects · double-click jumps", .words);
         }
         if (model.invalid > 0) try add(&lines, a, try fmt(a, "! {d} unreadable events ignored", .{model.invalid}), .problem);
-        if (self.status.len > 0) try add(&lines, a, self.status, .accent);
+        if (self.note(model)) |status| try add(&lines, a, status, .secondary);
         if (model.ended and !model.replay) try add(&lines, a, "! Live feed stopped · q quits", .problem);
         // Keep keys anchored and never let the terminal's bottom-right cell scroll.
         const footer = try fmt(a, "⏎ jump  ␣ steps  h held  m {s}  ? keys", .{model.hosts[1 - self.host].name});
@@ -758,7 +778,7 @@ const UI = struct {
             try add(&lines, a, "j/k select · Enter jump to owner", .words);
             try add(&lines, a, "f finished · m host · q quit", .words);
         }
-        if (self.status.len > 0) try add(&lines, a, self.status, .accent);
+        if (self.note(model)) |status| try add(&lines, a, status, .secondary);
         if (lines.items.len >= height) lines.shrinkRetainingCapacity(height -| 1);
         while (lines.items.len < height -| 1) try add(&lines, a, "", .words);
         try add(&lines, a, "⏎ jump to lead  f finished  ? keys", .lines);
@@ -792,7 +812,7 @@ const UI = struct {
         if (k == .stuck) {
             try add(lines, a, try fmt(a, "  {s}", .{try fit(a, try fmt(a, "stalled · {s}", .{if (eq(text(r, "state"), "error")) "error" else if (text(r, "now").len == 0) "idle, no Now line" else "no contact"}), width -| 2)}), .problem);
         } else if (text(r, "waiting").len > 0) {
-            try add(lines, a, try fmt(a, "  {s}", .{try fit(a, try fmt(a, "⧗ on {s}{s}{s}", .{ text(r, "waiting"), if (text(r, "check").len > 0) " · check " else "", text(r, "check") }), width -| 2)}), .secondary);
+            try add(lines, a, try fmt(a, "  {s}", .{try fit(a, try fmt(a, "⧗ on {s}{s}{s}", .{ waitingText(r), if (text(r, "check").len > 0) " · check " else "", text(r, "check") }), width -| 2)}), .secondary);
         }
         for (start..lines.items.len) |i| {
             if (i < self.hit.len) self.hit[i] = index;

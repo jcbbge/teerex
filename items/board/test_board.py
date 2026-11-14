@@ -273,6 +273,21 @@ class BoardTest(unittest.TestCase):
         pane.settle()  # drain: a full macOS PTY buffer blocks the board's next write
         self.assertNotIn(b'board: tab label',pane.output)
 
+    def test_status_note_fades_and_waiting_is_said_once(self):
+        # A refused tab rename must not sit in the operator's board forever.
+        fifo=self.root/'fade';os.mkfifo(fifo)
+        writer=os.open(fifo,os.O_RDWR|os.O_NONBLOCK);self.addCleanup(os.close,writer)
+        def agent(t):
+            os.write(writer,(json.dumps(dict(v=1,t=t,host='hive',kind='agent',id='w',name='worker',state='waiting',waiting='waiting on the seat'))+'\n').encode())
+        agent(1000)
+        pane=Pane(self.root,fixture=fifo,extra_env=dict(LC_REX_SESSION='session:00000000-0000-0000-0000-000000000000',LC_REX_BLOCK='block:00000000-0000-0000-0000-000000000000'))
+        self.addCleanup(pane.close)
+        pane.until(lambda:'Tab label unavailable' in pane.view() and '⧗ on the seat' in pane.view())
+        self.assertNotIn('on waiting on',pane.view())
+        agent(20000);pane.settle();self.assertIn('Tab label unavailable',pane.view())
+        agent(32000);pane.until(lambda:'Tab label unavailable' not in pane.view())
+        pane.settle()
+
     def test_every_agent_is_counted(self):
         # No made-up cap: the model kept only the first 256 agents and undercounted silently.
         path=self.root/'many.jsonl'
