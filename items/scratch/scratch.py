@@ -331,7 +331,7 @@ def scratch_watch_owner(socket, session, owner):
     args = dict(session=session, owner=owner, viewer=viewer)
     command = [os.environ.get('TEEREX_INTERNAL_REX') or 'rex', '--autostart=false',
                '--server', 'unix://' + socket, '--timeout', '1s', '--color', 'never',
-               'do', '-e', SCRATCH_WATCH_LUA, '--args', json.dumps(args)]
+               'do', '-e', __import__('teerex_pane_guard').prelude('unix://' + socket) + SCRATCH_WATCH_LUA, '--args', json.dumps(args)]
     environment = dict(os.environ)
     for key in ('REX_SERVER', 'REX_SESSION', 'REX_BLOCK', 'REX_CLIENT', 'LC_REX_SESSION', 'LC_REX_BLOCK'):
         environment.pop(key, None)

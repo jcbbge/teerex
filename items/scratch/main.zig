@@ -14,7 +14,7 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
         return std.process.execv(allocator, palette.items);
     }
     var argv: std.ArrayList([]const u8) = .empty;
-    try argv.appendSlice(allocator, &.{ "python3", "-I", "-c", try std.fmt.allocPrint(allocator, "{s}{s}", .{ try statusBootstrap(allocator), source }) });
+    try argv.appendSlice(allocator, &.{ "python3", "-I", "-c", try @import("pane_guard").python(allocator, try std.fmt.allocPrint(allocator, "{s}{s}", .{ try statusBootstrap(allocator), source })) });
     try argv.appendSlice(allocator, args);
     return std.process.execv(allocator, argv.items);
 }

@@ -65,6 +65,9 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     observation.addImport("supervised_child", child);
+    const pane_guard = b.createModule(.{ .root_source_file = b.path("src/pane_guard.zig"), .target = target, .optimize = optimize });
+    child.addImport("pane_guard", pane_guard);
+    exe.root_module.addImport("pane_guard", pane_guard);
     rex_run.addImport("supervised_child", child);
     exe.root_module.addImport("supervised_child", child);
     exe.root_module.addImport("rex_run", rex_run);
@@ -77,6 +80,8 @@ pub fn build(b: *std.Build) void {
     const clutch = b.createModule(.{ .root_source_file = b.path("items/clutch/main.zig"), .target = target, .optimize = optimize });
     clutch.addImport("rex_send", send);
     exe.root_module.addImport("rex_clutch", clutch);
+    clutch.addImport("supervised_child", child);
+    clutch.addImport("pane_guard", pane_guard);
     exe.root_module.addImport("rex_send", send);
     const spawn = b.createModule(.{
         .root_source_file = b.path("items/spawn/main.zig"),
@@ -136,6 +141,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     exe.root_module.addImport("rex_boards", boards);
+    boards.addImport("pane_guard", pane_guard);
     send.addImport("rex_boards", boards);
     surfaces.addImport("rex_boards", boards);
     rex_run.addImport("rex_boards", boards);
@@ -154,6 +160,7 @@ pub fn build(b: *std.Build) void {
     });
     const scratch = b.createModule(.{ .root_source_file = b.path("items/scratch/main.zig"), .target = target, .optimize = optimize });
     exe.root_module.addImport("rex_scratch", scratch);
+    scratch.addImport("pane_guard", pane_guard);
     agents.addImport("rex_scratch", scratch);
     scratch.addImport("rex_boards", boards);
     exe.root_module.addImport("rex_agents", agents);
@@ -162,11 +169,13 @@ pub fn build(b: *std.Build) void {
     agents.addImport("scoped_channel", channel);
     rex_run.addImport("scoped_channel", channel);
     agents.addImport("rex_boards", boards);
-    exe.root_module.addImport("rex_replay", b.createModule(.{
+    const replay = b.createModule(.{
         .root_source_file = b.path("items/replay/main.zig"),
         .target = target,
         .optimize = optimize,
-    }));
+    });
+    replay.addImport("pane_guard", pane_guard);
+    exe.root_module.addImport("rex_replay", replay);
     exe.root_module.addImport("rex_mcp", b.createModule(.{
         .root_source_file = b.path("items/mcp/main.zig"),
         .target = target,

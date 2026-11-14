@@ -305,6 +305,11 @@ class Runner:
 
     def connect(self):
         self.control = Control(self.args.socket)
+        raw_call = self.control.call
+        def guarded_call(method, payload):
+            __import__('teerex_pane_guard').authorize('unix://' + self.args.socket, method, payload, raw_call)
+            return raw_call(method, payload)
+        self.control.call = guarded_call
         self.version = self.control.call("server.version", {})
         self.packet["rex"] = self.version
         self.control.call("session.attach", dict(session_id=self.args.session))

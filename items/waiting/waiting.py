@@ -135,9 +135,15 @@ return call("session.detach_block",{session_id=p.session_id,block_id=p.block_id}
 
 
 def command(host, script, args=None):
+    if host['transport'] != 'ssh':
+        script = __import__('teerex_pane_guard').prelude('unix://' + host['socket']) + script
     argv = [host['rex'], '--autostart=false', '--server', 'unix://' + host['socket'],
             '--timeout', '5s', 'do', '-e', script, '--args', json.dumps(args or {}), '--json']
     if host['transport'] == 'ssh':
+        guard_source = __import__('teerex_pane_guard').SOURCE
+        wrapper = ('import os,sys\nns={"__name__":"teerex_pane_guard"}\nexec(' + repr(guard_source) + ',ns)\n'
+                   'argv=' + repr(argv) + '\nargv[argv.index("-e")+1]=ns["prelude"](' + repr('unix://' + host['socket']) + ')+argv[argv.index("-e")+1]\nos.execv(argv[0],argv)')
+        argv = ['python3', '-I', '-c', wrapper]
         argv = [*targets.ssh_argv(host), shlex.join(argv)]
     env = {k: v for k, v in os.environ.items() if k not in ('REX_SERVER', 'REX_SESSION', 'REX_BLOCK', 'REX_CLIENT')}
     result = subprocess.run(argv, capture_output=True, text=True, timeout=30, env=env)

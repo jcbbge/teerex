@@ -401,7 +401,7 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
                 }
             }
         }
-        const argv = [_][]const u8{ "rex", "--autostart=false", "--server", endpoint, "--timeout", "3s", "--color", "never", "do", "--session", sid, "--block", bid, "-e", @embedFile("draft.lua") ++ "\n" ++ @embedFile("send.lua"), "--args", request };
+        const argv = [_][]const u8{ "rex", "--autostart=false", "--server", endpoint, "--timeout", "3s", "--color", "never", "do", "--session", sid, "--block", bid, "-e", "-- teerex-guarded-message\n" ++ @embedFile("draft.lua") ++ "\n" ++ @embedFile("send.lua"), "--args", request };
         const before_spawn = timer.read() / std.time.ns_per_ms;
         if (before_spawn >= timeout_ms or supervised.requestedSignal() != 0) {
             outcome = "deadline_exceeded";

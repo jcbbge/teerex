@@ -304,7 +304,7 @@ def detached_operation(state, operation, argv=None):
     request = dict(operation=operation, session_id=target['session_id'], block_id=target.get('block_id'),
                    cwd=state.get('cwd'), name=state.get('name'), argv=argv)
     command = [state.get('rex_executable') or 'rex', '--autostart=false', '--server', 'unix://' + state['socket'],
-               '--timeout', '3s', '--color', 'never', 'do', '-e', DETACHED_LUA, '--args', json.dumps(request)]
+               '--timeout', '3s', '--color', 'never', 'do', '-e', __import__('teerex_pane_guard').prelude('unix://' + state['socket']) + DETACHED_LUA, '--args', json.dumps(request)]
     env = dict(os.environ, PATH=state.get('client_path') or os.defpath)
     with tempfile.TemporaryFile() as output, tempfile.TemporaryFile() as errors:
         result = subprocess.run(command, env=env, stdin=subprocess.DEVNULL, stdout=output, stderr=errors, timeout=5)
