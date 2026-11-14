@@ -10,6 +10,50 @@ import shlex
 import subprocess
 import sys
 
+# Read agent declarations on the same host as the scanned server. Live pane
+# membership below is authoritative; a registry entry alone never makes a stop.
+POSITION = r'''
+import json, os, stat, sys
+from pathlib import Path
+root=Path(sys.argv[1])/'.local/state'
+def read(path):
+    try:
+        fd=os.open(path, os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK)
+        with os.fdopen(fd) as f:
+            if not stat.S_ISREG(os.fstat(f.fileno()).st_mode):
+                raise ValueError('regular file required: '+str(path))
+            return f.read()
+    except FileNotFoundError:
+        return None
+boards=json.loads(read(root/'teerex-boards/state.json') or '{"seats":[]}')
+questions={}
+for seat in boards['seats']:
+    opened={}
+    for r in seat['records']:
+        if r['kind']=='decision': opened[r['body']['id']]=r
+        elif r['kind']=='resolution': opened.pop(r['body']['id'],None)
+    for r in opened.values():
+        questions.setdefault(r['from'],[]).append(r)
+rows=[]
+for path in (root/'teerex-agents').glob('agents-*.json'):
+    record=json.loads(read(path) or '{}')
+    if not record.get('target') or not record.get('created_at'): continue
+    target=record['target']
+    pad=root/'teerex/scratch'/target['session_id']/(target['block_id']+'.md')
+    now=waiting=''
+    section=None
+    for line in (read(pad) or '').splitlines():
+        if line.startswith('## '): section=line[3:].strip()
+        elif line.startswith('Waiting:'): waiting=line.partition(':')[2].strip()
+        elif section=='Now' and line.startswith('- [ ] ') and not now: now=line[6:]
+    cards=questions.get(record.get('name'),[])
+    decision=min(cards,key=lambda r:r['at'])['body'] if cards else None
+    rows.append(dict(session_id=target['session_id'],block_id=target['block_id'],
+        server=target.get('server'),created_at=record['created_at'],name=record.get('name'),
+        position=dict(now=now,waiting=waiting,decision=decision)))
+print(json.dumps(rows))
+'''
+
 SCAN = r'''
 local function call(m,a) local v,e=rex.call(m,a); if not v then error(e) end; return v end
 local rows={}
@@ -39,6 +83,34 @@ if p.detached then
  call("session.move_block",{session_id=p.session_id,block_id=p.block_id,anchor_block_id=anchor,direction="horizontal",side="after",ratio=2/3})
 end
 return call("session.focus_block",{session_id=p.session_id,block_id=p.block_id})
+'''
+
+LABEL = r'''
+local p=rex.args
+local attached,err=rex.call("session.attach",{session_id=p.session_id}); if not attached then error(err) end
+local r,e=rex.call("session.set_window_label",{session_id=p.session_id,window_id=p.window_id,label=p.label})
+if not r then error(e) end
+return r
+'''
+PREPARE = r'''
+local p=rex.args
+local attached,err=rex.call("session.attach",{session_id=p.session_id}); if not attached then error(err) end
+local v,e=rex.call("session.view",{session_id=p.session_id}); if not v then error(e) end
+local original
+for _,w in ipairs(v.windows or {}) do
+ if w.window_id==v.active_window_id then original={session_id=p.session_id,window_id=w.window_id,label=w.label or ""} end
+end
+if not original then error("focused tab not found") end
+local q=p.position
+local label=(p.name or p.label or "Agent").." | Now: "..q.now.." | Waiting: "..q.waiting
+if q.decision then
+ label=label.." | "..q.decision.ask
+ local default=(q.decision.prepared and q.decision.prepared.default) or q.decision.default
+ if default then label=label.." | Default: "..tostring(default) end
+end
+local r,err=rex.call("session.set_window_label",{session_id=original.session_id,window_id=original.window_id,label=label})
+if not r then error(err) end
+return original
 '''
 
 HIDE = r'''
@@ -78,12 +150,24 @@ def timestamp(value):
     return utc.strftime('%Y-%m-%dT%H:%M:%S') + '.' + (match[2] or '').ljust(9, '0')
 
 
-def scan(hosts, visited, here):
+def scan(hosts, visited, here, circuit=False):
     rows, sources = [], []
     for name, host in hosts.items():
         try:
             sample = command(host, SCAN)
+            positions = {}
+            if circuit:
+                script = 'local r,e=rex.exec({"python3","-c",' + json.dumps(POSITION) + ',' + json.dumps(host['home']) + '}); if not r then error(e) end; if not r.ok then error(r.stderr) end; return rex.json.decode(r.stdout)'
+                positions = {(r['session_id'], r['block_id']): r for r in command(host, script) or []
+                             if r.get('server') == 'unix://' + host['socket']}
             for pane in sample['rows'] or []:
+                if circuit:
+                    agent = positions.get((pane['session_id'], pane['block_id']))
+                    if agent and (agent['position']['waiting'] or agent['position'].get('decision')):
+                        pane.pop('records', None)
+                        pane.update(host=name, **{k: agent[k] for k in ('created_at', 'name', 'position')})
+                        rows.append(pane)
+                    continue
                 if (name, pane['block_id']) == here:
                     continue
                 records = pane.pop('records')
@@ -99,7 +183,8 @@ def scan(hosts, visited, here):
             sources.append(dict(host=name, ok=True, remote_api=sample['remote_api'], servers_api=sample['servers_api']))
         except (OSError, ValueError, KeyError, subprocess.TimeoutExpired) as exc:
             sources.append(dict(host=name, ok=False, error=str(exc)))
-    return sorted(rows, key=lambda p: (p['rank'], p['at'], p['host'], p['block_id'])), sources
+    order = (lambda p: (p['created_at'], p['host'], p['block_id'])) if circuit else (lambda p: (p['rank'], p['at'], p['host'], p['block_id']))
+    return sorted(rows, key=order), sources
 
 
 def main(argv=None):
@@ -108,6 +193,7 @@ def main(argv=None):
     parser.add_argument('--config', default=str(Path.home() / '.config/teerex/hosts.json'))
     parser.add_argument('--hosts', help='comma-separated names; default every configured host')
     parser.add_argument('--state', default=str(Path.home() / '.local/state/teerex-waiting/navigation.json'))
+    parser.add_argument('--circuit', action='store_true', help='repeat ready agents in fixed launch order; back walks in reverse')
     parser.add_argument('--focus', action='store_true', help='focus winner, presenting detached panes beside their active pane')
     parser.add_argument('--here-host')
     parser.add_argument('--here-server', help='Rex action context server label; resolves to configured host')
@@ -146,17 +232,39 @@ def main(argv=None):
         os.chmod(lock.name, 0o600)
         fcntl.flock(lock, fcntl.LOCK_EX)
         state = json.loads(state_path.read_text()) if state_path.exists() else dict(visited={}, trail=[])
-        rows, sources = scan(hosts, state['visited'], (a.here_host, a.here_block))
+        rows, sources = scan(hosts, state['visited'], (a.here_host, a.here_block), a.circuit)
         complete = all(s['ok'] for s in sources)
         result = dict(kind='waiting_result', complete=complete, sources=sources, waiting=rows, moved=False)
         # A partial scan never chooses a winner; its unseen host could be more urgent.
         if complete and a.operation != 'list':
             winner = (state['trail'][-1] if state['trail'] else None) if a.operation == 'back' else next(iter(rows), None)
+            if a.circuit:
+                current = next((p for p in rows if (p['host'], p['block_id']) == (a.here_host, a.here_block)), None)
+                cursor = ([current['created_at'], current['host'], current['block_id']] if current else state.get('circuit_cursor'))
+                keys = [(p['created_at'], p['host'], p['block_id']) for p in rows]
+                cursor = tuple(cursor) if cursor else None
+                choices = [p for p, key in zip(rows, keys) if cursor is None or
+                           (key < cursor if a.operation == 'back' else key > cursor)]
+                winner = ((choices[-1] if choices else rows[-1]) if a.operation == 'back' else
+                          (choices[0] if choices else rows[0])) if rows else None
             result['winner'] = winner
             if winner and a.focus:
                 command(hosts[winner['host']], SHOW, winner)
+                if a.circuit:
+                    # Save and restore the original tab label when advancing.
+                    previous = state.pop('circuit_display', None)
+                    try:
+                        if previous:
+                            command(hosts[previous['host']], LABEL, previous)
+                        display = command(hosts[winner['host']], PREPARE, winner)
+                        state['circuit_display'] = dict(host=winner['host'], **display)
+                    except (OSError, ValueError, KeyError, subprocess.TimeoutExpired) as exc:
+                        result['display_error'] = str(exc)
+                    state['circuit_cursor'] = [winner['created_at'], winner['host'], winner['block_id']]
                 result['moved'] = True
-                if a.operation == 'back':
+                if a.circuit:
+                    pass
+                elif a.operation == 'back':
                     state['trail'].pop()
                 else:
                     state['visited'][winner['host'] + '/' + winner['block_id']] = winner['at']

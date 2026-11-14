@@ -80,9 +80,76 @@ class WaitingTest(unittest.TestCase):
             time.sleep(.05)
         self.fail(str(value))
 
+    def test_circuit_repeats_ready_agents_in_launch_order_and_shows_position(self):
+        agents = []
+        root = self.root / '.local/state'
+        registry = root / 'teerex-agents'
+        registry.mkdir(parents=True)
+        for index, host in enumerate(('m5', 'hive', 'hive')):
+            session, block = self.pane(host)
+            name = 'circuit-' + str(index)
+            record = dict(name=name, created_at=index + 1, target=dict(
+                server='unix://' + self.hosts[host]['socket'], session_id=session, block_id=block))
+            (registry / ('agents-' + str(index) + '.json')).write_text(json.dumps(record))
+            pad = root / 'teerex/scratch' / session / (block + '.md')
+            pad.parent.mkdir(parents=True)
+            pad.write_text('## Now\n- [ ] Position ' + str(index) +
+                           ('\nWaiting: review ' + str(index) if index < 2 else ''))
+            agents.append((host, session, block))
+        for index in (0, 1, 0, 1):
+            result, value = self.invoke('next', circuit=True, focus=True)
+            self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+            self.assertNotIn('display_error', value, value)
+            host, session, block = agents[index]
+            self.assertEqual(value['winner']['block_id'], block)
+            self.assertEqual(value['winner']['position']['now'], 'Position ' + str(index))
+            view = self.rpc(host, 'session.view', session_id=session)
+            label = next(w['label'] for w in view['windows'] if w['window_id'] == view['active_window_id'])
+            self.assertIn('Now: Position ' + str(index), label)
+            self.assertIn('Waiting: review ' + str(index), label)
+        fixture = os.environ.get('WAITING_LUA')
+        if fixture:
+            source = Path(fixture).read_text()
+            source = source.replace('(os.getenv("HOME") or "") .. "/.local/state/rexconfig"', json.dumps(str(self.root)))
+            source = source.replace('home .. "/.local/opt/teerex-managed/current/teerex"', json.dumps(BIN))
+            source = source.replace('home .. "/.config/teerex/hosts.json"', json.dumps(str(self.config)))
+            source = source.replace('"--config", ' + json.dumps(str(self.config)),
+                '"--state", ' + json.dumps(str(self.state)) + ', "--config", ' + json.dumps(str(self.config)))
+            action = self.root / 'circuit.lua'
+            action.write_text(source)
+            for origin in ('hive', 'm5'):
+                for index in (0, 1, 0, 1):
+                    value = self.rex(origin, 'do', str(action), '--action', 'next_waiting',
+                                     '--args', '{"circuit":true}', '--json')
+                    self.assertEqual(value['winner']['block_id'], agents[index][2])
+                    self.assertNotIn('display_error', value)
+        # Decisions alone also make an agent ready, and show its prepared default.
+        host, session, block = agents[1]
+        pad = root / 'teerex/scratch' / session / (block + '.md')
+        pad.write_text('## Now\n- [ ] Position 1\n')
+        store = root / 'teerex-boards'
+        store.mkdir()
+        (store / 'state.json').write_text(json.dumps(dict(seats=[dict(records=[dict(
+            kind='decision', at='2026-11-14T00:00:00Z',
+            **{'from': 'circuit-1'}, body=dict(id='one', ask='Proceed?', prepared=dict(default='Continue')))])])))
+        result, value = self.invoke('list', circuit=True)
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertEqual(len(value['waiting']), 2)
+        result, value = self.invoke('next', circuit=True, focus=True)
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertEqual(value['winner']['block_id'], agents[0][2])
+        result, value = self.invoke('next', circuit=True, focus=True)
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        view = self.rpc(host, 'session.view', session_id=session)
+        label = next(w['label'] for w in view['windows'] if w['window_id'] == view['active_window_id'])
+        self.assertIn('Proceed? | Default: Continue', label)
+        result, value = self.invoke('back', circuit=True, focus=True)
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertEqual(value['winner']['block_id'], agents[0][2])
+
     def test_public_help(self):
         result = subprocess.run([BIN, 'waiting', '--help'], capture_output=True, text=True, timeout=10)
-        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
         self.assertTrue(result.stdout.startswith('usage: teerex waiting '), result.stdout)
         self.assertIn('--hosts', result.stdout)
 
