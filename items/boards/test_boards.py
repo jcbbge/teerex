@@ -814,6 +814,61 @@ class RexBoardsTest(unittest.TestCase):
         cls.version = json.loads(subprocess.check_output(cls.base + ["api", "call", "server.version"]))
         print("Disposable live Rex:", json.dumps(cls.version), flush=True)
 
+    def seat_clear_fixture(self, socket=None, session=None, block=None):
+        store = self.root / ("seat-clear-" + str(time.monotonic_ns()))
+        store.mkdir(mode=0o700)
+        command = [BIN, '--rex', self.rex, 'boards', 'seat', 'register', '--store', str(store),
+                   '--host', 'fixture', '--socket', str(socket or self.socket),
+                   '--session', session or 'session:' + ZERO, '--block', block or 'block:' + ZERO,
+                   '--owner', 'operator']
+        registered = subprocess.run(command, capture_output=True, text=True)
+        self.assertEqual(registered.returncode, 0, registered.stdout + registered.stderr)
+        state_path = store / 'state.json'
+        state = json.loads(state_path.read_text())
+        # Retain both activity and a still-open decision when retiring an absent seat.
+        records = [dict(kind='message', at=1, **{'from': 'worker'}, body='already read duplicate'),
+                   dict(kind='decision', at=2, **{'from': 'worker'}, body=prepared_decision())]
+        state['seats'][0]['records'] = records
+        state_path.write_text(json.dumps(state))
+        clear = command[:]
+        clear[clear.index('register')] = 'clear'
+        del clear[-2:]
+        clear += ['--generation', str(state['generation']), '--reason', 'retire absent seat']
+        return store, state, clear
+
+    def test_seat_clear_absent_archives_inbox_and_unregisters(self):
+        store, before, command = self.seat_clear_fixture()
+        cleared = subprocess.run(command, capture_output=True, text=True)
+        self.assertEqual(cleared.returncode, 0, cleared.stdout + cleared.stderr)
+        after = json.loads((store / 'state.json').read_text())
+        self.assertEqual(after['seats'], [])
+        self.assertEqual(after['generation'], before['generation'] + 1)
+        archives = list(store.glob('archive-*.json'))
+        self.assertEqual(len(archives), 1)
+        self.assertEqual(archives[0].stat().st_mode & 0o777, 0o600)
+        self.assertEqual(json.loads(archives[0].read_text()),
+                         [dict(target=before['seats'][0]['target'], record=r)
+                          for r in before['seats'][0]['records']])
+
+    def test_seat_clear_present_retains_inbox_and_refuses(self):
+        made = json.loads(subprocess.check_output(self.base + ['new', '--json', '--keep-open',
+                           '--shell=none', '--', '/bin/sleep', '120']))
+        store, before, command = self.seat_clear_fixture(
+            session=made['session_id'], block=made['initial_windows'][0]['block_ids'][0])
+        cleared = subprocess.run(command, capture_output=True, text=True)
+        self.assertEqual(cleared.returncode, 1, cleared.stdout + cleared.stderr)
+        self.assertIn('clear_inbox_before_unregistering_seat', cleared.stdout)
+        self.assertEqual(json.loads((store / 'state.json').read_text()), before)
+        self.assertEqual(list(store.glob('archive-*.json')), [])
+
+    def test_seat_clear_unreachable_refuses_without_archiving(self):
+        store, before, command = self.seat_clear_fixture(socket=self.root / 'unreachable.sock')
+        cleared = subprocess.run(command, capture_output=True, text=True)
+        self.assertEqual(cleared.returncode, 1, cleared.stdout + cleared.stderr)
+        self.assertIn('rex_read_failed', cleared.stdout)
+        self.assertEqual(json.loads((store / 'state.json').read_text()), before)
+        self.assertEqual(list(store.glob('archive-*.json')), [])
+
     def test_fleet_full_evicts_dead_and_all_live_grows(self):
         store = self.root / 'capacity-store'
         store.mkdir(mode=0o700)

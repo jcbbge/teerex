@@ -424,7 +424,12 @@ def mutate(a):
                 check(a.generation == store.state["generation"], "generation_conflict")
                 text(a.reason)
                 if a.command == "seat":
-                    check(not seat["records"], "clear_inbox_before_unregistering_seat")
+                    if seat["records"]:
+                        live = probe(a.socket, include_all_blocks=True)
+                        check(live["version"]["api_revision"] == 13 and isinstance(live["rows"], list), "invalid_live_response")
+                        check(not any(row["session"] == t["session_id"] and row["block"] == t["block_id"]
+                                      for row in live["rows"]), "clear_inbox_before_unregistering_seat")
+                        store.archive([dict(target=t, record=r) for r in seat["records"]])
                     store.state["seats"].remove(seat)
                 else:
                     check(not folded(seat)[0], "resolve_open_decisions_before_clear")
@@ -694,7 +699,7 @@ for _,s in ipairs(sessions) do
   for _,w in ipairs(view.windows or {}) do if w.window_id==view.active_window_id and not w.zoomed_block_id then anchor=w.focused_block_id end end
   local blocks=call("session.list_blocks",{session_id=s.session_id}).blocks or {}
   for _,b in ipairs(blocks) do
-    if b.creator_name=="com.superlogical.terminal" then
+    if rex.args.include_all_blocks or b.creator_name=="com.superlogical.terminal" then
       local status=nil
       if include_status then
         status=call("com.superlogical.terminal.program_status",{session_id=s.session_id,block_id=b.block_id,args={}})
@@ -711,7 +716,7 @@ io.write('{"version":',rex.json.encode(version),',"identity":',
 '''
 
 
-def probe(socket, jobs_registry=None, teerex=None, dashboard=False, agents_registry=None, expire_asks=False):
+def probe(socket, jobs_registry=None, teerex=None, dashboard=False, agents_registry=None, expire_asks=False, include_all_blocks=False):
     check(os.path.isabs(socket), "absolute_socket_required")
     if dashboard:
         jobs_registry = jobs_registry or os.path.expanduser('~/.local/state/teerex-agents')
@@ -727,7 +732,7 @@ def probe(socket, jobs_registry=None, teerex=None, dashboard=False, agents_regis
             registrations = bounded_command([teerex, "jobs", "list", "--registry", jobs_registry])
         check(registrations.get("kind") == "jobs_list", "invalid_jobs_list")
     live = bounded_command([os.environ.get("TEEREX_INTERNAL_REX") or "rex", "--autostart=false", "--server", "unix://" + socket,
-                            "--timeout", "3s", "--color", "never", "do", "-e", READ_LUA, "--args", json.dumps(dict(include_status=jobs_registry is not None or dashboard))])
+                            "--timeout", "3s", "--color", "never", "do", "-e", READ_LUA, "--args", json.dumps(dict(include_status=jobs_registry is not None or dashboard, include_all_blocks=include_all_blocks))])
     if registrations is not None:
         live["registrations"] = registrations["entries"]
     if dashboard:
