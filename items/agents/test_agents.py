@@ -260,11 +260,11 @@ class ContractHelpersTest(unittest.TestCase):
             pad.write_text("# Worker\nWaiting: review\nCheck: 2099-01-01T00:00:00Z\n")
             self.assertEqual(self.ns["contract_snapshot"](state)["declared"], "waiting")
 
-    def test_first_zero_step_turn_refuses_even_if_waiting_and_ambiguous_declarations_refuse(self):
+    def test_zero_step_turn_after_ack_refuses_even_if_waiting_and_ambiguous_declarations_refuse(self):
         with tempfile.TemporaryDirectory() as directory:
             pad = Path(directory) / "pad.md"
             pad.write_text("# Worker\nWaiting: review\nCheck: 2099-01-01T00:00:00Z\n")
-            state = dict(scratchpad=str(pad), contract={}, brief_attempted=True, brief_attempt_at=1, turn_started_at=1)
+            state = dict(scratchpad=str(pad), contract={}, brief_attempted=True, brief_attempt_at=1, turn_started_at=1, contract_turn_ended=True)
             first = self.ns["contract_turn"](state)
             self.assertEqual(first["action"], "block")
             self.assertIn("write your steps first", first["reason"])
@@ -333,20 +333,28 @@ class ContractHelpersTest(unittest.TestCase):
             self.assertEqual(saved["awaiting_starter"]["kind"], "flag")
             self.assertEqual(sorted(r[1]["outcome"] for r in results), ["already_attempted", "transport_acknowledged"])
 
-    def test_contract_activation_requires_brief_and_post_brief_turn(self):
+    def test_contract_activation_uses_brief_not_turn_start(self):
         state = dict(brief_attempted=False, brief_attempt_at=10, turn_started_at=20)
         self.assertFalse(self.ns["contract_active"](state))
-        state.update(brief_attempted=True, turn_started_at=9)
-        self.assertFalse(self.ns["contract_active"](state))
         self.assertEqual(self.ns["contract_turn"](state), dict(status="not_applicable", action="allow"))
-        state["turn_started_at"] = 10
-        self.assertTrue(self.ns["contract_active"](state))
-        state.pop("brief_attempt_at")
-        state["brief_receipt"] = dict(started_at_unix_ms=10)
+        state.update(brief_attempted=True, turn_started_at=9)
         self.assertTrue(self.ns["contract_active"](state))
 
-    def test_supervisor_contract_is_quiet_before_brief_turn(self):
-        state = dict(brief_attempted=True, brief_attempt_at=10, turn_started_at=9,
+    def test_contract_first_empty_turn_is_ack_but_steps_and_later_turns_are_judged(self):
+        snapshot = dict(steps_total=0, declared=None)
+        self.ns["contract_snapshot"] = lambda _: dict(snapshot)
+        state = dict(brief_attempted=True, brief_attempt_at=10, turn_started_at=9, contract={})
+        self.assertEqual(self.ns["contract_turn"](state), dict(status="protocol_ack", action="allow"))
+        snapshot["steps_total"] = 1
+        self.assertEqual(self.ns["contract_turn"](state)["action"], "block")
+        snapshot["steps_total"] = 0
+        state.update(contract_turn_ended=True, contract_reminded=False)
+        check = self.ns["contract_turn"](state)
+        self.assertEqual(check["action"], "block")
+        self.assertEqual(check["reason"], CONTRACT_REFUSAL + "; write your steps first")
+
+    def test_supervisor_contract_is_quiet_before_brief_attempt(self):
+        state = dict(brief_attempted=False, brief_attempt_at=10, turn_started_at=9,
                      contract=dict(awaiting_starter=dict(kind="done", at=1)))
         self.ns["load"] = lambda *_: state
         def unexpected(*args, **kwargs):
@@ -2063,9 +2071,7 @@ Path('/work/network-harness').touch()
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
         state = self.record(launch_id)
         self.assertEqual(state["contract"]["last_contact_at"], state["brief_attempt_at"])
-        # A delayed ACK stop still belongs to the old turn until prompt-submit.
-        p, packet = self.run_cli(*args, input=json.dumps(dict(hook_event_name="UserPromptSubmit")))
-        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        # The ACK already ended, so no prompt-start timestamp can exempt this stop.
         p, packet = self.run_cli(*args, input=stop)
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
         self.assertEqual(packet["outcome"], "scratchpad_blocked")
@@ -2425,7 +2431,12 @@ Path('/work/network-harness').touch()
                 def messages():
                     return [v["payload"] for v in events(self.starter_log) if v["event"] == "input"][input_start:]
                 start()
-                # Fresh but empty is still an undeclared first turn.
+                # The first empty end is the ACK; subsequent empty turns need steps.
+                scratch("flag", "")
+                ack = settle(end())
+                self.assertFalse(ack["delivery_rule"].startswith("contract_"))
+                self.assertTrue(self.record(launch_id)["contract_turn_ended"])
+                start()
                 scratch("flag", "")
                 reason = blocked(end())
                 self.assertEqual(reason, CONTRACT_REFUSAL + "; write your steps first")
@@ -2457,6 +2468,22 @@ Path('/work/network-harness').touch()
                 scratch("now", "Review", "--waiting", "reviewer", "--check", "2000-01-01T00:00:00Z")
                 blocked(end())
 
+    def test_contract_codex_stale_notify_basis_first_turn_with_steps_is_judged(self):
+        p, launched = self.launch(contract=True)
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        launch_id = launched["launch_id"]
+        state = self.record(launch_id)
+        state.update(turn_started_at=1, codex_last_notify_at=1)
+        (self.registry / ("agents-" + launch_id + ".json")).write_text(json.dumps(state))
+        scratch = subprocess.run([BIN, "scratch", "now", "Implement", "--session", state["target"]["session_id"],
+                                  "--block", state["target"]["block_id"]], env=self.env, capture_output=True, text=True)
+        self.assertEqual(scratch.returncode, 0, scratch.stdout + scratch.stderr)
+        result = self.enforcement_hook(launch_id, "codex", dict(type="agent-turn-complete", **{
+            "last-assistant-message": "cannot finish", "turn-id": "first-real-turn", "input-messages": ["work"]}), notify=True)
+        self.assertEqual(result["scratchpad_check"]["action"], "reminded")
+        self.assertEqual(result["scratchpad_check"]["reason"], CONTRACT_REFUSAL)
+        self.assertLess(self.record(launch_id)["turn_started_at"], state["brief_attempt_at"])
+
     def test_contract_pi_generated_extension_continues_once(self):
         self.settings["profiles"]["probe"].update(harness="pi", hook_events=True)
         p, launched = self.launch(contract=True)
@@ -2471,6 +2498,11 @@ const mod=await import('data:text/javascript;base64,'+Buffer.from(readFileSync(p
 mod.default({on:(name,handler)=>handlers[name]=handler});
 await handlers.before_agent_start({prompt:'work'});
 const pad=process.argv[2];
+writeFileSync(pad,readFileSync(pad,'utf8').replace(/^Updated:.*$/m,'Updated: '+new Date().toISOString()));
+const ack=await handlers.agent_before_settle({outcome:'completed',entries:[]});
+if (ack?.continue) throw new Error('protocol ACK was refused');
+await handlers.agent_settled({}, {sessionManager:{getBranch:()=>[]}});
+await handlers.before_agent_start({prompt:'work'});
 writeFileSync(pad,readFileSync(pad,'utf8').replace(/^Updated:.*$/m,'Updated: '+new Date().toISOString()));
 const first=await handlers.agent_before_settle({outcome:'completed',entries:[]});
 if (!first?.continue || first.entries[0].content !== process.argv[3] + '; write your steps first') throw new Error('contract did not continue');

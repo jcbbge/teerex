@@ -534,9 +534,7 @@ CONTRACT_REFUSE = 'Turn not ended: declare one — finished: every step checked 
 
 
 def contract_active(state):
-    attempted_at = state.get("brief_attempt_at") or (state.get("brief_receipt") or {}).get("started_at_unix_ms")
-    started_at = state.get("turn_started_at", state.get("immediate_child_started_at", 0))
-    return bool(state.get("brief_attempted") and attempted_at and started_at >= attempted_at)
+    return bool(state.get("brief_attempted"))
 
 
 def contract_turn(state):
@@ -548,6 +546,9 @@ def contract_turn(state):
     except (OSError, ValueError):
         snapshot = dict(steps_total=0, step_n=0, now=None, declared=None, check_at=None, flag=None)
     c.update(snapshot)
+    # The first empty turn can be the protocol ACK even if the brief arrived mid-turn.
+    if not state.get("contract_turn_ended") and snapshot["steps_total"] == 0:
+        return dict(status="protocol_ack", action="allow")
     needs_steps = snapshot["steps_total"] == 0 and not state.get("contract_turn_reported") and not state.get("contract_reminded")
     if snapshot["declared"] and not needs_steps:
         c["declared_at"] = now()
@@ -1544,12 +1545,13 @@ def report_stop(root, launch_id, event_id, event, allow_transcript=True):
     body = f"{title}: {state['name']}\n{details}"
     if check and check["status"] == "stale":
         body += "\nScratchpad: stale; " + check["action"]
-    if state.get("contract") and contract_active(state) and kind == "Stop":
-        # All adapters have passed freshness first. Direct stop callbacks also enforce declaration.
-        if not event.get("scratch_harness"):
-            state = update(root, launch_id, lambda s: s.update(contract_check=contract_turn(s)))
-            if state["contract_check"]["action"] == "block":
-                return 0, receipt(state, "scratchpad_blocked", scratchpad_check=state["contract_check"])
+    if state.get("contract") and contract_active(state) and kind == "Stop" and not event.get("scratch_harness"):
+        # Direct stop callbacks also enforce declaration after the brief.
+        state = update(root, launch_id, lambda s: s.update(contract_check=contract_turn(s)))
+        if state["contract_check"]["action"] == "block":
+            return 0, receipt(state, "scratchpad_blocked", scratchpad_check=state["contract_check"])
+    if (state.get("contract") and contract_active(state) and kind == "Stop"
+            and (state.get("contract_check") or {}).get("status") != "protocol_ack"):
         c = state["contract"]
         declared = c.get("declared")
         if declared == "done":
@@ -1570,6 +1572,7 @@ def report_stop(root, launch_id, event_id, event, allow_transcript=True):
         previous = s.get("last_hook") or {}
         if event_at_ns < previous.get("at_ns", previous.get("at", 0) * 1000000):
             return
+        s["contract_turn_ended"] = True
         s["last_hook"] = dict(kind=kind, state=turn_state, at=now(), at_ns=event_at_ns, text=details, event_id=event_id, evidence="harness_report_not_process_death", scratchpad_check=check, delivery_rule=delivery_rule)
     update(root, launch_id, remembered)
     if delivery_rule.startswith("contract_"):
