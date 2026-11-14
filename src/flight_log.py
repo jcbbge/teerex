@@ -227,9 +227,12 @@ def main(argv=None):
             with os.fdopen(fd, 'w') as stream:
                 stream.write(content)
             leaf = shutil.which('leaf') or str(Path.home() / '.cargo/bin/leaf')
-            opened = subprocess.run([SELF, 'surfaces', 'open', '--socket', o.socket, '--session', session, '--anchor', block, '--layout', 'float', '--bounds', '[0.08,0.08,0.84,0.84]', '--label', 'Morning brief', '--', leaf, 'open', path], capture_output=True, text=True)
+            local = next((h for h in config['hosts'].values() if h.get('transport') == 'local'), {})
+            executable = os.environ.get('TEEREX_INTERNAL_REX') or local.get('rex')
+            runtime = [SELF] + (['--rex', executable] if executable else [])
+            opened = subprocess.run(runtime + ['surfaces', 'open', '--socket', o.socket, '--session', session, '--anchor', block, '--layout', 'float', '--bounds', '[0.08,0.08,0.84,0.84]', '--label', 'Morning brief', '--', leaf, 'open', path], capture_output=True, text=True)
             if opened.returncode:
-                raise ValueError('leaf opening failed; retained ' + path + ': ' + clean(opened.stderr))
+                raise ValueError('leaf opening failed; retained ' + path + ': ' + clean(opened.stderr) + ' receipt: ' + clean(opened.stdout))
             print(opened.stdout, file=sys.stderr)
     elif o.page is not None:
         if o.page:
