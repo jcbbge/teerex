@@ -1417,13 +1417,30 @@ def report_stop(root, launch_id, event_id, event, allow_transcript=True):
     return code, packet
 
 
+def supervisor_error(o, field, exc):
+    # The supervisor shares the harness terminal: diagnostics belong only in its private record.
+    with contextlib.suppress(Exception):
+        with Registry(o.registry) as registry:
+            state = registry.read(o.launch_id)
+            if field not in state:
+                state[field] = dict(reason=str(exc)[:600], at=now())
+                registry.save(state)
+
+
 def supervise(o):
-    state = load(o.registry, o.launch_id)
+    state = None
     try:
+        state = load(o.registry, o.launch_id)
         return supervise_child(o)
+    except Exception as exc:
+        supervisor_error(o, "last_supervisor_error", exc)
+        return 1, None
     finally:
-        with contextlib.suppress(FileNotFoundError):
-            agent_input_path(state["socket"], os.environ["REX_SESSION"], os.environ["REX_BLOCK"]).unlink()
+        if state is not None:
+            try:
+                agent_input_path(state["socket"], os.environ["REX_SESSION"], os.environ["REX_BLOCK"]).unlink(missing_ok=True)
+            except Exception as exc:
+                supervisor_error(o, "last_supervisor_cleanup_error", exc)
 
 
 def supervise_child(o):
@@ -1504,33 +1521,44 @@ def supervise_child(o):
         last_status = None
         last_input_ns = 0
         channel_closed_reported = False
-        while child.poll() is None:
-            if broker is not None:
-                broker.service()
-            else:
-                time.sleep(.05)
-            if broker is not None and broker.closed and not channel_closed_reported:
-                update(o.registry, o.launch_id, lambda s: s.update(channel_status="revoked"))
-                channel_closed_reported = True
-            incoming = agent_input_read(state["socket"], sid, bid)
-            if incoming is not None and incoming["at_ns"] > last_input_ns:
-                delivered_input(o.registry, o.launch_id, incoming)
-                last_input_ns = incoming["at_ns"]
-            current = load(o.registry, o.launch_id).get("last_hook")
+        while True:
             try:
-                waiting = scratch_read(Path(state["scratchpad"])).get("waiting", "")
-            except (OSError, ValueError):
-                waiting = ""
-            status = ("blocked", waiting[:300]) if waiting and (current or {}).get("state") != "error" else (
-                (current.get("state") or {"Stop": "idle", "StopFailure": "error", "UserPromptSubmit": "working"}[current["kind"]], current["text"])
-                if current else ("working", "visible agent process starting; readiness not assessed"))
-            if status != last_status:
-                program_status(state, *status)
-                last_status = status
-            if current is not None and current != last_hook:
-                if current["kind"] in ("Stop", "StopFailure"):
-                    come_forward(state, current["kind"])
-                last_hook = current
+                if child.poll() is not None:
+                    break
+                if broker is not None:
+                    broker.service()
+                else:
+                    time.sleep(.05)
+                if broker is not None and broker.closed and not channel_closed_reported:
+                    update(o.registry, o.launch_id, lambda s: s.update(channel_status="revoked"))
+                    channel_closed_reported = True
+                try:
+                    incoming = agent_input_read(state["socket"], sid, bid)
+                except (ValueError, OSError) as exc:
+                    supervisor_error(o, "last_input_read_error", exc)
+                    incoming = None
+                if incoming is not None and incoming["at_ns"] > last_input_ns:
+                    delivered_input(o.registry, o.launch_id, incoming)
+                    last_input_ns = incoming["at_ns"]
+                current = load(o.registry, o.launch_id).get("last_hook")
+                try:
+                    waiting = scratch_read(Path(state["scratchpad"])).get("waiting", "")
+                except (OSError, ValueError) as exc:
+                    supervisor_error(o, "last_supervisor_loop_error", exc)
+                    waiting = ""
+                status = ("blocked", waiting[:300]) if waiting and (current or {}).get("state") != "error" else (
+                    (current.get("state") or {"Stop": "idle", "StopFailure": "error", "UserPromptSubmit": "working"}[current["kind"]], current["text"])
+                    if current else ("working", "visible agent process starting; readiness not assessed"))
+                if status != last_status:
+                    program_status(state, *status)
+                    last_status = status
+                if current is not None and current != last_hook:
+                    if current["kind"] in ("Stop", "StopFailure"):
+                        come_forward(state, current["kind"])
+                    last_hook = current
+            except Exception as exc:
+                supervisor_error(o, "last_supervisor_loop_error", exc)
+                time.sleep(.05)
         code = child.returncode
         term = {"Exited": code} if code >= 0 else {"Signal": -code}
     except OSError as exc:
@@ -1555,7 +1583,7 @@ def supervise_child(o):
                                 f"PROCESS EXIT: {state['name']}\n{role}: {json.dumps(term)}\n" + remote +
                                 f"Last harness report: {last}\nDescendants are not verified gone.", "waited_immediate_child")
     if notice_code:
-        print(json.dumps(result), file=sys.stderr)
+        supervisor_error(o, "last_supervisor_notice_error", result)
     return (code if code >= 0 else min(255, 128 - code)), None
 
 
@@ -1781,12 +1809,15 @@ def main():
             code, result = launch(o)
         else:
             code, result = globals()[o.operation](o)
-        if result is not None:
+        if result is not None and o.operation != "supervise":
             print(json.dumps(result, ensure_ascii=False))
         return code
     except (KeyboardInterrupt, Cancelled) as exc:
         sig = exc.args[0] if isinstance(exc, Cancelled) else signal.SIGINT
-        print(json.dumps(dict(schema_version=1, kind="agents_result", outcome="cancelled_uncertain", retry_safe=False)))
+        if o.operation == "supervise":
+            supervisor_error(o, "last_supervisor_error", exc)
+        else:
+            print(json.dumps(dict(schema_version=1, kind="agents_result", outcome="cancelled_uncertain", retry_safe=False)))
         return 128 + sig
     except (Refusal, OSError, ValueError, KeyError, TypeError, RecursionError, subprocess.SubprocessError) as exc:
         queue_busy = o.operation == "launch" and isinstance(exc, Refusal) and str(exc) == "launch_queue_busy"
@@ -1794,7 +1825,10 @@ def main():
                       failure_reason=str(exc), retry_safe=queue_busy, agent_readiness="not_assessed", all_processes_verified_gone=False)
         if queue_busy:
             result.update(creation_attempted=False, created=None)
-        print(json.dumps(result))
+        if o.operation == "supervise":
+            supervisor_error(o, "last_supervisor_error", exc)
+        else:
+            print(json.dumps(result))
         return 1
 
 

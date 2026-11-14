@@ -39,15 +39,21 @@ def agent_input_write(socket, session, block, at_ns, reminder=False):
 
 def agent_input_read(socket, session, block):
     path = agent_input_path(socket, session, block)
-    try:
-        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
-    except FileNotFoundError:
-        return None
-    with os.fdopen(fd) as stream:
-        info = os.fstat(stream.fileno())
-        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o600 or info.st_nlink != 1:
-            raise ValueError("private_agent_input_event_required")
-        raw = stream.read(4097)
+    for attempt in range(3):
+        try:
+            fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        except FileNotFoundError:
+            return None
+        with os.fdopen(fd) as stream:
+            info = os.fstat(stream.fileno())
+            if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o600 or info.st_nlink > 1:
+                raise ValueError("private_agent_input_event_required")
+            if info.st_nlink == 0:
+                continue  # Atomic replacement retired this inode; reopen the current path.
+            raw = stream.read(4097)
+        break
+    else:
+        return None  # A continuously replacing writer will be observed on the next poll.
     if len(raw) > 4096:
         raise ValueError("agent_input_event_too_large")
     event = json.loads(raw)
