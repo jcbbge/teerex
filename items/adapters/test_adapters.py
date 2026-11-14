@@ -13,11 +13,12 @@ import shutil
 import signal
 import subprocess
 import sys
-import tempfile
 import time
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/acceptance'))
+import test_resources as resources
+
 from test_environment import isolated_environment
 
 BIN = str(Path(os.environ.get("TEEREX_BIN", Path(__file__).resolve().parents[2] / "zig-out/bin/teerex")).resolve())
@@ -51,7 +52,7 @@ class OfflineTest(unittest.TestCase):
         data = json.loads(r.stdout)
         self.assertEqual(data["kind"], "rex_adapter_generation_failure")
         self.assertFalse(data["behavior_certified"])
-        self.assertEqual(data["error_name"], "FileNotFound")
+        self.assertEqual(data["error_name"], "RexExecutableNotFound")
 
 
 SHIM = r'''
@@ -102,14 +103,14 @@ class RuntimeTest(unittest.TestCase):
         if not cls.rex:
             raise RuntimeError("Put the deliberately selected test Rex executable on PATH")
         cls.rex = str(Path(cls.rex).resolve())
-        cls.tmp = tempfile.TemporaryDirectory(prefix="tadapter-", dir="/tmp")
+        cls.tmp = resources.temporary_directory(prefix="tadapter-", dir="/tmp")
         cls.addClassCleanup(cls.tmp.cleanup)
         cls.root = Path(cls.tmp.name)
         cls.socket = cls.root / "rex.sock"
         cls.base = [cls.rex, "--autostart=false", "--server", "unix://" + str(cls.socket), "--timeout", "2s"]
         cls.log = (cls.root / "server.log").open("w")
         cls.addClassCleanup(cls.log.close)
-        cls.server = subprocess.Popen([cls.rex, "server", "run", "--listen", "unix://" + str(cls.socket),
+        cls.server = resources.start_process([cls.rex, "server", "run", "--listen", "unix://" + str(cls.socket),
                                        "--restore=false", "--config", "/dev/null", "--state-dir", str(cls.root / "state")],
                                       stdout=cls.log, stderr=cls.log)
         cls.addClassCleanup(cls.stop_server)
@@ -390,7 +391,7 @@ class RuntimeTest(unittest.TestCase):
         for mode, sig in [("hang", None), ("hang_action", signal.SIGINT), ("hang_action", signal.SIGTERM)]:
             self.work.joinpath("pids").unlink(missing_ok=True)
             args = self.command()+["--timeout-ms", "300" if sig is None else "5000"]
-            p = subprocess.Popen([BIN,*PREFIX,*args],stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,
+            p = resources.start_process([BIN,*PREFIX,*args],stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,
                                  env=dict(self.env, ADAPTER_FAULT=mode))
             if sig is not None:
                 for _ in range(100):

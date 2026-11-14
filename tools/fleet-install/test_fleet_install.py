@@ -15,11 +15,13 @@ import struct
 import subprocess
 import sys
 import tarfile
-import tempfile
 import unittest
 from unittest.mock import patch
 
 import fleet_install as fleet
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/acceptance'))
+import test_resources as resources
 
 MAC = platform.system() == "Darwin" and platform.machine() == "arm64"
 SUPPORTED = MAC or (platform.system() == "Linux" and platform.machine() == "x86_64")
@@ -48,7 +50,7 @@ class FleetContract(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         compiler = fixture_compiler()
-        cls.build_temp = tempfile.TemporaryDirectory(prefix="teerex-fleet-build-")
+        cls.build_temp = resources.temporary_directory(prefix="teerex-fleet-build-")
         cls.build = Path(cls.build_temp.name).resolve()
         cls.binaries = {}
         for tag, output in ((OLD, OLD[1:]), (NEW, NEW[1:]), (BAD, "wrong-version")):
@@ -63,7 +65,7 @@ class FleetContract(unittest.TestCase):
         cls.build_temp.cleanup()
 
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(prefix="teerex-fleet-test-")
+        self.temp = resources.temporary_directory(prefix="teerex-fleet-test-")
         self.addCleanup(self.temp.cleanup)
         self.base = Path(self.temp.name).resolve()
         self.home = self.base / "home with spaces"

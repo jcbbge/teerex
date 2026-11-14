@@ -8,8 +8,11 @@ import os
 from pathlib import Path
 import statistics
 import subprocess
-import tempfile
 import time
+
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/acceptance'))
+import test_resources as resources
 
 
 def cpu(pid):
@@ -27,7 +30,7 @@ def main():
     args=parser.parse_args()
     spec=importlib.util.spec_from_file_location('board_tests',Path(__file__).with_name('test_board.py'))
     module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
-    with tempfile.TemporaryDirectory(prefix='board-measure-',dir='/tmp') as directory:
+    with resources.temporary_directory(prefix='board-measure-',dir='/tmp') as directory:
         root=Path(directory)
         env=dict(os.environ,TEEREX_CALL_LOG_DIR=str(root/'calls'))
         result=json.loads(subprocess.check_output([module.BIN,'board','--benchmark','10000'],env=env,text=True))

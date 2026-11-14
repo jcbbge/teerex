@@ -7,11 +7,12 @@ from pathlib import Path
 import signal
 import subprocess
 import sys
-import tempfile
 import time
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/acceptance'))
+import test_resources as resources
+
 from test_environment import isolated_environment
 BIN = str(Path(os.environ.get("TEEREX_BIN", Path(__file__).resolve().parents[2] / "zig-out/bin/teerex")).resolve())
 QUESTION = "SYNTHETIC_QUESTION_CANARY_9c41"
@@ -20,7 +21,7 @@ NOTES = "SYNTHETIC_NOTES_CANARY_51be"
 
 class RecordsFixture(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(prefix="trecords-", dir="/tmp")
+        self.temp = resources.temporary_directory(prefix="trecords-", dir="/tmp")
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         self.store = self.root / "store"
@@ -490,7 +491,7 @@ class RecordsTest(RecordsFixture):
     def test_inherited_private_stdin_cancellation_releases_store_lock(self):
         for sig in (signal.SIGINT, signal.SIGTERM):
             cmd = [BIN, "records", "new", "--store", str(self.store), "--id", "interrupted", "--kind", "investigation", "--writer", "worker", "--fields-file", "-"]
-            child = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=self.env, text=True)
+            child = resources.start_process(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=self.env, text=True)
             child.stdin.write('{"question":"' + QUESTION)
             child.stdin.flush()
             with (self.store / "lock").open("r+") as probe:
@@ -543,7 +544,7 @@ class LiveRecordsTest(RecordsFixture):
     @classmethod
     def setUpClass(cls):
         cls.rex = str(Path(os.environ["REX_BIN"]).resolve())
-        cls.tmp = tempfile.TemporaryDirectory(prefix="trecords-rex-", dir="/tmp")
+        cls.tmp = resources.temporary_directory(prefix="trecords-rex-", dir="/tmp")
         cls.addClassCleanup(cls.tmp.cleanup)
         cls.server_root = Path(cls.tmp.name)
         cls.socket = cls.server_root / "rex.sock"
@@ -555,7 +556,7 @@ class LiveRecordsTest(RecordsFixture):
 
     @classmethod
     def start_server(cls):
-        cls.server = subprocess.Popen([cls.rex, "server", "run", "--listen", "unix://" + str(cls.socket), "--restore=false",
+        cls.server = resources.start_process([cls.rex, "server", "run", "--listen", "unix://" + str(cls.socket), "--restore=false",
                                        "--config", "/dev/null", "--state-dir", str(cls.server_root / "state")], stdout=cls.log, stderr=cls.log)
         for _ in range(200):
             if cls.server.poll() is not None:
@@ -597,7 +598,6 @@ class LiveRecordsTest(RecordsFixture):
         super().setUp()
         self.env["TEEREX_INTERNAL_REX"] = self.rex
         self.env["PATH"] = str(Path(self.rex).parent) + os.pathsep + self.env["PATH"]
-        sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/acceptance'))
         import pane_authority
         pane_authority.caller(self, self.rpc, self.env, self.root)
         self.session = self.rpc("session.create", {"label": "records disposable"})["session_id"]
@@ -848,7 +848,7 @@ class LiveRecordsTest(RecordsFixture):
         cmd = [BIN, "records", "attach", "--store", str(self.store), "--id", "a", "--by", "worker", "--evidence", str(self.packet())]
         with (self.store / "lock").open("r+") as held:
             fcntl.flock(held, fcntl.LOCK_EX)
-            children = [subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=self.env, text=True) for _ in range(2)]
+            children = [resources.start_process(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=self.env, text=True) for _ in range(2)]
             for p in children:
                 out, err = p.communicate(timeout=10)
                 self.assertEqual(p.returncode, 1, out + err)

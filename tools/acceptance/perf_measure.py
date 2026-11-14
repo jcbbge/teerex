@@ -19,6 +19,9 @@ import sys
 import tempfile
 import time
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/acceptance'))
+import test_resources as resources
+
 ROOT = Path(__file__).resolve().parents[2]
 WORKLOADS = ('observe', 'watch_to_change', 'send_ignore', 'send_guard', 'send_guard_saved_draft', 'surfaces_open', 'surfaces_close', 'run_visible_small', 'agents_prune_plan', 'boards_calls', 'cartridges_list')
 
@@ -36,7 +39,7 @@ def measured(argv, env, after_start=None, timeout=30):
     # would silently attribute an earlier heavy verb's RSS to later small verbs.
     with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
         start = time.monotonic()
-        p = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=out, stderr=err, env=env, start_new_session=True)
+        p = resources.start_process(argv, stdin=subprocess.DEVNULL, stdout=out, stderr=err, env=env, start_new_session=True)
         try:
             if after_start:
                 after_start()
@@ -90,7 +93,7 @@ class Fixture:
         self.base = [args.rex, '--autostart=false', '--server', 'unix://' + str(self.socket), '--timeout', '3s']
         self.cli = [args.teerex, '--rex', args.rex]
         self.log = (root / 'server.log').open('wb')
-        self.server = subprocess.Popen([args.rex, 'server', 'run', '--listen', 'unix://' + str(self.socket), '--restore=false', '--config', '/dev/null', '--state-dir', str(root / 'rex-state')], env=self.env, stdout=self.log, stderr=self.log)
+        self.server = resources.start_process([args.rex, 'server', 'run', '--listen', 'unix://' + str(self.socket), '--restore=false', '--config', '/dev/null', '--state-dir', str(root / 'rex-state')], env=self.env, stdout=self.log, stderr=self.log)
         try:
             for _ in range(400):
                 if self.server.poll() is not None:
@@ -234,7 +237,7 @@ def main():
     a = p.parse_args()
     if a.warm_runs < 0: p.error('warm-runs must be nonnegative')
     a.rex, a.teerex = str(Path(a.rex).resolve()), str(Path(a.teerex).resolve())
-    with tempfile.TemporaryDirectory(prefix='teerex-perf-', dir='/tmp') as temp:
+    with resources.temporary_directory(prefix='teerex-perf-', dir='/tmp') as temp:
         fixture = Fixture(Path(temp).resolve(), a)
         try: results, observations = fixture.run()
         finally: fixture.close()

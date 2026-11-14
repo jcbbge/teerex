@@ -2,11 +2,14 @@ import contextlib
 import io
 import json
 from pathlib import Path
-import tempfile
 import unittest
 from unittest.mock import patch
 import doctor_all
 import targets
+
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools/acceptance'))
+import test_resources as resources
 
 doctor_all.targets = targets
 doctor_all.WORKER_SOURCE = Path(doctor_all.__file__).read_text()
@@ -14,7 +17,7 @@ doctor_all.WORKER_SOURCE = Path(doctor_all.__file__).read_text()
 
 class DoctorAllTest(unittest.TestCase):
     def test_reports_each_failure_and_continues(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with resources.temporary_directory() as directory:
             root = Path(directory)
             home = root / 'home'
             config_root = home / 'rexconfig'

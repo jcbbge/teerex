@@ -11,12 +11,13 @@ import shutil
 import signal
 import subprocess
 import sys
-import tempfile
 import time
 import unittest
 
-
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/acceptance'))
+import test_resources as resources
+
+
 from test_environment import isolated_environment
 
 BIN = Path(os.environ.get("TEEREX_BIN", Path(__file__).resolve().parents[2] / "zig-out/bin/teerex"))
@@ -41,7 +42,7 @@ class OfflineTest(unittest.TestCase):
                 self.assertEqual(result.stdout, "")
 
     def test_invalid_baselines_rejected_before_rex(self):
-        with tempfile.TemporaryDirectory() as root:
+        with resources.temporary_directory() as root:
             path = Path(root) / "baseline.json"
             cases = ["{", "{}", "x" * (128 * 1024 + 1),
                      json.dumps({"schema_version": 1, "kind": "run_result", "adapter_identity": "a" * 64}),
@@ -106,14 +107,14 @@ class RuntimeTest(unittest.TestCase):
         cls.rex = shutil.which("rex")
         if not cls.rex or not BIN.is_file():
             raise RuntimeError("Build teerex and put the explicitly selected test Rex on PATH")
-        tmp = tempfile.TemporaryDirectory(prefix="tdoc-", dir="/tmp")
+        tmp = resources.temporary_directory(prefix="tdoc-", dir="/tmp")
         cls.addClassCleanup(tmp.cleanup)
         cls.root = Path(tmp.name)
         cls.socket = cls.root / "rex.sock"
         cls.base = [cls.rex, "--autostart=false", "--server", "unix://" + str(cls.socket), "--timeout", "2s"]
         cls.log = (cls.root / "server.log").open("w")
         cls.addClassCleanup(cls.log.close)
-        cls.server = subprocess.Popen([cls.rex, "server", "run", "--listen", "unix://" + str(cls.socket),
+        cls.server = resources.start_process([cls.rex, "server", "run", "--listen", "unix://" + str(cls.socket),
                                        "--restore=false", "--config", "/dev/null", "--state-dir", str(cls.root / "state")],
                                       stdout=cls.log, stderr=cls.log)
         cls.addClassCleanup(cls.stop_server)
@@ -309,7 +310,7 @@ class RuntimeTest(unittest.TestCase):
                 pids = Path(env["DOCTOR_PIDS"])
                 pids.unlink(missing_ok=True)
                 started = time.monotonic()
-                proc = subprocess.Popen(self.command("--timeout-ms", "400" if sig is None else "5000"),
+                proc = resources.start_process(self.command("--timeout-ms", "400" if sig is None else "5000"),
                                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
                 self.addCleanup(lambda p=proc: p.poll() is None and p.kill())
                 for _ in range(200):

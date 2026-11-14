@@ -3,8 +3,11 @@ import importlib.util
 import json
 import os
 from pathlib import Path
-import tempfile
 import unittest
+
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/acceptance'))
+import test_resources as resources
 
 spec = importlib.util.spec_from_file_location("focus_queue", Path(__file__).resolve().parents[1] / "send/focus_queue.py")
 queue = importlib.util.module_from_spec(spec)
@@ -13,7 +16,7 @@ spec.loader.exec_module(queue)
 
 class QueueStoreTest(unittest.TestCase):
     def test_restart_order_and_no_entry_cap(self):
-        with tempfile.TemporaryDirectory() as temp:
+        with resources.temporary_directory() as temp:
             root = Path(temp)
             root.chmod(0o700)
             state = root / ("a" * 64 + ".json")
@@ -33,7 +36,7 @@ class QueueStoreTest(unittest.TestCase):
             self.assertEqual(len(restarted.inspect(state, False)["messages"]), 1025)
 
     def test_missing_probe_does_not_create_store(self):
-        with tempfile.TemporaryDirectory() as temp:
+        with resources.temporary_directory() as temp:
             state = Path(temp) / "absent" / ("a" * 64 + ".json")
             self.assertEqual(queue.inspect(state, False), dict(outcome="inspected", messages=[]))
             self.assertFalse(state.parent.exists())

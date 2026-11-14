@@ -7,11 +7,12 @@ import os
 import sys
 from pathlib import Path
 import subprocess
-import tempfile
 import unittest
 
-
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/acceptance'))
+import test_resources as resources
+
+
 from test_environment import isolated_environment
 
 BIN = Path(os.environ.get("TEEREX_BIN", Path(__file__).resolve().parents[2] / "zig-out/bin/teerex"))
@@ -19,7 +20,7 @@ BIN = Path(os.environ.get("TEEREX_BIN", Path(__file__).resolve().parents[2] / "z
 
 class ManeuverTest(unittest.TestCase):
     def setUp(self):
-        tmp = tempfile.TemporaryDirectory(prefix="tmaneuver-")
+        tmp = resources.temporary_directory(prefix="tmaneuver-")
         self.addCleanup(tmp.cleanup)
         self.root = Path(tmp.name)
         self.definition_path = self.root / "definition.json"

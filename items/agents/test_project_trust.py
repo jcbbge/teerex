@@ -1,8 +1,11 @@
 """Focused TOML trust edits; all files are disposable."""
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-import tempfile
 import json
+
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/acceptance'))
+import test_resources as resources
 try:
     import tomllib
 except ImportError:
@@ -19,7 +22,7 @@ class ProjectTrustTest(unittest.TestCase):
         channel = source.resolve().parents[2] / "src/scoped_channel.py"
         exec(compile(channel.read_text(), str(channel), "exec"), self.ns)
         exec(compile(source.read_text(), str(source), "exec"), self.ns)
-        self.temp = tempfile.TemporaryDirectory()
+        self.temp = resources.temporary_directory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name).resolve()
         self.path = self.root / "settings.toml"

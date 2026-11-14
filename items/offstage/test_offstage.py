@@ -7,9 +7,11 @@ import shutil
 import signal
 import subprocess
 import sys
-import tempfile
 import time
 import unittest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/acceptance'))
+import test_resources as resources
 
 BIN = Path(os.environ.get("TEEREX_BIN", Path(__file__).resolve().parents[2] / "zig-out/bin/teerex"))
 
@@ -64,14 +66,14 @@ class OffstageTest(unittest.TestCase):
         cls.rex = os.environ.get("REX_BIN") or shutil.which("rex")
         if not cls.rex or not BIN.is_file():
             raise RuntimeError("Build teerex and put test Rex on PATH")
-        cls.tmp = tempfile.TemporaryDirectory(prefix="toff-", dir="/tmp")
+        cls.tmp = resources.temporary_directory(prefix="toff-", dir="/tmp")
         cls.addClassCleanup(cls.tmp.cleanup)
         cls.root = Path(cls.tmp.name)
         cls.socket = cls.root / "rex.sock"
         cls.base = [cls.rex, "--autostart=false", "--server", "unix://" + str(cls.socket), "--timeout", "2s"]
         cls.log = (cls.root / "server.log").open("w")
         cls.addClassCleanup(cls.log.close)
-        cls.server = subprocess.Popen([cls.rex, "server", "run", "--listen", "unix://" + str(cls.socket),
+        cls.server = resources.start_process([cls.rex, "server", "run", "--listen", "unix://" + str(cls.socket),
                                        "--restore=false", "--config", "/dev/null", "--state-dir", str(cls.root / "state")],
                                       stdout=cls.log, stderr=cls.log)
         cls.addClassCleanup(cls.stop_server)
@@ -114,7 +116,7 @@ class OffstageTest(unittest.TestCase):
         return r, [json.loads(x) for x in r.stdout.splitlines()]
 
     def start(self, argv, **kw):
-        p = subprocess.Popen(self.command(argv, **kw), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        p = resources.start_process(self.command(argv, **kw), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         self.addCleanup(self.reap, p)
         self.assertTrue(select.select([p.stdout], [], [], 8)[0], "no started receipt")
         first = json.loads(p.stdout.readline())
@@ -267,7 +269,7 @@ class OffstageTest(unittest.TestCase):
             self.api("block.close", session_id=self.session, block_id=bid)
 
     def fault(self, mode, argv):
-        with tempfile.TemporaryDirectory(prefix="fault-", dir=self.root) as root:
+        with resources.temporary_directory(prefix="fault-", dir=self.root) as root:
             root = Path(root)
             wrapper = root / "rex"
             wrapper.write_text(f"#!{sys.executable}\n" + FAULT_TRANSPORT)

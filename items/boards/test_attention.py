@@ -5,10 +5,13 @@ import json
 import os
 from pathlib import Path
 import subprocess
-import tempfile
 import time
 import unittest
 from unittest.mock import patch
+
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/acceptance'))
+import test_resources as resources
 
 spec = importlib.util.spec_from_file_location('attention', Path(__file__).with_name('attention.py'))
 attention = importlib.util.module_from_spec(spec)
@@ -17,7 +20,7 @@ spec.loader.exec_module(attention)
 
 class AttentionTest(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
+        self.tmp = resources.temporary_directory()
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
         self.profiles = self.root / 'profiles.json'

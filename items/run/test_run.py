@@ -8,12 +8,13 @@ import shutil
 import signal
 import subprocess
 import sys
-import tempfile
 import time
 import unittest
 
-
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/acceptance'))
+import test_resources as resources
+
+
 from test_environment import isolated_environment
 
 BIN = Path(os.environ.get("TEEREX_BIN", Path(__file__).resolve().parents[2] / "zig-out/bin/teerex"))
@@ -31,14 +32,14 @@ class RunTest(unittest.TestCase):
         cls.rex = os.environ.get("REX_BIN") or shutil.which("rex")
         if not cls.rex or not BIN.is_file():
             raise RuntimeError("Build teerex and put the test Rex binary on PATH first")
-        tmp = tempfile.TemporaryDirectory(prefix="trun-", dir="/tmp")
+        tmp = resources.temporary_directory(prefix="trun-", dir="/tmp")
         cls.addClassCleanup(tmp.cleanup)
         cls.root = Path(tmp.name)
         cls.socket = cls.root / "rex.sock"
         cls.base = [cls.rex, "--autostart=false", "--server", "unix://" + str(cls.socket), "--timeout", "2s"]
         cls.log = (cls.root / "server.log").open("w")
         cls.addClassCleanup(cls.log.close)
-        cls.server = subprocess.Popen(
+        cls.server = resources.start_process(
             [cls.rex, "server", "run", "--listen", "unix://" + str(cls.socket), "--restore=false",
              "--config", "/dev/null", "--state-dir", str(cls.root / "state")],
             stdout=cls.log, stderr=cls.log,
@@ -206,7 +207,7 @@ class RunTest(unittest.TestCase):
         for sig in [signal.SIGINT, signal.SIGTERM]:
             with self.subTest(signal=sig):
                 path, argv = self.fixture("cancel" + str(sig))
-                proc = subprocess.Popen(self.command(argv), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                proc = resources.start_process(self.command(argv), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
                 try:
                     for _ in range(150):
                         if path.exists() or proc.poll() is not None:
@@ -296,7 +297,7 @@ class RunTest(unittest.TestCase):
         self.assertFalse(marker.exists())
 
     def test_fast_exits_do_not_signal_an_unrelated_process(self):
-        sentinel = subprocess.Popen([sys.executable, "-c", "import time;time.sleep(30)"])
+        sentinel = resources.start_process([sys.executable, "-c", "import time;time.sleep(30)"])
         try:
             for _ in range(20):
                 result, packet = self.invoke(["/usr/bin/true"])

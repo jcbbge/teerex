@@ -1,8 +1,11 @@
 import importlib.util
 import json
 from pathlib import Path
-import tempfile
 import unittest
+
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools/acceptance'))
+import test_resources as resources
 
 spec = importlib.util.spec_from_file_location('flight_log', Path(__file__).with_name('flight_log.py'))
 log = importlib.util.module_from_spec(spec)
@@ -10,7 +13,7 @@ spec.loader.exec_module(log)
 
 class FlightLogTests(unittest.TestCase):
     def test_evidence_merge_archive_steps_and_since(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with resources.temporary_directory() as tmp:
             root = Path(tmp) / '.local/state'
             agents = root / 'teerex-agents'
             agents.mkdir(parents=True)
@@ -48,7 +51,7 @@ class FlightLogTests(unittest.TestCase):
     def test_invalid_timestamp_and_symlink(self):
         with self.assertRaises(ValueError):
             log.timestamp('yesterday')
-        with tempfile.TemporaryDirectory() as tmp:
+        with resources.temporary_directory() as tmp:
             target = Path(tmp) / 'target'
             target.write_text('private')
             link = Path(tmp) / 'link'

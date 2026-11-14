@@ -8,7 +8,9 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
-import tempfile
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/acceptance'))
+import test_resources as resources
 
 
 def sha(data):
@@ -58,7 +60,7 @@ def main():
     parser.add_argument("--check", action="store_true")
     args = parser.parse_args()
     if args.check:
-        with tempfile.TemporaryDirectory(prefix="replay-regenerate-") as temporary:
+        with resources.temporary_directory(prefix="replay-regenerate-") as temporary:
             fresh = Path(temporary)
             generate(fresh)
             expected = {p.relative_to(fresh): p.read_bytes() for p in fresh.rglob("*") if p.is_file()}

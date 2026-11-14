@@ -14,8 +14,10 @@ from pathlib import Path
 import platform
 import subprocess
 import sys
-import tempfile
 import unittest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/acceptance'))
+import test_resources as resources
 
 
 CLI = Path(__file__).with_name("cartridges.py").resolve()
@@ -29,7 +31,7 @@ def sha(path):
 
 class Lifecycle(unittest.TestCase):
     def setUp(self):
-        temporary = tempfile.TemporaryDirectory(prefix="teerex-cartridges-test-")
+        temporary = resources.temporary_directory(prefix="teerex-cartridges-test-")
         self.addCleanup(temporary.cleanup)
         self.home = Path(temporary.name).resolve()
         self.root = self.home / "space in path" / "cartridges"
@@ -40,7 +42,7 @@ class Lifecycle(unittest.TestCase):
         # which is unrelated to the manager and breaks exact read-only controls.
         # Call logging is expected even for read-only commands; keep it outside
         # the exact HOME snapshot, independently of the caller's environment.
-        logs = tempfile.TemporaryDirectory(prefix="teerex-cartridges-call-log-")
+        logs = resources.temporary_directory(prefix="teerex-cartridges-call-log-")
         self.addCleanup(logs.cleanup)
         self.env = dict(os.environ, HOME=str(self.home), PYTHONDONTWRITEBYTECODE="1",
                         TEEREX_CALL_LOG_DIR=logs.name)
@@ -269,7 +271,7 @@ class Lifecycle(unittest.TestCase):
         self.package("other")
         self.install("agent", "other")
         command = PREFIX + ["--root", str(self.root), "run", "agent"]
-        process = subprocess.Popen(command, env=self.env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        process = resources.start_process(command, env=self.env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         try:
             self.assertEqual(process.stdout.readline(), "ready\n")
             self.assertEqual(process.stdout.readline().strip(), str(self.root / "data/agent"))
@@ -541,7 +543,7 @@ exec(compile(source, sys.argv[0], "exec"), {"__name__": "__main__"})
         command = prefix + ["--root", str(self.root), "install", "alpha", "--catalog", str(self.catalog), "--apply"]
         env = dict(self.env, PATH=str(self.home) + os.pathsep + self.env.get("PATH", ""))
         # A background job may inherit SIGINT as ignored; the contract is about default disposition.
-        process = subprocess.Popen(command, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        process = resources.start_process(command, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                                    preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_DFL))
         try:
             with selectors.DefaultSelector() as ready:
@@ -591,7 +593,7 @@ exec(compile(source, sys.argv[0], "exec"), {"__name__": "__main__"})
         run = subprocess.run(PREFIX + ["run", "alpha"], env=env, capture_output=True, text=True)
         self.assertEqual(run.returncode, 1)
         self.assertIn("cartridge root does not exist", run.stderr)
-        process = subprocess.Popen([str(self.root / "packages/alpha/1.0.0/launch")], env=self.env,
+        process = resources.start_process([str(self.root / "packages/alpha/1.0.0/launch")], env=self.env,
                                    stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         try:
             self.assertEqual(process.stdout.readline(), "ready\n")

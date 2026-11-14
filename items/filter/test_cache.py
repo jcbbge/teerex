@@ -7,16 +7,19 @@ import os
 from pathlib import Path
 import stat
 import subprocess
-import tempfile
 import time
 import unittest
 
 from test_filter import BIN, observation
 
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/acceptance'))
+import test_resources as resources
+
 
 class CacheTest(unittest.TestCase):
     def setUp(self):
-        temporary = tempfile.TemporaryDirectory(prefix="tx-cache-")
+        temporary = resources.temporary_directory(prefix="tx-cache-")
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
         self.directory = self.root / "cache"

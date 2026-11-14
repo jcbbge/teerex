@@ -13,11 +13,12 @@ import shutil
 import signal
 import subprocess
 import sys
-import tempfile
 import time
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/acceptance'))
+import test_resources as resources
+
 from test_environment import isolated_environment
 import pane_authority
 
@@ -28,7 +29,7 @@ class SurfacesTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.rex = str(Path(os.environ.get("REX_BIN") or shutil.which("rex") or "MISSING_REX").resolve())
-        tmp = tempfile.TemporaryDirectory(prefix="tsurface-", dir="/tmp")
+        tmp = resources.temporary_directory(prefix="tsurface-", dir="/tmp")
         cls.addClassCleanup(tmp.cleanup)
         cls.root = Path(tmp.name)
         cls.socket = cls.root / "rex.sock"
@@ -37,7 +38,7 @@ class SurfacesTest(unittest.TestCase):
         cls.base = [cls.rex, "--autostart=false", "--server", "unix://" + str(cls.socket), "--timeout", "3s"]
         cls.log = (cls.root / "server.log").open("w")
         cls.addClassCleanup(cls.log.close)
-        cls.server = subprocess.Popen([cls.rex, "server", "run", "--listen", "unix://" + str(cls.socket),
+        cls.server = resources.start_process([cls.rex, "server", "run", "--listen", "unix://" + str(cls.socket),
                                       "--restore=false", "--config", str(cls.config), "--state-dir", str(cls.root / "state")],
                                      stdout=cls.log, stderr=cls.log)
         cls.addClassCleanup(cls.stop_server)
@@ -211,7 +212,7 @@ class SurfacesTest(unittest.TestCase):
         # Slow the child after it starts, so the second ensure overlaps the held lock.
         self.shim("import subprocess,sys,time\ntime.sleep(.2)\n"
                   + f"sys.exit(subprocess.run([{self.rex!r},*sys.argv[1:]]).returncode)\n")
-        children = [subprocess.Popen(cmd, env=self.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        children = [resources.start_process(cmd, env=self.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
                     for cmd in (first, second)]
         results = []
         for child in children:
@@ -243,7 +244,7 @@ class SurfacesTest(unittest.TestCase):
             self.assertEqual(busy["failure_reason"], "ensure_busy")
             self.assertTrue(busy["retry_safe"])
             self.assertFalse(busy["creation_attempted"])
-            child = subprocess.Popen(self.global_command("busy seat"), env=self.env,
+            child = resources.start_process(self.global_command("busy seat"), env=self.env,
                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             time.sleep(.1)
             child.terminate()
@@ -409,7 +410,7 @@ class SurfacesTest(unittest.TestCase):
 
     def test_session_close_refuses_empty_session_with_attached_client(self):
         sid = self.another_session('attached empty ' + self.work.name)
-        client = subprocess.Popen(self.base + ['do', '--session', sid, '--for', '10m', '-e',
+        client = resources.start_process(self.base + ['do', '--session', sid, '--for', '10m', '-e',
                                   "rex.on('session_changed',function() end)"],
                                   env=self.env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         def stop_client():
@@ -664,7 +665,7 @@ class SurfacesTest(unittest.TestCase):
                 except BlockingIOError:break
             os.set_blocking(writer, True)
             started = time.monotonic()
-            process = subprocess.Popen([BIN, "surfaces", "close", "--socket", str(self.socket), "--session", self.session,
+            process = resources.start_process([BIN, "surfaces", "close", "--socket", str(self.socket), "--session", self.session,
                 "--pane", self.anchor, "--timeout-ms", "1000", "--publish-receipt-file", str(file)],
                 env=self.env, stdout=writer, stderr=subprocess.PIPE)
             process.wait(timeout=6)
@@ -873,7 +874,7 @@ class SurfacesTest(unittest.TestCase):
     def test_named_host_focus_palette_targets_selected_server_without_creation(self):
         socket = self.work / "other.sock"
         log = (self.work / "other.log").open("w")
-        other = subprocess.Popen([self.rex, "server", "run", "--listen", "unix://" + str(socket),
+        other = resources.start_process([self.rex, "server", "run", "--listen", "unix://" + str(socket),
                                   "--restore=false", "--config", "/dev/null", "--state-dir", str(self.work / "other-state")],
                                  stdout=log, stderr=log)
         def stop():
@@ -1251,7 +1252,7 @@ class SurfacesTest(unittest.TestCase):
                   "signal.signal(signal.SIGTERM,signal.SIG_IGN)\ntime.sleep(60)\n")
         for sig, expected in [(None, 124), (signal.SIGINT, 130), (signal.SIGTERM, 143)]:
             ready.unlink(missing_ok=True)
-            p = subprocess.Popen(self.command("tab", extra=["--timeout-ms", "200" if sig is None else "5000"]),
+            p = resources.start_process(self.command("tab", extra=["--timeout-ms", "200" if sig is None else "5000"]),
                                  env=self.env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             if sig is not None:
                 for _ in range(100):

@@ -9,7 +9,6 @@ import queue
 import shutil
 import subprocess
 import sys
-import tempfile
 import threading
 import time
 import unittest
@@ -17,6 +16,8 @@ from unittest import mock
 from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/acceptance'))
+import test_resources as resources
+
 from test_environment import isolated_environment
 
 SOURCE=Path(__file__).with_name('feed.py')
@@ -45,7 +46,7 @@ class FeedTests(unittest.TestCase):
         return dict(id=identifier,project='fixture',title='Example',waits='ship',text='ship? Example',on='',since=since,broken=broken,broken_why='broken' if broken else '')
 
     def test_held_changed_unchanged_and_failure(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with resources.temporary_directory() as tmp:
             path=Path(tmp)/'held.json'
             packet=dict(schema=1,generated_at=1,items=[self.held_row('new',2),self.held_row('old',1,True)])
             path.write_text(json.dumps(packet))
@@ -122,7 +123,7 @@ class FeedTests(unittest.TestCase):
         self.assertIn('Held work unavailable',output.getvalue())
 
     def test_held_enter_resolves_board_host_separately_from_source(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with resources.temporary_directory() as tmp:
             config=Path(tmp)/'hosts.json'
             hosts=dict(board=dict(transport='local',socket='/board socket'),remote=dict(transport='ssh',socket='/remote'))
             config.write_text(json.dumps(dict(hosts=hosts)))
@@ -144,7 +145,7 @@ class FeedTests(unittest.TestCase):
                 run.assert_not_called()
 
     def test_native_watcher_existing_and_new_directories(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with resources.temporary_directory() as tmp:
             root=Path(tmp);w=feed.Watcher([root/'new'])
             try:
                 (root/'new').mkdir();self.assertTrue(w.wait(2))
@@ -154,7 +155,7 @@ class FeedTests(unittest.TestCase):
 
     @unittest.skipUnless(sys.platform=='linux','Linux proc fixture')
     def test_proc_deltas_and_agent_tree(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with resources.temporary_directory() as tmp:
             p=Path(tmp);(p/'net').mkdir();(p/'self').mkdir()
             (p/'stat').write_text('cpu 10 0 10 80 0 0 0 0\ncpu0 10 0 10 80 0 0 0 0\n')
             (p/'meminfo').write_text('MemTotal: 1000 kB\nMemAvailable: 400 kB\nSwapTotal: 100 kB\nSwapFree: 25 kB\n')
@@ -178,7 +179,7 @@ class FeedTests(unittest.TestCase):
         self.assertTrue(all(0<=x<=100 for x in b['cpu']))
 
     def test_registry_scratch_calls_and_removal(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with resources.temporary_directory() as tmp:
             root=Path(tmp)
             class Args:pass
             a=Args();a.host='fixture';a.rex='/not-found';a.socket=str(root/'none')
@@ -205,7 +206,7 @@ class FeedTests(unittest.TestCase):
             self.assertIn('message delivered',out.getvalue());self.assertNotIn('SECRET',out.getvalue());self.assertNotIn('DO NOT PRINT',out.getvalue())
 
     def test_supervisor_status_ids_and_legacy_classify_panes(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with resources.temporary_directory() as tmp:
             root=Path(tmp)
             a=SimpleNamespace(host='fixture',rex='/not-found',socket=str(root/'none'))
             for field in ('agents_registry','jobs_registry','scratch','calls'):
@@ -247,7 +248,7 @@ class FeedTests(unittest.TestCase):
         self.assertEqual(steps[2]['text'],'Verify')
 
     def test_contract_and_legacy_worker_rows(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with resources.temporary_directory() as tmp:
             root=Path(tmp)
             a=SimpleNamespace(host='fixture',rex='/not-found',socket=str(root/'none'))
             for field in ('agents_registry','jobs_registry','scratch','calls'):
@@ -278,7 +279,7 @@ class FeedTests(unittest.TestCase):
                 self.assertEqual(state.rows[block]['starter'],'')
 
     def test_profile_process_changes_and_unclassified_rescan(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with resources.temporary_directory() as tmp:
             root=Path(tmp);profiles=root/'profiles.json'
             profiles.write_text(json.dumps(dict(profiles=dict(example=dict(argv=['/example/runner'])))))
             a=SimpleNamespace(host='fixture',profiles=profiles)
@@ -314,7 +315,7 @@ class FeedTests(unittest.TestCase):
         self.assertEqual(state.status['b'],'blocked');self.assertEqual(state.questions['b'],'Which option?');self.assertIn('title changed',out.getvalue())
 
     def test_unreachable_host_is_event(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with resources.temporary_directory() as tmp:
             fake=Path(tmp)/'exec';fake.write_text('#!/bin/sh\nexit 1\n');fake.chmod(0o700)
             class Args:pass
             a=Args();a.once=False;a.executable=str(fake);a.config=str(Path(tmp)/'config');a.hosts='absent'
@@ -324,10 +325,10 @@ class FeedTests(unittest.TestCase):
 
     @unittest.skipUnless(REX,'explicit Rex executable required')
     def test_disposable_rex_push_and_filesystem_changes(self):
-        with tempfile.TemporaryDirectory(prefix='boardfeed-',dir='/tmp') as tmp:
+        with resources.temporary_directory(prefix='boardfeed-',dir='/tmp') as tmp:
             root=Path(tmp);socket=root/'rex.sock';endpoint='unix://'+str(socket)
             log=open(root/'rex.log','w')
-            server=subprocess.Popen([REX,'server','run','--listen',endpoint,'--restore=false','--config','/dev/null','--state-dir',str(root/'state')],stdout=log,stderr=log)
+            server=resources.start_process([REX,'server','run','--listen',endpoint,'--restore=false','--config','/dev/null','--state-dir',str(root/'state')],stdout=log,stderr=log)
             process=None
             try:
                 for _ in range(100):
@@ -337,7 +338,7 @@ class FeedTests(unittest.TestCase):
                 command=([os.environ['TEEREX_BIN'],'board','feed'] if os.environ.get('TEEREX_BIN') else [sys.executable,str(SOURCE),'/not-used'])+['--local','--host-name','fixture','--socket',str(socket),'--rex',REX]
                 for flag in ('agents-registry','jobs-registry','scratch','calls'):
                     (root/flag).mkdir();command+=['--'+flag,str(root/flag)]
-                process=subprocess.Popen(command,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,env=dict(isolated_environment(),HOME=tmp))
+                process=resources.start_process(command,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,env=dict(isolated_environment(),HOME=tmp))
                 events=queue.Queue()
                 threading.Thread(target=lambda:[events.put(json.loads(line)) for line in process.stdout],daemon=True).start()
                 def wait_for(predicate):
@@ -425,7 +426,7 @@ class FeedTests(unittest.TestCase):
                 if os.environ.get('TEEREX_BIN'):
                     config=root/'hosts.json'
                     config.write_text(json.dumps(dict(schema_version=1,hosts=dict(hive=dict(host_id='hive',platform='linux-x86_64' if sys.platform=='linux' else 'macos-arm64',transport='local',home=tmp,socket=str(socket),rex=REX,teerex=os.environ['TEEREX_BIN'],store=str(root/'store'))))))
-                    merged=subprocess.Popen([os.environ['TEEREX_BIN'],'board','feed','--config',str(config),'--hosts','hive,absent'],stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,env=dict(isolated_environment(),HOME=tmp))
+                    merged=resources.start_process([os.environ['TEEREX_BIN'],'board','feed','--config',str(config),'--hosts','hive,absent'],stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,env=dict(isolated_environment(),HOME=tmp))
                     try:
                         received=queue.Queue()
                         threading.Thread(target=lambda:[received.put(json.loads(line)) for line in merged.stdout],daemon=True).start()

@@ -10,6 +10,9 @@ import sys
 import time
 import unittest
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/acceptance'))
+import test_resources as resources
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "send"))
 import test_send as fixtures
 
@@ -83,7 +86,7 @@ class ClutchTest(fixtures.SendTest):
     def test_release_unblocks_waiting_sender_without_retry(self):
         target, raw = self.fixture()
         self.clutch("take", target)
-        process = subprocess.Popen(self.command(target) + ["--no-queue", "--draft-wait-ms", "3000"], env=self.env,
+        process = resources.start_process(self.command(target) + ["--no-queue", "--draft-wait-ms", "3000"], env=self.env,
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         self.addCleanup(lambda: self.cleanup_process(process))
         time.sleep(.3)
@@ -100,7 +103,7 @@ class ClutchTest(fixtures.SendTest):
         target, log = self.prompt()
         draft = "operator unfinished β"
         self.type_draft(target, draft)
-        process = subprocess.Popen(self.command(target) + ["--no-queue", "--draft-wait-ms", "600"], env=self.env,
+        process = resources.start_process(self.command(target) + ["--no-queue", "--draft-wait-ms", "600"], env=self.env,
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         self.addCleanup(lambda: self.cleanup_process(process))
         time.sleep(.2)
@@ -193,7 +196,7 @@ class ClutchTest(fixtures.SendTest):
         self.type_draft(target, "keep this draft")
         result, saved = self.clutch("release", target)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        process = subprocess.Popen(self.command(target) + ["--draft-wait-ms", "500"], env=self.env,
+        process = resources.start_process(self.command(target) + ["--draft-wait-ms", "500"], env=self.env,
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         self.addCleanup(lambda: self.cleanup_process(process))
         time.sleep(.2)

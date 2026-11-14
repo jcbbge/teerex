@@ -4,9 +4,12 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
-import tempfile
 import time
 import unittest
+
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools/acceptance'))
+import test_resources as resources
 
 BIN = str(Path(os.environ.get("TEEREX_BIN", Path(__file__).resolve().parents[1] / "zig-out/bin/teerex")).resolve())
 
@@ -14,7 +17,7 @@ BIN = str(Path(os.environ.get("TEEREX_BIN", Path(__file__).resolve().parents[1] 
 class TourTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.temp = tempfile.TemporaryDirectory(prefix="tour-test-", dir="/tmp")
+        cls.temp = resources.temporary_directory(prefix="tour-test-", dir="/tmp")
         cls.addClassCleanup(cls.temp.cleanup)
         cls.root = Path(cls.temp.name)
         cls.socket = str(cls.root / "rex.sock")
@@ -23,7 +26,7 @@ class TourTest(unittest.TestCase):
         cls.rex = os.environ.get("REX_BIN") or shutil.which("rex")
         cls.log = (cls.root / "rex.log").open("w")
         cls.addClassCleanup(cls.log.close)
-        cls.server = subprocess.Popen([cls.rex, "server", "run", "--listen", "unix://" + cls.socket,
+        cls.server = resources.start_process([cls.rex, "server", "run", "--listen", "unix://" + cls.socket,
                                       "--restore=false", "--config", str(config),
                                       "--state-dir", str(cls.root / "state")], stdout=cls.log, stderr=cls.log)
         cls.addClassCleanup(cls.stop)

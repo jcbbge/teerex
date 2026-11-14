@@ -22,8 +22,10 @@ from pathlib import Path
 import shlex
 import subprocess
 import sys
-import tempfile
 import unittest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/acceptance'))
+import test_resources as resources
 
 
 HERE = Path(__file__).resolve().parent
@@ -38,7 +40,7 @@ class ManagedRuntime(unittest.TestCase):
         self.factory.setUp()
         self.addCleanup(self.factory.doCleanups)
         self.home, self.root = self.factory.home, self.factory.root
-        logs = tempfile.TemporaryDirectory(prefix='managed-call-log-'); self.addCleanup(logs.cleanup)
+        logs = resources.temporary_directory(prefix='managed-call-log-'); self.addCleanup(logs.cleanup)
         self.env = dict(self.factory.env, TEEREX_CALL_LOG_DIR=logs.name, TEEREX_CLUTCH_DIR=str(self.home / 'clutch'))
         self.command = [str(self.binary), 'cartridges', '--root', str(self.root)]
         receipt = self.call('install', '--all', '--catalog', str(self.native_catalog), '--allow-experimental', '--apply')
@@ -61,7 +63,7 @@ class ManagedRuntime(unittest.TestCase):
 
     def run_payload(self, key, args, managed=True):
         argv = self.command + ['run', key, '--', *args] if managed else [str(Path(self.packages[key]['code']) / ('teerex-' + key)), *args]
-        p = subprocess.Popen(argv, env=self.env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        p = resources.start_process(argv, env=self.env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         self.processes.append(p)
         return p
 
@@ -137,12 +139,12 @@ class ManagedRuntime(unittest.TestCase):
     def test_M2_real_managed_watch(self):
         if not self.rex:
             self.skipTest('real watch requires --with-rex and REX_BIN; native filter lease still tested')
-        fixture = tempfile.TemporaryDirectory(prefix='managed-watch-'); self.addCleanup(fixture.cleanup)
+        fixture = resources.temporary_directory(prefix='managed-watch-'); self.addCleanup(fixture.cleanup)
         fixture_root = Path(fixture.name).resolve()
         socket = fixture_root / 'rex.sock'
         base = [self.rex, '--autostart=false', '--server', 'unix://' + str(socket), '--timeout', '3s']
         log = (fixture_root / 'server.log').open('wb'); self.addCleanup(log.close)
-        server = subprocess.Popen([self.rex, 'server', 'run', '--listen', 'unix://' + str(socket), '--restore=false', '--config', '/dev/null', '--state-dir', str(fixture_root / 'rex-state')], stdout=log, stderr=log, env=self.env)
+        server = resources.start_process([self.rex, 'server', 'run', '--listen', 'unix://' + str(socket), '--restore=false', '--config', '/dev/null', '--state-dir', str(fixture_root / 'rex-state')], stdout=log, stderr=log, env=self.env)
         self.addCleanup(lambda: (server.terminate(), server.wait(timeout=10)))
         for _ in range(200):
             if socket.exists(): break
@@ -242,7 +244,7 @@ def main():
     args = parser.parse_args()
     if args.managed_runtime:
         return managed_runtime(args)
-    with tempfile.TemporaryDirectory(prefix="teerex-real-cartridges-") as temporary:
+    with resources.temporary_directory(prefix="teerex-real-cartridges-") as temporary:
         home = Path(temporary).resolve()
         root = home / "cartridges"
         env = dict(os.environ, HOME=str(home))

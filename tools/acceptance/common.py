@@ -10,8 +10,10 @@ import signal
 import stat
 import subprocess
 import sys
-import tempfile
 import time
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/acceptance'))
+import test_resources as resources
 
 ROOT = Path(__file__).resolve().parents[2]
 EXCLUDED = ["rex_server", "gui", "neighbour_panes", "whole_machine_energy"]
@@ -33,7 +35,7 @@ def save(path, value, mode=0o600):
 def execute(argv, env=None, timeout=30, cancel=None):
     """wait4 gives this waited child's high-water RSS, not a cumulative RSS delta."""
     start = time.monotonic_ns()
-    process = subprocess.Popen(list(map(str, argv)), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
+    process = resources.start_process(list(map(str, argv)), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
     streams = [bytearray(), bytearray()]
     stop_sent = False
     killed = False
@@ -92,7 +94,7 @@ class Server:
         self.base = [self.rex, "--autostart=false", "--server", "unix://" + str(self.socket), "--timeout", "3s"]
         self.log = (self.root / "server.log").open("wb")
         os.chmod(self.root / "server.log", 0o600)
-        self.process = subprocess.Popen([self.rex, "server", "run", "--listen", "unix://" + str(self.socket), "--restore=false", "--config", "/dev/null", "--state-dir", str(self.root / "state")], env=self.env, stdout=self.log, stderr=self.log)
+        self.process = resources.start_process([self.rex, "server", "run", "--listen", "unix://" + str(self.socket), "--restore=false", "--config", "/dev/null", "--state-dir", str(self.root / "state")], env=self.env, stdout=self.log, stderr=self.log)
         try:
             end = time.monotonic() + 5
             while not self.socket.exists():

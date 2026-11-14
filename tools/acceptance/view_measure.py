@@ -15,8 +15,10 @@ import resource
 import statistics
 import subprocess
 import sys
-import tempfile
 import time
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/acceptance'))
+import test_resources as resources
 
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURE = Path(__file__).with_name('fixtures') / 'progress_fixture.py'
@@ -46,7 +48,7 @@ def execute(argv, stats, rex_launches=0, timeout=25):
 
 def task(args):
     rex, binary, socket, directory, arm, event, iteration, delay, duration = args
-    with tempfile.TemporaryDirectory(prefix='view-arm-', dir=directory) as temp:
+    with resources.temporary_directory(prefix='view-arm-', dir=directory) as temp:
         root = Path(temp)
         marker = root / 'event.json'
         base = [rex, '--autostart=false', '--server', 'unix://' + socket, '--timeout', '3s']
@@ -168,12 +170,12 @@ def main():
     binary_sha256 = hashlib.sha256(Path(a.teerex).read_bytes()).hexdigest()
     driver_sha256 = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
     (out / 'runs.jsonl').write_text('')
-    with tempfile.TemporaryDirectory(prefix='teerex-view-', dir='/tmp') as temp:
+    with resources.temporary_directory(prefix='teerex-view-', dir='/tmp') as temp:
         root = Path(temp)
         socket = str(root / 'rex.sock')
         endpoint = 'unix://' + socket
         with (root / 'server.log').open('wb') as log:
-            server = subprocess.Popen([a.rex, 'server', 'run', '--listen', endpoint, '--restore=false', '--config', '/dev/null', '--state-dir', str(root / 'state')], stdout=log, stderr=log)
+            server = resources.start_process([a.rex, 'server', 'run', '--listen', endpoint, '--restore=false', '--config', '/dev/null', '--state-dir', str(root / 'state')], stdout=log, stderr=log)
             try:
                 for _ in range(200):
                     if server.poll() is not None:

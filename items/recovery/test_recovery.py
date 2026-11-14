@@ -9,11 +9,12 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
-import tempfile
 import time
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/acceptance'))
+import test_resources as resources
+
 from test_environment import isolated_environment
 
 BIN = str(Path(os.environ.get("TEEREX_BIN", "zig-out/bin/teerex")).resolve())
@@ -25,7 +26,7 @@ class RecoveryTest(unittest.TestCase):
         self.rex = os.environ.get("REX_BIN") or shutil.which("rex")
         if not self.rex:
             raise RuntimeError("Select disposable test Rex with REX_BIN")
-        self.tmp = tempfile.TemporaryDirectory(prefix="trec-", dir="/tmp")
+        self.tmp = resources.temporary_directory(prefix="trec-", dir="/tmp")
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
         self.store = self.root / "snapshot"
@@ -45,7 +46,7 @@ class RecoveryTest(unittest.TestCase):
         print("Recovery real Rex:", json.dumps(self.version), flush=True)
 
     def start(self):
-        self.server = subprocess.Popen([self.rex, "server", "run", "--listen", "unix://" + str(self.socket),
+        self.server = resources.start_process([self.rex, "server", "run", "--listen", "unix://" + str(self.socket),
                                         "--restore=false", "--config", "/dev/null", "--state-dir", str(self.root / "state")],
                                        stdout=self.log, stderr=self.log, env=self.env)
         for _ in range(100):

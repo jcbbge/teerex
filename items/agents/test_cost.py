@@ -4,9 +4,11 @@ import os
 import sys
 import time
 from pathlib import Path
-import tempfile
 import unittest
 from unittest.mock import patch
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/acceptance'))
+import test_resources as resources
 
 NS = {'__name__': 'cost_test'}
 ROOT = Path(__file__).resolve().parents[2]
@@ -16,7 +18,7 @@ for source in ('items/agents/cost.py', 'src/scoped_channel.py', 'items/agents/ag
 
 class CostTests(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
+        self.tmp = resources.temporary_directory()
         self.addCleanup(self.tmp.cleanup)
         self.path = Path(self.tmp.name) / 'transcript.jsonl'
 

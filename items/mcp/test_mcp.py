@@ -8,12 +8,13 @@ import shutil
 import signal
 import subprocess
 import sys
-import tempfile
 import threading
 import time
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/acceptance'))
+import test_resources as resources
+
 from test_environment import isolated_environment
 HERE = Path(__file__).resolve().parent
 BIN = Path(os.environ.get("TEEREX_BIN", HERE.parents[1] / "zig-out/bin/teerex")).resolve()
@@ -24,7 +25,7 @@ spec.loader.exec_module(server)
 
 class Client:
     def __init__(self, env):
-        self.process = subprocess.Popen([str(BIN), "mcp"], env=env, stdin=subprocess.PIPE,
+        self.process = resources.start_process([str(BIN), "mcp"], env=env, stdin=subprocess.PIPE,
                                         stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         self.buffer = bytearray()
         self.identity = 0
@@ -80,7 +81,7 @@ class Client:
 
 class ProtocolTest(unittest.TestCase):
     def setUp(self):
-        temporary = tempfile.TemporaryDirectory(prefix="teerex-mcp-")
+        temporary = resources.temporary_directory(prefix="teerex-mcp-")
         self.addCleanup(temporary.cleanup)
         self.home = Path(temporary.name).resolve()
         self.env = dict(isolated_environment(), HOME=str(self.home), REX_SERVER="", REX_SESSION="",
@@ -246,13 +247,13 @@ class RexTest(unittest.TestCase):
         cls.rex = os.environ.get("REX_BIN") or shutil.which("rex")
         if not cls.rex:
             raise RuntimeError("Select explicit disposable-test REX_BIN")
-        temporary = tempfile.TemporaryDirectory(prefix="tmcp-", dir="/tmp")
+        temporary = resources.temporary_directory(prefix="tmcp-", dir="/tmp")
         cls.addClassCleanup(temporary.cleanup)
         cls.root = Path(temporary.name).resolve()
         cls.socket = cls.root / "rex.sock"
         cls.log = (cls.root / "server.log").open("w")
         cls.addClassCleanup(cls.log.close)
-        cls.server = subprocess.Popen([cls.rex, "server", "run", "--listen", "unix://" + str(cls.socket),
+        cls.server = resources.start_process([cls.rex, "server", "run", "--listen", "unix://" + str(cls.socket),
                                        "--restore=false", "--config", "/dev/null", "--state-dir", str(cls.root / "state")], stdout=cls.log, stderr=cls.log)
         cls.addClassCleanup(cls.stop_server)
         deadline = time.monotonic() + 5
@@ -280,7 +281,6 @@ class RexTest(unittest.TestCase):
         self.env = dict(isolated_environment(), HOME=str(home), REX_SERVER="unix://" + str(self.socket), REX_SESSION=self.session,
                         PATH=str(Path(self.rex).parent) + os.pathsep + os.environ.get("PATH", ""),
                         TEEREX_INTERNAL_REX=self.rex, TEEREX_CALL_LOG_DIR=str(home / "calls"), TEEREX_CLUTCH_DIR=str(home / "clutch"), XDG_STATE_HOME=str(home / "state"))
-        sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/acceptance'))
         import pane_authority
         pane_authority.caller(self, lambda method, args: json.loads(subprocess.check_output(self.base + ['api', 'call', method, json.dumps(args)])), self.env, home, session_id=self.session)
         self.client = Client(self.env)

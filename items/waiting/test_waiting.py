@@ -7,11 +7,12 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
-import tempfile
 import time
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/acceptance'))
+import test_resources as resources
+
 from test_environment import isolated_environment
 import pane_authority
 
@@ -21,7 +22,7 @@ REX = os.environ.get('REX_BIN') or shutil.which('rex')
 
 class WaitingTest(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(prefix='twait-', dir='/tmp')
+        self.temp = resources.temporary_directory(prefix='twait-', dir='/tmp')
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         self.hosts = {}
@@ -29,7 +30,7 @@ class WaitingTest(unittest.TestCase):
             socket = self.root / (name + '.sock')
             log = (self.root / (name + '.log')).open('w')
             self.addCleanup(log.close)
-            process = subprocess.Popen([REX, 'server', 'run', '--listen', 'unix://' + str(socket),
+            process = resources.start_process([REX, 'server', 'run', '--listen', 'unix://' + str(socket),
                 '--restore=false', '--config', '/dev/null', '--state-dir', str(self.root / name)], stdout=log, stderr=log)
             def stop(p=process):
                 p.terminate()

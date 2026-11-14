@@ -13,9 +13,11 @@ import shutil
 import signal
 import subprocess
 import sys
-import tempfile
 import time
 import unittest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/acceptance'))
+import test_resources as resources
 
 BIN = str(Path(os.environ.get("TEEREX_BIN", "zig-out/bin/teerex")).resolve())
 ROOT = Path(__file__).resolve().parents[2]
@@ -41,7 +43,7 @@ def prepared_decision():
 
 class BoardsTest(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory(prefix="tboards-", dir="/tmp")
+        self.tmp = resources.temporary_directory(prefix="tboards-", dir="/tmp")
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
         self.store = self.root / "store"
@@ -479,7 +481,7 @@ Recommendation: Leave and notify owner; it is not ours to remove.""")
     def test_registered_stdin_deadline_and_signals_never_save_partial_bytes(self):
         self.register()
         command = self.argv("try-route", **{"from": "worker", "message_file": "-", "timeout_ms": 150})
-        p = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        p = resources.start_process(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         p.stdin.write("partial bytes with no EOF")
         p.stdin.flush()
         self.assertEqual(p.wait(timeout=3), 124)
@@ -492,7 +494,7 @@ Recommendation: Leave and notify owner; it is not ours to remove.""")
             command[-1] = "10000"
             reader, writer = os.pipe()
             with os.fdopen(reader, "rb") as source, os.fdopen(writer, "wb") as producer:
-                with subprocess.Popen(command, stdin=source, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) as p:
+                with resources.start_process(command, stdin=source, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) as p:
                     producer.write(b"cancel before EOF")
                     producer.flush()
                     # Consumption proves the helper reached its guarded stdin loop;
@@ -562,7 +564,7 @@ else:
 
 class CallsTest(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory(prefix="tcalls-")
+        self.tmp = resources.temporary_directory(prefix="tcalls-")
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
         self.log = self.root / "calls"
@@ -667,7 +669,7 @@ class CallsTest(unittest.TestCase):
 
     def test_exec_pid_preserved_and_foreign_exit_remains_unknown(self):
         command = self.foreign_target("import os,json\nprint(json.dumps(dict(pid=os.getpid())),flush=True)\nraise SystemExit(23)\n")
-        proc = subprocess.Popen([BIN, *command], env=self.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        proc = resources.start_process([BIN, *command], env=self.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         output, error = proc.communicate(timeout=10)
         self.assertEqual(proc.returncode, 23, error)
         self.assertEqual(json.loads(output)["pid"], proc.pid)
@@ -680,7 +682,7 @@ class CallsTest(unittest.TestCase):
 
     def test_signal_passthrough_keeps_foreign_pid_output_and_exit(self):
         command = self.foreign_target("import os,signal,json\nsignal.signal(signal.SIGTERM,lambda *_:exit(23))\nprint(json.dumps(dict(pid=os.getpid())),flush=True)\nsignal.pause()\n")
-        proc = subprocess.Popen([BIN, *command], env=self.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        proc = resources.start_process([BIN, *command], env=self.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         try:
             ready = proc.stdout.readline()
             self.assertEqual(json.loads(ready)["pid"], proc.pid)
@@ -821,7 +823,7 @@ class RexBoardsTest(unittest.TestCase):
         cls.rex = os.environ.get("REX_BIN") or shutil.which("rex")
         if not cls.rex:
             raise unittest.SkipTest("REX_BIN required for disposable live tests")
-        cls.tmp = tempfile.TemporaryDirectory(prefix="tboards-live-", dir="/tmp")
+        cls.tmp = resources.temporary_directory(prefix="tboards-live-", dir="/tmp")
         cls.addClassCleanup(cls.tmp.cleanup)
         cls.root = Path(cls.tmp.name)
         cls.socket = cls.root / "rex.sock"
@@ -832,7 +834,7 @@ class RexBoardsTest(unittest.TestCase):
         leaf.chmod(0o700)
         cls.log = (cls.root / "server.log").open("w")
         cls.addClassCleanup(cls.log.close)
-        cls.server = subprocess.Popen([cls.rex, "server", "run", "--listen", "unix://" + str(cls.socket),
+        cls.server = resources.start_process([cls.rex, "server", "run", "--listen", "unix://" + str(cls.socket),
                                        "--restore=false", "--config", "/dev/null", "--state-dir", str(cls.root / "rex-state")],
                                       stdout=cls.log, stderr=cls.log,
                                       env=dict(isolated_environment(), TEEREX_CLUTCH_DIR=str(cls.root / "server-clutch"), PATH=str(cls.bin) + os.pathsep + os.environ["PATH"]))
@@ -1292,7 +1294,7 @@ class RexBoardsTest(unittest.TestCase):
         master, slave = pty.openpty()
         fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 30, width, 0, 0))
         before = termios.tcgetattr(slave)
-        process = subprocess.Popen(args, env=env, stdin=slave, stdout=slave, stderr=slave)
+        process = resources.start_process(args, env=env, stdin=slave, stdout=slave, stderr=slave)
         output = bytearray()
         def stop():
             if process.poll() is None:
@@ -1635,7 +1637,7 @@ class RexBoardsTest(unittest.TestCase):
         self.assertEqual(json.loads(failed.stdout)["sources"][0]["outcome"], "unknown")
 
     def test_real_terminal_enumeration_reports_and_offline_host_stay_unknown(self):
-        tmp = tempfile.TemporaryDirectory(dir=self.root)
+        tmp = resources.temporary_directory(dir=self.root)
         self.addCleanup(tmp.cleanup)
         root = Path(tmp.name)
         store = root / "store"
@@ -1676,7 +1678,7 @@ class RexBoardsTest(unittest.TestCase):
             self.assertEqual(p["sources"][0]["outcome"], "unknown")
         after = subprocess.check_output(self.base + ["api", "call", "session.view", json.dumps(dict(session_id=sid))])
         self.assertEqual(view, after)
-        # Registering/appending to a real seat does not deliver terminal events or alter its structural view.
+        # Registration preserves the view; try-route delivers once to the raw fixture.
         subprocess.run([BIN, "boards", "seat", "register"] + common + ["--owner", "operator"], check=True, capture_output=True)
         message = root / "message"
         message.write_text("operator draft must stay untouched")
@@ -1685,7 +1687,7 @@ class RexBoardsTest(unittest.TestCase):
         capture = json.loads(subprocess.check_output(self.base + ["block", "call", "-s", sid, "-b", bid, "format", '{"format":"text"}']))
         self.assertIn("OPERATOR DRAFT: keep my words", capture["content"])
         self.assertNotIn("operator draft must", capture["content"])
-        self.assertEqual(received.read_bytes(), b"")
+        self.assertEqual(received.read_bytes(), b"FROM worker: operator draft must stay untouched\r")
         # Real visible foreground board refreshes after append and resolution; no daemon/TTY emulation.
         viewer = json.loads(subprocess.check_output(self.base + ["new", "--json", "--keep-open", "--shell=none", "--",
                             BIN, "boards", "inbox"] + common + ["--interval-ms", "500"]))

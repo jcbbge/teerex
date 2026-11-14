@@ -7,10 +7,12 @@ import shutil
 import statistics
 import subprocess
 import sys
-import tempfile
 import time
 
 from common import ROOT, Server, execute, save, sha
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/acceptance'))
+import test_resources as resources
 
 
 def run(args):
@@ -38,16 +40,19 @@ def run(args):
     def close(block, receipt_path):
         result = command("surfaces", "close", "--socket", socket, "--session", session, "--pane", block)
         save(receipt_path, result)
+        if result.get('block_absence_verified') is True:
+            resources.forget_pane(block)
         return result.get("outcome") == "closed_and_absent" and result.get("block_absence_verified") is True
     sink = None
     try:
         sink_receipt = command("surfaces", "open", "--socket", socket, "--session", session, "--layout", "tab", "--label", "c32-inert-notification-sink", "--",
             sys.executable, "-c", "import sys,time;print('C32 inert notification sink; no commands execute',flush=True)\nwhile True:\n line=sys.stdin.readline()\n if not line:time.sleep(.1)")
         sink = sink_receipt["created"]["block_id"]
+        resources.own_pane(args.teerex, socket, session, sink)
         for profile in profiles:
             for n in range(args.agent_runs):
                 for condition in ("with-teerex", "plain-rex"):
-                    work = Path(tempfile.mkdtemp(prefix="c32-", dir=ROOT.parent))
+                    work = Path(resources.mkdtemp(prefix="c32-", dir=ROOT.parent))
                     evidence = args.out / ("%s-%s-%s" % (profile, n, condition))
                     evidence.mkdir(mode=0o700)
                     registry = work / "registry"
@@ -61,7 +66,7 @@ def run(args):
                     for tool in ("teerex", "rex", "agent-send"):
                         source = "#!" + sys.executable + "\nimport os,sys\nos.execv(" + repr(sys.executable) + ",[" + repr(sys.executable) + "," + repr(str(ROOT / "tools/acceptance/agent_shim.py")) + "," + repr(str(config_path)) + "," + repr(tool) + "]+sys.argv[1:])\n"
                         save(shim / tool, source.encode(), 0o700)
-                    with tempfile.TemporaryDirectory(prefix="c32-task-", dir="/tmp") as directory:
+                    with resources.temporary_directory(prefix="c32-task-", dir="/tmp") as directory:
                         private = Server(args.rex, Path(directory))
                         agent = None
                         try:
@@ -91,6 +96,10 @@ def run(args):
                             launched = command("agents", "launch", "--config", str(work / "profiles.json"), "--profile", profile,
                                 "--name", "c32-%s-%s-%s" % (profile, n, condition), "--brief-file", str(work / "task.md"), "--ack-timeout-ms", "60000", timeout=95)
                             agent = launched["target"]["block_id"]
+                            resources.own_pane(args.teerex, socket, session, agent)
+                            side = (launched.get("scratch_pane_receipt") or {}).get("created") or {}
+                            if side.get("block_id"):
+                                resources.own_pane(args.teerex, socket, session, side["block_id"])
                             launch_id = launched["launch_id"]
                             correct = False
                             stopped = False

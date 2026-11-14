@@ -12,10 +12,11 @@ import time
 import tty
 import subprocess
 import tarfile
-import tempfile
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools/acceptance'))
+import test_resources as resources
+
 from test_environment import isolated_environment
 
 BIN = Path(os.environ.get("TEEREX_BIN", Path(__file__).resolve().parents[1] / "zig-out/bin/teerex"))
@@ -25,7 +26,7 @@ class StableRuntimeTest(unittest.TestCase):
     """Agents launched today must call back through the managed current link, not today's versioned binary."""
     def test_managed_install_records_current_link_for_long_lived_children(self):
         import shutil
-        with tempfile.TemporaryDirectory(prefix="teerex-stable-") as root:
+        with resources.temporary_directory(prefix="teerex-stable-") as root:
             root = Path(root)
             version = root / "managed" / "versions" / "vX"
             version.mkdir(parents=True)
@@ -53,7 +54,7 @@ class StableRuntimeTest(unittest.TestCase):
 
 class TargetsTest(unittest.TestCase):
     def setUp(self):
-        temp = tempfile.TemporaryDirectory(prefix="teerex-targets-")
+        temp = resources.temporary_directory(prefix="teerex-targets-")
         self.addCleanup(temp.cleanup)
         self.root = Path(temp.name).resolve()
         self.output = self.root / "observed.json"
@@ -367,7 +368,7 @@ class TargetsTest(unittest.TestCase):
                         master, slave = pty.openpty()
                         tty.setraw(slave)
                         try:
-                            proc = subprocess.Popen(command, env=env, stdout=slave, stderr=subprocess.PIPE)
+                            proc = resources.start_process(command, env=env, stdout=slave, stderr=subprocess.PIPE)
                             # Darwin can discard unread queued PTY bytes when the
                             # last slave closes. Drain while our slave stays open.
                             output = b""
@@ -386,7 +387,7 @@ class TargetsTest(unittest.TestCase):
                             os.close(master)
                             if slave is not None: os.close(slave)
                     else:
-                        proc = subprocess.Popen(command, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                        proc = resources.start_process(command, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                         output, error = proc.communicate(timeout=5)
                         self.assertEqual(proc.returncode, 0, error)
                     actual = json.loads(observed.read_text())

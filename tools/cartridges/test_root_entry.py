@@ -9,6 +9,9 @@ import unittest
 
 from test_cartridges import CLI, Lifecycle
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/acceptance'))
+import test_resources as resources
+
 BIN = Path(os.environ.get("TEEREX_BIN", "zig-out/bin/teerex")).resolve()
 
 
@@ -48,7 +51,7 @@ class RootEntry(Lifecycle):
     def test_exec_pid_environment_exit_and_signal_passthrough(self):
         self.package("alpha", code='#!/bin/sh\nprintf "%s\\n%s\\n" "$$" "$CUSTOM_ENTRY_TEST"\nprintf "payload stderr\\n" >&2\nexit 23\n')
         self.install("alpha")
-        process = subprocess.Popen([str(BIN), "cartridges", "--root", str(self.root), "run", "alpha"],
+        process = resources.start_process([str(BIN), "cartridges", "--root", str(self.root), "run", "alpha"],
                                    env=dict(self.env, CUSTOM_ENTRY_TEST="literal ; α"), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         out, error = process.communicate(timeout=10)
         self.assertEqual(out, str(process.pid) + "\nliteral ; α\n")

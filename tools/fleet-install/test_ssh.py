@@ -15,19 +15,22 @@ import platform
 import pwd
 import socket
 import subprocess
-import tempfile
 import time
 
 import fleet_install as fleet
 import test_fleet_install
 from test_fleet_install import OLD, NEW, PLATFORM
 
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/acceptance'))
+import test_resources as resources
+
 
 @contextmanager
 def loopback_ssh():
     """Run one bounded test's real SSH endpoint; always stop it and discard its keys."""
     username = pwd.getpwuid(os.getuid()).pw_name
-    with tempfile.TemporaryDirectory(prefix="teerex-ssh-auth-") as temporary:
+    with resources.temporary_directory(prefix="teerex-ssh-auth-") as temporary:
         temporary = Path(temporary).resolve()
         key, hostkey = temporary / "client-key", temporary / "host-key"
         for path in (key, hostkey):
@@ -51,7 +54,7 @@ LogLevel ERROR
 """)
         log = temporary / "sshd.log"
         log.touch()
-        process = subprocess.Popen(["sudo", "-n", "/usr/sbin/sshd", "-D", "-f", str(config), "-E", str(log)],
+        process = resources.start_process(["sudo", "-n", "/usr/sbin/sshd", "-D", "-f", str(config), "-E", str(log)],
                                    stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
         try:
             for attempt in range(100):
@@ -85,7 +88,7 @@ def main():
     fixture = test_fleet_install.FleetContract()
     fixture.setUp()
     try:
-        with loopback_ssh() as (ssh_fields, trusted, wrong), tempfile.TemporaryDirectory(prefix=".teerex-ssh-test-", dir=home) as installation:
+        with loopback_ssh() as (ssh_fields, trusted, wrong), resources.temporary_directory(prefix=".teerex-ssh-test-", dir=home) as installation:
             installation = Path(installation).resolve()
             host = dict(name="disposable-loopback", host_id="disposable-loopback", **ssh_fields,
                         home=str(home), platform=PLATFORM, teerex=str(installation / "bin/teerex"),

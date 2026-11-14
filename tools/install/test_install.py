@@ -17,8 +17,10 @@ import struct
 import subprocess
 import sys
 import tarfile
-import tempfile
 import unittest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/acceptance'))
+import test_resources as resources
 
 
 INSTALLER = Path(__file__).with_name("teerex-install").resolve()
@@ -64,7 +66,7 @@ class Lifecycle(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         compiler = fixture_compiler()
-        cls.build_temp = tempfile.TemporaryDirectory(prefix="teerex-installer-stubs-")
+        cls.build_temp = resources.temporary_directory(prefix="teerex-installer-stubs-")
         build = Path(cls.build_temp.name)
         cls.binaries = {}
         for label, status in (("old", 0), ("new", 0), ("broken", 17)):
@@ -82,13 +84,13 @@ class Lifecycle(unittest.TestCase):
         cls.build_temp.cleanup()
 
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(prefix="teerex-installer-test-")
+        self.temp = resources.temporary_directory(prefix="teerex-installer-test-")
         self.addCleanup(self.temp.cleanup)
         self.home = Path(self.temp.name).resolve()
         self.prefix = self.home / "space in path" / "teerex"
         # Public binaries may log read-only calls; keep logs outside the HOME
         # snapshot instead of relying on CI's global call-log override.
-        logs = tempfile.TemporaryDirectory(prefix="teerex-installer-call-log-")
+        logs = resources.temporary_directory(prefix="teerex-installer-call-log-")
         self.addCleanup(logs.cleanup)
         self.env = dict(os.environ, HOME=str(self.home), TEEREX_CALL_LOG_DIR=logs.name)
         self.sentinels = {}

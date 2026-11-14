@@ -15,13 +15,14 @@ import signal
 import socket
 import subprocess
 import sys
-import tempfile
 import time
 import threading
 import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/acceptance'))
+import test_resources as resources
+
 from test_environment import isolated_environment
 import pane_authority
 
@@ -168,7 +169,7 @@ def events(path):
 
 class HelpRangesTest(unittest.TestCase):
     def test_agent_numeric_ranges_keep_help_and_errors_compact(self):
-        with tempfile.TemporaryDirectory(prefix="tagents-help-") as temporary:
+        with resources.temporary_directory(prefix="tagents-help-") as temporary:
             env = dict(isolated_environment(), TEEREX_CALL_LOG_DIR=str(Path(temporary) / "calls"))
             for operation, flag, lower, upper in [
                 ("launch", "--launch-wait-ms", 0, 60000),
@@ -197,7 +198,7 @@ class HelpRangesTest(unittest.TestCase):
 
 class TimelineTest(unittest.TestCase):
     def test_legacy_archive_filters_order_and_read_only(self):
-        with tempfile.TemporaryDirectory(prefix="tagents-timeline-") as tmp:
+        with resources.temporary_directory(prefix="tagents-timeline-") as tmp:
             root = Path(tmp)
             registry = root / "registry"
             registry.mkdir(mode=0o700)
@@ -308,7 +309,7 @@ class ContractHelpersTest(unittest.TestCase):
         self.assertNotIn("0", record["notifications"])
         # Essential live metadata has no count/size refusal, even above the compaction target.
         record = dict(purpose="x" * (self.ns["LIMIT"] + 1))
-        with tempfile.TemporaryDirectory() as tmp:
+        with resources.temporary_directory() as tmp:
             os.chmod(tmp, 0o700)
             record.update(schema_version=1, launch_id="a" * 32)
             with self.ns["Registry"](tmp) as registry:
@@ -327,7 +328,7 @@ class ContractHelpersTest(unittest.TestCase):
                 init(state, {"contract_interval_s": invalid}, "", None, None)
 
     def test_snapshot_steps_declarations_and_flag_identity(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with resources.temporary_directory() as directory:
             pad = Path(directory) / "pad.md"
             pad.write_text("# Worker\n## Now\n- [ ] Current\n## To-do\n- [ ] Later\n## Done\n- [x] Earlier\nBlocked: stuck; tried; need\n")
             state = dict(scratchpad=str(pad), contract={})
@@ -341,7 +342,7 @@ class ContractHelpersTest(unittest.TestCase):
             self.assertEqual(self.ns["contract_snapshot"](state)["declared"], "waiting")
 
     def test_zero_step_turn_after_ack_refuses_but_finished_ignores_stale_flags(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with resources.temporary_directory() as directory:
             pad = Path(directory) / "pad.md"
             pad.write_text("# Worker\nWaiting: review\nCheck: 2099-01-01T00:00:00Z\n")
             state = dict(scratchpad=str(pad), contract={}, brief_attempted=True, brief_attempt_at=1, turn_started_at=1, contract_turn_ended=True)
@@ -458,7 +459,7 @@ class ContractHelpersTest(unittest.TestCase):
         self.assertEqual(state["contract"]["awaiting_starter"]["at"], 20)
 
     def test_flag_claim_is_atomic_and_not_retried(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with resources.temporary_directory() as directory:
             root = Path(directory)
             pad = root / "pad.md"
             pad.write_text("# Worker\nBlocked: stuck; tried; need\n")
@@ -500,7 +501,7 @@ class ContractHelpersTest(unittest.TestCase):
         self.assertEqual(check["reason"], CONTRACT_REFUSAL + "; write your steps first")
 
     def test_registry_save_keeps_contract_starter_current_for_every_rebind(self):
-        with tempfile.TemporaryDirectory() as root:
+        with resources.temporary_directory() as root:
             os.chmod(root, 0o700)
             old = dict(session_id="old-session", block_id="old-pane")
             new = dict(session_id="new-session", block_id="new-pane")
@@ -641,7 +642,7 @@ class ContractHelpersTest(unittest.TestCase):
         self.assertEqual(state["contract"]["lapses"], 0)
 
     def test_seat_rebind_without_explicit_rex_preserves_path_lookup(self):
-        with tempfile.TemporaryDirectory() as root, patch.dict(os.environ):
+        with resources.temporary_directory() as root, patch.dict(os.environ):
             os.environ.pop("TEEREX_INTERNAL_REX", None)
             old = dict(host="fixture", server="unix:///tmp/rex.sock", session_id="session:" + "0" * 8 + "-0000-0000-0000-000000000000", block_id="block:" + "0" * 8 + "-0000-0000-0000-000000000000")
             new = dict(old, block_id="block:11111111-1111-1111-1111-111111111111")
@@ -697,14 +698,14 @@ class AgentsTest(unittest.TestCase):
     def setUpClass(cls):
         if not REX:
             raise RuntimeError("Select the disposable test Rex with REX_BIN")
-        cls.temp = tempfile.TemporaryDirectory(prefix="tagents-", dir="/tmp")
+        cls.temp = resources.temporary_directory(prefix="tagents-", dir="/tmp")
         cls.addClassCleanup(cls.temp.cleanup)
         cls.root = Path(cls.temp.name)
         cls.socket = cls.root / "rex.sock"
         cls.base = [REX, "--autostart=false", "--server", "unix://" + str(cls.socket), "--timeout", "3s"]
         cls.log = (cls.root / "server.log").open("w")
         cls.addClassCleanup(cls.log.close)
-        cls.server = subprocess.Popen([REX, "server", "run", "--listen", "unix://" + str(cls.socket),
+        cls.server = resources.start_process([REX, "server", "run", "--listen", "unix://" + str(cls.socket),
                                        "--restore=false", "--config", "/dev/null", "--state-dir", str(cls.root / "state")],
                                       stdout=cls.log, stderr=cls.log,
                                       env=dict(isolated_environment(), HOME=str(cls.root), TEEREX_CLUTCH_DIR=str(cls.root / "server-clutch"), PATH=str(Path(REX).parent) + os.pathsep + os.environ.get("PATH", "")))
@@ -1163,7 +1164,7 @@ with ThreadPoolExecutor() as pool:
         quiet["argv"] = [sys.executable, str(self.fixture), str(self.worker_log), "noack"]
         self.settings["profiles"]["quiet"] = quiet
         self.config.write_text(json.dumps(self.settings))
-        process = subprocess.Popen([BIN, "agents", "launch", "--config", str(self.config), "--profile", "quiet",
+        process = resources.start_process([BIN, "agents", "launch", "--config", str(self.config), "--profile", "quiet",
                                     "--ack-timeout-ms", "10000"], env=self.env,
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         try:
@@ -1595,7 +1596,7 @@ with ThreadPoolExecutor() as pool:
                                 "signal.signal(signal.SIGTERM,signal.SIG_IGN)\ntime.sleep(60)\n")
                 shim.chmod(0o755)
                 env = dict(self.env, PATH=str(directory) + os.pathsep + self.env["PATH"])
-                p = subprocess.Popen([BIN, "agents", "launch", "--config", str(self.config), "--profile", "probe"],
+                p = resources.start_process([BIN, "agents", "launch", "--config", str(self.config), "--profile", "probe"],
                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
                 client_pid = None
                 try:
@@ -2039,7 +2040,7 @@ with ThreadPoolExecutor() as pool:
             log = (self.work / ("sshd-" + str(i) + ".log")).open("w+")
             self.addCleanup(log.close)
             logs.append(log)
-            server = subprocess.Popen(["/usr/sbin/sshd", "-D", "-e", "-f", str(ssh_config)], stdout=log, stderr=log)
+            server = resources.start_process(["/usr/sbin/sshd", "-D", "-e", "-f", str(ssh_config)], stdout=log, stderr=log)
             self.addCleanup(lambda p=server: (p.terminate(), p.wait(timeout=5)) if p.poll() is None else None)
             def ready():
                 if server.poll() is not None:
@@ -2531,7 +2532,7 @@ Path('/work/network-harness').touch()
             try:
                 command = self.probe_fence(scratch) + ["--unshare-net", "--info-fd", str(info_w), "--block-fd", str(block_r),
                             "--ro-bind", str(resolver), "/run/systemd/resolve/stub-resolv.conf", "--", *probe, sys.executable, "-c", harness]
-                process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, pass_fds=(info_w, block_r))
+                process = resources.start_process(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, pass_fds=(info_w, block_r))
                 raw = b""
                 while b"}" not in raw:
                     self.assertTrue(select.select([info_r], [], [], 10)[0], "bubblewrap did not publish its child identity")
@@ -2539,7 +2540,7 @@ Path('/work/network-harness').touch()
                     self.assertTrue(part, "missing bubblewrap child identity")
                     raw += part
                 child_pid = json.loads(raw)["child-pid"]
-                slirp = subprocess.Popen(["slirp4netns", "--configure", "--disable-host-loopback", "--mtu", "65520",
+                slirp = resources.start_process(["slirp4netns", "--configure", "--disable-host-loopback", "--mtu", "65520",
                                           "--ready-fd", str(ready_w), "--exit-fd", str(exit_r), str(child_pid), "tap0"],
                                          stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, pass_fds=(ready_w, exit_r))
                 self.assertTrue(select.select([ready_r], [], [], 10)[0], "slirp did not become ready")
@@ -2737,7 +2738,7 @@ Path('/work/network-harness').touch()
         self.assertEqual(result["code"], 1)
         self.assertIn("already_attempted", result["result"]["failure_reason"])
         wait_for(lambda: len([v for v in events(self.starter_log) if v["event"] == "input"]) == 2)
-        stalled = subprocess.Popen([BIN, "agents", "channel", "--handle", str(handle_path), "--request-id", "f" * 32,
+        stalled = resources.start_process([BIN, "agents", "channel", "--handle", str(handle_path), "--request-id", "f" * 32,
                                     "--operation", "send", "--to", "starter", "--message-file", "-"],
                                    stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=self.env)
         try:
@@ -2850,7 +2851,7 @@ Path('/work/network-harness').touch()
     def test_harness_app_and_normal_title_live(self):
         event_path = self.work / "status-events.jsonl"
         with event_path.open("w") as output:
-            stream = subprocess.Popen(self.base + ["events", "--all", "--json"], stdout=output, stderr=subprocess.DEVNULL)
+            stream = resources.start_process(self.base + ["events", "--all", "--json"], stdout=output, stderr=subprocess.DEVNULL)
             self.addCleanup(stream.wait, timeout=5)
             self.addCleanup(stream.terminate)
             def stream_ready():

@@ -5,12 +5,13 @@ import os
 from pathlib import Path
 import sys
 import subprocess
-import tempfile
 import types
 import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/acceptance'))
+import test_resources as resources
+
 from test_environment import isolated_environment
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -31,7 +32,7 @@ exec(compile((ROOT / 'items/agents/agents.py').read_text(), 'agents.py', 'exec')
 
 class StopStatusTest(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
+        self.tmp = resources.temporary_directory()
         self.addCleanup(self.tmp.cleanup)
         self.env = patch.dict(os.environ, dict(isolated_environment(), TEEREX_ASK_STATE_DIR=self.tmp.name,
                               REX_SERVER='/tmp/rex.sock', REX_SESSION='session:test', REX_BLOCK='block:test'), clear=True)

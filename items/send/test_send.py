@@ -12,12 +12,13 @@ import signal
 import select
 import subprocess
 import sys
-import tempfile
 import time
 import threading
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/acceptance'))
+import test_resources as resources
+
 from test_environment import isolated_environment
 import pane_authority
 
@@ -31,7 +32,7 @@ class SendTest(unittest.TestCase):
         cls.rex = os.environ.get("REX_BIN") or shutil.which("rex")
         if not cls.rex:
             raise unittest.SkipTest("Rex executable required")
-        cls.tmp = tempfile.TemporaryDirectory(prefix="teerex-send-")
+        cls.tmp = resources.temporary_directory(prefix="teerex-send-")
         cls.addClassCleanup(cls.tmp.cleanup)
         cls.root = Path(cls.tmp.name)
         cls.socket = cls.root / "rex.sock"
@@ -41,7 +42,7 @@ class SendTest(unittest.TestCase):
         cls.config.write_text("")
         cls.log = (cls.root / "server.log").open("w")
         cls.addClassCleanup(cls.log.close)
-        cls.server = subprocess.Popen([
+        cls.server = resources.start_process([
             cls.rex, "server", "run", "--listen", cls.endpoint, "--restore=false",
             "--config", str(cls.config), "--state-dir", str(cls.root / "state"),
         ], stdout=cls.log, stderr=cls.log)
@@ -231,7 +232,9 @@ class SendTest(unittest.TestCase):
         helpers = self.work / 'helpers'
         helpers.mkdir()
         helper = helpers / 'python3'
-        helper.write_text('#!/bin/sh\nexit 44\n')
+        helper.write_text(f'#!{sys.executable}\nimport os,sys\n'
+                          f'if sys.argv[-1] in ("message", "control"): os.execv({sys.executable!r}, [{sys.executable!r}, *sys.argv[1:]])\n'
+                          'sys.exit(44)\n')
         helper.chmod(0o700)
         self.env['PATH'] = str(helpers) + os.pathsep + self.env['PATH']
         subprocess.check_call(self.base + ["block", "rename", "-s", target[0], target[1], "seat"])
@@ -624,7 +627,7 @@ class SendTest(unittest.TestCase):
             result = subprocess.run(command, input=invalid, env=self.env, capture_output=True, timeout=5)
             self.assertEqual(result.returncode, 2, result.stderr)
         for sig in (None, signal.SIGINT, signal.SIGTERM):
-            proc = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=self.env)
+            proc = resources.start_process(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=self.env)
             proc.stdin.write(b"partial, not EOF")
             proc.stdin.flush()
             if sig is not None:
@@ -741,7 +744,7 @@ class SendTest(unittest.TestCase):
             # This proves readiness without creating a clutch record as a side effect.
             command = self.command(target)
             command[command.index("--message-file") + 1] = "-"
-            proc = subprocess.Popen(command, env=self.env, stdin=subprocess.PIPE,
+            proc = resources.start_process(command, env=self.env, stdin=subprocess.PIPE,
                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             proc.stdin.write("x" * 65536)
             proc.stdin.flush()
@@ -798,7 +801,7 @@ class SendTest(unittest.TestCase):
         target, raw = self.fixture()
         fake = self.work / "fake"
         fake.mkdir()
-        self.env["PATH"] = str(fake)
+        self.env["PATH"] = str(fake) + os.pathsep + self.env["PATH"]
         prefix = (f"#!{sys.executable}\nimport json,time\n"
                   "def emit(v): print(json.dumps(v),flush=True)\n"
                   "emit({'event':'source','source':{'rex_version':'injected','platform':'test','api_revision':13}})\n"

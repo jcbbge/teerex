@@ -6,6 +6,9 @@ import subprocess
 import sys
 import time
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/acceptance'))
+import test_resources as resources
+
 
 def append(path, value):
     fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW, 0o600)
@@ -43,7 +46,7 @@ def run(config, tool, argv):
     if tool == "teerex":
         env["TEEREX_INTERNAL_REX"] = config["rex_shim"]
         env["TEEREX_REX"] = config["rex_shim"]
-    child = subprocess.Popen([real, *argv], env=env, stdout=subprocess.PIPE)
+    child = resources.start_process([real, *argv], env=env, stdout=subprocess.PIPE)
     chunks = []
     size = 0
     while True:

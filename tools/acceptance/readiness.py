@@ -14,12 +14,14 @@ import re
 import signal
 import subprocess
 import sys
-import tempfile
 import time
 import unittest
 
 from common import ROOT, Server, alive, controls, execute, observations, save, sha
 from records import ROWS, RUBRIC, contract, input_snapshot, read_json, validate, verdict
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/acceptance'))
+import test_resources as resources
 
 MANAGER = ROOT / "tools/cartridges/cartridges.py"
 
@@ -95,11 +97,11 @@ def run_one(args, payload, version, index):
     rows = {row: dict(pass_=False, detail="not_executed") for row in ROWS}
     outcomes = {}
     identity = None
-    with tempfile.TemporaryDirectory(prefix="readiness-", dir="/tmp") as directory:
+    with resources.temporary_directory(prefix="readiness-", dir="/tmp") as directory:
         root = Path(directory).resolve()
         with_server = Server(args.rex, root)
         server = with_server
-        sentinel = subprocess.Popen([sys.executable, "-c", "import time;time.sleep(900)"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        sentinel = resources.start_process([sys.executable, "-c", "import time;time.sleep(900)"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         try:
             identity = server.version
             package_root = server.home / "cartridges"
@@ -194,7 +196,7 @@ def run_one(args, payload, version, index):
                 manage("run", args.item, "--", "compare", "--before", str(new_packet), "--after", str(new_packet))
                 command = [*manager, "run", args.item, "--", "watch", "--socket", str(server.socket), "--session", session,
                            "--block", block, "--baseline", str(new_packet), "--status-state", "done", "--no-deadline"]
-                watcher = subprocess.Popen(command, env=server.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                watcher = resources.start_process(command, env=server.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                 try:
                     time.sleep(.3)
                     busy = manage("remove", args.item, "--version", version, "--deactivate", "--apply", expected=1)
@@ -235,7 +237,7 @@ def run_one(args, payload, version, index):
                     return "capture_limit_tests_passed;long_wait=once_in_invocation"
                 baseline, _ = execute(observations(installed, server, session, block, 65535), server.env)
                 save(new_packet, baseline.stdout)
-                watcher = subprocess.Popen([str(installed), "watch", "--socket", str(server.socket), "--session", session, "--block", block,
+                watcher = resources.start_process([str(installed), "watch", "--socket", str(server.socket), "--session", session, "--block", block,
                     "--baseline", str(new_packet), "--timeout-ms", "60000", "--interval-ms", "50"], env=server.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                 samples = []
                 began = time.monotonic()

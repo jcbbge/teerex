@@ -6,22 +6,24 @@ import re
 import shutil
 import subprocess
 import sys
-import tempfile
 import time
 import unittest
 
 from wire import Control, data_connect, data_resume
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/acceptance'))
+import test_resources as resources
 
 
 class WireProbe(unittest.TestCase):
     def test_echo_snapshot_resize_and_child_exit(self):
         rex = os.environ.get("REX_BIN") or shutil.which("rex")
         self.assertTrue(rex, "REX_BIN must select a test Rex")
-        with tempfile.TemporaryDirectory(prefix="replay-p0-", dir="/tmp") as directory:
+        with resources.temporary_directory(prefix="replay-p0-", dir="/tmp") as directory:
             root = Path(directory)
             path = root / "rex.sock"
             with (root / "server.log").open("w+") as log:
-                server = subprocess.Popen([rex, "server", "run", "--listen", "unix://" + str(path),
+                server = resources.start_process([rex, "server", "run", "--listen", "unix://" + str(path),
                                            "--restore=false", "--config", "/dev/null", "--state-dir", str(root / "state")], stdout=log, stderr=log)
                 try:
                     for _ in range(100):

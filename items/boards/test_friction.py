@@ -8,11 +8,12 @@ from pathlib import Path
 import re
 import subprocess
 import sys
-import tempfile
 import time
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/acceptance'))
+import test_resources as resources
+
 from test_environment import isolated_environment
 
 BIN = Path(os.environ.get('TEEREX_BIN','zig-out/bin/teerex')).resolve()
@@ -22,7 +23,7 @@ KEY = lambda n: 'k:'+f'{n:016x}'
 
 class FrictionTest(unittest.TestCase):
     def setUp(self):
-        temporary=tempfile.TemporaryDirectory(prefix='friction-',dir='/tmp')
+        temporary=resources.temporary_directory(prefix='friction-',dir='/tmp')
         self.addCleanup(temporary.cleanup)
         self.root=Path(temporary.name)
         self.log=self.root/'logs'; self.log.mkdir(mode=0o700)
@@ -338,7 +339,7 @@ class FrictionTest(unittest.TestCase):
         runtime=self.root/'python3';output=self.root/'exec.json'
         runtime.write_text(f'#!{sys.executable}\nimport json,os;from pathlib import Path\nPath({str(output)!r}).write_text(json.dumps(dict(pid=os.getpid())))\nprint("exact payload");raise SystemExit(23)\n')
         runtime.chmod(0o700)
-        proc=subprocess.Popen([str(BIN),'boards','friction','status','--log-dir',str(self.log)],env=dict(self.env,PATH=str(self.root)),stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+        proc=resources.start_process([str(BIN),'boards','friction','status','--log-dir',str(self.log)],env=dict(self.env,PATH=str(self.root)),stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
         out,err=proc.communicate(timeout=10)
         self.assertEqual((proc.returncode,out,err),(23,'exact payload\n',''))
         self.assertEqual(json.loads(output.read_text())['pid'],proc.pid)

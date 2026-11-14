@@ -11,6 +11,9 @@ import sys
 import time
 import unittest
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools/acceptance'))
+import test_resources as resources
+
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location('_surface_fixture', ROOT / 'items/surfaces/test_surfaces.py')
 _fixtures = importlib.util.module_from_spec(spec)
@@ -329,7 +332,7 @@ class GuardTest(_fixtures.SurfacesTest):
         self.assertIn(sid, [v['session_id'] for v in self.rpc('session.list', {})['sessions']])
         # Real attached CLI clients remain protected in the operator path.
         (self.store / 'state.json').write_text(json.dumps(dict(seats=[])))
-        client = subprocess.Popen(self.base + ['do', '--session', sid, '--for', '10m', '-e',
+        client = resources.start_process(self.base + ['do', '--session', sid, '--for', '10m', '-e',
                                   "rex.on('session_changed',function() end)"],
                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         try:

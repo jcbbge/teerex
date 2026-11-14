@@ -10,11 +10,12 @@ import shutil
 import signal
 import subprocess
 import sys
-import tempfile
 import time
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/acceptance'))
+import test_resources as resources
+
 from test_environment import isolated_environment
 BIN = str(Path(os.environ.get("TEEREX_BIN", Path(__file__).resolve().parents[2] / "zig-out/bin/teerex")).resolve())
 ZERO = "00000000-0000-0000-0000-000000000000"
@@ -26,14 +27,14 @@ class JobsTest(unittest.TestCase):
         cls.rex = os.environ.get("REX_BIN") or shutil.which("rex")
         if not cls.rex:
             raise RuntimeError("Select test REX_BIN")
-        tmp = tempfile.TemporaryDirectory(prefix="tjobs-", dir="/tmp")
+        tmp = resources.temporary_directory(prefix="tjobs-", dir="/tmp")
         cls.addClassCleanup(tmp.cleanup)
         cls.root = Path(tmp.name)
         cls.socket = cls.root / "rex.sock"
         cls.base = [cls.rex, "--autostart=false", "--server", "unix://" + str(cls.socket), "--timeout", "3s"]
         cls.log = (cls.root / "server.log").open("w")
         cls.addClassCleanup(cls.log.close)
-        cls.server = subprocess.Popen([cls.rex, "server", "run", "--listen", "unix://" + str(cls.socket),
+        cls.server = resources.start_process([cls.rex, "server", "run", "--listen", "unix://" + str(cls.socket),
                                        "--restore=false", "--config", "/dev/null", "--state-dir", str(cls.root / "state")],
                                       stdout=cls.log, stderr=cls.log)
         cls.addClassCleanup(cls.stop_server)
@@ -91,7 +92,6 @@ class JobsTest(unittest.TestCase):
         # These are explicit operator presentation tests of raw/native-owned panes.
         if operation == 'present':
             import sys
-            sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/acceptance'))
             import pane_authority
             r = pane_authority.operator(self.command(operation, **options), self.env, capture_output=True, text=True, timeout=20)
         else:
@@ -552,7 +552,7 @@ class JobsTest(unittest.TestCase):
                 for block in (self.anchor, other):
                     command = self.command("track", block=block, owner="operator", kind="command", purpose="concurrent track",
                                            deadline_unix_ms=int(time.time() * 1000) + 60000, cleanup="manual")
-                    processes.append(subprocess.Popen(command, env=self.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True))
+                    processes.append(resources.start_process(command, env=self.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True))
                 time.sleep(.25)
                 self.assertTrue(all(p.poll() is None for p in processes), "tracks must wait for the held lock")
             generations = set()
@@ -586,7 +586,7 @@ class JobsTest(unittest.TestCase):
             self.assertTrue(receipt["retry_safe"])
             self.assertEqual(receipt["remote_effect"], "not_attempted")
             self.assertGreaterEqual(time.monotonic() - started, 9.9)
-            process = subprocess.Popen(command, env=self.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            process = resources.start_process(command, env=self.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             try:
                 time.sleep(.15)
                 process.terminate()
@@ -693,7 +693,7 @@ class JobsTest(unittest.TestCase):
         gen = 1
         for sig, code in [(None, 124), (signal.SIGINT, 130), (signal.SIGTERM, 143), (signal.SIGKILL, -signal.SIGKILL)]:
             ready.unlink(missing_ok=True)
-            proc = subprocess.Popen(self.command("present", owner="operator α", generation=gen, reason="bounded transport lifetime", anchor=self.anchor,
+            proc = resources.start_process(self.command("present", owner="operator α", generation=gen, reason="bounded transport lifetime", anchor=self.anchor,
                                                  focus="no", timeout_ms=1000 if sig is None else 5000),
                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=self.env, start_new_session=True)
             try:

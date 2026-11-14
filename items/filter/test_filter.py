@@ -5,8 +5,11 @@ import json
 import os
 from pathlib import Path
 import subprocess
-import tempfile
 import unittest
+
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/acceptance'))
+import test_resources as resources
 
 
 BIN = Path(os.environ.get("TEEREX_BIN", Path(__file__).resolve().parents[2] / "zig-out/bin/teerex"))
@@ -39,7 +42,7 @@ def observation():
 
 class FilterTest(unittest.TestCase):
     def setUp(self):
-        temporary = tempfile.TemporaryDirectory(prefix="tx-filter-")
+        temporary = resources.temporary_directory(prefix="tx-filter-")
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
 

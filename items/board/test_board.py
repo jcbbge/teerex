@@ -14,7 +14,6 @@ import signal
 import struct
 import subprocess
 import sys
-import tempfile
 import termios
 import textwrap
 import time
@@ -22,6 +21,9 @@ import unicodedata
 import unittest
 from unittest import mock
 from types import SimpleNamespace
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/acceptance'))
+import test_resources as resources
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'tools/acceptance'))
@@ -94,7 +96,7 @@ class Pane:
         env.update(extra_env or {})
         argv = [BIN, 'board'] + (['--replay', str(fixture)] if fixture else [])
         if config: argv += ['--config', str(config)]
-        self.proc = subprocess.Popen(argv, stdin=self.slave, stdout=self.slave, stderr=self.slave, env=env)
+        self.proc = resources.start_process(argv, stdin=self.slave, stdout=self.slave, stderr=self.slave, env=env)
         self.output = b''
         self.until(lambda: b'jump' in self.output)
     def resize(self, width, height=30):
@@ -139,7 +141,7 @@ class Pane:
 
 class BoardTest(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(prefix='tboard-', dir='/tmp')
+        self.temp = resources.temporary_directory(prefix='tboard-', dir='/tmp')
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
     def pane(self, **kw):
@@ -152,7 +154,7 @@ class BoardTest(unittest.TestCase):
         rex=str(Path(os.environ.get('REX_BIN') or shutil.which('rex') or 'MISSING_REX').resolve())
         socket=self.root/'rex.sock'
         log=(self.root/'server.log').open('w');self.addCleanup(log.close)
-        server=subprocess.Popen([rex,'server','run','--listen','unix://'+str(socket),'--restore=false','--config','/dev/null','--state-dir',str(self.root/'server')],stdout=log,stderr=log)
+        server=resources.start_process([rex,'server','run','--listen','unix://'+str(socket),'--restore=false','--config','/dev/null','--state-dir',str(self.root/'server')],stdout=log,stderr=log)
         def stop():
             server.terminate();server.wait(timeout=5)
         self.addCleanup(stop)
@@ -438,7 +440,7 @@ class BoardTest(unittest.TestCase):
             root=self.root/name;root.mkdir()
             socket=root/'rex.sock'
             log=(root/'server.log').open('w');self.addCleanup(log.close)
-            proc=subprocess.Popen([rex,'server','run','--listen','unix://'+str(socket),'--restore=false','--config','/dev/null','--state-dir',str(root/'server')],stdout=log,stderr=log)
+            proc=resources.start_process([rex,'server','run','--listen','unix://'+str(socket),'--restore=false','--config','/dev/null','--state-dir',str(root/'server')],stdout=log,stderr=log)
             def stop(proc=proc):
                 proc.terminate()
                 try:proc.wait(timeout=5)

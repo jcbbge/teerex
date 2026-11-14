@@ -8,9 +8,11 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
-import tempfile
 import time
 import unittest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/acceptance'))
+import test_resources as resources
 
 sys.path.insert(0, str(Path(__file__).parent))
 from wire import Control
@@ -23,7 +25,7 @@ FAKE = str(Path(__file__).with_name("fake_tui.py").resolve())
 class Replay(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.temp = tempfile.TemporaryDirectory(prefix="replay-tests-", dir="/tmp")
+        cls.temp = resources.temporary_directory(prefix="replay-tests-", dir="/tmp")
         cls.addClassCleanup(cls.temp.cleanup)
         cls.root = Path(cls.temp.name)
         cls.sock = cls.root / "rex.sock"
@@ -32,7 +34,7 @@ class Replay(unittest.TestCase):
             raise RuntimeError("REX_BIN required")
         cls.log = (cls.root / "server.log").open("w")
         cls.addClassCleanup(cls.log.close)
-        cls.server = subprocess.Popen([cls.rex, "server", "run", "--listen", "unix://" + str(cls.sock),
+        cls.server = resources.start_process([cls.rex, "server", "run", "--listen", "unix://" + str(cls.sock),
             "--restore=false", "--config", "/dev/null", "--state-dir", str(cls.root / "state")], stdout=cls.log, stderr=cls.log)
         cls.addClassCleanup(cls.stop_server)
         for _ in range(100):
@@ -309,7 +311,7 @@ class Replay(unittest.TestCase):
         # Recorded pacing leaves an observable cancellation window.
         command = [BIN, "replay", "play", "--socket", str(self.sock), "--session", self.session,
                    "--fixture", str(fixture.resolve()), "--observations-out", str(self.path("cancel")), "--pace", "recorded"]
-        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        process = resources.start_process(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         try:
             self.control.call("session.attach", {"session_id": self.session})
             deadline = time.monotonic() + 5
@@ -343,7 +345,7 @@ class Replay(unittest.TestCase):
         (fixture / "fixture.json").write_text(json.dumps(manifest))
         command = [BIN, "replay", "play", "--socket", str(self.sock), "--session", self.session,
                    "--fixture", str(fixture), "--observations-out", str(self.path("contended")), "--pace", "recorded"]
-        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        process = resources.start_process(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         try:
             self.control.call("session.attach", {"session_id": self.session})
             deadline = time.monotonic() + 5

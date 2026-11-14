@@ -285,7 +285,7 @@ class Runner:
         self.control = None
         self.block = None
         self.stream = None
-        self.work = tempfile.TemporaryDirectory(prefix="teerex-replay-", dir="/tmp")
+        self.work = tempfile.TemporaryDirectory(prefix="teerex-replay-")
         self.root = Path(self.work.name)
         self.deadline = time.monotonic() + args.timeout_ms / 1000
         self.version = None

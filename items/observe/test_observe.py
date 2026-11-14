@@ -9,12 +9,13 @@ import shutil
 import signal
 import subprocess
 import sys
-import tempfile
 import time
 import unittest
 
-
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/acceptance'))
+import test_resources as resources
+
+
 from test_environment import isolated_environment
 
 BIN = Path(os.environ.get("TEEREX_BIN", Path(__file__).resolve().parents[2] / "zig-out/bin/teerex"))
@@ -35,7 +36,7 @@ def compare_packets(root, before, after, extra=()):
 
 class CompareTest(unittest.TestCase):
     def setUp(self):
-        tmp = tempfile.TemporaryDirectory(prefix="tc03-")
+        tmp = resources.temporary_directory(prefix="tc03-")
         self.addCleanup(tmp.cleanup)
         self.root = Path(tmp.name)
         self.before = {
@@ -370,7 +371,7 @@ class ObserveTest(unittest.TestCase):
         cls.rex = shutil.which("rex")
         if not cls.rex or not BIN.is_file():
             raise RuntimeError("Build teerex and put the test Rex binary on PATH first")
-        cls.tmp = tempfile.TemporaryDirectory(prefix="tx-", dir="/tmp")
+        cls.tmp = resources.temporary_directory(prefix="tx-", dir="/tmp")
         cls.addClassCleanup(cls.tmp.cleanup)
         cls.root = Path(cls.tmp.name)
         cls.socket = cls.root / "rex socket.sock"
@@ -378,7 +379,7 @@ class ObserveTest(unittest.TestCase):
         cls.base = [cls.rex, "--autostart=false", "--server", cls.endpoint, "--timeout", "2s"]
         cls.log = (cls.root / "server.log").open("w")
         cls.addClassCleanup(cls.log.close)
-        cls.server = subprocess.Popen(
+        cls.server = resources.start_process(
             [cls.rex, "server", "run", "--listen", cls.endpoint, "--restore=false",
              "--config", "/dev/null", "--state-dir", str(cls.root / "state")],
             stdout=cls.log, stderr=cls.log,
@@ -546,7 +547,7 @@ class ObserveTest(unittest.TestCase):
                             marker="TEEREX_WATCH_READY"), gate
 
     def triggered_watch(self, target, baseline, gate, **options):
-        process = subprocess.Popen(self.watch_command(target, baseline, **options),
+        process = resources.start_process(self.watch_command(target, baseline, **options),
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         try:
             time.sleep(.25)
@@ -1006,7 +1007,7 @@ class ObserveTest(unittest.TestCase):
                 self.assertEqual(stale.returncode, 124, stale.stderr)
                 self.assertIsNone(json.loads(stale.stdout)["matched_status_report"])
                 command = self.watch_command(target, baseline, status_state=state, status_id=record_id)
-                process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                process = resources.start_process(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
                 try:
                     time.sleep(.15)
                     first_gate.touch()
@@ -1061,7 +1062,7 @@ class ObserveTest(unittest.TestCase):
     def test_watch_no_deadline_cancellation_and_usage(self):
         baseline, _ = self.baseline(self.a)
         command = self.watch_command(self.a, baseline, timeout=None, status_state=["done", "error"])
-        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        process = resources.start_process(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         try:
             time.sleep(.3)
             self.assertIsNone(process.poll())
@@ -1168,7 +1169,7 @@ class ObserveTest(unittest.TestCase):
                            [str(BIN), "observe", "--socket", str(self.socket), "--session", self.a[0],
                             "--block", self.a[1], "--timeout-ms", str(timeout)])
                 started = time.monotonic()
-                process = subprocess.Popen(command, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                process = resources.start_process(command, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
                 try:
                     if stop is not None:
                         for _ in range(200):
@@ -1297,7 +1298,7 @@ class ObserveTest(unittest.TestCase):
                 shim.chmod(0o700)
                 env = dict(isolated_environment(), PATH=str(directory) + os.pathsep + os.environ["PATH"])
                 command = self.watch_command(self.a, baseline, timeout=6000, interval=5000 if stop else 50)
-                process = subprocess.Popen(command, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                process = resources.start_process(command, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
                 try:
                     # A long poll gap exposes handlers incorrectly scoped to one collection.
                     time.sleep(1)

@@ -4,8 +4,10 @@ import json
 from pathlib import Path
 import subprocess
 import sys
-import tempfile
 import unittest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/acceptance'))
+import test_resources as resources
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import execute
@@ -53,7 +55,7 @@ class EvidenceTest(unittest.TestCase):
             validate(dict(advertised_requirements_met=True, kind="doctor_result"))
 
     def test_agent_shim_blocks_plain_teerex_and_stubs_interruptions(self):
-        with tempfile.TemporaryDirectory() as temporary:
+        with resources.temporary_directory() as temporary:
             root = Path(temporary)
             config = root / "config.json"
             log = root / "tools.jsonl"
@@ -86,7 +88,7 @@ class EvidenceTest(unittest.TestCase):
             summarize(dict(measurements={"teerex": {"F1": {}}}, rows={}))
 
     def test_packaging_absent_malformed_ready_and_stale(self):
-        with tempfile.TemporaryDirectory() as temporary:
+        with resources.temporary_directory() as temporary:
             root = Path(temporary)
             def git(*args):
                 return subprocess.check_output(["git", *args], cwd=root, stderr=subprocess.DEVNULL, text=True).strip()

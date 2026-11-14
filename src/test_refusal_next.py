@@ -4,10 +4,11 @@ import os
 from pathlib import Path
 import subprocess
 import sys
-import tempfile
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools/acceptance'))
+import test_resources as resources
+
 from test_environment import isolated_environment
 import pane_authority
 
@@ -25,7 +26,7 @@ class RefusalNextTest(unittest.TestCase):
         self.assertNotIn('next: ', p.stderr)
 
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(prefix='teerex-refusal-next-')
+        self.temp = resources.temporary_directory(prefix='teerex-refusal-next-')
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         self.env = dict(isolated_environment(), HOME=str(self.root), REX_SESSION=SESSION, REX_BLOCK=BLOCK,

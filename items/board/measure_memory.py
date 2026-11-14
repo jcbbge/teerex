@@ -15,9 +15,12 @@ import select
 import shutil
 import struct
 import subprocess
-import tempfile
 import threading
 import time
+
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/acceptance'))
+import test_resources as resources
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -38,7 +41,7 @@ def cpu(pid):
 def measure():
     binary = os.environ.get('TEEREX_BIN', str(ROOT/'zig-out/bin/teerex'))
     rex = os.environ.get('REX_BIN') or shutil.which('rex')
-    with tempfile.TemporaryDirectory(prefix='board-memory-', dir='/tmp') as tmp:
+    with resources.temporary_directory(prefix='board-memory-', dir='/tmp') as tmp:
         root = Path(tmp)
         socket = root/'rex.sock'
         fifo = root/'events'
@@ -57,13 +60,13 @@ def measure():
                 except OSError: return
         threading.Thread(target=drain, daemon=True).start()
         try:
-            server = subprocess.Popen([rex,'server','run','--listen','unix://'+str(socket),'--restore=false','--config','/dev/null','--state-dir',str(root/'rex-state')], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            server = resources.start_process([rex,'server','run','--listen','unix://'+str(socket),'--restore=false','--config','/dev/null','--state-dir',str(root/'rex-state')], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             children.append(server)
             deadline = time.monotonic()+10
             while not socket.exists():
                 if time.monotonic()>deadline: raise RuntimeError('disposable server did not start')
                 time.sleep(.01)
-            feed = subprocess.Popen([binary,'board','feed','--local','--host-name','hive','--socket',str(socket),'--rex',rex,'--calls',str(calls)], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=env)
+            feed = resources.start_process([binary,'board','feed','--local','--host-name','hive','--socket',str(socket),'--rex',rex,'--calls',str(calls)], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=env)
             children.append(feed)
             events = queue.Queue()
             def relay():
@@ -77,7 +80,7 @@ def measure():
                             time.sleep(.002)
                             events.put(1)
             threading.Thread(target=relay, daemon=True).start()
-            board = subprocess.Popen([binary,'board','--replay',str(fifo),'--no-graphics'], stdin=slave, stdout=slave, stderr=slave, env=env)
+            board = resources.start_process([binary,'board','--replay',str(fifo),'--no-graphics'], stdin=slave, stdout=slave, stderr=slave, env=env)
             children.append(board)
             samples = []
             with open(calls/'fixture.jsonl', 'w', buffering=1) as source:

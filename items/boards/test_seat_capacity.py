@@ -1,7 +1,10 @@
 import os
 from pathlib import Path
-import tempfile
 import unittest
+
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/acceptance'))
+import test_resources as resources
 ROOT = Path(__file__).resolve().parents[2]
 
 class SeatCapacityTest(unittest.TestCase):
@@ -10,7 +13,7 @@ class SeatCapacityTest(unittest.TestCase):
         from unittest.mock import patch
         spec = importlib.util.spec_from_file_location('seat_status_capacity', ROOT / 'items/boards/seat_status.py')
         module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
-        with tempfile.TemporaryDirectory(prefix='ask-capacity-') as root, patch.dict(os.environ, TEEREX_ASK_STATE_DIR=root):
+        with resources.temporary_directory(prefix='ask-capacity-') as root, patch.dict(os.environ, TEEREX_ASK_STATE_DIR=root):
             os.chmod(root, 0o700)
             with module.ledger('/tmp/disposable-capacity.sock', True) as rows:
                 rows.extend(dict(id=str(n), expires=n, detail='x' * 1024) for n in range(513))

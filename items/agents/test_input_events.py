@@ -5,15 +5,16 @@ import io
 import os
 import sys
 from pathlib import Path
-import tempfile
 import threading
 import time
 import types
 import unittest
 from unittest.mock import patch
 
-
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/acceptance'))
+import test_resources as resources
+
+
 from test_environment import isolated_environment
 
 def module(name):
@@ -33,7 +34,7 @@ BID = 'block:00000000-0000-0000-0000-000000000002'
 
 class InputEventsTest(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory()
+        self.temp = resources.temporary_directory()
         self.addCleanup(self.temp.cleanup)
         self.env = patch.dict(os.environ, dict(isolated_environment(), HOME=self.temp.name,
                                              REX_SESSION=SID, REX_BLOCK=BID), clear=True)

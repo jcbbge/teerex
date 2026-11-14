@@ -8,6 +8,9 @@ import sys
 import time
 import unittest
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/acceptance'))
+import test_resources as resources
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "send"))
 import test_send as fixtures
 
@@ -175,7 +178,7 @@ sys.exit(p.returncode)
         target, log = self.prompt()
         self.type_draft(target, "operator unfinished")
         self.assertFalse(Path(self.env["TEEREX_CLUTCH_DIR"]).exists())
-        process = subprocess.Popen(self.command(target) + ["--draft-wait-ms", "3000"], env=self.env,
+        process = resources.start_process(self.command(target) + ["--draft-wait-ms", "3000"], env=self.env,
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         try:
             deadline = time.monotonic() + 3

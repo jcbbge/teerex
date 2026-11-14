@@ -9,12 +9,13 @@ import shutil
 import signal
 import subprocess
 import sys
-import tempfile
 import time
 import unittest
 
-
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/acceptance'))
+import test_resources as resources
+
+
 from test_environment import isolated_environment
 
 BIN = str(Path(os.environ.get("TEEREX_BIN", Path(__file__).resolve().parents[2] / "zig-out/bin/teerex")).resolve())
@@ -26,14 +27,14 @@ class SpawnTest(unittest.TestCase):
         cls.rex = os.environ.get("REX_BIN") or shutil.which("rex")
         if not cls.rex:
             raise RuntimeError("Put the explicitly selected test Rex on PATH")
-        tmp = tempfile.TemporaryDirectory(prefix="tspawn-", dir="/tmp")
+        tmp = resources.temporary_directory(prefix="tspawn-", dir="/tmp")
         cls.addClassCleanup(tmp.cleanup)
         cls.root = Path(tmp.name)
         cls.socket = cls.root / "rex.sock"
         cls.base = [cls.rex, "--autostart=false", "--server", "unix://" + str(cls.socket), "--timeout", "3s"]
         cls.log = (cls.root / "server.log").open("w")
         cls.addClassCleanup(cls.log.close)
-        cls.server = subprocess.Popen([cls.rex, "server", "run", "--listen", "unix://" + str(cls.socket),
+        cls.server = resources.start_process([cls.rex, "server", "run", "--listen", "unix://" + str(cls.socket),
                                        "--restore=false", "--config", "/dev/null", "--state-dir", str(cls.root / "state")],
                                       stdout=cls.log, stderr=cls.log)
         cls.addClassCleanup(cls.stop_server)
@@ -293,7 +294,7 @@ class SpawnTest(unittest.TestCase):
         for sig, expected in [(None, 124), (signal.SIGINT, 130), (signal.SIGTERM, 143)]:
             with self.subTest(sig=sig):
                 ready.unlink(missing_ok=True)
-                proc = subprocess.Popen(self.command("/bin/true", timeout=200 if sig is None else 5000),
+                proc = resources.start_process(self.command("/bin/true", timeout=200 if sig is None else 5000),
                                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=self.env)
                 self.addCleanup(lambda p=proc: p.poll() is None and p.kill())
                 if sig is not None:

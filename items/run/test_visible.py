@@ -13,11 +13,12 @@ import signal
 import stat
 import subprocess
 import sys
-import tempfile
 import time
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/acceptance'))
+import test_resources as resources
+
 from test_environment import isolated_environment
 
 BIN = str(Path(os.environ.get("TEEREX_BIN", "zig-out/bin/teerex")).resolve())
@@ -31,14 +32,14 @@ class VisibleTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.rex = str(Path(os.environ.get("REX_BIN") or shutil.which("rex") or "MISSING_REX").resolve())
-        cls.temp = tempfile.TemporaryDirectory(prefix="tvisible-", dir="/tmp")
+        cls.temp = resources.temporary_directory(prefix="tvisible-", dir="/tmp")
         cls.addClassCleanup(cls.temp.cleanup)
         cls.root = Path(cls.temp.name)
         cls.socket = cls.root / "rex.sock"
         cls.base = [cls.rex, "--autostart=false", "--server", "unix://" + str(cls.socket), "--timeout", "3s"]
         cls.log = (cls.root / "server.log").open("w")
         cls.addClassCleanup(cls.log.close)
-        cls.server = subprocess.Popen([cls.rex, "server", "run", "--listen", "unix://" + str(cls.socket),
+        cls.server = resources.start_process([cls.rex, "server", "run", "--listen", "unix://" + str(cls.socket),
                                       "--restore=false", "--config", "/dev/null", "--state-dir", str(cls.root / "state")],
                                      stdout=cls.log, stderr=cls.log, env=dict(isolated_environment(), HOME=str(cls.root)))
         cls.addClassCleanup(cls.stop_server)
@@ -70,7 +71,7 @@ class VisibleTest(unittest.TestCase):
         self.work = self.root / str(time.monotonic_ns())
         self.work.mkdir()
         self.envfile = self.work / "env.json"
-        self.envfile.write_text(json.dumps({"PATH": "/usr/bin:/bin", "TEEREX_LITERAL": "a\n'α😀", "EMPTY": ""}))
+        self.envfile.write_text(json.dumps({"PATH": "/usr/bin:/bin", "TEEREX_LITERAL": "a\n'α😀", "EMPTY": "", resources.run().marker: "1"}))
         self.stdin = self.work / "stdin"
         self.stdin.write_bytes(b"input\x00\xff\n\n")
         self.session = self.rpc("session.create", {"label": "run-visible disposable"})["session_id"]
@@ -170,7 +171,6 @@ class VisibleTest(unittest.TestCase):
         self.assertEqual(rejected.returncode, 1)
 
     def test_detached_supervisor_self_close_after_job_presentation(self):
-        sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/acceptance'))
         import pane_authority
         pane_authority.caller(self, self.rpc, self.runtime_env, self.work)
         self.runtime_env.update(AGENT_SESSION=self.runtime_env['REX_SESSION'], AGENT_PANE=self.runtime_env['REX_BLOCK'])
@@ -252,7 +252,7 @@ os.write(1,b'\\x00\\xffdetached\\n');sys.exit(0)
                                              *self.channel_options(channel, block)])
         wrapper = ("import subprocess,time,sys\n" + f"p=subprocess.run({command!r},capture_output=True,text=True)\n" +
                    "assert p.returncode==0,(p.stdout,p.stderr)\nprint(p.stdout,flush=True)\ntime.sleep(60)\n")
-        caller = subprocess.Popen([sys.executable, "-c", wrapper], env=self.runtime_env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        caller = resources.start_process([sys.executable, "-c", wrapper], env=self.runtime_env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         launch = None
         try:
             import select
@@ -377,7 +377,7 @@ if {fenced!r}:
             options += ["--registry", str(registry), "--owner", "rivet", "--purpose", "fenced channel"]
         if detached:
             options += ["--detach"]
-        process = subprocess.Popen(self.command(argv=argv, extra=options),
+        process = resources.start_process(self.command(argv=argv, extra=options),
                                    env=self.runtime_env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         launch = None
         try:
@@ -477,7 +477,7 @@ assert json.loads(data)['result']['failure_reason']=='channel_token_mismatch'
         marker = self.work / "running"
         command = self.command(f"from pathlib import Path;import time;Path({str(marker)!r}).touch();time.sleep(60)",
                                extra=self.channel_options(directory, block) + ["--no-deadline"])
-        process = subprocess.Popen(command, env=self.runtime_env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        process = resources.start_process(command, env=self.runtime_env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         try:
             for _ in range(250):
                 if marker.exists() or process.poll() is not None:
@@ -524,7 +524,7 @@ assert json.loads(data)['result']['failure_reason']=='channel_token_mismatch'
         gate, started = self.work / "gate", self.work / "started"
         script = (f"import pathlib,time;pathlib.Path({str(started)!r}).touch()\n"
                   f"while not pathlib.Path({str(gate)!r}).exists(): time.sleep(.02)")
-        process = subprocess.Popen(self.command(script, extra=["--registry", str(registry), "--owner", "rivet", "--purpose", "item · step", "--no-deadline"]),
+        process = resources.start_process(self.command(script, extra=["--registry", str(registry), "--owner", "rivet", "--purpose", "item · step", "--no-deadline"]),
                                    env=self.runtime_env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         try:
             for _ in range(250):
@@ -565,7 +565,7 @@ assert json.loads(data)['result']['failure_reason']=='channel_token_mismatch'
         try:
             with lock_path.open("r+") as lock:
                 fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                process = subprocess.Popen(command, env=self.runtime_env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                process = resources.start_process(command, env=self.runtime_env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
                 time.sleep(5.5)
                 self.assertIsNone(process.poll(), "native jobs queue must outlive the former5s wrapper budget")
                 self.assertFalse(marker.exists(), "queued tracking must not permit argv")
@@ -610,7 +610,7 @@ assert json.loads(data)['result']['failure_reason']=='channel_token_mismatch'
         self.assertGreater(v["exit_report"]["elapsed_ms"], 10000)
         marker = self.work / "started"
         script = f"import pathlib,time;pathlib.Path({str(marker)!r}).touch();time.sleep(60)"
-        process = subprocess.Popen(self.command(script, extra=["--no-deadline"]), env=self.runtime_env,
+        process = resources.start_process(self.command(script, extra=["--no-deadline"]), env=self.runtime_env,
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         try:
             for _ in range(200):
@@ -827,7 +827,7 @@ print('exact environment received')
         self.assert_stopped(int(pidfile.read_text()))
         for sig in (signal.SIGINT, signal.SIGTERM):
             pidfile.unlink()
-            p = subprocess.Popen(self.command(script, extra=["--keep-open"]), env=self.runtime_env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            p = resources.start_process(self.command(script, extra=["--keep-open"]), env=self.runtime_env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             try:
                 for _ in range(200):
                     if pidfile.exists() or p.poll() is not None:
@@ -1026,7 +1026,7 @@ print('exact environment received')
     def test_controller_sigkill_retains_known_ids_and_helper_own_deadline(self):
         output = self.work / "controller-loss"
         pidfile, script = self.long_command()
-        p = subprocess.Popen(self.command(script, extra=["--timeout-ms", "700", "--output-dir", str(output)]),
+        p = resources.start_process(self.command(script, extra=["--timeout-ms", "700", "--output-dir", str(output)]),
                              env=self.runtime_env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         try:
             for _ in range(200):

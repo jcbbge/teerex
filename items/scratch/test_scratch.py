@@ -11,6 +11,8 @@ import time
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/acceptance'))
+import test_resources as resources
+
 from test_environment import isolated_environment
 
 BIN = str(Path(os.environ.get("TEEREX_BIN", "zig-out/bin/teerex")).resolve())
@@ -20,7 +22,7 @@ BLOCK = "block:22222222-2222-2222-2222-222222222222"
 
 class ScratchTest(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(prefix="teerex-scratch-")
+        self.temp = resources.temporary_directory(prefix="teerex-scratch-")
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         self.env = dict(isolated_environment(), HOME=str(self.root), REX_SESSION=SESSION, REX_BLOCK=BLOCK,
@@ -194,7 +196,7 @@ class ScratchTest(unittest.TestCase):
             self.assertIn(value, frame)
         self.assertTrue(all(len(line) <= 40 for line in frame.splitlines()))
         with tempfile.TemporaryFile() as log:
-            proc = subprocess.Popen([BIN, "scratch", "watch"], env=self.env, stdout=log, stderr=log)
+            proc = resources.start_process([BIN, "scratch", "watch"], env=self.env, stdout=log, stderr=log)
             try:
                 time.sleep(.4)
                 self.cli("todo", "Changed live")
@@ -219,7 +221,7 @@ class ScratchTest(unittest.TestCase):
                        + 'with open(' + repr(str(calls)) + ', "a") as stream: stream.write(str(time.time()) + "\\n")\n'
                        + 'print("live", end="")\n')
         rex.chmod(0o700)
-        proc = subprocess.Popen([BIN, 'scratch', 'watch', '--socket', str(self.root / 'rex.sock')],
+        proc = resources.start_process([BIN, 'scratch', 'watch', '--socket', str(self.root / 'rex.sock')],
                                 env=dict(self.env, TEEREX_INTERNAL_REX=str(rex)),
                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         try:

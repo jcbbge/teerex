@@ -13,11 +13,13 @@ import signal
 import statistics
 import subprocess
 import sys
-import tempfile
 import time
 
 from common import ROOT, EXCLUDED, Server, alive, controls, execute, observations, save, sha
 from fail_fixture import ASSERTION, expected
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/acceptance'))
+import test_resources as resources
 
 FIXTURE = Path(__file__).with_name("fail_fixture.py")
 MODES = ("F1", "F2", "F3", "F4", "F5", "F6")
@@ -73,7 +75,7 @@ def teerex_task(args, server, session, anchor, root, mode, keep=True, controller
     server.command = measured_command
     envfile = root / "env.json"
     gate = root / "release"
-    save(envfile, dict(PATH=os.defpath, HOME=str(server.home), PYTHONDONTWRITEBYTECODE="1", FIXTURE_DIR=str(root), FIXTURE_GATE=str(gate)))
+    save(envfile, dict(PATH=os.defpath, HOME=str(server.home), PYTHONDONTWRITEBYTECODE="1", FIXTURE_DIR=str(root), FIXTURE_GATE=str(gate), **{resources.run().marker: "1"}))
     before = invoke(observations(args.teerex, server, session, anchor), stats, server.env, 1)
     save(root / "sentinel-before.json", before.stdout)
     output = root / "output"
@@ -362,7 +364,7 @@ def refusals(args, server, session, anchor, evidence):
 
 
 def unknown_tests(args, server):
-    home = Path(tempfile.mkdtemp(prefix="c31-fault-home-", dir="/tmp"))
+    home = Path(resources.mkdtemp(prefix="c31-fault-home-", dir="/tmp"))
     environment = dict(server.env, HOME=str(home), TEEREX_BIN=args.teerex, REX_BIN=args.rex)
     try:
         result, _ = execute([sys.executable, str(ROOT / "items/run/test_visible.py"),
@@ -439,9 +441,9 @@ def main(argv=None):
     report = dict(schema_version=1, kind="safe_subset_baseline", host=dict(os=platform.system(), arch=platform.machine()),
                   binaries=dict(teerex=sha(args.teerex), rex=sha(args.rex)), rows={}, results={}, measurements={})
     try:
-        with tempfile.TemporaryDirectory(prefix="c31-", dir="/tmp") as directory:
+        with resources.temporary_directory(prefix="c31-", dir="/tmp") as directory:
             server = Server(args.rex, Path(directory))
-            sentinel = subprocess.Popen([sys.executable, "-c", "import time;time.sleep(900)"])
+            sentinel = resources.start_process([sys.executable, "-c", "import time;time.sleep(900)"])
             try:
                 session, anchor = server.fixture()
                 report["rex"] = server.version
@@ -466,7 +468,7 @@ def main(argv=None):
                         for arm in order:
                             root = evidence / ("measure-%s-%s-%s" % (mode, arm, iteration))
                             if iteration == -1 - args.warmups:
-                                with tempfile.TemporaryDirectory(prefix="c31-cold-", dir="/tmp") as cold_directory:
+                                with resources.temporary_directory(prefix="c31-cold-", dir="/tmp") as cold_directory:
                                     cold_server = Server(args.rex, Path(cold_directory))
                                     try:
                                         cold_session, cold_anchor = cold_server.fixture()

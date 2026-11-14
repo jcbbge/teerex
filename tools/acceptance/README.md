@@ -35,3 +35,19 @@ The U05 state interpretation is part of the current whole-cartridge contract. It
 Records without measured content hashes remain stale until fresh independent evidence is acquired; old evidence is never enrolled retrospectively.
 
 The current [content-pinned independent records and SHA256s](results/observe-content-independent.sha256) were executed by teerex on hive and M5 at `9c8f1c2`: three fresh API13 runs per platform, both verdicts ready with no failed rows. The records measure covered input hash `567f2fde8babb4efb81f61e9310f27f78904663bd9e9e8557401435dd94d6312`; later record and documentation commits preserve that content. Historical independent records remain unchanged.
+
+Test and proof resources use `test_resources`: `temporary_directory`, `mkdtemp`
+and `start_process` register allocations in a private, locked per-helper journal.
+Normal exit, failures, SIGINT and SIGTERM reap processes and directories; the
+next invocation of the same helper recovers its unlocked journals after SIGKILL.
+Recovery checks process identity and directory identity, and never sweeps by a
+`teerex-*` prefix or contacts a personal server. Disposable Rex sessions are
+destroyed before server termination. An inherited unique environment marker
+covers detached descendants; explicit child environment files must include
+`resources.run().marker: "1"`. Child CLI temporary storage stays in the journal
+through `TMPDIR`; test socket directories stay short enough for Unix sockets.
+Real-server proof panes must register their exact creation receipt addresses
+with `own_pane` and call `forget_pane` after verified closure. Test with
+`python3 tools/acceptance/test_resource_cleanup.py -v`; it covers pass, failure,
+timeout, both interrupts, SIGKILL recovery, active-run exclusion and preservation
+of foreign/replaced directories, plus allocator coverage across test helpers.

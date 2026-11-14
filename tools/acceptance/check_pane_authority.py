@@ -8,8 +8,10 @@ import importlib.util
 import os
 from pathlib import Path
 import sys
-import tempfile
 import unittest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/acceptance'))
+import test_resources as resources
 
 ROOT = Path(__file__).resolve().parents[2]
 OPERATIONS = {'close', 'rename', 'move', 'focus', 'session close'}
@@ -86,7 +88,7 @@ def main():
         return run()
     # Legacy fixtures also invoke CLI helpers without their own environment map.
     # Those calls must never consult a personal boards/creator/agent store.
-    with tempfile.TemporaryDirectory(prefix='pane-authority-environment-') as root:
+    with resources.temporary_directory(prefix='pane-authority-environment-') as root:
         root = Path(root)
         os.environ.update(HOME=str(root), XDG_STATE_HOME=str(root / 'state'),
                           TEEREX_BOARDS_STORE=str(root / 'boards'), AGENT_REGISTRY=str(root / 'agents'))
