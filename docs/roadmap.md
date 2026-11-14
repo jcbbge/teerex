@@ -2,7 +2,7 @@
 
 ## Status, 14 November 2026
 
-This table records where every roadmap item stands at main `MAINSHA`; the sections below are kept as the planning record. **Built** means on main and covered by its tests. **Done** means finished another way (a ruling or a decision), with the reason. **Blocked upstream** means it needs a Rex API that does not exist; each links its upstream request, tracked as a teerex issue. Rex takes requests only in its Beta Discord, so each issue carries paste-ready text for that post.
+This table records where every roadmap item stands at main on 14 November 2026 (the build both machines run is pinned in rexconfig's `teerex.version`); the sections below are kept as the planning record. **Built** means on main and covered by its tests. **Done** means finished another way (a ruling or a decision), with the reason. **Blocked upstream** means it needs a Rex API that does not exist; each links its upstream request, tracked as a teerex issue. Rex takes requests only in its Beta Discord, so each issue carries paste-ready text for that post.
 
 | Item | Status | Where |
 | --- | --- | --- |
