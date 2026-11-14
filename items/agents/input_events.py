@@ -1,4 +1,6 @@
 """Acknowledged input events, consumed by the destination's in-pane supervisor."""
+import contextlib
+import fcntl
 import json
 import hashlib
 import os
@@ -18,16 +20,32 @@ def agent_input_path(socket, session, block):
     return Path.home() / ".local/state/teerex/agent-input" / (key + ".json")
 
 
-def agent_input_write(socket, session, block, at_ns, reminder=False):
+def agent_input_write(socket, session, block, at_ns, reminder=False, sender=None):
     path = agent_input_path(socket, session, block)
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     info = path.parent.lstat()
     if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o700:
         raise ValueError("private_agent_input_directory_required")
+    lock = os.open(str(path) + ".lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        previous = agent_input_read(socket, session, block) or {}
+        event = dict(at_ns=at_ns, reminder=reminder)
+        first = previous.get("first_work_sender")
+        if first is None and sender and sender.get("name") and sender.get("session") and sender.get("block") and not reminder and not sender["name"].startswith("teerex-"):
+            first = sender
+        if first:
+            event["first_work_sender"] = first
+        return agent_input_replace(path, event)
+    finally:
+        os.close(lock)
+
+
+def agent_input_replace(path, event):
     fd, stage = tempfile.mkstemp(dir=path.parent, prefix=".input-")
     try:
         with os.fdopen(fd, "w") as stream:
-            json.dump(dict(at_ns=at_ns, reminder=reminder), stream)
+            json.dump(event, stream)
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(stage, path)

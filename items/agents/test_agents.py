@@ -317,6 +317,41 @@ class ContractHelpersTest(unittest.TestCase):
                 registry.save(record, new=True)
                 self.assertEqual(registry.read(record["launch_id"])["purpose"], record["purpose"])
 
+    def test_explicit_starter_requires_receiver_and_records_new_assignment(self):
+        import types
+        with resources.temporary_directory() as directory:
+            target = dict(host="hive", server="unix:///tmp/test", session_id="s", block_id="child")
+            owner = dict(target=dict(target, block_id="lead"))
+            state = dict(human=True, socket="/tmp/test", target=target, purpose="work", starter=None)
+            self.ns["load"] = lambda r, i: owner if i == "lead" else state
+            self.ns["update"] = lambda r, i, f: (f(state) or state)
+            self.ns["pane_presence"] = lambda *a: True
+            self.ns["receipt"] = lambda s, outcome: dict(outcome=outcome)
+            guard = types.SimpleNamespace(snapshot=lambda *a: dict(actor=target, operator=False))
+            options = types.SimpleNamespace(registry=directory, launch_id="child", starter_launch_id="lead")
+            with patch.dict(sys.modules, teerex_pane_guard=guard):
+                self.assertEqual(self.ns["starter"](options)[1]["outcome"], "starter_assigned")
+                self.assertEqual(state["starter"], owner["target"])
+                guard.snapshot = lambda *a: dict(actor={"block_id": "stranger"}, operator=False)
+                with self.assertRaises(self.ns["Refusal"]):
+                    self.ns["starter"](options)
+
+    def test_human_adopts_first_registered_work_sender_once(self):
+        with resources.temporary_directory() as directory:
+            Path(directory, "agents-" + "a" * 32 + ".json").touch()
+            target = dict(host="hive", server="unix:///tmp/test", session_id="s", block_id="b")
+            state = dict(human=True, starter=None, report_to=None, purpose="human", target={"block_id": "child"})
+            self.ns["load"] = lambda *a: dict(name="lead", target=target)
+            self.ns["update"] = lambda r, i, f: (f(state) or state)
+            event = dict(at_ns=1000000, first_work_sender=dict(name="lead", session="s", block="b"))
+            self.ns["delivered_input"](directory, "id", event)
+            self.assertEqual(state["starter"], target)
+            self.assertEqual(state["report_to"], target)
+            self.assertTrue(self.ns["contract_active"](state))
+            state["starter"] = {"block_id": "another"}
+            self.ns["delivered_input"](directory, "id", event)
+            self.assertEqual(state["starter"], {"block_id": "another"})
+
     def test_brief_sender_is_registered_starter_or_launcher(self):
         with resources.temporary_directory() as directory:
             address = dict(host="hive", server="unix:///tmp/test", session_id="s", block_id="b")
@@ -3075,6 +3110,67 @@ Path('/work/network-harness').touch()
                     self.assertEqual(result["scratchpad_check"]["action"], "reminded" if harness == "codex" else "block")
                     reason = result["scratchpad_check"]["reason"]
                 self.assertEqual(reason, CONTRACT_REFUSAL + "; write your steps first")
+
+    def register_starter_identity(self):
+        target = dict(host="disposable", server="unix://" + str(self.socket),
+                      session_id=self.session, block_id=self.starter)
+        state = dict(schema_version=1, launch_id="e" * 32, name="lead", target=target)
+        path = self.registry / ("agents-" + "e" * 32 + ".json")
+        path.write_text(json.dumps(state))
+        path.chmod(0o600)
+        return target
+
+    def test_contract_routes_rapid_sequence_retains_flag_in_order(self):
+        self.register_starter_identity()
+        p, launched = self.launch(contract=True)
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        state = self.record(launched["launch_id"])
+        destination = ("--session", self.session, "--block", state["target"]["block_id"])
+        # Hold registry lock so the supervisor cannot sample intermediate state.
+        with (self.registry / "agents.lock").open("a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            for args in (("todo", "one"), ("todo", "two"), ("now", "one"), ("done",),
+                         ("now", "two"), ("flag", "missing; inspected; need input"), ("done",)):
+                result = subprocess.run([BIN, "scratch", *args, *destination],
+                                        env=self.env, capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        wait_for(lambda: len([v for v in self.starter_messages() if "STEP probe" in v or "FLAG probe" in v]) == 5)
+        lines = [v for v in self.starter_messages() if "STEP probe" in v or "FLAG probe" in v]
+        expected = ("1/2 started: one", "1/2 finished: one", "2/2 started: two",
+                    "FLAG probe step 2/2: missing; inspected; need input", "2/2 finished: two")
+        for actual, suffix in zip(lines, expected):
+            self.assertIn(suffix, actual)
+        wait_for(lambda: any(v["event"] == "input" and "TASK β" in v["payload"] for v in events(self.worker_log)))
+        brief = next(v["payload"] for v in events(self.worker_log) if v["event"] == "input" and "TASK β" in v["payload"])
+        self.assertTrue(brief.startswith("FROM lead:"), brief)
+
+    def test_contract_routes_human_adopts_sender_and_routes_stop(self):
+        target = self.register_starter_identity()
+        self.config.write_text(json.dumps(self.settings))
+        p, launched = self.run_cli("human", "--config", str(self.config), "--profile", "probe")
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        launch_id = launched["launch_id"]
+        state = self.record(launch_id)
+        wait_for(lambda: events(self.worker_log))
+        sender_env = dict(self.env, AGENT_NAME="lead", AGENT_SESSION=self.session,
+                          AGENT_PANE=self.starter, REX_SESSION=self.session, REX_BLOCK=self.starter)
+        sent = subprocess.run([BIN, "send", "--socket", str(self.socket), "--session", self.session,
+                               "--block", state["target"]["block_id"], "--from", "lead", "--message-file", "-"],
+                              input="WORK: run the assigned check", env=sender_env, capture_output=True, text=True)
+        self.assertEqual(sent.returncode, 0, sent.stdout + sent.stderr)
+        wait_for(lambda: self.record(launch_id).get("work_sender_adopted"))
+        self.assertEqual(self.record(launch_id)["starter"], target)
+        for args in (("todo", "check"), ("now", "check"), ("flag", "missing; inspected; need input")):
+            result = subprocess.run([BIN, "scratch", *args, "--session", self.session,
+                                     "--block", state["target"]["block_id"]], env=self.env, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        wait_for(lambda: any("FLAG probe" in v for v in self.starter_messages()))
+        p, packet = self.run_cli("stop", "--registry", str(self.registry), "--launch-id", launch_id,
+                                "--event-file", "-", input=json.dumps(dict(hook_event_name="Stop",
+                                                       last_assistant_message="human assigned report")))
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        wait_for(lambda: any("human assigned report" in v for v in self.starter_messages()))
+        self.assertEqual(self.record(launch_id)["report_to"], target)
 
     def test_contract_steps_and_flag_are_delivered_once(self):
         p, launched = self.launch(contract=True)

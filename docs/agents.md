@@ -191,3 +191,12 @@ teerex doctor --socket "$S"     # rex executable used, client/server mismatch, w
 - It never infers that work is done.
 
 Every result says what is known, and names anything unknown (`unknown`, `uncertain`, `not_assessed`).
+
+Human launches acquire a work starter on the first acknowledged message from a
+registered agent. The sender's pane and registered name must match. Generated
+teerex notices do not count. That first sender is retained across rapid input,
+and becomes both starter and report-to; scratch steps, flags and Stop reports
+then route there. Later messages never change that owner. A different owner
+requires the receiving agent (or operator) to run
+`teerex agents starter --registry REGISTRY --launch-id OWN_LAUNCH --starter-launch-id NEW_STARTER_LAUNCH`.
+This explicit command starts a new work assignment; ordinary messages never transfer ownership.

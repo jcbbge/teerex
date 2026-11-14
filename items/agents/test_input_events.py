@@ -42,6 +42,12 @@ class InputEventsTest(unittest.TestCase):
         self.addCleanup(self.env.stop)
         self.target = (self.temp.name + '/unused.sock', SID, BID)
 
+    def test_first_work_sender_survives_later_input(self):
+        first = dict(name="lead", session=SID, block=BID)
+        inputs.agent_input_write(*self.target, 1, sender=first)
+        inputs.agent_input_write(*self.target, 2, sender=dict(name="other", session=SID, block=BID))
+        self.assertEqual(inputs.agent_input_read(*self.target)["first_work_sender"], first)
+
     def test_atomic_replacement_race(self):
         inputs.agent_input_write(*self.target, 1)
         stop = threading.Event()

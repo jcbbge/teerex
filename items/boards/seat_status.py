@@ -353,7 +353,8 @@ def apply(pid, report, context):
     input_outcome = None
     try:
         if context.get('agent_input'):
-            input_outcome = agent_input_write(context['socket'], context['session'], context['block'], context['input_at_ns'], reminder=context.get('sender') == 'teerex-scratchpad')
+            input_outcome = agent_input_write(context['socket'], context['session'], context['block'], context['input_at_ns'], reminder=context.get('sender') == 'teerex-scratchpad',
+                sender=dict(name=context.get('sender'), **(context.get('origin') or {})))
         if outcome == 'written' and context.get('state') == 'blocked' and str(context.get('id', '')).startswith('ask/'):
             register(context)
         if outcome == 'written' and context.get('state') == 'clear' and str(context.get('id', '')).startswith('ask/'):

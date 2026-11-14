@@ -471,7 +471,7 @@ def scratch_main(argv=None):
                     if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_nlink != 1:
                         raise ScratchError("owned_regular_scratch_events_required")
                     for kind, line in lines:
-                        stream.write(json.dumps(dict(kind=kind, line=line)) + "\n")
+                        stream.write(json.dumps(dict(kind=kind, line=line, now=data["now"], done=data["done"], blocked=data["blocked"])) + "\n")
                     stream.flush()
                     os.fsync(stream.fileno())
         return 0

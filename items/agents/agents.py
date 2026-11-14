@@ -686,7 +686,7 @@ CONTRACT_REFUSE = 'Turn not ended: declare one — finished: every step checked 
 
 
 def contract_active(state):
-    return bool(state.get("brief_attempted"))
+    return bool(state.get("brief_attempted") or state.get("work_sender_adopted"))
 
 
 def contract_turn(state):
@@ -818,7 +818,7 @@ def contract_tell(root, launch_id, kind, line, to="starter", last_message=None, 
             if kind == "flag" and c.get("flag", {}).get("sha") == flag["sha"]:
                 c["flag"].update(delivered_at=now() if ok else None, receipt=results)
             if ok and kind in ("done", "flag", "scratch_flag") and s.get("last_input_at_ns", 0) < sent_at * 1000000:
-                c.update(awaiting_starter=dict(kind=kind, at=sent_at), starter_lapses=0)
+                c.update(awaiting_starter=dict(kind="flag" if kind == "scratch_flag" else kind, at=sent_at), starter_lapses=0)
         update(root, launch_id, told)
     return (0 if ok else 1), dict(outcome=("queued" if queued else "transport_acknowledged") if ok else "uncertain", results=results)
 
@@ -1986,7 +1986,21 @@ def validate_hook_event(event, allow_transcript=True):
 
 
 def delivered_input(root, launch_id, event):
+    sender = event.get("first_work_sender")
+    adopted = None
+    if sender:
+        for path in Path(root).glob("agents-*.json"):
+            candidate = load(root, path.stem[7:])
+            target = candidate.get("target") or {}
+            if (candidate.get("name") == sender.get("name") and
+                    target.get("session_id") == sender.get("session") and
+                    target.get("block_id") == sender.get("block")):
+                adopted = target
+                break
     def started(s):
+        if s.get("human") and not s.get("starter") and adopted and adopted != s.get("target"):
+            s.update(starter=adopted, report_to=adopted, work_sender_adopted=True)
+            s["contract"] = contract_init(s, {}, "", None, None)
         if event.get("reminder"):
             s["last_reminder_at_ns"] = event["at_ns"]
             return
@@ -2205,7 +2219,13 @@ def contract_steps(root, launch_id, previous):
                 offset = stream.tell()
                 update(root, launch_id, lambda s: s.update(scratch_event_offset=offset))
                 contract_tell(root, launch_id, event["kind"], event["line"])
-        return previous
+                if "done" in event:
+                    previous = event["now"], event["done"]
+                if event["kind"] == "scratch_flag" and event.get("blocked"):
+                    flag = dict(text=event["blocked"], sha=hashlib.sha256(event["blocked"].encode()).hexdigest(),
+                                attempt=now(), delivered_at=None)
+                    update(root, launch_id, lambda s: s["contract"].update(flag=flag))
+        state = load(root, launch_id)
     try:
         snapshot = contract_snapshot(state)
         done = scratch_read(Path(state["scratchpad"]))["done"]
@@ -2724,6 +2744,29 @@ def timeline(o):
     return 0, None
 
 
+def starter(o):
+    """Deliberate new-work ownership change, requested by the receiving agent."""
+    import teerex_pane_guard
+    state = load(o.registry, o.launch_id)
+    owner = load(o.registry, o.starter_launch_id)
+    policy = teerex_pane_guard.snapshot("unix://" + state["socket"])
+    actor = policy["actor"]
+    require(policy["operator"] or all(actor.get(k) == state["target"].get(k)
+            for k in ("session_id", "block_id")), "starter_change_requires_receiving_agent_or_operator")
+    require(owner["target"]["server"] == state["target"]["server"] and
+            owner["target"] != state["target"], "starter_same_server_other_agent_required")
+    require(pane_presence(state, owner["target"]), "new_starter_not_live")
+    def bind(s):
+        require(s.get("human"), "starter_change_requires_human_launch")
+        previous = s.get("starter")
+        s.update(starter=owner["target"], report_to=owner["target"], work_sender_adopted=True)
+        s["contract"] = contract_init(s, {}, "", None, None)
+        s.setdefault("work_assignments", []).append(dict(at=now(), previous=previous,
+                                                        starter=owner["target"], by=actor))
+    state = update(o.registry, o.launch_id, bind)
+    return 0, receipt(state, "starter_assigned")
+
+
 def rebind_seat(o):
     old, new = [json.loads(value) for value in o.old_target], json.loads(o.new_target)
     for address in old + [new]:
@@ -2797,6 +2840,9 @@ def parser():
         "Profiles accept layout: tab|detached and opt-in come_forward: true (place on Stop/StopFailure/exit without focus). "
         "No readiness claim, input lease, untracked agent, daemon, automatic retry/close or whole-tree death guarantee."))
     sub = p.add_subparsers(dest="operation", required=True)
+    q = sub.add_parser("starter", help="explicit new work: receiving human-launched agent assigns its starter")
+    for field in ("registry", "launch-id", "starter-launch-id"):
+        q.add_argument("--" + field, required=True)
     q = sub.add_parser("rebind_seat", help="registry-locked inheritance after boards verifies the previous seat absent")
     q.add_argument("--registry", required=True)
     q.add_argument("--old-target", action="append", required=True)

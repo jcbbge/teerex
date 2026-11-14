@@ -577,3 +577,12 @@ agents, including archives. Acceptance clears the unanswered reminder and record
 who accepted, when, the pending report and optional note in `agents timeline`.
 A second acceptance refuses because nothing is pending. To send a live worker
 back for changes, send it a message as before.
+
+Human launches acquire a work starter on the first acknowledged message from a
+registered agent. The sender's pane and registered name must match. Generated
+teerex notices do not count. That first sender is retained across rapid input,
+and becomes both starter and report-to; scratch steps, flags and Stop reports
+then route there. Later messages never change that owner. A different owner
+requires the receiving agent (or operator) to run
+`teerex agents starter --registry REGISTRY --launch-id OWN_LAUNCH --starter-launch-id NEW_STARTER_LAUNCH`.
+This explicit command starts a new work assignment; ordinary messages never transfer ownership.
