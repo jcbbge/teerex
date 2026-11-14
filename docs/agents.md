@@ -118,6 +118,33 @@ teerex surfaces rename|focus|move|close --socket "$S" --session "$SES" --pane "$
 - **Questions for Josh** go to the seat, never to an on-screen prompt in your own pane.
 - **Housekeeping:** dead launch records are archived automatically. To do it by hand: `teerex agents prune --registry DIR [--apply]`.
 
+## Accept reports and reap workers
+
+After reviewing a worker's result, accept its pending DONE or FLAG without
+sending input, or send it back for changes:
+
+```sh
+teerex agents accept --launch-id "$LAUNCH_ID" --note "Reviewed result and proof"
+teerex surfaces close --socket "$S" --session "$SES" --pane "$WORKER_BLOCK"
+teerex surfaces close --socket "$S" --session "$SES" --pane "$SCRATCH_BLOCK"
+```
+
+Use only the exact worker and scratchpad block IDs from your own launch receipt.
+Close a finished worker's tab when its work has landed; verify the close receipts
+say the blocks are absent. Accepting a report clears the pending answer and
+records acceptance; it does not close panes or prove completion.
+
+The launcher retains the agent pane after immediate child exit. Its supervisor
+closes only the scratchpad viewer it created; that viewer also follows the exact
+owner block and closes itself when the owner is absent. Inspect before closing
+a viewer that may already be gone. Pruning archives dead launch records and
+scratchpads; it does not close panes or signal processes. Pane absence alone
+does not prove every descendant or remote process has died.
+
+Reap every test server, session, pane, temporary directory, worktree and process
+you started on either machine when its work lands. Leave other people's
+surfaces alone. Report what you started and the evidence each is gone.
+
 ## Jobs, boards, recovery
 
 ```sh
