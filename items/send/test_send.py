@@ -427,7 +427,7 @@ class SendTest(unittest.TestCase):
         clutch = [BIN, 'clutch', 'take', '--socket', str(self.socket), '--session', target[0], '--pane', target[1], '--reason', 'human reviewing detached agent']
         held = subprocess.run(clutch, env=self.env, capture_output=True, text=True)
         self.assertEqual(held.returncode, 0, held.stdout + held.stderr)
-        blocked = subprocess.run(self.command(target) + ['--draft-wait-ms', '0'], env=self.env, capture_output=True, text=True)
+        blocked = subprocess.run(self.command(target) + ['--no-queue', '--draft-wait-ms', '0'], env=self.env, capture_output=True, text=True)
         self.assertNotEqual(blocked.returncode, 0)
         self.assertEqual(json.loads(blocked.stdout)['failure_reason'], 'pane_held_by_human')
         self.assertEqual(log.read_text(), '')

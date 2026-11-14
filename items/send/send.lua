@@ -84,7 +84,7 @@ local function gate()
         clutch.state, clutch.failure_reason = held and "held" or "released", nil
         if not held then emit({event="clutch", clutch=clutch}); return true end
         clutch.held_observed = true
-        if clutch.waited_ms >= a.draft_wait_ms then
+        if a.queue_on_hold or clutch.waited_ms >= a.draft_wait_ms then
             clutch.bound_reached = true
             clutch_reason = "pane_held_by_human"
             emit({event="clutch", clutch=clutch})

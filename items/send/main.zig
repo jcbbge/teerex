@@ -10,12 +10,13 @@ const usage =
     \\Requires Linux/macOS, Rex on PATH, existing API10..13 server, and canonical lowercase full IDs.
     \\Select a dedicated agent terminal: this can submit/execute input and does not establish prompt safety.
     \\--draft guard|ignore defaults guard: wait for quiet/empty draft, clear, send, restore without Enter.
-    \\Cooperative clutch always applies, including --draft ignore; held panes wait then refuse pane_held_by_human.
+    \\Cooperative clutch applies in both draft modes: held panes durably queue, exit 0, type nothing.
+    \\--no-queue keeps wait-then-refuse pane_held_by_human within the draft-wait budget.
     \\Unavailable clutch state is reported unknown with a named failure_reason and does not block send.
-    \\Send only reads clutch state; missing is released. take/release write; release deletes records.
+    \\Send reads clutch state; only a confirmed hold creates private queue records. release drains in order.
     \\State: TEEREX_CLUTCH_DIR or ~/.local/state/teerex/clutch; same command/Rex host required.
     \\--draft-wait-ms N defaults 30000 (0..55000); quiet window1500ms, restore delay400ms.
-    \\Ignore preserves prior paste/Enter behavior. No chunking, retry, inbox forwarding, or autostart.
+    \\Ignore preserves paste/Enter behavior after release. No chunking, resend, inbox forwarding, or autostart.
     \\File: regular, or - reads stdin until EOF within the same deadline/cancellation budget, before any dispatch.
     \\Input: 1..65536 UTF-8 bytes; LF/tab allowed, other C0/DEL rejected. Encoded RPC capped at 60000 bytes.
     \\Local inbox markers refuse input. Same-host/TMPDIR agent-send mkdir lock serializes cooperating senders only.
@@ -28,7 +29,7 @@ const usage =
     \\Seat-labelled deliveries add best-effort OSC7501 status; replies from the seat clear matching ask cards.
     \\Status uses fd0/fd1/fd2 or controlling tty, including redirected stdout; Python3 required for status only.
     \\--status-id ID --status-state done|blocked|clear --status-message TEXT customize the seat record (ask uses these).
-    \\Exit: 0 both ACKs, 1 refusal/error/uncertain, 2 usage, 124 deadline, 130 SIGINT, 143 SIGTERM.
+    \\Exit: 0 queued (queue_id) or both ACKs; 1 refusal/error/uncertain, 2 usage, 124 deadline, 130 SIGINT, 143 SIGTERM.
     \\
 ;
 
@@ -213,8 +214,14 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
     var timeout: ?u64 = null;
     var draft_mode: ?[]const u8 = null;
     var draft_wait: ?u64 = null;
+    var no_queue = false;
     var i: usize = 0;
-    while (i < args.len) : (i += 2) {
+    while (i < args.len) {
+        if (std.mem.eql(u8, args[i], "--no-queue") and !no_queue) {
+            no_queue = true;
+            i += 1;
+            continue;
+        }
         if (i + 1 == args.len) usageError("every option needs a value");
         const name = args[i];
         const value = args[i + 1];
@@ -241,6 +248,7 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
         } else if (std.mem.eql(u8, name, "--status-message") and status_message == null) {
             status_message = value;
         } else usageError("unknown or repeated option");
+        i += 2;
     }
     const path = socket orelse usageError("--socket is required");
     const sid = session orelse usageError("--session is required");
@@ -308,6 +316,20 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
     var failure: ?[]const u8 = null;
     var backend: ?supervised.Result = null;
     var encoded_argument_bytes: ?usize = null;
+    var queued_id: ?[]const u8 = null;
+    const queue_request = try std.json.Stringify.valueAlloc(allocator, .{
+        .socket = if (clutch) |store| store.socket else path,
+        .session = sid,
+        .pane = bid,
+        .sender = sender,
+        .body = message,
+        .draft = mode,
+        .draft_wait_ms = draft_wait_ms,
+        .timeout_ms = timeout_ms,
+        .status_id = status_id,
+        .status_state = status_state,
+        .status_message = status_message,
+    }, .{});
     work: {
         if (input_failure) |reason| {
             failure = reason;
@@ -350,6 +372,7 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
             .draft_wait_ms = draft_wait_ms,
             .clutch_file = clutch_file,
             .clutch_failure = clutch_failure,
+            .queue_on_hold = !no_queue,
             .text = try std.fmt.allocPrint(allocator, "FROM {s}: {s}", .{ sender, message }),
         }, .{});
         encoded_argument_bytes = request.len;
@@ -363,6 +386,20 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
             outcome = "refused";
             failure = "encoded_paste_exceeds_limit";
             break :work;
+        }
+        if (!no_queue and std.mem.eql(u8, clutch_initial, "held")) {
+            if (clutch) |*store| {
+                queued_id = enqueue(allocator, &env, store, queue_request) catch |err| {
+                    failure = @errorName(err);
+                    outcome = "refused";
+                    break :work;
+                };
+                if (queued_id != null) {
+                    collector.clutch.held_observed = true;
+                    outcome = "queued";
+                    break :work;
+                }
+            }
         }
         const argv = [_][]const u8{ "rex", "--autostart=false", "--server", endpoint, "--timeout", "3s", "--color", "never", "do", "--session", sid, "--block", bid, "-e", @embedFile("draft.lua") ++ "\n" ++ @embedFile("send.lua"), "--args", request };
         const before_spawn = timer.read() / std.time.ns_per_ms;
@@ -380,6 +417,21 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
         const transport_ok = !r.stopped and r.term == .Exited and r.term.Exited == 0 and collector.pending.items.len == 0;
         outcome = if (r.deadline_exceeded) "deadline_exceeded" else if (transport_ok and collector.enter_acknowledged and collector.finished and collector.reason == null) "events_acknowledged" else if (collector.paste_attempted) "uncertain" else if (collector.reason != null) "refused" else "backend_error";
         if (!transport_ok and r.stderr.len != 0 and std.mem.eql(u8, mode, "ignore")) std.debug.print("teerex send: Rex backend: {s}\n", .{r.stderr});
+    }
+    // A hold can arrive during draft guarding. Queue only before any input attempt.
+    if (!no_queue and std.mem.eql(u8, collector.reason orelse "", "pane_held_by_human") and
+        !collector.paste_attempted and collector.draft.cleared == null and supervised.requestedSignal() == 0)
+    {
+        if (clutch) |*store| {
+            queued_id = enqueue(allocator, &env, store, queue_request) catch |err| blk: {
+                failure = @errorName(err);
+                break :blk null;
+            };
+            if (queued_id != null) {
+                outcome = "queued";
+                collector.reason = null;
+            }
+        }
     }
     if (collector.draft_wait_started) |start| collector.draft.waited_ms = timer.read() / std.time.ns_per_ms - start;
     const signal = supervised.requestedSignal();
@@ -412,7 +464,8 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
         .encoded_rpc_bytes = collector.encoded_rpc_bytes,
         .max_encoded_rpc_bytes = 60000,
         .outcome = outcome,
-        .failure_reason = failure orelse collector.reason orelse if (backend != null and !success) @as(?[]const u8, "rex_transport_incomplete") else null,
+        .queue_id = queued_id,
+        .failure_reason = failure orelse collector.reason orelse if (backend != null and !success and queued_id == null) @as(?[]const u8, "rex_transport_incomplete") else null,
         .cancellation_signal = if (signal == 0) @as(?u8, null) else signal,
         .draft = collector.draft,
         .clutch = .{ .cooperative = true, .state_file = clutch_file, .state = collector.clutch.state, .failure_reason = collector.clutch.failure_reason, .held_observed = collector.clutch.held_observed, .waited_ms = collector.clutch.waited_ms, .bound_reached = collector.clutch.bound_reached },
@@ -430,7 +483,7 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
     }, .{ .whitespace = .indent_2 });
     try std.fs.File.stdout().writeAll(output);
     try std.fs.File.stdout().writeAll("\n");
-    return if (signal != 0) 128 + signal else if (std.mem.eql(u8, outcome, "deadline_exceeded")) 124 else if (success) 0 else 1;
+    return if (signal != 0) 128 + signal else if (std.mem.eql(u8, outcome, "deadline_exceeded")) 124 else if (success or queued_id != null) 0 else 1;
 }
 
 // Match Python str.split() for Unicode whitespace, without passing message text to accounting.
@@ -495,4 +548,37 @@ fn statusReport(allocator: std.mem.Allocator, env: *std.process.EnvMap, pid: ?i3
     if (result.deadline_exceeded) return "deadline_exceeded";
     const parsed = std.json.parseFromSlice([]const u8, allocator, collector.bytes.items, .{ .allocate = .alloc_always }) catch return "failed";
     return parsed.value;
+}
+
+const QueueCollector = struct {
+    allocator: std.mem.Allocator,
+    bytes: std.ArrayList(u8) = .empty,
+    pub fn receive(self: *QueueCollector, bytes: []const u8) !void {
+        try self.bytes.appendSlice(self.allocator, bytes);
+    }
+};
+
+fn enqueue(allocator: std.mem.Allocator, env: *const std.process.EnvMap, store: *clutch_state.Store, request: []const u8) !?[]const u8 {
+    // The hold/store may have appeared after this send entered draft guarding.
+    var current = try clutch_state.Store.openRead(allocator, env, store.socket, store.session, store.pane);
+    defer current.close();
+    const dir = current.dir orelse return error.QueueStoreUnavailable;
+    var random: [16]u8 = undefined;
+    std.crypto.random.bytes(&random);
+    const name = try std.fmt.allocPrint(allocator, "{s}.request", .{std.fmt.bytesToHex(random, .lower)});
+    const file = try dir.createFile(name, .{ .exclusive = true, .mode = 0o600 });
+    defer file.close();
+    defer dir.deleteFile(name) catch {};
+    try file.writeAll(request);
+    try file.sync();
+    const request_path = try std.fs.path.join(allocator, &.{ std.fs.path.dirname(current.path).?, name });
+    const argv = [_][]const u8{ "python3", "-I", "-c", queue_source, "enqueue", current.path, request_path };
+    var collector = QueueCollector{ .allocator = allocator };
+    const result = try supervised.collect(allocator, &argv, env, 2000, &collector);
+    if (result.stopped or result.term != .Exited or result.term.Exited != 0) return error.QueueWriteFailed;
+    const Reply = struct { outcome: []const u8, id: ?[]const u8 = null };
+    const reply = (try std.json.parseFromSlice(Reply, allocator, collector.bytes.items, .{ .allocate = .alloc_always })).value;
+    if (std.mem.eql(u8, reply.outcome, "queued")) return reply.id orelse error.QueueIdMissing;
+    if (std.mem.eql(u8, reply.outcome, "released")) return null;
+    return error.QueueWriteFailed;
 }

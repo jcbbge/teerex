@@ -1203,6 +1203,7 @@ def parser():
     common(q)
     q.add_argument("--from", dest="sender", required=True)
     q.add_argument("--message-file", required=True)
+    q.add_argument("--no-queue", action="store_true", help="native fallback waits/refuses held input; inbox append unchanged")
     q.add_argument("--draft", choices=("guard", "ignore"), default="guard", help="native fallback draft policy; registered inbox append never types")
     q.add_argument("--draft-wait-ms", type=bounded_int(0, 55000), default=30000, metavar="0..55000")
     q.add_argument("--timeout-ms", type=bounded_int(100, 115000), default=None, metavar="100..115000",

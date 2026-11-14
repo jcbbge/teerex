@@ -25,7 +25,7 @@ class ClutchTest(fixtures.SendTest):
         return result, json.loads(result.stdout) if result.stdout else None
 
     def bounded_send(self, target, wait=150, *extra):
-        result = subprocess.run(self.command(target) + ["--draft-wait-ms", str(wait), *extra], env=self.env,
+        result = subprocess.run(self.command(target) + ["--no-queue", "--draft-wait-ms", str(wait), *extra], env=self.env,
                                 capture_output=True, text=True, timeout=8)
         return result, json.loads(result.stdout)
 
@@ -72,7 +72,7 @@ class ClutchTest(fixtures.SendTest):
     def test_release_unblocks_waiting_sender_without_retry(self):
         target, raw = self.fixture()
         self.clutch("take", target)
-        process = subprocess.Popen(self.command(target) + ["--draft-wait-ms", "3000"], env=self.env,
+        process = subprocess.Popen(self.command(target) + ["--no-queue", "--draft-wait-ms", "3000"], env=self.env,
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         self.addCleanup(lambda: self.cleanup_process(process))
         time.sleep(.3)
@@ -89,7 +89,7 @@ class ClutchTest(fixtures.SendTest):
         target, log = self.prompt()
         draft = "operator unfinished β"
         self.type_draft(target, draft)
-        process = subprocess.Popen(self.command(target) + ["--draft-wait-ms", "600"], env=self.env,
+        process = subprocess.Popen(self.command(target) + ["--no-queue", "--draft-wait-ms", "600"], env=self.env,
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         self.addCleanup(lambda: self.cleanup_process(process))
         time.sleep(.2)
@@ -123,7 +123,7 @@ class ClutchTest(fixtures.SendTest):
         # Keep the same path length as rex.sock: Darwin sockaddr_un has a short fixed limit.
         alias = self.socket.with_name("app sock")
         alias.symlink_to(self.socket)
-        command = self.command(target) + ["--draft-wait-ms", "0"]
+        command = self.command(target) + ["--no-queue", "--draft-wait-ms", "0"]
         command[command.index("--socket") + 1] = str(alias)
         result = subprocess.run(command, capture_output=True, text=True, env=self.env, timeout=5)
         self.assertEqual(json.loads(result.stdout)["failure_reason"], "pane_held_by_human")
