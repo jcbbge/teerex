@@ -1,8 +1,8 @@
 # teerex product roadmap
 
-## Status after the 13 November 2026 overnight run
+## Status, 14 November 2026
 
-Josh's overnight ruling selected every roadmap item. This table records where each one stands at main `47cbfe9`; the sections below are kept as the planning record. **Built** means on main and covered by the four CI lanes. **Host-blocked** means it needs a Rex API that does not exist; each has one upstream request (R1–R7, kept with the teerex lead's records).
+This table records where every roadmap item stands at main `MAINSHA`; the sections below are kept as the planning record. **Built** means on main and covered by its tests. **Done** means finished another way (a ruling or a decision), with the reason. **Blocked upstream** means it needs a Rex API that does not exist; each links its upstream request, tracked as a teerex issue. Rex takes requests only in its Beta Discord, so each issue carries paste-ready text for that post.
 
 | Item | Status | Where |
 | --- | --- | --- |
@@ -11,25 +11,29 @@ Josh's overnight ruling selected every roadmap item. This table records where ea
 | C03/C21/C22 presentation filtering | Built | `--view progress-v1` on compare/watch/filter |
 | Q02/C31/C32 readiness + baseline | Built; `observe` evidenced ready on API13, both machines | `tools/acceptance/` |
 | Q11 managed runtime, Q12 performance | Built and measured on hive and the M5 | `tools/acceptance/results/` |
-| N06 doctor on Linux, N07 latest view, N08 recovery inspection | Built | `doctor`, `observe --tail`, `jobs doctor`, `cartridges doctor/repair` |
+| N06 doctor on Linux, N07 latest view, N08 recovery inspection | Built; `doctor --all` reads rexconfig's single pin `teerex.version` | `doctor`, `observe --tail`, `jobs doctor`, `cartridges doctor/repair` |
 | U05 perception (agent state) | Built | `observe --state` |
 | U06 Linux run/offstage | Built | `run`, `offstage` |
 | U07 MCP surface | Built | `teerex mcp` |
-| U11 richer presentation | Built: keyboard fleet dashboard | `boards fleet` |
+| U11 richer presentation | Built: keyboard fleet board | `board`, `boards fleet` |
 | H02 friction, H03 replay, H06 decisions, H07 section T, H08 terms | Built | `boards friction`, `replay`, `records` decisions, `ask --deliver paste`, [observation terms](observation-terms.md) |
-| H04 fence probe | Built (teerex half) | `agents fence-probe`; Rivet owns the fence |
-| H05 pause/redirect/takeover | Rivet's half | [spec](planning/workloads/authority-task-runtime.md) |
-| U03, C04, C05, C07, C16, C17, Q13 (guarded input, human clutch) | Host-blocked; cooperative `clutch` built | upstream R1, R4, R6 |
-| C18/U04 learned maneuver execution | Host-blocked | upstream R5 |
-| U08 signed distribution, Q09 notarization | Not needed (Josh, 13 Nov 2026): teerex runs only on his own M5 and hive; ad-hoc signing is enough there | — |
-| Q05 first-use observation | Done (13 Nov 2026): fresh Claude, Codex and pi agents given only docs/agents.md completed run-visible, read-a-pane and send tasks in three rounds; the guide was fixed after each round, and the final round reported only minor notes | docs/agents.md |
-| Q06 actual API11 | Untestable: no legitimate pinned API11 build is available | — |
-| Q07 extra API/build pairs, Q08 OS/arch floor | Not pursued: hive and the M5 are both API13; CI covers Mac API10/12/13 and Linux API13 | — |
-| Q10 painted UI acceptance | Not pursued unattended: it would capture Josh's live screen | — |
-| Q14 lifetime/crash recovery | Built: `recovery reconcile` (read-only discovery, then confirmed apply) for launches orphaned by a Rex restart or supervisor kill, plus N08 doctors, prune and detach receipts | `teerex recovery reconcile` |
-| Q15 encryption, redaction, secure erase | Built: records redact recognized credentials and refuse secret-bearing evidence; the call log drops token-shaped names; `records forget` and `forget-scratchpad` overwrite before unlinking; run-visible never keeps env values. Encryption at rest deferred (reasoning in items/records/README.md) | — |
-| U10 Rex–Rivet integration | Rivet's half; teerex side (run-visible, channel, detach, session ensure) built | — |
-| Issues | #1 #2 #3 #4 #5 #6 #7 #9 #10 #12 #13 #15 #16 #17 #18 #19 #20 #22 #23 #14 closed | GitHub |
+| H04 fence probe | Built (teerex's part); the fence itself belongs to Rivet | `agents fence-probe` |
+| H05 pause/redirect/takeover | Done in Rivet, live on 13 Nov 2026 (pause, go, redirect, takeover, stop on a throwaway item); teerex's part is the spec | [spec](planning/workloads/authority-task-runtime.md) |
+| U10 Rex–Rivet integration | Built: run-visible, channel, detach, session ensure; fenced workers reach their starter through the agents channel with no relay (#21) | `run-visible --channel-dir`, `agents channel` |
+| Pane and session authority | Built: whoever opened a pane or session (agents launch, surfaces open, session ensure; locally or through a named host) can close it, nobody else; the registered seat's tab is operator-only | [surfaces](../items/surfaces/README.md) |
+| Q14 lifetime/crash recovery | Built: `recovery reconcile`; `recovery snapshot` records absent launches as omissions (#24); `--root` and per-host `recovery_store` (#25) | `teerex recovery` |
+| Q15 encryption, redaction, secure erase | Built: redaction, refusal of secret-bearing evidence, overwrite-before-unlink. Encryption at rest: Done, decided against (a key beside the data adds nothing against the same user; host disk encryption is the operator's control; items/records/README.md) | — |
+| Q05 first-use observation | Done (13 Nov 2026): fresh Claude, Codex and pi agents given only docs/agents.md completed run-visible, read-a-pane and send; docs/agents.md now also carries the scratchpad contract, seat resolution and reaping | docs/agents.md |
+| Q08 OS/arch floor | Done: the supported floor is what is measured, Linux x86_64 (hive) and macOS arm64 (the M5), Rex API 13 on both; Mac API 10/12/13 tested in CI | — |
+| U08 signed distribution, Q09 notarization | Done by ruling (Josh, 13 Nov 2026): teerex runs only on his M5 and hive; ad-hoc signing is enough | — |
+| Q10 painted UI acceptance | Done by ruling (seat record seat-20261114t173127z-3429192): teerex's side is proven through Rex state (labels, status, focus); painted glyphs are covered by lead panes's font-coverage check and Josh's own eyes on the panes. No screen capture | — |
+| U03, C04, C05, C07, C16, C17, Q13 (guarded input, human clutch) | Blocked upstream: server-enforced input lease revoked by a human keystroke. Cooperative `clutch` built | [#27](https://github.com/jcbbge/teerex/issues/27) |
+| C18/U04 learned maneuver execution | Blocked upstream: needs the input lease and an exact draft read. Recognition built | [#27](https://github.com/jcbbge/teerex/issues/27), [#28](https://github.com/jcbbge/teerex/issues/28) |
+| Exact draft detection and draft restore | Blocked upstream: a program reporting its input line. Guarded `send` uses a screen heuristic today | [#28](https://github.com/jcbbge/teerex/issues/28) |
+| Safe server update | Blocked upstream: server update without losing panes. Impact inventory and snapshot built | [#29](https://github.com/jcbbge/teerex/issues/29) |
+| Exact live replay checkpoints | Blocked upstream: stream offset on terminal reads. Exact after a quiesced replay today | [#30](https://github.com/jcbbge/teerex/issues/30) |
+| Q06 actual API11, Q07 extra API/build pairs | Blocked upstream: no pinned older server builds are published | [#31](https://github.com/jcbbge/teerex/issues/31) |
+| Issues | #1–#7 #9 #10 #12–#26 closed; open: #27–#31 (upstream) | GitHub |
 
 ## Current phased plan — 13 November 2026
 
