@@ -212,6 +212,9 @@ class Registry:
         if new:
             require(not os.path.lexists(str(Path(self.root) / name)), "launch_already_exists")
         previous = {} if new else self.read(state["launch_id"], name)
+        # The board's contract projection follows every starter rebind/fall-up.
+        if isinstance(state.get("contract"), dict):
+            state["contract"]["starter"] = state.get("starter")
         old_events = lifecycle_events(previous)
         state["timeline_partial"] = not new and ("timeline" not in previous or previous.get("timeline_partial", False))
         state["timeline"] = list(previous.get("timeline", old_events))

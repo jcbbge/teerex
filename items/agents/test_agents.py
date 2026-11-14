@@ -494,6 +494,26 @@ class ContractHelpersTest(unittest.TestCase):
         self.assertEqual(check["action"], "block")
         self.assertEqual(check["reason"], CONTRACT_REFUSAL + "; write your steps first")
 
+    def test_registry_save_keeps_contract_starter_current_for_every_rebind(self):
+        with tempfile.TemporaryDirectory() as root:
+            os.chmod(root, 0o700)
+            old = dict(session_id="old-session", block_id="old-pane")
+            new = dict(session_id="new-session", block_id="new-pane")
+            state = dict(schema_version=1, launch_id="a" * 32, starter=old,
+                         contract=dict(starter=old, awaiting_starter=dict(kind="done", at=1)))
+            with self.ns["Registry"](root) as registry:
+                registry.save(state, new=True)
+                state["starter"] = new
+                registry.save(state)
+                saved = registry.read(state["launch_id"])
+                self.assertEqual(saved["contract"]["starter"], new)
+                self.assertEqual(saved["contract"]["awaiting_starter"], dict(kind="done", at=1))
+                # Repair an already stale copy even when only report-to was rebound.
+                saved["contract"]["starter"] = old
+                saved["report_to"] = new
+                registry.save(saved)
+                self.assertEqual(registry.read(state["launch_id"])["contract"]["starter"], new)
+
     def test_unanswered_includes_accept_command_and_stops_after_acceptance(self):
         state = dict(name="worker", brief_attempted=True, contract=dict(
             awaiting_starter=dict(kind="done", at=1), starter_lapses=0, interval_s=1))
