@@ -151,7 +151,7 @@ class SurfacesTest(unittest.TestCase):
         r, absent = self.surface("resolve", "--session", "any", "--pane", "absent pane")
         self.assertEqual(r.returncode, 1)
         self.assertEqual(absent["failure_reason"], "target_not_found")
-        self.assertTrue(all("session_id" in row and "session_label" in row and "label" in row for row in absent["candidates"]))
+        self.assertFalse(absent.get("candidates"))
 
     def test_global_ensure_refuses_missing_creation_target_and_incomplete_inventory(self):
         before = self.view()
@@ -297,17 +297,57 @@ class SurfacesTest(unittest.TestCase):
         r, value = self.surface("resolve", "--session", label, "--window", "unique pane α")
         self.assertEqual(r.returncode, 0, r.stdout)
         self.assertEqual(value["resolved"]["window_id"], pane["window_id"])
-        self.open("tab", label="unique pane α")
+        duplicate = self.open("tab", label="unique pane α")["actual"]
         before = self.view()
-        r, value = self.surface("close", "--session", label, "--pane", "unique pane α")
-        self.assertEqual(r.returncode, 1, r.stdout)
-        self.assertEqual(value["failure_reason"], "ambiguous_target")
-        self.assertEqual(len(value["candidates"]), 2)
+        for verb, selector, key in (("close", "--pane", "block_id"), ("resolve", "--pane", "block_id"),
+                                    ("resolve", "--window", "window_id")):
+            r, value = self.surface(verb, "--session", label, selector, "unique pane α")
+            self.assertEqual(r.returncode, 1, r.stdout)
+            self.assertEqual(value["failure_reason"], "ambiguous_target")
+            self.assertEqual({row[key] for row in value["candidates"]}, {pane[key], duplicate[key]})
+            self.assertTrue(all(row["label"] == "unique pane α" for row in value["candidates"]))
         self.assertEqual(before, self.view())
         r, value = self.surface("resolve", "--session", "absent session")
         self.assertEqual(r.returncode, 1)
         self.assertEqual(value["failure_reason"], "target_not_found")
-        self.assertTrue(value["candidates"])
+        self.assertFalse(value.get("candidates"))
+
+    def test_missing_selectors_never_expose_inventory(self):
+        missing = "missing target " + self.work.name
+        absent_block = "block:00000000-0000-0000-0000-000000000000"
+        absent_window = "window:00000000-0000-0000-0000-000000000000"
+        absent_session = "session:00000000-0000-0000-0000-000000000000"
+        cases = []
+        for selector in (missing, absent_block):
+            for verb in ("resolve", "inspect", "focus", "close"):
+                cases.append((verb, ["--session", self.session, "--pane", selector]))
+            cases.append(("resolve", ["--session", "any", "--pane", selector]))
+            cases.append(("rename", ["--session", self.session, "--pane", selector, "--label", "unused"]))
+            # A valid source must not survive in resolved when its anchor is missing.
+            cases.append(("move", ["--session", self.session, "--pane", self.anchor, "--anchor", selector]))
+            for verb in ("open", "ensure"):
+                cases.append((verb, ["--session", self.session, "--layout", "tiled", "--anchor", selector,
+                                     "--label", "unused", "--", "/bin/sh", "-c", "exit 0"]))
+        for selector in (missing, absent_window):
+            cases.append(("resolve", ["--session", self.session, "--window", selector]))
+            cases.append(("rename", ["--session", self.session, "--window", selector, "--label", "unused"]))
+        for selector in (missing, absent_session):
+            cases.append(("resolve", ["--session", selector]))
+            cases.append(("close", ["--session", selector, "--pane", self.anchor]))
+            cases.append(("session close", ["--session", selector]))
+        before = self.view()
+        for verb, args in cases:
+            with self.subTest(verb=verb, args=args):
+                process, packet = self.surface(verb, *args)
+                self.assertEqual(process.returncode, 1, process.stdout + process.stderr)
+                self.assertEqual(packet["outcome"], "refused")
+                self.assertIn(packet["failure_reason"], ("target_not_found", "window_not_found", "pane_not_attached_terminal"))
+                self.assertFalse(packet.get("candidates"))
+                self.assertFalse(packet.get("resolved"))
+                self.assertFalse(packet["creation_attempted"] or packet["control_attempted"])
+                outside_requested = {key: value for key, value in packet.items() if key != "requested"}
+                self.assertNotRegex(json.dumps(outside_requested), r"(?:block|window):")
+        self.assertEqual(before, self.view())
 
     def test_session_close_empty_unattached_and_verify_absence(self):
         sid = self.rpc('session.create', {'label': 'close empty ' + self.work.name})['session_id']

@@ -16,7 +16,7 @@ local function surface(a, emit)
             for _,v in ipairs(rows) do if v[key]==text then return v end end
             local prefix=key=="session_id" and "session:" or key=="window_id" and "window:" or "block:"
             if text:sub(1,#prefix)==prefix then
-                result.candidates=rows; result.failure_reason="target_not_found"; return nil
+                result.candidates=nil; result.resolved=nil; result.failure_reason="target_not_found"; return nil
             end
         end
         local matches={}
@@ -28,7 +28,8 @@ local function surface(a, emit)
             end
         end
         if #matches~=1 then
-            result.candidates=#matches>0 and matches or rows
+            result.candidates=#matches>1 and matches or nil
+            result.resolved=nil
             result.failure_reason=#matches>1 and (exact_label and "ambiguous_label" or "ambiguous_target") or "target_not_found"
             return nil
         end
