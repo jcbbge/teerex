@@ -399,6 +399,17 @@ class State:
                             if block not in records:records[block]=dict(record,_managed=registry==self.a.agents_registry)
                     except (OSError,ValueError,UnicodeError,TypeError):continue
             executables=profile_executables(self.a.profiles) if getattr(self.a,'profiles',None) else set()
+            # Same registration and live-address rules as boards.live_seat;
+            # read existing state directly without opening a mutable Store.
+            seat=None
+            try:
+                registrations=json.loads((self.a.store/'state.json').read_text(encoding='utf-8'))['seats']
+                seats=[r['target'] for r in registrations if not r.get('inherited_to')
+                       and r['target']['host']==self.a.host
+                       and r['target']['server']=='unix://'+self.a.socket
+                       and self.live.get(r['target']['block_id'],{}).get('session')==r['target']['session_id']]
+                if len(seats)==1:seat=seats[0]
+            except (OSError,ValueError,KeyError,TypeError,AttributeError):pass
             rows={}
             for block,pane in self.live.items():
                 session=pane['session']
@@ -448,6 +459,7 @@ class State:
                 item=(record.get('cost') or {}).get('rivet_item')
                 if not item and record.get('owner')=='rivet':item=(record.get('purpose') or '').split(' · ')[0]
                 row.update(cost=self.accounting.get(block),project=self.project(item),rivet_item=item)
+                if seat and block==seat['block_id'] and session==seat['session_id']:row['role']='seat'
                 rows[block]=row
             for block,row in rows.items():
                 if self.rows.get(block)!=row:emit(self.a.host,'agent',**row)

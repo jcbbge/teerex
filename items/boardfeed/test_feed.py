@@ -79,6 +79,33 @@ class FeedTests(unittest.TestCase):
         self.assertEqual(argv[argv.index('--tasks')+1],'/tasks');self.assertIn('--once',argv)
         self.assertEqual(json.loads(output.getvalue())['host'],'fixture')
 
+    def test_registered_seat_role_is_read_only_and_exact(self):
+        with resources.temporary_directory() as tmp:
+            root=Path(tmp)
+            a=SimpleNamespace(host='fixture',rex='/not-found',socket='/fixture.sock',store=root/'store')
+            for field in ('store','agents_registry','jobs_registry','scratch','calls'):
+                path=root/field;path.mkdir(exist_ok=True);setattr(a,field,path)
+            state=feed.State(a);state.refresh_inventory=lambda:True
+            state.live={'b':dict(session='s',label='operator'),'other':dict(session='s',label='seat')}
+            for block in state.live:
+                (a.agents_registry/(block+'.json')).write_text(json.dumps(dict(name=block,target=dict(session_id='s',block_id=block))))
+            target=dict(host='fixture',server='unix:///fixture.sock',session_id='s',block_id='b')
+            path=a.store/'state.json'
+            def scan(registrations):
+                path.write_text(json.dumps(dict(seats=registrations)))
+                before=path.read_bytes()
+                with mock.patch.object(feed,'emit'):state.scan()
+                self.assertEqual(path.read_bytes(),before)
+            scan([dict(target=target)])
+            self.assertEqual(state.rows['b']['role'],'seat');self.assertNotIn('role',state.rows['other'])
+            for change in (dict(host='other'),dict(server='unix:///other'),dict(session_id='wrong')):
+                scan([dict(target=dict(target,**change))]);self.assertNotIn('role',state.rows['b'])
+            scan([dict(target=target,inherited_to=target)]);self.assertNotIn('role',state.rows['b'])
+            scan([]);self.assertNotIn('role',state.rows['b'])
+            path.unlink()
+            with mock.patch.object(feed,'emit'):state.scan()
+            self.assertNotIn('role',state.rows['b']);self.assertFalse(path.exists())
+
     def test_proof_steps_and_observational_sources(self):
         steps=feed.scratch_steps({'Done':['Read — proof: contract','Guess — unproven'],'Now':[],'To-do':[]})
         self.assertEqual([(s['text'],s['proof']) for s in steps],[('Guess',None),('Read','contract')])
