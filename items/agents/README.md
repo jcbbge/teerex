@@ -412,11 +412,11 @@ the previous reporting path. The contact clock starts at the brief attempt.
 After the existing freshness check, a worker turn must declare exactly one state:
 all steps finished, `scratch flag "stuck; tried; need"`, or Waiting with a future Check.
 An empty first turn also needs steps. Claude blocks, Codex sends itself a reminder, and
-Pi continues settlement once; a second undeclared end reports `NO ANSWER` to the starter.
-Declared turns send `DONE`, `FLAG` or `WAITING` lines to the starter and distinct report-to.
+Pi continues settlement once; a second undeclared end reports `NOT DONE` with the missing declaration to the starter.
+Each declared turn sends one `DONE name:` or `NOT DONE name step n/m:` answer to the starter and distinct report-to. Waiting answers include the wait and check time; blocked answers include the flag text. Full last words accompany DONE, or the first blocked answer for each flag, and never a plain NOT DONE. The one-line answer remains the contact summary in the registry; transcript fallback retains its existing bounded read.
 Flag sends claim their content hash before dispatch so concurrent checks send once.
 Only acknowledged sends count as contact; an uncertain flag attempt is retained without retry.
-Legacy launch records without a contract retain the previous turn-report rules.
+Legacy launch records without a contract retain their delivery rules and use DONE or NOT DONE headers.
 
 Managed workers keep their starter informed through the existing supervisor. Scratchpad Now changes and new Done items send one STEP line; a Blocked flag sends one FLAG per distinct SHA through the shared contract helper. Human launches have no worker contract.
 

@@ -667,7 +667,7 @@ def contract_seat(state):
     return seats[0] if seats else None
 
 
-def contract_tell(root, launch_id, kind, line, to="starter"):
+def contract_tell(root, launch_id, kind, line, to="starter", last_message=None):
     state = load(root, launch_id)
     if kind == "flag" and to == "starter":
         with Registry(root) as registry:
@@ -693,7 +693,7 @@ def contract_tell(root, launch_id, kind, line, to="starter"):
     results = []
     for i, destination in enumerate(destinations):
         sender = dict(state, name="teerex-contract")
-        code, packet = send(root, sender, destination, line, "contract-" + secrets.token_hex(16) + "-" + str(i))
+        code, packet = send(root, sender, destination, line + ("\n" + last_message if last_message else ""), "contract-" + secrets.token_hex(16) + "-" + str(i))
         results.append(dict(client_exit=code, receipt=packet))
     ok = bool(results) and all(transport_ack(r["client_exit"], r["receipt"]) for r in results)
     if to == "starter":
@@ -782,7 +782,7 @@ export default function(pi) {
     const text = (last?.content ?? []).filter(c => c.type === 'text').map(c => c.text).join('\\n');
     const failed = outcome === 'error';
     const payload = {hook_event_name: failed ? 'StopFailure' : 'Stop',
-      last_assistant_message: text.slice(0,1500), error: (last?.errorMessage ?? 'Pi run failed').slice(0,600)};
+      last_assistant_message: text, error: (last?.errorMessage ?? 'Pi run failed').slice(0,600)};
     const args = HOOK;
     const result = spawnSync(args[0], args.slice(1), {input: JSON.stringify(payload), encoding: 'utf8', timeout: 250000});
     if (result.error || result.status !== 0) throw new Error('teerex stop report failed: ' + (result.error?.message ?? result.stderr));
@@ -815,7 +815,7 @@ def hook(o):
         if last is None:
             last = ""
         require(isinstance(last, str), "invalid_last_words")
-        normalized = dict(hook_event_name="Stop", last_assistant_message=last[:1500])
+        normalized = dict(hook_event_name="Stop", last_assistant_message=last)
         if scratch_enabled:
             inputs = event.get("input-messages", [])
             require(isinstance(inputs, list) and all(isinstance(v, str) for v in inputs), "invalid_codex_input_messages")
@@ -1135,7 +1135,7 @@ def channel(o):
         validate_hook_event(event)
         if event["hook_event_name"] == "Stop" and not event.get("last_assistant_message"):
             try:
-                event["last_assistant_message"] = transcript_last_text(event.get("transcript_path"))[:1500]
+                event["last_assistant_message"] = transcript_last_text(event.get("transcript_path"))
             except (OSError, Refusal, ValueError):
                 event["last_assistant_message"] = "(last words unavailable inside worker)"
         event.pop("transcript_path", None)
@@ -1557,7 +1557,7 @@ def stop(o):
         validate_hook_event(event)
         if event["hook_event_name"] == "Stop" and not event.get("last_assistant_message"):
             try:
-                event["last_assistant_message"] = transcript_last_text(event.get("transcript_path"))[:1500]
+                event["last_assistant_message"] = transcript_last_text(event.get("transcript_path"))
             except (OSError, Refusal, ValueError):
                 event["last_assistant_message"] = "(last words unavailable on compute host)"
         event.pop("transcript_path", None)
@@ -1652,10 +1652,10 @@ def report_stop(root, launch_id, event_id, event, allow_transcript=True):
         except (OSError, Refusal, ValueError):
             last = "(last words unavailable: transcript could not be read)"
     error = str(event.get("error") or event.get("error_details") or event.get("message") or "unknown error")
-    details = (last[:1500] or "(no last words supplied)") if kind == "Stop" else error[:600]
+    details = (last or "(no last words supplied)") if kind == "Stop" else error[:600]
     state = load(root, launch_id)
     # Hook metadata reports a turn, never process death; only invocation IDs deduplicate.
-    title = "IDLE (harness turn-stop report)" if kind == "Stop" else "ERROR (harness failure report, death not verified)"
+    title = "NOT DONE" if kind == "Stop" else "ERROR (harness failure report, death not verified)"
     body = f"{title}: {state['name']}\n{details}"
     if check and check["status"] == "stale":
         body += "\nScratchpad: stale; " + check["action"]
@@ -1671,16 +1671,28 @@ def report_stop(root, launch_id, event_id, event, allow_transcript=True):
         if declared == "done":
             body = f"DONE {state['name']}: {c['done_when']} — " + " ".join(details.split())[:300]
         elif declared == "blocked":
-            body = f"FLAG {state['name']} step {c['step_n']}/{c['steps_total']}: {c['flag']['text']}"
+            body = f"NOT DONE {state['name']} step {c['step_n']}/{c['steps_total']}: {c['flag']['text']}"
         elif declared == "waiting":
             waiting = scratch_read(Path(state["scratchpad"]))["waiting"]
             clock = datetime.datetime.fromtimestamp(c["check_at"] / 1000, datetime.timezone.utc).strftime("%H:%MZ")
-            body = f"WAITING {state['name']} step {c['step_n']}/{c['steps_total']}: {waiting}; checks again {clock}"
+            body = f"NOT DONE {state['name']} step {c['step_n']}/{c['steps_total']}: {waiting}; checks again {clock}"
         else:
-            body = f"NO ANSWER {state['name']}: ended its turn without declaring done, blocked or waiting"
+            body = f"NOT DONE {state['name']} step {c['step_n']}/{c['steps_total']}: ended its turn without declaring done, blocked or waiting"
         delivery_rule = "contract_" + (declared or "no_answer")
     else:
         delivery_rule = turn_report_rule(root, state, kind)
+    if kind == "Stop" and not delivery_rule.startswith("contract_"):
+        try:
+            snapshot = contract_snapshot(state)
+        except (OSError, ValueError, KeyError):
+            snapshot = dict(step_n=0, steps_total=0)
+        if delivery_rule in ("finished_now_empty", "finished_now_done") and (state.get("contract_check") or {}).get("status") != "protocol_ack":
+            body = f"DONE {state['name']}: " + " ".join(details.split())[:300] + "\n" + details
+        else:
+            reason = "protocol acknowledged; awaiting task steps" if (state.get("contract_check") or {}).get("status") == "protocol_ack" else "turn ended with work remaining"
+            if check and check["status"] == "stale":
+                reason += "; Scratchpad: stale; " + check["action"]
+            body = f"NOT DONE {state['name']} step {snapshot['step_n']}/{snapshot['steps_total']}: {reason}"
     turn_state = "error" if kind == "StopFailure" else "done" if delivery_rule in ("finished_now_empty", "finished_now_done", "contract_done") else "idle"
     def remembered(s):
         previous = s.get("last_hook") or {}
@@ -1697,7 +1709,18 @@ def report_stop(root, launch_id, event_id, event, allow_transcript=True):
                         dict(outcome="uncertain", attempted_at=now(), delivery_rule=delivery_rule,
                              evidence="harness_report_not_process_death"), 64, "notification_already_attempted")
         update(root, launch_id, reporting)
-        code, delivery = contract_tell(root, launch_id, "flag" if declared == "blocked" else declared or "no_answer", body)
+        last_message = details if declared == "done" else None
+        if declared == "blocked":
+            # The supervisor may already have sent FLAG. Attach last words once per
+            # flag, while every turn still sends its own NOT DONE answer.
+            with Registry(root) as registry:
+                current = registry.read(launch_id)
+                flag = current["contract"]["flag"]
+                if not flag.get("last_message_attempted"):
+                    flag["last_message_attempted"] = now()
+                    last_message = details
+                    registry.save(current)
+        code, delivery = contract_tell(root, launch_id, declared or "no_answer", body, last_message=last_message)
         update(root, launch_id, lambda s: s["notifications"][event_id].update(outcome="transport_acknowledged" if code == 0 else "uncertain", receipt=delivery))
         state = load(root, launch_id)
         publish_fleet(root, state, event_id, "completed" if declared == "done" else "blocked" if declared in ("blocked", "waiting") else "idle", body)

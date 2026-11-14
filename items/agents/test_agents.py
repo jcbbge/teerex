@@ -960,7 +960,7 @@ class AgentsTest(unittest.TestCase):
         self.assertIsNone(state["immediate_child_term"])
         self.assertEqual(state["last_hook"]["kind"], "Stop")
         self.assertEqual(state["last_hook"]["text"], "Result β: one changed edge.")
-        wait_for(lambda: any("IDLE (harness turn-stop report)" in v.get("payload", "") for v in events(self.starter_log)))
+        wait_for(lambda: any("DONE probe:" in v.get("payload", "") for v in events(self.starter_log)))
         p, duplicate = self.run_cli("stop", "--registry", str(self.registry), "--launch-id", launch_id, "--event-file", "-", "--event-id", "1" * 32, input=hook)
         self.assertEqual(p.returncode, 1)
         self.assertIn("notification_already_attempted", duplicate["failure_reason"])
@@ -2847,16 +2847,17 @@ Path('/work/network-harness').touch()
                     nonlocal counter
                     counter += 1
                     self.enforcement_hook(launch_id, harness, dict(hook_event_name="UserPromptSubmit"))
+                last_words = "proof " + "x" * 1800 + "\ncomplete last line"
                 def end(reminder=False):
                     if harness == "codex":
                         return self.enforcement_hook(launch_id, harness, dict(type="agent-turn-complete", **{
-                            "last-assistant-message": "proof " + "x" * 400, "turn-id": f"{counter}-{'reminder' if reminder else 'real'}",
+                            "last-assistant-message": last_words, "turn-id": f"{counter}-{'reminder' if reminder else 'real'}",
                             "input-messages": [latest_refusal if reminder else 'work']}), notify=True)
                     return self.enforcement_hook(launch_id, harness, dict(hook_event_name="ScratchCheck" if harness == "pi" else "Stop",
-                                                                          last_assistant_message="proof"))
+                                                                          last_assistant_message=last_words))
                 def settle(result):
                     if harness == "pi":
-                        return self.enforcement_hook(launch_id, harness, dict(hook_event_name="Stop", last_assistant_message="proof"))
+                        return self.enforcement_hook(launch_id, harness, dict(hook_event_name="Stop", last_assistant_message=last_words))
                     return result
                 def blocked(result):
                     nonlocal latest_refusal
@@ -2880,7 +2881,7 @@ Path('/work/network-harness').touch()
                 reason = blocked(end())
                 self.assertEqual(reason, CONTRACT_REFUSAL + "; write your steps first")
                 settle(end(reminder=True))
-                wait_for(lambda: any("NO ANSWER probe:" in text for text in messages()))
+                wait_for(lambda: any("NOT DONE probe step" in text for text in messages()))
                 start()
                 scratch("now", "Implement")
                 blocked(end())
@@ -2895,14 +2896,24 @@ Path('/work/network-harness').touch()
                 scratch("flag", "stuck; tried tests; need review")
                 result = settle(end())
                 self.assertEqual(result["delivery_rule"], "contract_blocked")
-                settle(end(reminder=True))
-                exact = "FLAG probe step 2/2: stuck; tried tests; need review"
-                self.assertEqual(sum(exact in text for text in messages()), 1)
+                start()
+                scratch("flag", "stuck; tried tests; need review")
+                settle(end())
+                exact = "NOT DONE probe step 2/2: stuck; tried tests; need review"
+                wait_for(lambda: sum(exact in text for text in messages()) == 2)
+                reports = [text for text in messages() if exact in text]
+                self.assertEqual(len(reports), 2)
+                self.assertEqual(sum("\nproof" in text for text in reports), 1)
                 start()
                 scratch("now", "Review", "--waiting", "reviewer", "--check", "10m")
                 result = settle(end())
                 self.assertEqual(result["delivery_rule"], "contract_waiting")
-                wait_for(lambda: any("WAITING probe step 2/2: reviewer; checks again " in text for text in messages()))
+                wait_for(lambda: any("NOT DONE probe step 2/2: reviewer; checks again " in text for text in messages()))
+                waits = [text for text in messages() if "NOT DONE probe step 2/2: reviewer;" in text]
+                self.assertTrue(all("proof" not in text for text in waits))
+                dones = [text for text in messages() if "DONE probe: TASK" in text]
+                self.assertTrue(any(text.endswith(last_words) for text in dones))
+                self.assertTrue(any(text.endswith(last_words) for text in reports))
                 start()
                 scratch("now", "Review", "--waiting", "reviewer", "--check", "2000-01-01T00:00:00Z")
                 blocked(end())
@@ -2952,7 +2963,7 @@ await handlers.agent_settled({}, {sessionManager:{getBranch:()=>[]}});
         result = subprocess.run(["node", "--input-type=module", "-e", script, str(extension), state["scratchpad"], CONTRACT_REFUSAL],
                                 env=dict(self.env, AGENT_SCRATCHPAD=state["scratchpad"]), text=True, capture_output=True, timeout=30)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        wait_for(lambda: any("NO ANSWER probe:" in v.get("payload", "") for v in events(self.starter_log)))
+        wait_for(lambda: any("NOT DONE probe step" in v.get("payload", "") for v in events(self.starter_log)))
 
     def test_claude_scratch_stop_blocks_once_fresh_turn_passes_and_no_env_skips(self):
         p, launched = self.launch()
