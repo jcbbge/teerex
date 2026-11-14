@@ -107,6 +107,22 @@ class CostTests(unittest.TestCase):
             NS['cost_flag']('root', state, row)
         self.assertEqual(len(sent), 1)
         self.assertEqual(state['cost_flag']['outcome'], 'acknowledged')
+        self.assertEqual(sent[0][3], 'COST test: this turn 2 new tokens over 0.001 seconds; agent continues.')
+
+    def test_notice_uses_current_turn_dollars(self):
+        self.write([dict(type='message', id=str(at), timestamp=at, message=dict(role='assistant',
+                    usage=dict(input=10, output=5, cost=dict(total=price))))
+                    for at, price in ((100, 9), (200, .125))])
+        row = NS['cost_usage'](self.path, 'pi', turn_at=200)
+        self.assertEqual(row['dollars'], 9.125)
+        self.assertEqual(row['turn_dollars'], .125)
+        state = dict(launch_id='a' * 32, name='test', starter={'block_id': 'test'})
+        row.update(threshold=dict(turn_seconds=7200, turn_tokens=10), current_turn_seconds=1, turn_active=True)
+        sent = []
+        with patch.dict(NS, update=lambda root, launch, change: change(state), now=lambda: 1000,
+                        send=lambda *args: (sent.append(args) or (0, {})), transport_ack=lambda *args: True):
+            NS['cost_flag']('root', state, row)
+        self.assertEqual(sent[0][3], 'COST test: this turn 15 new tokens ($0.12) over 10 new tokens; agent continues.')
 
     def test_threshold_claim_is_per_turn_and_stale_polls_do_not_claim(self):
         state = dict(launch_id='a' * 32, name='test', starter={'block_id': 'test'}, turn_started_at=100)

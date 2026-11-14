@@ -104,6 +104,7 @@ def cost_matches(states):
 def cost_usage(path, harness, turn_at=0, rates=None):
     total = dict(input=0, output=0, cache_read=0, cache_write=0)
     turn_tokens, dollars, priced, usage_seen = 0, 0.0, True, False
+    turn_dollars, turn_priced, turn_seen = 0.0, True, False
     messages = {}
     cumulative = {}
     model = None
@@ -166,6 +167,11 @@ def cost_usage(path, harness, turn_at=0, rates=None):
             total[k] += delta[k]
         if at >= turn_at:
             turn_tokens += delta['input'] + delta['cache_write'] + delta['output']
+            turn_seen = True
+            if amount is None:
+                turn_priced = False
+            else:
+                turn_dollars += amount
         if amount is None:
             priced = False
         else:
@@ -173,7 +179,7 @@ def cost_usage(path, harness, turn_at=0, rates=None):
             sources.add(source)
     return dict(tokens_in=total['input'] + total['cache_read'] + total['cache_write'], tokens_out=total['output'],
                 cache_read_tokens=total['cache_read'], cache_write_tokens=total['cache_write'],
-                turn_tokens=turn_tokens, dollars=dollars if priced and usage_seen else None,
+                turn_tokens=turn_tokens, turn_dollars=turn_dollars if turn_priced and turn_seen else None, dollars=dollars if priced and usage_seen else None,
                 dollar_source='+'.join(sorted(sources)) if priced and usage_seen else 'unknown_not_recorded',
                 usage_seen=usage_seen, last_at=last_at)
 
@@ -215,7 +221,14 @@ def cost_flag(root, state, row):
     update(root, state['launch_id'], claim)
     if not claimed:
         return
-    body = f"COST {state['name']}: current turn {row['current_turn_seconds'] / 3600:.2f} hours, {row.get('turn_tokens')} tokens. Threshold exceeded; agent continues."
+    dollars = row.get('turn_dollars')
+    price = f" (${dollars:.2f})" if dollars is not None else ''
+    thresholds = []
+    if (row.get('turn_tokens') or 0) >= settings['turn_tokens']:
+        thresholds.append(f"{settings['turn_tokens']:g} new tokens")
+    if row['current_turn_seconds'] >= settings['turn_seconds']:
+        thresholds.append(f"{settings['turn_seconds']:g} seconds")
+    body = f"COST {state['name']}: this turn {row.get('turn_tokens')} new tokens{price} over {' and '.join(thresholds)}; agent continues."
     code, packet = send(root, state, state['starter'], body, 'cost-threshold')
     def finish(s):
         if (s.get('cost_flag') or {}).get('turn_started_at') == turn:

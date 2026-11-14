@@ -466,8 +466,12 @@ Older supervisors provide only the turn-start evidence they recorded.
 
 Profiles may set `cost: {turn_seconds: 7200, turn_tokens: 1000000}`. These are
 warning thresholds, never limits. The existing visible supervisor checks once
-per minute and flags the starter once per launch when either threshold is crossed
-on an active turn; the agent continues. It claims the attempt durably before
+per minute and flags the starter at most once per recorded turn when either threshold is crossed
+on an active turn; the agent continues. Turn tokens count uncached input, cache
+writes and output, excluding cache reads; total input and cache-read reporting
+stay unchanged. Notices say `COST <name>: this turn <N> new tokens[ ($X.XX)]
+over <threshold>; agent continues.` Dollars, when known, cover the current
+turn only; the threshold names new tokens, elapsed seconds, or both. It claims the attempt durably before
 sending and does not retry uncertain sends. New launches use this supervisor;
 already-running supervisors retain their installed behavior. Reading cost does
 not send warnings. Failure to read accounting never stops the agent.
