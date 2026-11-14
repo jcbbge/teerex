@@ -66,16 +66,89 @@ lists. Predicates: `capture_contains`, `capture_not_contains`,
 `"unknown"`; a negative capture fact on an incomplete prefix is always unknown.
 All facts must be true. See [shared terms](../../docs/observation-terms.md).
 
-Every non-usage invocation emits one `replay_result` v1 JSON with separate `mode`,
-`outcome`, steps/checkpoints, source identity, cleanup, `retry_safe:false`,
-`interpretation:"none"`, `task_completion:"not_assessed"`. Play additionally
-reports `stream_check`; record reports `fixture_path` and stream completeness.
+Every non-usage invocation emits one `replay_result` v1 JSON with `mode`,
+`outcome`, `target`, `steps`, `checkpoints`, `not_run`, cleanup,
+`retry_safe:false`, `interpretation:"none"`, `task_completion:"not_assessed"`
+and `model_turns:"not_observed"`. `target` identifies the requested server/session;
+its block starts as null. `rex` is added only after `server.version` succeeds,
+so input refusals such as `script_checkpoint_invalid` have no observed Rex identity.
+Play adds `stream_check` only after byte comparison is reached; an earlier
+deadline can omit it. Published records add `fixture_path` and `stream`.
+`stream.complete` means the captured interval has no pending partial wire frame,
+not that the child finished: inspect `stream.end` (`child_exited`, `deadline`,
+`cancelled`, or a failure) and the exit/outcome separately. A deadline can publish
+an empty complete interval and still exit 124. Live checkpoint observations are
+in `steps`; play checkpoint observations are in `checkpoints`.
 Exit 0: complete record / faithful replay with all facts true / live steps true.
 Exit 1: refusal, wire/creation/cleanup uncertainty, incomplete/hash mismatch.
 Exit 2: usage (no JSON). Exit 3: false/unknown facts, live divergence, or
 `steps_not_run`. Exit 124: deadline; 130/143: interruption. Without `--keep-open`,
 only this invocation's block is closed and absence verified. With it, the result
 cannot claim absence; the private controller files are removed at exit.
+
+## Script and facts files
+
+Save this as an absolute `--script` file for live `/bin/echo cold-live`:
+
+```json
+{
+  "schema_version": 1,
+  "kind": "teerex_live_script",
+  "id": "echo",
+  "model_turns": 0,
+  "steps": [
+    {"expect": [{"id": "echo", "capture_contains": "cold-live"}], "within_ms": 1000},
+    {"checkpoint": {"id": "end"}}
+  ]
+}
+```
+
+Each step has exactly one verb. The other supported shapes are
+`{"write":"n"}`, `{"paste":"text"}`, `{"key":{"key":"Escape"}}`,
+`{"resize":{"columns":80,"rows":24}}`, `{"sleep_ms":500}` and
+`{"effect":{"relative_to":"cwd","path_exists":"result.txt"}}`.
+Effects also accept `path_absent` with a relative path, or
+`file_sha256:{"path":"result.txt","sha256":"<64 lowercase hex digits>"}`.
+Paths must resolve inside cwd. `within_ms` is required for expect (100–60000);
+sleep is 0–5000 ms. Add `"local_only":"reason this submits only to a local program"`
+to any step that submits Enter/newline. A checkpoint value is an object with a
+slug `id`, never a bare string. `needs_authoring:true` leaves a step unrun and
+returns `steps_not_run`; it does not pass.
+
+Save independently authored display assertions as the absolute `--facts` file:
+
+```json
+{
+  "schema_version": 1,
+  "kind": "teerex_display_facts",
+  "id": "echo-display",
+  "authored_by": "manual",
+  "at": {
+    "end": [{"id": "echo", "capture_contains": "cold-replay"}]
+  }
+}
+```
+
+`at` maps fixture checkpoint ids (or `end`) to fact lists. Each fact has a string
+`id` and exactly one predicate. String values: `capture_contains`,
+`capture_not_contains`, `status_state`, `mode_enabled`. Other values:
+`capture_lines_in_order:["first","second"]`, `size:{"columns":80,"rows":24}`,
+`process_running:true`, `child_exit_code:0`. `status_id` optionally selects a
+named status record. Live expect uses the same fact-list shape, directly in the
+step; it does not take an `at` envelope. With no `--facts`, play loads the fixture's
+`facts.json` if present, otherwise checks stream fidelity without display facts.
+
+The earlier cold-reader fixture failures (confirm play deadline, zero-byte echo
+record and live echo divergence) did not reproduce on a fresh private API13
+Linux server, Rex `0.0.1794460237-g348d75`: default-tab `/bin/echo cold-replay`
+recorded 13 bytes and `child_exited`; committed `fixtures/confirm` replayed all
+33 bytes with `--timeout-ms 5000`; live `/bin/echo cold-live` satisfied the script
+above within 1000 ms with `--allow-attached-viewers`. These are fixture-specific
+failures, not evidence that an app client is required or that five seconds is
+too short. For a comparable fixture, use a fresh private server with
+`--config /dev/null --restore=false` and a fresh session, as the verification
+harness below does. The original fixture's cause remains unknown; do not mask a
+repeated deadline by claiming success or increasing the timeout without evidence.
 
 ## Verification
 
