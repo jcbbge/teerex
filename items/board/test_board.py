@@ -602,6 +602,35 @@ class BoardTest(unittest.TestCase):
             except ProcessLookupError:continue
             self.fail('board left feed descendant alive: %d'%pid)
 
+    def test_header_tracks_rows_arriving_after_start_per_host(self):
+        fifo=self.root/'late-events';os.mkfifo(fifo)
+        writer=os.open(fifo,os.O_RDWR|os.O_NONBLOCK);self.addCleanup(os.close,writer)
+        p=Pane(self.root,width=120,fixture=fifo);self.addCleanup(p.close)
+        p.settle()
+        self.assertIn('agents  0 total  0 ► working',p.view())
+        def emit(host, ident, state):
+            event=dict(v=1,t=1,kind='agent',host=host,id=ident,name=ident,
+                       state=state,now='Active step',done=0,total=1)
+            os.write(writer,(json.dumps(event)+'\n').encode())
+        def expect(host, names, working):
+            p.until(lambda: all(name in p.view() for name in names))
+            p.settle()
+            view=p.view()
+            self.assertIn(host,view)
+            self.assertIn('agents  %d total  %d ► working'%(len(names),working),view)
+        emit('hive','late-hive-one','working')
+        expect('hive',['late-hive-one'],1)
+        emit('hive','late-hive-two','idle')
+        expect('hive',['late-hive-one','late-hive-two'],1)
+        emit('m5','late-mac-one','working')
+        p.key(b'm');expect('m5',['late-mac-one'],1)
+        emit('m5','late-mac-two','working')
+        expect('m5',['late-mac-one','late-mac-two'],2)
+        p.key(b'm');expect('hive',['late-hive-one','late-hive-two'],1)
+        emit('hive','late-hive-one','gone')
+        p.until(lambda:'late-hive-one' not in p.view())
+        expect('hive',['late-hive-two'],0)
+
     def test_header_counts_idle_done_and_unknown_from_rows(self):
         events=[json.loads(line) for line in FIXTURE.read_text().splitlines()]
         template=next(e for e in events if e['kind']=='agent' and e['host']=='hive')
