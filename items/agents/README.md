@@ -423,3 +423,5 @@ Managed workers keep their starter informed through the existing supervisor. Scr
 The profile's `contract_interval_s` (default 600), or launch `--contract-interval-s`, bounds quiet time. A missed interval or expired waiting Check wakes the worker and sends LAPSE to the starter; a second consecutive lapse also reaches the registered seat on the same host and server. The worker shows blocked with `stalled` until new contact. Each lapse starts a fresh interval.
 
 DONE and FLAG hold the starter responsible for answering. Acknowledged input to the worker clears that pending answer; child exit ends it. An unanswered report sends UNANSWERED after one interval and escalates to the seat after the next. Seat lookup uses the existing board registration and delivery retains root send's inbox routing and refusal boundaries. The supervisor adds no process or service.
+
+Managed scratch viewers follow their exact agent block ID, including app pane and tab closures. On immediate child exit the supervisor closes only the viewer in its own creation receipt before sending the exit notice. The retained agent pane remains available for inspection.

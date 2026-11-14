@@ -1,6 +1,6 @@
 # Per-pane session scratchpad
 
-`teerex scratch` keeps one ephemeral working list for each Rex pane, separate from project task lists. Python 3.9+ is required. It never contacts Rex. The fixed path is `~/.local/state/teerex/scratch/<session:UUID>/<block:UUID>.md`, preserving colons. Scratch/session/archive directories are 0700; Markdown and lock files are 0600.
+`teerex scratch` keeps one ephemeral working list for each Rex pane, separate from project task lists. Python 3.9+ is required. Only an owner-bound `watch --socket ABS` contacts Rex. The fixed path is `~/.local/state/teerex/scratch/<session:UUID>/<block:UUID>.md`, preserving colons. Scratch/session/archive directories are 0700; Markdown and lock files are 0600.
 
 All seven verbs accept `--session session:UUID --block block:UUID`. Omitted targets come from `REX_SESSION`/`REX_BLOCK`, falling back to `LC_REX_SESSION`/`LC_REX_BLOCK` over SSH. They require full canonical IDs. HOME selects the local user's home; XDG_STATE_HOME does not change this established path.
 
@@ -37,7 +37,7 @@ Updated: 2026-11-13T00:00:00Z
 
 Reads tolerate extra blank lines, missing sections and hand-written checkbox capitalization. Extra Now entries become To-do items. Writes normalize the supported fields and sections; arbitrary Markdown outside this format is not preserved. A stable per-file advisory lock protects cooperating writers across atomic replacements. Writes flush the new file and directory; files are bounded to 256 KiB. Symlink files/locks and unowned/nonregular files refuse. Hand editors that ignore the lock can still race a write.
 
-`show --json` returns `{purpose, intent, now, todo, done, updated, waiting, done_when, check, blocked}`; empty Now is null. Plain `show` and `watch` use ▶, ☐ and ✓ and `updated N min ago`. Watch polls in the foreground, redraws when content or age changes, wraps to at most 40 columns, and exits on interruption. `watch --once` prints one frame. A missing/archived file shows a waiting message.
+`show --json` returns `{purpose, intent, now, todo, done, updated, waiting, done_when, check, blocked}`; empty Now is null. Plain `show` and `watch` use ▶, ☐ and ✓ and `updated N min ago`. Watch polls in the foreground, redraws when content or age changes, wraps to at most 40 columns, and exits on interruption. `watch --once` prints one frame. A missing/archived file shows a waiting message. Managed viewers use `watch --socket ABS`: every 250 ms they check the exact owner block ID and close their own viewer when it is absent. Unavailable checks keep the viewer open and print the reason; names are never used for ownership. `--once` stays an offline single frame.
 
 Managed and human launches initialize the file and export `AGENT_SCRATCHPAD` and `LC_AGENT_SCRATCHPAD`. Profiles accept `intent` and `scratch_pane` (boolean, default true). Intent defaults to the brief's first nonblank line, then Purpose. The protocol names the path and requires updates before and after every step. A tiled watch opens beside the agent through `surfaces open`. A failed/uncertain side-pane creation is retained in the launch receipt, never retried automatically. It does not claim the harness followed the protocol.
 

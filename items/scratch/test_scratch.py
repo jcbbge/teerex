@@ -231,7 +231,7 @@ class ScratchTest(unittest.TestCase):
         p = self.cli("palette", "--file", str(path), "--socket", str(self.root / "none.sock"))
         self.assertFalse(json.loads(p.stdout)["installed"])
         lua = path.read_text()
-        for value in ("Show scratchpad", "-- teerex-surface-action:teerex_scratch_show", "ctx.block_id", "'scratch','watch'"):
+        for value in ("Show scratchpad", "-- teerex-surface-action:teerex_scratch_show", "ctx.block_id", "--socket", "scratch", "watch"):
             self.assertIn(value, lua)
         self.assertNotEqual(self.cli("palette", "--file", str(path), "--socket", str(self.root / "none.sock"), check=False).returncode, 0)
 

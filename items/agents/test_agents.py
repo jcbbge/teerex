@@ -789,6 +789,58 @@ class AgentsTest(unittest.TestCase):
         self.assertEqual(len(stops), len(cases))
         self.assertEqual(stops[0]["delivery_rule"], "progress_turn_suppressed")
 
+    def test_same_name_viewers_follow_only_their_owner_across_close_routes(self):
+        launches = []
+        for _ in range(3):
+            process, packet = self.launch()
+            self.assertEqual(process.returncode, 0, process.stdout + process.stderr)
+            state = self.record(packet['launch_id'])
+            self.assertTrue(state['scratch_pane_opened'], state.get('scratch_pane_receipt'))
+            launches.append((state['target']['block_id'], state['scratch_pane_receipt']['created']['block_id']))
+        self.assertEqual(len({self.record(p.name[7:-5])['name'] for p in self.registry.glob('agents-*.json')}), 1)
+        def blocks():
+            return {b['block_id'] for b in self.rpc('session.list_blocks', dict(session_id=self.session))['blocks']}
+        for index, (owner, viewer) in enumerate(launches):
+            self.assertIn(viewer, blocks())
+            started = time.monotonic()
+            if index == 0:  # Same server operation used by closing a pane in Rex.app.
+                self.rpc('block.close', dict(session_id=self.session, block_id=owner, keep_last=False))
+            elif index == 1:
+                result = subprocess.run([BIN, 'surfaces', 'close', '--socket', str(self.socket),
+                                         '--session', self.session, '--pane', owner], env=self.env,
+                                        capture_output=True, text=True, timeout=5)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            else:
+                view = self.rpc('session.view', dict(session_id=self.session))
+                window = next(w['window_id'] for w in view['windows'] if any(
+                    owner == pane['block_id'] for layer in w.get('layers', []) for pane in layer.get('blocks', [])))
+                self.rpc('session.close_window', dict(session_id=self.session, window_id=window))
+            wait_for(lambda: viewer not in blocks(), timeout=max(.01, 2 - (time.monotonic() - started)))
+            elapsed = time.monotonic() - started
+            self.assertLess(elapsed, 2)
+            self.assertTrue(all(other in blocks() for _, other in launches[index + 1:]))
+            print('viewer close route', index, 'seconds', round(elapsed, 3), flush=True)
+
+    def test_agent_exit_closes_its_viewer_while_retaining_agent_pane(self):
+        process, packet = self.launch()
+        self.assertEqual(process.returncode, 0, process.stdout + process.stderr)
+        state = self.record(packet['launch_id'])
+        owner = state['target']['block_id']
+        viewer = state['scratch_pane_receipt']['created']['block_id']
+        message = self.work / 'exit.txt'
+        message.write_text('TEST EXIT 0')
+        started = time.monotonic()
+        result = subprocess.run([BIN, 'send', '--socket', str(self.socket), '--session', self.session,
+                                 '--block', owner, '--from', 'fixture', '--message-file', str(message)],
+                                env=self.env, text=True, capture_output=True, timeout=5)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        def gone():
+            ids = {b['block_id'] for b in self.rpc('session.list_blocks', dict(session_id=self.session))['blocks']}
+            self.assertIn(owner, ids)
+            return viewer not in ids
+        wait_for(gone, timeout=max(.01, 2 - (time.monotonic() - started)))
+        self.assertLess(time.monotonic() - started, 2)
+
     def test_agent_keeps_three_step_scratchpad_visible(self):
         p, packet = self.launch("scratch-three")
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)

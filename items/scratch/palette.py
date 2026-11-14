@@ -24,12 +24,14 @@ def main():
 rex.action{name='teerex_scratch_show',title='Show scratchpad',category='teerex',run=function(ctx)
 if not ctx.session_id or not ctx.block_id then error('invoke from an attached pane',0) end
 local argv=rex.json.decode(COMMAND)
-for _,v in ipairs({'--session',ctx.session_id,'--anchor',ctx.block_id,'--',BINARY,'scratch','watch','--session',ctx.session_id,'--block',ctx.block_id}) do argv[#argv+1]=v end
+for _,v in ipairs({'--session',ctx.session_id,'--anchor',ctx.block_id,'--'}) do argv[#argv+1]=v end
+for _,v in ipairs(rex.json.decode(WATCH)) do argv[#argv+1]=v end
+for _,v in ipairs({'--session',ctx.session_id,'--block',ctx.block_id}) do argv[#argv+1]=v end
 local r=rex.exec(argv,{timeout=20})
 if type(r)~='table' or not r.ok then error('scratchpad opening uncertain; inspect before retry',0) end
 return rex.json.decode(r.stdout)
 end}
-""".replace("COMMAND", quote(json.dumps(command))).replace("BINARY", quote(o.teerex))
+""".replace("COMMAND", quote(json.dumps(command))).replace("WATCH", quote(json.dumps([o.teerex, *(["--rex", o.rex] if o.rex else []), "scratch", "watch", "--socket", o.socket])))
     fd = os.open(o.file, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
     with os.fdopen(fd, "w") as stream:
         stream.write(body)

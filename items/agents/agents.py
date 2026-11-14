@@ -1317,7 +1317,8 @@ def launch_agent(o):
             if state["scratch_pane"] and layout != "detached":
                 side_code, side_packet = invoke(["surfaces", "open", "--socket", socket, "--session", session,
                                                 "--layout", "tiled", "--anchor", block, "--label", name + " scratchpad",
-                                                "--", RUNTIME, "scratch", "watch", "--session", session, "--block", block])
+                                                "--", RUNTIME, *(["--rex", state["rex_executable"]] if state.get("rex_executable") else []),
+                                                "scratch", "watch", "--socket", socket, "--session", session, "--block", block])
                 state = update(root, launch_id, lambda s: s.update(scratch_pane_receipt=side_packet,
                                 scratch_pane_opened=succeeded(side_code, side_packet, "created_and_verified")))
             code, packet = invoke(["jobs", "track", "--registry", root, "--socket", socket, "--session", session, "--block", block,
@@ -1807,6 +1808,19 @@ def contract_starter(root, launch_id):
         contract_tell(root, launch_id, "unanswered", line, to="seat")
 
 
+def close_scratch_viewer(state):
+    """Only this launch's exact, successfully created side pane is owned."""
+    side = state.get('scratch_pane_receipt') or {}
+    block = (side.get('created') or {}).get('block_id')
+    if side.get('outcome') != 'created_and_verified' or not block:
+        return dict(outcome='no_recorded_viewer')
+    address_id(block, 'block')
+    code, packet = invoke(['surfaces', 'close', '--socket', state['socket'],
+                           '--session', state['target']['session_id'], '--pane', block],
+                          client_path=state['client_path'], rex_executable=state['rex_executable'])
+    return dict(client_exit=code, receipt=packet)
+
+
 def supervise(o):
     signal.signal(signal.SIGHUP, terminate)
     state = None
@@ -1980,6 +1994,11 @@ def supervise_child(o):
                 if s.get("contract"):
                     s["contract"].update(awaiting_starter=None, starter_lapses=0)
             update(o.registry, o.launch_id, ended)
+            try:
+                cleanup = close_scratch_viewer(load(o.registry, o.launch_id))
+                update(o.registry, o.launch_id, lambda s: s.update(scratch_cleanup=cleanup))
+            except Exception as exc:
+                supervisor_error(o, 'last_scratch_cleanup_error', exc)
         program_status(state, "done" if term == {"Exited": 0} else "error",
                        "immediate child terminated; descendants not verified" if term is not None else
                        "supervision failed; immediate child termination unknown")

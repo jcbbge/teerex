@@ -10,6 +10,7 @@ import re
 import shutil
 import shlex
 import stat
+import subprocess
 import sys
 import tempfile
 import textwrap
@@ -280,6 +281,42 @@ def scratch_check_time(value):
     return parsed.astimezone(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+# The server checks exact block IDs and closes the viewer in the same call. A tab
+# close or app close bypasses the agent supervisor, but not this foreground watch.
+SCRATCH_WATCH_LUA = r"""
+local a=rex.args
+local sessions=rex.call('session.list')
+if type(sessions)~='table' or type(sessions.sessions)~='table' then error('session_list_unavailable') end
+local exists=false
+for _,s in ipairs(sessions.sessions) do if s.session_id==a.session then exists=true end end
+if not exists then io.write('gone'); return end
+rex.call('session.attach',{session_id=a.session})
+local blocks=rex.call('session.list_blocks',{session_id=a.session})
+if type(blocks)~='table' or type(blocks.blocks)~='table' then error('block_list_unavailable') end
+for _,b in ipairs(blocks.blocks) do if b.block_id==a.owner then io.write('live'); return end end
+if a.viewer then rex.call('block.close',{session_id=a.session,block_id=a.viewer,keep_last=false}) end
+io.write('gone')
+"""
+
+
+def scratch_watch_owner(socket, session, owner):
+    viewer = os.environ.get('REX_BLOCK') or os.environ.get('LC_REX_BLOCK')
+    own_session = os.environ.get('REX_SESSION') or os.environ.get('LC_REX_SESSION')
+    if own_session != session or viewer == owner:
+        viewer = None
+    if viewer is not None:
+        scratch_id(viewer, 'block')
+    args = dict(session=session, owner=owner, viewer=viewer)
+    command = [os.environ.get('TEEREX_INTERNAL_REX') or 'rex', '--autostart=false',
+               '--server', 'unix://' + socket, '--timeout', '1s', '--color', 'never',
+               'do', '-e', SCRATCH_WATCH_LUA, '--args', json.dumps(args)]
+    # Closing this viewer must not interrupt the server-side close request.
+    result = subprocess.run(command, capture_output=True, text=True, timeout=1.5, start_new_session=True)
+    if result.returncode or result.stdout not in ('live', 'gone'):
+        raise ScratchError('owner_check_unavailable: ' + result.stderr.strip())
+    return result.stdout == 'live'
+
+
 def scratch_main(argv=None):
     parser = argparse.ArgumentParser(prog="teerex scratch", description="Per-pane ephemeral Markdown scratchpads; palette prepares Show scratchpad for surfaces palette install.")
     subs = parser.add_subparsers(dest="operation", required=True)
@@ -303,6 +340,7 @@ def scratch_main(argv=None):
             p.add_argument("--json", action="store_true")
         if op == "watch":
             p.add_argument("--once", action="store_true", help="render one frame and exit")
+            p.add_argument("--socket", help="owner Rex socket; close this viewer when its exact owner block disappears")
     subs.add_parser("hook", help="Claude seat UserPromptSubmit/Stop stdin hook; stale scratchpad blocks once per turn; AGENT_SCRATCHPAD required")
     settings = subs.add_parser("hook-settings", help="print installable Claude seat hook settings; does not modify configuration")
     settings.add_argument("--teerex", required=True, help="absolute stable teerex executable")
@@ -326,8 +364,22 @@ def scratch_main(argv=None):
             else:
                 print(scratch_render(data), end="")
         elif o.operation == "watch":
+            if o.socket and not os.path.isabs(o.socket):
+                raise ScratchError('absolute_socket_required')
             previous = None
+            owner_error = None
             while True:
+                if o.socket and not o.once:
+                    try:
+                        if not scratch_watch_owner(o.socket, o.session, o.block):
+                            break
+                        owner_error = None
+                    except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
+                        # An unavailable server is not evidence that the owner is gone.
+                        message = str(exc)
+                        if message != owner_error:
+                            print('Scratchpad owner check unavailable: ' + message, file=sys.stderr, flush=True)
+                        owner_error = message
                 try:
                     frame = scratch_render(scratch_read(path), shutil.get_terminal_size((40, 24)).columns)
                 except FileNotFoundError:
