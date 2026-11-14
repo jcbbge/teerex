@@ -17,6 +17,9 @@ import tempfile
 import time
 import unittest
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/acceptance'))
+from test_environment import isolated_environment
+
 BIN = str(Path(os.environ.get("TEEREX_BIN", Path(__file__).resolve().parents[2] / "zig-out/bin/teerex")).resolve())
 PREFIX = [] if os.environ.get("TEEREX_ADAPTER_STANDALONE") == "1" else ["adapters"]
 NAMES = ["rex_version", "rex_capture", "rex_process", "rex_directory", "rex_status"]
@@ -29,7 +32,7 @@ def invoke(*args, env=None):
 
 class OfflineTest(unittest.TestCase):
     def test_help_usage_and_missing_rex(self):
-        env = dict(os.environ, PATH="/no-rex-here")
+        env = dict(isolated_environment(), PATH="/no-rex-here")
         r = invoke("--help", env=env)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("Discovery is not permission", r.stdout)
@@ -144,7 +147,7 @@ class RuntimeTest(unittest.TestCase):
         self.work = self.root / str(time.monotonic_ns())
         self.work.mkdir()
         self.trace = self.work / "trace.jsonl"
-        self.env = dict(os.environ, PATH=str(self.shim_dir) + os.pathsep + os.environ.get("PATH", ""),
+        self.env = dict(isolated_environment(), PATH=str(self.shim_dir) + os.pathsep + os.environ.get("PATH", ""),
                         ADAPTER_TRACE=str(self.trace), ADAPTER_REAL_REX=self.rex,
                         ADAPTER_PIDS=str(self.work / "pids"), ADAPTER_FAULT="",
                         REX_SERVER="unix:///tmp/poison.sock", REX_SESSION="session:poison",

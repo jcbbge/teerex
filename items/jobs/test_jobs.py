@@ -14,6 +14,8 @@ import tempfile
 import time
 import unittest
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/acceptance'))
+from test_environment import isolated_environment
 BIN = str(Path(os.environ.get("TEEREX_BIN", Path(__file__).resolve().parents[2] / "zig-out/bin/teerex")).resolve())
 ZERO = "00000000-0000-0000-0000-000000000000"
 
@@ -66,7 +68,7 @@ class JobsTest(unittest.TestCase):
         self.work.mkdir()
         self.registry = self.work / "registry"
         self.registry.mkdir(mode=0o700)
-        self.env = dict(os.environ, PATH=str(Path(self.rex).parent) + os.pathsep + os.environ.get("PATH", ""),
+        self.env = dict(isolated_environment(), PATH=str(Path(self.rex).parent) + os.pathsep + os.environ.get("PATH", ""),
                         REX_SERVER="unix:///tmp/poison.sock", REX_SESSION="session:poison", REX_BLOCK="block:poison", REX_CLIENT="client:poison")
         self.env.update(XDG_STATE_HOME=str(self.work / 'state'), TEEREX_BOARDS_STORE=str(self.work / 'boards'),
                         AGENT_REGISTRY=str(self.work / 'agents'))

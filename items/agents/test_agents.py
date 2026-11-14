@@ -22,6 +22,7 @@ import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/acceptance'))
+from test_environment import isolated_environment
 import pane_authority
 
 BIN = str(Path(os.environ.get("TEEREX_BIN", "zig-out/bin/teerex")).resolve())
@@ -168,7 +169,7 @@ def events(path):
 class HelpRangesTest(unittest.TestCase):
     def test_agent_numeric_ranges_keep_help_and_errors_compact(self):
         with tempfile.TemporaryDirectory(prefix="tagents-help-") as temporary:
-            env = dict(os.environ, TEEREX_CALL_LOG_DIR=str(Path(temporary) / "calls"))
+            env = dict(isolated_environment(), TEEREX_CALL_LOG_DIR=str(Path(temporary) / "calls"))
             for operation, flag, lower, upper in [
                 ("launch", "--launch-wait-ms", 0, 60000),
                 ("launch", "--ack-timeout-ms", 100, 60000),
@@ -200,7 +201,7 @@ class TimelineTest(unittest.TestCase):
             root = Path(tmp)
             registry = root / "registry"
             registry.mkdir(mode=0o700)
-            env = dict(os.environ, TEEREX_CALL_LOG_DIR=str(root / "calls"))
+            env = dict(isolated_environment(), TEEREX_CALL_LOG_DIR=str(root / "calls"))
             first, second = "1" * 32, "2" * 32
             def state(launch, name, at):
                 return dict(schema_version=1, launch_id=launch, name=name, created_at=at, protocol_ack_at=at+10,
@@ -704,7 +705,7 @@ class AgentsTest(unittest.TestCase):
         cls.server = subprocess.Popen([REX, "server", "run", "--listen", "unix://" + str(cls.socket),
                                        "--restore=false", "--config", "/dev/null", "--state-dir", str(cls.root / "state")],
                                       stdout=cls.log, stderr=cls.log,
-                                      env=dict(os.environ, HOME=str(cls.root), TEEREX_CLUTCH_DIR=str(cls.root / "server-clutch"), PATH=str(Path(REX).parent) + os.pathsep + os.environ.get("PATH", "")))
+                                      env=dict(isolated_environment(), HOME=str(cls.root), TEEREX_CLUTCH_DIR=str(cls.root / "server-clutch"), PATH=str(Path(REX).parent) + os.pathsep + os.environ.get("PATH", "")))
         cls.addClassCleanup(cls.stop_server)
         wait_for(lambda: cls.socket.exists())
         cls.version = cls.rpc("server.version", {})
@@ -736,7 +737,7 @@ class AgentsTest(unittest.TestCase):
                                                                  '/bin/sleep', '120'], timeout=10))
         self.session = target["session_id"]
         self.starter = target["initial_windows"][0]["block_ids"][0]
-        self.env = dict(os.environ, HOME=str(self.root), TEEREX_CLUTCH_DIR=str(self.work / "clutch"), PATH=str(Path(REX).parent) + os.pathsep + os.environ.get("PATH", ""),
+        self.env = dict(isolated_environment(), HOME=str(self.root), TEEREX_CLUTCH_DIR=str(self.work / "clutch"), PATH=str(Path(REX).parent) + os.pathsep + os.environ.get("PATH", ""),
                         REX_SERVER="unix:///tmp/poison.sock", REX_SESSION="session:poison", REX_BLOCK="block:poison")
         pane_authority.caller(self, self.rpc, self.env, self.work)
         made = subprocess.run([BIN, 'surfaces', 'open', '--socket', str(self.socket), '--session', self.session,
@@ -1041,7 +1042,7 @@ class AgentsTest(unittest.TestCase):
             elif event == "return" and id(frame) in active:
                 label, start = active.pop(id(frame))
                 spans.append(dict(phase=label, start_s=round(start, 4), end_s=round(time.monotonic() - origin, 4)))
-        with patch.dict(os.environ, self.env):
+        with patch.dict(os.environ, self.env, clear=True):
             sys.setprofile(profile)
             try:
                 code, receipt = agents.launch(options)
@@ -1923,7 +1924,7 @@ with ThreadPoolExecutor() as pool:
                     return code, packet
                 ns["invoke"] = invoke
                 o = ns["parser"]().parse_args(["launch", "--config", str(self.config), "--profile", "probe"])
-                with patch.dict(os.environ, self.env):
+                with patch.dict(os.environ, self.env, clear=True):
                     if stage == "exception":
                         with self.assertRaisesRegex(OSError, reason):
                             ns["launch"](o)
@@ -1949,7 +1950,7 @@ with ThreadPoolExecutor() as pool:
         self.settings["profiles"]["probe"]["scratch_pane"] = False
         self.config.write_text(json.dumps(self.settings))
         o = ns["parser"]().parse_args(["launch", "--config", str(self.config), "--profile", "probe"])
-        with patch.dict(os.environ, self.env):
+        with patch.dict(os.environ, self.env, clear=True):
             code, result = ns["launch"](o)
         self.assertEqual(code, 0, str(result))
         self.assertEqual(result["scratchpad_failure_reason"], "forced scratchpad failure")
@@ -1976,7 +1977,7 @@ with ThreadPoolExecutor() as pool:
         o = ns["parser"]().parse_args(["launch", "--config", str(self.config), "--profile", "probe"])
         from unittest.mock import patch
         start = time.monotonic()
-        with patch.dict(os.environ, self.env), self.assertRaisesRegex(OSError, "forced protocol write failure"):
+        with patch.dict(os.environ, self.env, clear=True), self.assertRaisesRegex(OSError, "forced protocol write failure"):
             ns["launch"](o)
         path = next(self.registry.glob("agents-*.json"))
         launch_id = path.stem[7:]

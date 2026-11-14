@@ -13,6 +13,9 @@ import time
 import unittest
 
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/acceptance'))
+from test_environment import isolated_environment
+
 BIN = Path(os.environ.get("TEEREX_BIN", Path(__file__).resolve().parents[2] / "zig-out/bin/teerex"))
 
 
@@ -120,7 +123,7 @@ class RunTest(unittest.TestCase):
         before = subprocess.run(self.base + ["session", "ls", "--json"], capture_output=True, text=True, check=True).stdout
         arguments = ["literal ; $(touch SHOULD_NOT_EXIST)", "space value", "a\nb", '\"; error("INJECT") --', "α😀"]
         script = "import json,os,sys;print(json.dumps([os.getcwd(),sys.argv[1:],sys.stdin.read(),os.getenv('TEEREX_TEST'),os.getenv('REX_BLOCK')]))"
-        env = dict(os.environ, TEEREX_TEST="inherited", REX_SERVER="unix:///tmp/wrong.sock",
+        env = dict(isolated_environment(), TEEREX_TEST="inherited", REX_SERVER="unix:///tmp/wrong.sock",
                    REX_SESSION="session:poison", REX_BLOCK="block:poison", REX_CLIENT="client:poison")
         result, packet = self.invoke([sys.executable, "-c", script, *arguments], env=env)
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -258,7 +261,7 @@ class RunTest(unittest.TestCase):
         fake = folder / "rex"
         fake.write_text(f"#!{sys.executable}\nimport os,time\nos.close(1)\nos.close(2)\ntime.sleep(30)\n")
         fake.chmod(0o700)
-        result, packet = self.invoke(["/usr/bin/true"], timeout=100, env=dict(os.environ, PATH=str(folder)))
+        result, packet = self.invoke(["/usr/bin/true"], timeout=100, env=dict(isolated_environment(), PATH=str(folder)))
         self.assertEqual(result.returncode, 124, result.stderr)
         self.assertEqual(packet["outcome"], "outer_deadline_exceeded")
         self.assertIsNone(packet["source"])
@@ -285,7 +288,7 @@ class RunTest(unittest.TestCase):
         result, packet = self.invoke([str(self.root / "absent-program")])
         self.assertEqual(result.returncode, 1, result.stderr)
         self.assertIsNone(packet["exit_report"])
-        result = subprocess.run(self.command(argv), env=dict(os.environ, PATH="/no-rex-executable"),
+        result = subprocess.run(self.command(argv), env=dict(isolated_environment(), PATH="/no-rex-executable"),
                                 capture_output=True, text=True, timeout=5)
         self.assertEqual(result.returncode, 1)
         self.assertIn("FileNotFound", result.stderr)

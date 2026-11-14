@@ -11,6 +11,8 @@ import tempfile
 import time
 import unittest
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/acceptance'))
+from test_environment import isolated_environment
 BIN = str(Path(os.environ.get("TEEREX_BIN", Path(__file__).resolve().parents[2] / "zig-out/bin/teerex")).resolve())
 QUESTION = "SYNTHETIC_QUESTION_CANARY_9c41"
 NOTES = "SYNTHETIC_NOTES_CANARY_51be"
@@ -22,7 +24,7 @@ class RecordsFixture(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         self.store = self.root / "store"
-        self.env = dict(os.environ, HOME=str(self.root), TEEREX_CALL_LOG_DIR=str(self.root / "calls"), TEEREX_CLUTCH_DIR=str(self.root / "clutch"),
+        self.env = dict(isolated_environment(), HOME=str(self.root), TEEREX_CALL_LOG_DIR=str(self.root / "calls"), TEEREX_CLUTCH_DIR=str(self.root / "clutch"),
                         REX_SERVER="unix:///poison", REX_SESSION="session:poison", REX_BLOCK="block:poison")
         self.fields = dict(question=QUESTION, next_action=dict(actor="worker", step="run the asymmetric cache check", stop_when="twenty iterations complete"), notes=NOTES)
         self.call("init")

@@ -14,6 +14,9 @@ import time
 import unittest
 
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/acceptance'))
+from test_environment import isolated_environment
+
 BIN = Path(os.environ.get("TEEREX_BIN", Path(__file__).resolve().parents[2] / "zig-out/bin/teerex"))
 
 
@@ -25,7 +28,7 @@ def compare_packets(root, before, after, extra=()):
     second.write_text(json.dumps(after, sort_keys=True), encoding="utf-8")
     return subprocess.run(
         [str(BIN), "compare", "--before", str(first), "--after", str(second), *extra],
-        env=dict(os.environ, PATH="/no-rex-or-other-executables"),
+        env=dict(isolated_environment(), PATH="/no-rex-or-other-executables"),
         capture_output=True, text=True, timeout=5,
     )
 
@@ -437,7 +440,7 @@ class ObserveTest(unittest.TestCase):
         raise RuntimeError("Fixture did not reach expected " + method + " state")
 
     def observe(self, target, *extra, socket=None):
-        env = dict(os.environ, REX_SERVER="unix:///tmp/not-the-selected-server.sock",
+        env = dict(isolated_environment(), REX_SERVER="unix:///tmp/not-the-selected-server.sock",
                    REX_SESSION=self.b[0], REX_BLOCK=self.b[1])
         return subprocess.run(
             [str(BIN), "observe", "--socket", str(socket or self.socket),
@@ -449,7 +452,7 @@ class ObserveTest(unittest.TestCase):
         if not ROOT_SOCKET_DEFAULTS: self.skipTest("combined-root defaults do not apply to standalone cartridges")
         command = [str(BIN), "observe", "--session", self.a[0], "--block", self.a[1]]
         encoded = "unix://" + str(self.socket).replace("/", "%2F").replace(" ", "%20")
-        result = subprocess.run(command, env=dict(os.environ, REX_SERVER=encoded),
+        result = subprocess.run(command, env=dict(isolated_environment(), REX_SERVER=encoded),
                                 capture_output=True, text=True, timeout=10)
         self.assertEqual(result.returncode, 0, result.stderr)
         packet = json.loads(result.stdout)
@@ -459,12 +462,12 @@ class ObserveTest(unittest.TestCase):
         self.assertNotIn("socket_source", json.loads(explicit.stdout))
         self.assertEqual(set(json.loads(explicit.stdout)["capture"]), {"scope", "portion", "max_bytes", "complete", "content"})
         if self.rex_json("api", "call", "server.version")["api_revision"] == 13:
-            probe = subprocess.run([str(BIN), "boards", "probe"], env=dict(os.environ, REX_SERVER=encoded),
+            probe = subprocess.run([str(BIN), "boards", "probe"], env=dict(isolated_environment(), REX_SERVER=encoded),
                                    capture_output=True, text=True, timeout=10)
             self.assertEqual(probe.returncode, 0, probe.stderr)
             self.assertEqual(json.loads(probe.stdout)["socket_source"], "REX_SERVER")
         for endpoint in ("tcp://localhost:123", "unix://relative", "unix:///tmp/%QQ", "unix:///tmp/%+1", "unix:///tmp/%00"):
-            result = subprocess.run(command, env=dict(os.environ, REX_SERVER=endpoint),
+            result = subprocess.run(command, env=dict(isolated_environment(), REX_SERVER=endpoint),
                                     capture_output=True, text=True, timeout=5)
             self.assertEqual(result.returncode, 1)
             self.assertEqual(result.stdout, "")
@@ -474,7 +477,7 @@ class ObserveTest(unittest.TestCase):
         shim = self.root / "socket-default-rex"
         shim.write_text(f"#!{sys.executable}\nimport sys\nsys.exit(7)\n")
         shim.chmod(0o700)
-        env = dict(os.environ, TEEREX_REX=str(shim), TEEREX_INTERNAL_REX=str(shim))
+        env = dict(isolated_environment(), TEEREX_REX=str(shim), TEEREX_INTERNAL_REX=str(shim))
         env.pop("REX_SERVER", None)
         result = subprocess.run([str(BIN), "doctor", "--timeout-ms", "5000"], env=env, capture_output=True, text=True, timeout=5)
         self.assertEqual(result.returncode, 1, result.stderr)
@@ -750,7 +753,7 @@ class ObserveTest(unittest.TestCase):
         baseline, before = self.baseline(self.a)
         absent_session = "session:00000000-0000-0000-0000-000000000001"
         absent_block = "block:00000000-0000-0000-0000-000000000002"
-        env = dict(os.environ, REX_SERVER="unix:///tmp/not-the-selected-server.sock",
+        env = dict(isolated_environment(), REX_SERVER="unix:///tmp/not-the-selected-server.sock",
                    REX_SESSION=self.b[0], REX_BLOCK=self.b[1], REX_CLIENT="other-client")
         sessions_before = self.rex_json("session", "ls", "--json")
         for target in [(absent_session, self.a[1]), (self.a[0], absent_block), (self.a[0], self.b[1])]:
@@ -814,7 +817,7 @@ class ObserveTest(unittest.TestCase):
     def test_watch_quiet_deadline_is_not_completion_or_known_missing_evidence(self):
         baseline, before = self.baseline(self.a)
         original = baseline.read_bytes()
-        env = dict(os.environ, REX_SERVER="unix:///tmp/wrong.sock", REX_SESSION=self.b[0], REX_BLOCK=self.b[1])
+        env = dict(isolated_environment(), REX_SERVER="unix:///tmp/wrong.sock", REX_SESSION=self.b[0], REX_BLOCK=self.b[1])
         result = subprocess.run(self.watch_command(self.a, baseline, timeout=650),
                                 env=env, capture_output=True, text=True, timeout=5)
         self.assertEqual(result.returncode, 124, result.stderr)
@@ -936,7 +939,7 @@ class ObserveTest(unittest.TestCase):
         shim = directory / "rex"
         shim.write_text(f"#!{sys.executable}\nimport sys\nsys.stdout.write({frames!r})\n", encoding="utf-8")
         shim.chmod(0o700)
-        env = dict(os.environ, PATH=str(directory) + os.pathsep + os.environ["PATH"])
+        env = dict(isolated_environment(), PATH=str(directory) + os.pathsep + os.environ["PATH"])
         # Both frames are ready together. The first watch must stop at process
         # disappearance, not coalesce it with the later exit report. Starting
         # from that unavailable baseline must then wake on exit evidence alone.
@@ -1110,7 +1113,7 @@ class ObserveTest(unittest.TestCase):
         missing = self.root / "watch-missing.sock"
         before["target"]["server"] = "unix://" + str(missing)
         baseline.write_text(json.dumps(before), encoding="utf-8")
-        for env in [None, dict(os.environ, PATH="/no-rex-available")]:
+        for env in [None, dict(isolated_environment(), PATH="/no-rex-available")]:
             with self.subTest(env=env is None):
                 result = subprocess.run(self.watch_command(self.a, baseline, socket=missing), env=env,
                                         capture_output=True, text=True, timeout=5)
@@ -1159,7 +1162,7 @@ class ObserveTest(unittest.TestCase):
                     "time.sleep(60)\n", encoding="utf-8",
                 )
                 fake.chmod(0o700)
-                env = dict(os.environ, PATH=str(directory) + os.pathsep + os.environ["PATH"])
+                env = dict(isolated_environment(), PATH=str(directory) + os.pathsep + os.environ["PATH"])
                 timeout = 400 if stop is None else 3000
                 command = (self.watch_command(self.a, baseline, timeout=timeout) if kind == "watch" else
                            [str(BIN), "observe", "--socket", str(self.socket), "--session", self.a[0],
@@ -1238,7 +1241,7 @@ class ObserveTest(unittest.TestCase):
             "sys.exit(p.wait())\n", encoding="utf-8",
         )
         shim.chmod(0o700)
-        env = dict(os.environ, PATH=str(directory) + os.pathsep + os.environ["PATH"])
+        env = dict(isolated_environment(), PATH=str(directory) + os.pathsep + os.environ["PATH"])
         result = subprocess.run(self.watch_command(self.long, baseline, timeout=400), env=env,
                                 capture_output=True, text=True, timeout=5)
         self.assertEqual(result.returncode, 124, result.stderr)
@@ -1292,7 +1295,7 @@ class ObserveTest(unittest.TestCase):
                     f"os.execv({self.rex!r},[{self.rex!r},*sys.argv[1:]])\n", encoding="utf-8",
                 )
                 shim.chmod(0o700)
-                env = dict(os.environ, PATH=str(directory) + os.pathsep + os.environ["PATH"])
+                env = dict(isolated_environment(), PATH=str(directory) + os.pathsep + os.environ["PATH"])
                 command = self.watch_command(self.a, baseline, timeout=6000, interval=5000 if stop else 50)
                 process = subprocess.Popen(command, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
                 try:

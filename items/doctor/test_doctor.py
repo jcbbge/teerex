@@ -16,6 +16,9 @@ import time
 import unittest
 
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/acceptance'))
+from test_environment import isolated_environment
+
 BIN = Path(os.environ.get("TEEREX_BIN", Path(__file__).resolve().parents[2] / "zig-out/bin/teerex"))
 METHODS = ["server.version", *["com.superlogical.terminal." + x for x in ("format", "process", "pwd", "program_status")]]
 
@@ -23,7 +26,7 @@ METHODS = ["server.version", *["com.superlogical.terminal." + x for x in ("forma
 class OfflineTest(unittest.TestCase):
     def invoke(self, *args):
         return subprocess.run([str(BIN), "doctor", *args], capture_output=True, text=True, timeout=5,
-                              env=dict(os.environ, PATH="/no-rex-here"))
+                              env=dict(isolated_environment(), PATH="/no-rex-here"))
 
     def test_help_and_invalid_arguments_without_rex(self):
         result = self.invoke("--help")
@@ -139,7 +142,7 @@ class RuntimeTest(unittest.TestCase):
 
     def env(self, mode=""):
         audit = self.root / (self.id().split(".")[-1] + ".audit")
-        return dict(os.environ, PATH=str(self.shim_dir) + os.pathsep + os.environ["PATH"],
+        return dict(isolated_environment(), PATH=str(self.shim_dir) + os.pathsep + os.environ["PATH"],
                     DOCTOR_REAL_REX=self.rex, DOCTOR_AUDIT=str(audit), DOCTOR_FAULT=mode,
                     DOCTOR_PIDS=str(self.root / "hung.pids"), REX_SERVER="unix:///tmp/poison.sock",
                     REX_SESSION="session:poison", REX_BLOCK="block:poison", REX_CLIENT="client:poison")
@@ -156,7 +159,7 @@ class RuntimeTest(unittest.TestCase):
         before = subprocess.check_output(self.base + ["session", "ls", "--json"])
         # Also exercise raw, unwrapped CLI responses rather than only shim JSON.
         direct = subprocess.run(self.command(), capture_output=True, text=True, timeout=8,
-                                env=dict(os.environ, REX_SERVER="unix:///tmp/poison.sock", REX_BLOCK="block:poison"))
+                                env=dict(isolated_environment(), REX_SERVER="unix:///tmp/poison.sock", REX_BLOCK="block:poison"))
         self.assertEqual(direct.returncode, 0, direct.stderr)
         raw_packet = json.loads(direct.stdout)
         self.assertTrue(raw_packet["advertised_requirements_met"])
@@ -292,7 +295,7 @@ class RuntimeTest(unittest.TestCase):
         self.assertIsNone(packet["source"])
         self.assertFalse(missing.exists())
         result = subprocess.run(self.command(), capture_output=True, text=True, timeout=5,
-                                env=dict(os.environ, PATH="/no-rex-here"))
+                                env=dict(isolated_environment(), PATH="/no-rex-here"))
         self.assertEqual(result.returncode, 1)
         packet = json.loads(result.stdout)
         self.assertIsNone(packet["cli"])

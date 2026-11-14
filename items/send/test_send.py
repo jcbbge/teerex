@@ -18,6 +18,7 @@ import threading
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/acceptance'))
+from test_environment import isolated_environment
 import pane_authority
 
 
@@ -81,7 +82,7 @@ class SendTest(unittest.TestCase):
         self.work.mkdir()
         (self.work / "inbox").mkdir()
         # Exact same TMPDIR lock namespace as agent-send; no test lock in /tmp root.
-        self.env = dict(os.environ, TEEREX_ASK_STATE_DIR=str(self.work / "asks"), TEEREX_CLUTCH_DIR=str(self.work / "clutch"), TMPDIR=str(self.work), AGENT_INBOX_DIR=str(self.work / "inbox"),
+        self.env = dict(isolated_environment(), TEEREX_ASK_STATE_DIR=str(self.work / "asks"), TEEREX_CLUTCH_DIR=str(self.work / "clutch"), TMPDIR=str(self.work), AGENT_INBOX_DIR=str(self.work / "inbox"),
                         REX_SERVER="unix:///tmp/never-this-server.sock", REX_BLOCK="block:wrong",
                         REX_SESSION="session:wrong", REX_CLIENT="client:wrong",
                         PATH=str(Path(self.rex).parent) + os.pathsep + os.environ.get("PATH", ""))

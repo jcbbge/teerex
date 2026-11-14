@@ -17,6 +17,9 @@ import tempfile
 import time
 import unittest
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/acceptance'))
+from test_environment import isolated_environment
+
 BIN = str(Path(os.environ.get("TEEREX_BIN", "zig-out/bin/teerex")).resolve())
 
 
@@ -37,7 +40,7 @@ class VisibleTest(unittest.TestCase):
         cls.addClassCleanup(cls.log.close)
         cls.server = subprocess.Popen([cls.rex, "server", "run", "--listen", "unix://" + str(cls.socket),
                                       "--restore=false", "--config", "/dev/null", "--state-dir", str(cls.root / "state")],
-                                     stdout=cls.log, stderr=cls.log, env=dict(os.environ, HOME=str(cls.root)))
+                                     stdout=cls.log, stderr=cls.log, env=dict(isolated_environment(), HOME=str(cls.root)))
         cls.addClassCleanup(cls.stop_server)
         for _ in range(100):
             if cls.server.poll() is not None:
@@ -72,7 +75,7 @@ class VisibleTest(unittest.TestCase):
         self.stdin.write_bytes(b"input\x00\xff\n\n")
         self.session = self.rpc("session.create", {"label": "run-visible disposable"})["session_id"]
         self.addCleanup(lambda: self.rpc("session.destroy", {"session_id": self.session}))
-        self.runtime_env = dict(os.environ, HOME=str(self.root), REX_SERVER="unix:///tmp/wrong.sock", REX_BLOCK="block:wrong",
+        self.runtime_env = dict(isolated_environment(), HOME=str(self.root), REX_SERVER="unix:///tmp/wrong.sock", REX_BLOCK="block:wrong",
                                 PATH=str(Path(self.rex).parent) + os.pathsep + os.environ.get("PATH", ""))
         self.anchor = None
 

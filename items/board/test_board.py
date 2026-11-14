@@ -25,6 +25,7 @@ from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'tools/acceptance'))
+from test_environment import isolated_environment
 import pane_authority
 BIN = str(Path(os.environ.get('TEEREX_BIN', ROOT / 'zig-out/bin/teerex')).resolve())
 FIXTURE = Path(__file__).with_name('fixture.jsonl')
@@ -87,7 +88,7 @@ class Pane:
         self.saved = termios.tcgetattr(self.slave)
         self.width = width
         self.resize(width)
-        env = dict(os.environ, HOME=str(root), XDG_STATE_HOME=str(root / 'state'),
+        env = dict(isolated_environment(), HOME=str(root), XDG_STATE_HOME=str(root / 'state'),
                    TEEREX_CALL_LOG_DIR=str(root / 'calls'), REX_SERVER='unix:///tmp/poison-board.sock')
         env.pop('NO_COLOR', None)
         env.update(extra_env or {})
@@ -162,7 +163,7 @@ class BoardTest(unittest.TestCase):
         def rpc(method,args):
             return json.loads(subprocess.check_output([rex,'--autostart=false','--server','unix://'+str(socket),'api','call',method,json.dumps(args)],timeout=5))
         sid=rpc('session.create',dict(label='glyph fixture'))['session_id']
-        creator = dict(os.environ, HOME=str(self.root), PATH=str(Path(rex).parent)+os.pathsep+os.environ.get('PATH',''))
+        creator = dict(isolated_environment(), HOME=str(self.root), PATH=str(Path(rex).parent)+os.pathsep+os.environ.get('PATH',''))
         pane_authority.caller(self, rpc, creator, self.root)
         opened=json.loads(subprocess.check_output([BIN,'--rex',rex,'surfaces','open','--socket',str(socket),'--session',sid,'--layout','tab','--label','🟠 fixture','--','/bin/sh','-c','sleep 60'],env=creator,timeout=10))['actual']
         fifo=self.root/'events';os.mkfifo(fifo)
@@ -425,7 +426,7 @@ class BoardTest(unittest.TestCase):
     def test_invalid_events_visible_and_once_nonzero(self):
         path=self.root/'invalid.jsonl'
         path.write_text('{bad}\n'+json.dumps(dict(v=2,t=123,host='hive',kind='agent'))+'\n')
-        result=subprocess.run([BIN,'board','--replay',str(path),'--once'],env=dict(os.environ,TEEREX_CALL_LOG_DIR=str(self.root/'calls')),capture_output=True)
+        result=subprocess.run([BIN,'board','--replay',str(path),'--once'],env=dict(isolated_environment(),TEEREX_CALL_LOG_DIR=str(self.root/'calls')),capture_output=True)
         self.assertEqual(result.returncode,1)
         self.assertIn(b'2 unreadable events',result.stdout)
     def test_jump_uses_selected_named_server_and_reads_scratchpad(self):
@@ -451,7 +452,7 @@ class BoardTest(unittest.TestCase):
             def rpc(method,args,base=base):
                 return json.loads(subprocess.check_output(base+[method,json.dumps(args)],timeout=5))
             sid=rpc('session.create',dict(label='board disposable '+name))['session_id']
-            env=dict(os.environ,TEEREX_CALL_LOG_DIR=str(root/'calls'),XDG_STATE_HOME=str(root/'state'))
+            env=dict(isolated_environment(),TEEREX_CALL_LOG_DIR=str(root/'calls'),XDG_STATE_HOME=str(root/'state'))
             def open_pane(label):
                 return json.loads(subprocess.check_output([BIN,'--rex',rex,'surfaces','open','--socket',str(socket),'--session',sid,'--layout','tab','--label',label,'--','/bin/sh','-c','sleep 60'],env=env,stderr=subprocess.DEVNULL,timeout=10))['actual']['block_id']
             target=open_pane('target')
@@ -508,7 +509,7 @@ class BoardTest(unittest.TestCase):
             self.assertNotIn('explicit Rex executable',content)
         finally:
             pane_authority.operator([BIN,'--rex',rex,'surfaces','close','--socket',hosts['hive']['socket'],'--session',board_sid,'--pane',held_block],
-                                    dict(os.environ, HOME=str(self.root), XDG_STATE_HOME=str(self.root / 'state'),
+                                    dict(isolated_environment(), HOME=str(self.root), XDG_STATE_HOME=str(self.root / 'state'),
                                          TEEREX_BOARDS_STORE=str(self.root / 'operator-boards'), AGENT_REGISTRY=str(self.root / 'operator-agents')),
                                     capture_output=True,timeout=5,check=True)
         # Finite live JSON and the independent kept check use these disposable
@@ -516,7 +517,7 @@ class BoardTest(unittest.TestCase):
         registry=self.root/'.local/state/teerex-agents';registry.mkdir(parents=True)
         for name, (_, sid, target, _) in targets.items():
             (registry/(name+'.json')).write_text(json.dumps(dict(name=name,launch_id=name,target=dict(session_id=sid,block_id=target))))
-        private_env=dict(os.environ,HOME=str(self.root),TEEREX_CALL_LOG_DIR=str(self.root/'calls'))
+        private_env=dict(isolated_environment(),HOME=str(self.root),TEEREX_CALL_LOG_DIR=str(self.root/'calls'))
         private_env['TEEREX_ASK_STATE_DIR']=str(self.root/'asks')
         _,decision_session,asker_block,seat_block=targets['hive']
         Path(hosts['hive']['store']).mkdir(mode=0o700,exist_ok=True)
@@ -659,7 +660,7 @@ class BoardTest(unittest.TestCase):
         for state in ('idle','done','unknown','blocked','error'):
             events.append(dict(template,id='hive-'+state,name='agent-'+state,state=state))
         path=self.root/'json-counts.jsonl';path.write_text('\n'.join(map(json.dumps,events)))
-        result=subprocess.run([BIN,'board','--replay',str(path),'--hosts','hive','--json'],env=dict(os.environ,TEEREX_CALL_LOG_DIR=str(self.root/'calls')),capture_output=True,text=True,timeout=5)
+        result=subprocess.run([BIN,'board','--replay',str(path),'--hosts','hive','--json'],env=dict(isolated_environment(),TEEREX_CALL_LOG_DIR=str(self.root/'calls')),capture_output=True,text=True,timeout=5)
         self.assertEqual(result.returncode,0,result.stderr)
         hosts=json.loads(result.stdout)['hosts']
         self.assertEqual(len(hosts),1)
@@ -749,7 +750,7 @@ class BoardTest(unittest.TestCase):
         '''))
         fake.chmod(0o755)
         out=subprocess.run([sys.executable,'-c',check.PROBE,str(fake),'/nonexistent.sock',str(self.root/'no-profiles.json')],
-                           env=dict(os.environ,HOME=str(self.root)),capture_output=True,text=True,timeout=30)
+                           env=dict(isolated_environment(),HOME=str(self.root)),capture_output=True,text=True,timeout=30)
         self.assertEqual(out.returncode,0,out.stderr)
         self.assertEqual([r['block'] for r in json.loads(out.stdout)],[kept])
 
@@ -758,7 +759,7 @@ class BoardTest(unittest.TestCase):
         for e in list(events):
             if e['kind']=='agent': events.append(dict(e,state='gone'))
         path=self.root/'gone.jsonl';path.write_text('\n'.join(map(json.dumps,events)))
-        result=subprocess.run([BIN,'board','--replay',str(path),'--once'],env=dict(os.environ,TEEREX_CALL_LOG_DIR=str(self.root/'calls')),capture_output=True,text=True)
+        result=subprocess.run([BIN,'board','--replay',str(path),'--once'],env=dict(isolated_environment(),TEEREX_CALL_LOG_DIR=str(self.root/'calls')),capture_output=True,text=True)
         self.assertEqual(result.returncode,0,result.stderr)
         self.assertIn('No agents working',result.stdout)
         self.assertNotIn('Choose a sound',result.stdout)

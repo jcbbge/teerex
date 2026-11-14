@@ -20,6 +20,7 @@ import unittest
 BIN = str(Path(os.environ.get("TEEREX_BIN", "zig-out/bin/teerex")).resolve())
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'tools/acceptance'))
+from test_environment import isolated_environment
 import pane_authority
 ZERO = "00000000-0000-0000-0000-000000000000"
 OTHER = "11111111-1111-1111-1111-111111111111"
@@ -46,7 +47,7 @@ class BoardsTest(unittest.TestCase):
         self.store = self.root / "store"
         self.store.mkdir(mode=0o700)
         self.target = dict(host="hive", socket=str(self.root / "rex.sock"), session="session:" + ZERO, block="block:" + ZERO)
-        self.env = dict(os.environ, TEEREX_ATTENTION_DIR=str(self.root / "attention"), TEEREX_ASK_STATE_DIR=str(self.root / "asks"), TEEREX_CLUTCH_DIR=str(self.root / "clutch"))
+        self.env = dict(isolated_environment(), TEEREX_ATTENTION_DIR=str(self.root / "attention"), TEEREX_ASK_STATE_DIR=str(self.root / "asks"), TEEREX_CLUTCH_DIR=str(self.root / "clutch"))
         self.message = self.root / "message"
         self.message.write_text("first line\noperator input stays untouched · α")
         self.card = self.root / "card.json"
@@ -563,7 +564,7 @@ class CallsTest(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
         self.log = self.root / "calls"
-        self.env = dict(os.environ, TEEREX_ATTENTION_DIR=str(self.root / "attention"), TEEREX_ASK_STATE_DIR=str(self.root / "asks"), TEEREX_CLUTCH_DIR=str(self.root / "clutch"), TEEREX_CALL_LOG_DIR=str(self.log))
+        self.env = dict(isolated_environment(), TEEREX_ATTENTION_DIR=str(self.root / "attention"), TEEREX_ASK_STATE_DIR=str(self.root / "asks"), TEEREX_CLUTCH_DIR=str(self.root / "clutch"), TEEREX_CALL_LOG_DIR=str(self.log))
 
     def call(self, *args, **kw):
         return subprocess.run([BIN, *args], env=self.env, capture_output=True, text=True, timeout=15, **kw)
@@ -832,7 +833,7 @@ class RexBoardsTest(unittest.TestCase):
         cls.server = subprocess.Popen([cls.rex, "server", "run", "--listen", "unix://" + str(cls.socket),
                                        "--restore=false", "--config", "/dev/null", "--state-dir", str(cls.root / "rex-state")],
                                       stdout=cls.log, stderr=cls.log,
-                                      env=dict(os.environ, TEEREX_CLUTCH_DIR=str(cls.root / "server-clutch"), PATH=str(cls.bin) + os.pathsep + os.environ["PATH"]))
+                                      env=dict(isolated_environment(), TEEREX_CLUTCH_DIR=str(cls.root / "server-clutch"), PATH=str(cls.bin) + os.pathsep + os.environ["PATH"]))
         def stop():
             cls.server.terminate()
             try:
@@ -857,7 +858,7 @@ class RexBoardsTest(unittest.TestCase):
         store = root / 'store'
         store.mkdir(mode=0o700)
         received = root / 'received'
-        env = dict(os.environ, TEEREX_ATTENTION_DIR=str(root / 'attention'),
+        env = dict(isolated_environment(), TEEREX_ATTENTION_DIR=str(root / 'attention'),
                    TEEREX_ASK_STATE_DIR=str(root / 'asks'), TEEREX_CLUTCH_DIR=str(root / 'clutch'),
                    TEEREX_CALL_LOG_DIR=str(root / 'calls'))
         script = ("import os,tty;tty.setraw(0);os.write(1,b'READY');f=open(" + repr(str(received)) + ", 'ab',buffering=0)\n"
@@ -1037,7 +1038,7 @@ class RexBoardsTest(unittest.TestCase):
         fixture_bin.mkdir()
         (fixture_bin / 'rex').symlink_to(self.rex)
         def register(target, default_rex=False):
-            env = dict(os.environ)
+            env = isolated_environment()
             if default_rex:
                 env.pop('TEEREX_INTERNAL_REX', None)
                 env['PATH'] = str(fixture_bin) + os.pathsep + env.get('PATH', '')
@@ -1180,7 +1181,7 @@ class RexBoardsTest(unittest.TestCase):
     def test_prepared_paste_live_acks_and_refusal_leaves_cat_unchanged(self):
         root = self.root / ("prepared-" + str(time.monotonic_ns()))
         root.mkdir()
-        env = dict(os.environ, PATH=str(Path(self.rex).parent) + os.pathsep + os.environ["PATH"])
+        env = dict(isolated_environment(), PATH=str(Path(self.rex).parent) + os.pathsep + os.environ["PATH"])
         pane_authority.caller(self, lambda method, args: json.loads(subprocess.check_output(self.base + ['api', 'call', method, json.dumps(args)])), env, root)
         sid = json.loads(subprocess.check_output(self.base + ["api", "call", "session.create", "{}"]))["session_id"]
         self.addCleanup(subprocess.run, self.base + ["api", "call", "session.destroy", json.dumps(dict(session_id=sid))],
@@ -1242,7 +1243,7 @@ class RexBoardsTest(unittest.TestCase):
         root.mkdir()
         for directory in ("store", "jobs", "agents", "bin"):
             (root / directory).mkdir(mode=0o700)
-        env = dict(os.environ, TEEREX_ASK_STATE_DIR=str(root / "asks"), TEEREX_CLUTCH_DIR=str(root / "clutch"), PATH=str(root / "bin") + os.pathsep + str(Path(self.rex).parent) + os.pathsep + os.environ["PATH"],
+        env = dict(isolated_environment(), TEEREX_ASK_STATE_DIR=str(root / "asks"), TEEREX_CLUTCH_DIR=str(root / "clutch"), PATH=str(root / "bin") + os.pathsep + str(Path(self.rex).parent) + os.pathsep + os.environ["PATH"],
                    TEEREX_CALL_LOG_DIR=str(root / "calls"), REX_SERVER="unix:///poison.sock", REX_SESSION="session:poison", REX_BLOCK="block:poison")
         def invoke(*args):
             result = subprocess.run([BIN, *args], env=env, capture_output=True, text=True, timeout=20)
@@ -1551,7 +1552,7 @@ class RexBoardsTest(unittest.TestCase):
         registry, store = root / "jobs", root / "boards"
         registry.mkdir(mode=0o700)
         store.mkdir(mode=0o700)
-        env = dict(os.environ, PATH=str(Path(self.rex).parent) + os.pathsep + os.environ["PATH"])
+        env = dict(isolated_environment(), PATH=str(Path(self.rex).parent) + os.pathsep + os.environ["PATH"])
         rpc = lambda method, args: json.loads(subprocess.check_output(self.base + ['api', 'call', method, json.dumps(args)]))
         pane_authority.caller(self, rpc, env, root)
         def make(report=False):
@@ -1651,7 +1652,7 @@ class RexBoardsTest(unittest.TestCase):
         targets = root / "targets.json"
         targets.write_text(json.dumps([dict(host="hive", server="unix://" + str(self.socket)),
                                        dict(host="m5", server="unix://" + str(root / "missing.sock"))]))
-        env = dict(os.environ, PATH=str(Path(self.rex).parent) + os.pathsep + os.environ["PATH"],
+        env = dict(isolated_environment(), PATH=str(Path(self.rex).parent) + os.pathsep + os.environ["PATH"],
                    REX_SERVER="unix:///poison.sock", REX_SESSION="session:poison")
         common = ["--store", str(store), "--host", "hive", "--socket", str(self.socket), "--session", sid, "--block", bid]
         subprocess.run([BIN, "boards", "fleet", "report"] + common + ["--owner", "worker", "--purpose", "live test", "--state", "working", "--detail", "hook_idle is not process death"], check=True, capture_output=True)

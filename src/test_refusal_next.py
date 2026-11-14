@@ -8,6 +8,7 @@ import tempfile
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools/acceptance'))
+from test_environment import isolated_environment
 import pane_authority
 
 BIN = str(Path(os.environ.get('TEEREX_BIN', 'zig-out/bin/teerex')).resolve())
@@ -27,7 +28,7 @@ class RefusalNextTest(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory(prefix='teerex-refusal-next-')
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
-        self.env = dict(os.environ, HOME=str(self.root), REX_SESSION=SESSION, REX_BLOCK=BLOCK,
+        self.env = dict(isolated_environment(), HOME=str(self.root), REX_SESSION=SESSION, REX_BLOCK=BLOCK,
                         TEEREX_CALL_LOG_DIR=str(self.root / 'calls'))
 
     def run_at_terminal(self, *args):

@@ -16,6 +16,9 @@ import unittest
 from unittest import mock
 from types import SimpleNamespace
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/acceptance'))
+from test_environment import isolated_environment
+
 SOURCE=Path(__file__).with_name('feed.py')
 spec=importlib.util.spec_from_file_location('feed',SOURCE)
 feed=importlib.util.module_from_spec(spec);spec.loader.exec_module(feed)
@@ -98,7 +101,7 @@ class FeedTests(unittest.TestCase):
     def test_held_enter_routes_host_and_opens_tiled_beside_board(self):
         a=SimpleNamespace(held_id='item-1',held_open_json=None,held_pane=False,executable='/teerex',config='/hosts.json',host='remote',rex='/board/rex')
         source=dict(held_open=['/show','{id}'])
-        with mock.patch.object(feed,'selected_host',return_value=source),mock.patch.dict(os.environ,REX_SESSION='session:test',REX_BLOCK='block:test'),mock.patch.object(feed.subprocess,'run',return_value=SimpleNamespace(returncode=0)) as run:
+        with mock.patch.object(feed,'selected_host',return_value=source),mock.patch.dict(os.environ,dict(isolated_environment(),REX_SESSION='session:test',REX_BLOCK='block:test'),clear=True),mock.patch.object(feed.subprocess,'run',return_value=SimpleNamespace(returncode=0)) as run:
             feed.open_held(a)
             argv=run.call_args.args[0]
             self.assertEqual(argv[:6],['/teerex','--rex','/board/rex','surfaces','open','--session'])
@@ -334,7 +337,7 @@ class FeedTests(unittest.TestCase):
                 command=([os.environ['TEEREX_BIN'],'board','feed'] if os.environ.get('TEEREX_BIN') else [sys.executable,str(SOURCE),'/not-used'])+['--local','--host-name','fixture','--socket',str(socket),'--rex',REX]
                 for flag in ('agents-registry','jobs-registry','scratch','calls'):
                     (root/flag).mkdir();command+=['--'+flag,str(root/flag)]
-                process=subprocess.Popen(command,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,env=dict(os.environ,HOME=tmp))
+                process=subprocess.Popen(command,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,env=dict(isolated_environment(),HOME=tmp))
                 events=queue.Queue()
                 threading.Thread(target=lambda:[events.put(json.loads(line)) for line in process.stdout],daemon=True).start()
                 def wait_for(predicate):
@@ -406,7 +409,7 @@ class FeedTests(unittest.TestCase):
                 probe_spec=importlib.util.spec_from_file_location('check_one_source',SOURCE.parent.parent/'board/check_one_source.py')
                 probe=importlib.util.module_from_spec(probe_spec);probe_spec.loader.exec_module(probe)
                 def probe_rows(path):
-                    return json.loads(subprocess.check_output([sys.executable,'-c',probe.PROBE,REX,str(socket),str(path)],env=dict(os.environ,HOME=tmp),timeout=15))
+                    return json.loads(subprocess.check_output([sys.executable,'-c',probe.PROBE,REX,str(socket),str(path)],env=dict(isolated_environment(),HOME=tmp),timeout=15))
                 self.assertEqual({r['block'] for r in probe_rows(profiles)},{other_block,manual_block})
                 args.profiles=root/'missing-profiles.json'
                 with contextlib.redirect_stdout(io.StringIO()):inventory.scan()
@@ -422,7 +425,7 @@ class FeedTests(unittest.TestCase):
                 if os.environ.get('TEEREX_BIN'):
                     config=root/'hosts.json'
                     config.write_text(json.dumps(dict(schema_version=1,hosts=dict(hive=dict(host_id='hive',platform='linux-x86_64' if sys.platform=='linux' else 'macos-arm64',transport='local',home=tmp,socket=str(socket),rex=REX,teerex=os.environ['TEEREX_BIN'],store=str(root/'store'))))))
-                    merged=subprocess.Popen([os.environ['TEEREX_BIN'],'board','feed','--config',str(config),'--hosts','hive,absent'],stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,env=dict(os.environ,HOME=tmp))
+                    merged=subprocess.Popen([os.environ['TEEREX_BIN'],'board','feed','--config',str(config),'--hosts','hive,absent'],stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,env=dict(isolated_environment(),HOME=tmp))
                     try:
                         received=queue.Queue()
                         threading.Thread(target=lambda:[received.put(json.loads(line)) for line in merged.stdout],daemon=True).start()

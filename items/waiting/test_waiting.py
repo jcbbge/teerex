@@ -12,6 +12,7 @@ import time
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/acceptance'))
+from test_environment import isolated_environment
 import pane_authority
 
 BIN = str(Path(os.environ.get('TEEREX_BIN', Path(__file__).resolve().parents[2] / 'zig-out/bin/teerex')).resolve())
@@ -47,7 +48,7 @@ class WaitingTest(unittest.TestCase):
         self.config = self.root / 'hosts.json'
         self.config.write_text(json.dumps(dict(schema_version=1, hosts=self.hosts)))
         self.state = self.root / 'navigation.json'
-        self.env = dict(os.environ, HOME=str(self.root), TEEREX_INTERNAL_REX=REX,
+        self.env = dict(isolated_environment(), HOME=str(self.root), TEEREX_INTERNAL_REX=REX,
                         PATH=str(Path(REX).parent) + os.pathsep + os.environ.get('PATH', ''))
         pane_authority.caller(self, lambda method, args: self.rpc('hive', method, **args), self.env, self.root)
         self.controller = self.root / 'caller-teerex'

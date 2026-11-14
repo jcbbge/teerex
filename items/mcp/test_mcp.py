@@ -13,6 +13,8 @@ import threading
 import time
 import unittest
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/acceptance'))
+from test_environment import isolated_environment
 HERE = Path(__file__).resolve().parent
 BIN = Path(os.environ.get("TEEREX_BIN", HERE.parents[1] / "zig-out/bin/teerex")).resolve()
 spec = importlib.util.spec_from_file_location("teerex_mcp", HERE / "server.py")
@@ -81,7 +83,7 @@ class ProtocolTest(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory(prefix="teerex-mcp-")
         self.addCleanup(temporary.cleanup)
         self.home = Path(temporary.name).resolve()
-        self.env = dict(os.environ, HOME=str(self.home), REX_SERVER="", REX_SESSION="",
+        self.env = dict(isolated_environment(), HOME=str(self.home), REX_SERVER="", REX_SESSION="",
                         TEEREX_CLUTCH_DIR=str(self.home / "clutch"), TEEREX_CALL_LOG_DIR=str(self.home / "calls"))
         self.client = Client(self.env)
         self.addCleanup(self.client.close)
@@ -275,7 +277,7 @@ class RexTest(unittest.TestCase):
         made = json.loads(subprocess.check_output(self.base + ["new", "--json", "--keep-open", "--shell=none", "--", "/bin/sleep", "120"], timeout=10))
         self.session = made["session_id"]
         self.block = made["initial_windows"][0]["block_ids"][0]
-        self.env = dict(os.environ, HOME=str(home), REX_SERVER="unix://" + str(self.socket), REX_SESSION=self.session,
+        self.env = dict(isolated_environment(), HOME=str(home), REX_SERVER="unix://" + str(self.socket), REX_SESSION=self.session,
                         PATH=str(Path(self.rex).parent) + os.pathsep + os.environ.get("PATH", ""),
                         TEEREX_INTERNAL_REX=self.rex, TEEREX_CALL_LOG_DIR=str(home / "calls"), TEEREX_CLUTCH_DIR=str(home / "clutch"), XDG_STATE_HOME=str(home / "state"))
         sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/acceptance'))

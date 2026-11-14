@@ -1,9 +1,13 @@
 """Public help names for every embedded Python controller; no Rex or real stores."""
 import os
+import sys
 from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools/acceptance'))
+from test_environment import isolated_environment
 
 BIN = str(Path(os.environ.get("TEEREX_BIN", Path(__file__).resolve().parents[1] / "zig-out/bin/teerex")).resolve())
 
@@ -38,7 +42,7 @@ class PythonHelpTest(unittest.TestCase):
             "install", "activate", "remove", "restore", "list", "doctor", "repair", "run")]
         commands += [("replay", op) for op in ("record", "play", "live")]
         with tempfile.TemporaryDirectory(prefix="teerex-help-") as temp:
-            env = dict(os.environ, HOME=temp, XDG_CONFIG_HOME=temp,
+            env = dict(isolated_environment(), HOME=temp, XDG_CONFIG_HOME=temp,
                        XDG_STATE_HOME=temp, TEEREX_CALL_LOG_DIR=str(Path(temp) / "calls"),
                        REX_SERVER="unix:///no-server-help-test", REX_SESSION="poison", REX_BLOCK="poison")
             for command in commands:

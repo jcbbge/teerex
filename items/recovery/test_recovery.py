@@ -13,6 +13,9 @@ import tempfile
 import time
 import unittest
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/acceptance'))
+from test_environment import isolated_environment
+
 BIN = str(Path(os.environ.get("TEEREX_BIN", "zig-out/bin/teerex")).resolve())
 SOURCE = Path(__file__).with_name("recovery.py").resolve()
 
@@ -29,7 +32,7 @@ class RecoveryTest(unittest.TestCase):
         self.store.mkdir(mode=0o700)
         self.socket = self.root / "rex.sock"
         self.base = [self.rex, "--autostart=false", "--server", "unix://" + str(self.socket), "--timeout", "3s"]
-        self.env = dict(os.environ, HOME=str(self.root), TEEREX_CLUTCH_DIR=str(self.root / "clutch"), PATH=str(Path(self.rex).parent) + os.pathsep + os.environ.get("PATH", ""),
+        self.env = dict(isolated_environment(), HOME=str(self.root), TEEREX_CLUTCH_DIR=str(self.root / "clutch"), PATH=str(Path(self.rex).parent) + os.pathsep + os.environ.get("PATH", ""),
                         REX_SERVER="unix:///tmp/poison.sock", REX_SESSION="poison", REX_BLOCK="poison", REX_CLIENT="poison")
         self.server = None
         self.log = (self.root / "server.log").open("w")

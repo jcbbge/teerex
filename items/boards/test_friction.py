@@ -12,6 +12,9 @@ import tempfile
 import time
 import unittest
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/acceptance'))
+from test_environment import isolated_environment
+
 BIN = Path(os.environ.get('TEEREX_BIN','zig-out/bin/teerex')).resolve()
 ROOT = Path(__file__).resolve().parents[2]
 KEY = lambda n: 'k:'+f'{n:016x}'
@@ -24,7 +27,7 @@ class FrictionTest(unittest.TestCase):
         self.root=Path(temporary.name)
         self.log=self.root/'logs'; self.log.mkdir(mode=0o700)
         self.admin=self.root/'admin'; self.admin.mkdir(mode=0o700)
-        self.env=dict(os.environ,TEEREX_CALL_LOG_DIR=str(self.log),TEEREX_CALLER='agent-read',AGENT_NAME='test-agent',AGENT_PANE='test-pane')
+        self.env=dict(isolated_environment(),TEEREX_CALL_LOG_DIR=str(self.log),TEEREX_CALLER='agent-read',AGENT_NAME='test-agent',AGENT_PANE='test-pane')
         self.control_env=dict(self.env,TEEREX_CALL_LOG_DIR=str(self.admin))
         self.counter=0
 

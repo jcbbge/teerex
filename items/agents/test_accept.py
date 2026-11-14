@@ -8,6 +8,7 @@ import tempfile
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/acceptance'))
+from test_environment import isolated_environment
 import pane_authority
 
 BIN = str(Path(os.environ.get('TEEREX_BIN', 'zig-out/bin/teerex')).resolve())
@@ -24,7 +25,7 @@ class ReportAcceptanceTest(unittest.TestCase):
         self.boards.mkdir(mode=0o700)
         self.starter = self.address('1')
         self.worker = self.address('2')
-        self.env = {k: v for k, v in os.environ.items()
+        self.env = {k: v for k, v in isolated_environment().items()
                     if not k.startswith(('AGENT_', 'LC_AGENT_', 'TEEREX_OPERATOR', 'LC_TEEREX_OPERATOR'))}
         self.env.update(XDG_STATE_HOME=str(self.root), TEEREX_BOARDS_STORE=str(self.boards),
                         AGENT_REGISTRY=str(self.registry))

@@ -3,6 +3,7 @@ import hashlib
 import io
 import json
 import os
+import sys
 from pathlib import Path
 import platform
 import pty
@@ -13,6 +14,9 @@ import subprocess
 import tarfile
 import tempfile
 import unittest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools/acceptance'))
+from test_environment import isolated_environment
 
 BIN = Path(os.environ.get("TEEREX_BIN", Path(__file__).resolve().parents[1] / "zig-out/bin/teerex"))
 
@@ -68,7 +72,7 @@ class TargetsTest(unittest.TestCase):
 
     def call(self, *args):
         return subprocess.run([str(BIN), *args], capture_output=True, text=True, timeout=10,
-                              env=dict(os.environ, REX_SERVER="unix:///poisoned", REX_SESSION="wrong"))
+                              env=dict(isolated_environment(), REX_SERVER="unix:///poisoned", REX_SESSION="wrong"))
 
     def test_recovery_store_default_and_explicit_directory(self):
         self.host["recovery_store"] = str(self.root / "snapshots")
@@ -323,7 +327,7 @@ class TargetsTest(unittest.TestCase):
         self.host.update(home=str(self.root), platform="macos-arm64" if mac else "linux-x86_64",
                          install={"prefix": str(prefix)})
         self.save()
-        env = dict(os.environ, HOME=str(self.root))
+        env = dict(isolated_environment(), HOME=str(self.root))
         args = ["fleet", "install", "--config", str(self.config), "--host", "hive", "--version", tag, "--from", str(assets)]
         def invoke(binary, *extra):
             result = subprocess.run([str(binary), *args, *extra], cwd=self.root, env=env,
@@ -350,7 +354,7 @@ class TargetsTest(unittest.TestCase):
                            + f"os.write(1,{raw!r})\n")
         runtime.chmod(0o700)
         socket = str(self.root / "no server socket")
-        env = dict(os.environ, PATH=str(self.root), HOME=str(self.root),
+        env = dict(isolated_environment(), PATH=str(self.root), HOME=str(self.root),
                    TEEREX_CALL_LOG_DIR=str(self.root / "calls"))
         env.pop("TEEREX_SOCKET_SOURCE", None)
         for explicit in (False, True):
@@ -402,7 +406,7 @@ class TargetsTest(unittest.TestCase):
         command = [str(BIN), "--rex", str(pinned), "observe", "--socket", "/not-contacted.sock",
                    "--session", "session:12345678-1234-1234-1234-123456789abc",
                    "--block", "block:abcdef12-1234-1234-1234-123456789abc"]
-        result = subprocess.run(command, env=dict(os.environ, PATH=str(self.root)), capture_output=True, text=True, timeout=5)
+        result = subprocess.run(command, env=dict(isolated_environment(), PATH=str(self.root)), capture_output=True, text=True, timeout=5)
         self.assertEqual(result.returncode, 1)
         self.assertIn("PINNED_DIAGNOSTIC", result.stderr)
         self.assertIn(str(pinned), result.stderr)
@@ -425,7 +429,7 @@ class TargetsTest(unittest.TestCase):
             with self.subTest(tty=tty):
                 result = subprocess.run([str(BIN), "targets", "exec", "--config", str(self.config),
                                          "--host", "hive", *(["--tty"] if tty else []), "--", *command],
-                                        env=dict(os.environ, PATH=str(self.root) + os.pathsep + os.environ["PATH"]),
+                                        env=dict(isolated_environment(), PATH=str(self.root) + os.pathsep + os.environ["PATH"]),
                                         capture_output=True, text=True, timeout=10)
                 self.assertEqual(result.returncode, 7, result.stderr)
                 actual = json.loads(ssh_output.read_text())

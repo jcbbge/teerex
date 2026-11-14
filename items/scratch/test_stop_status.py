@@ -10,6 +10,9 @@ import types
 import unittest
 from unittest.mock import patch
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/acceptance'))
+from test_environment import isolated_environment
+
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'src'))
 
@@ -30,8 +33,8 @@ class StopStatusTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
-        self.env = patch.dict(os.environ, TEEREX_ASK_STATE_DIR=self.tmp.name,
-                              REX_SERVER='/tmp/rex.sock', REX_SESSION='session:test', REX_BLOCK='block:test')
+        self.env = patch.dict(os.environ, dict(isolated_environment(), TEEREX_ASK_STATE_DIR=self.tmp.name,
+                              REX_SERVER='/tmp/rex.sock', REX_SESSION='session:test', REX_BLOCK='block:test'), clear=True)
         self.env.start()
         self.addCleanup(self.env.stop)
 

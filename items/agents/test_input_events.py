@@ -3,6 +3,7 @@ import contextlib
 import importlib.util
 import io
 import os
+import sys
 from pathlib import Path
 import tempfile
 import threading
@@ -11,6 +12,9 @@ import types
 import unittest
 from unittest.mock import patch
 
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/acceptance'))
+from test_environment import isolated_environment
 
 def module(name):
     spec = importlib.util.spec_from_file_location(name, Path(__file__).with_name(name + '.py'))
@@ -31,7 +35,8 @@ class InputEventsTest(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
-        self.env = patch.dict(os.environ, HOME=self.temp.name, REX_SESSION=SID, REX_BLOCK=BID)
+        self.env = patch.dict(os.environ, dict(isolated_environment(), HOME=self.temp.name,
+                                             REX_SESSION=SID, REX_BLOCK=BID), clear=True)
         self.env.start()
         self.addCleanup(self.env.stop)
         self.target = (self.temp.name + '/unused.sock', SID, BID)

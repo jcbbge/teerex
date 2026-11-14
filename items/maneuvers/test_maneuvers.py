@@ -4,11 +4,15 @@ import copy
 import hashlib
 import json
 import os
+import sys
 from pathlib import Path
 import subprocess
 import tempfile
 import unittest
 
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools/acceptance'))
+from test_environment import isolated_environment
 
 BIN = Path(os.environ.get("TEEREX_BIN", Path(__file__).resolve().parents[2] / "zig-out/bin/teerex"))
 
@@ -65,7 +69,7 @@ class ManeuverTest(unittest.TestCase):
 
     @staticmethod
     def execute(command):
-        return subprocess.run(command, env=dict(os.environ, PATH="/no-rex-or-other-executables",
+        return subprocess.run(command, env=dict(isolated_environment(), PATH="/no-rex-or-other-executables",
                               REX_SERVER="unix:///poison.sock", REX_SESSION="session:poison", REX_BLOCK="block:poison"),
                               capture_output=True, text=True, timeout=5)
 
