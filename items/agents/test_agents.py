@@ -733,7 +733,7 @@ class AgentsTest(unittest.TestCase):
         agents = types.ModuleType("measured_agents")
         base = Path(__file__).resolve().parents[1]
         sources = [base / "scratch/scratch.py", base.parent / "src/scoped_channel.py",
-                   base / "agents/input_events.py", base / "agents/agents.py"]
+                   base / "agents/input_events.py", base / "agents/cost.py", base / "agents/agents.py"]
         agents.__dict__.update(SCRATCH_LIBRARY=True, __file__=str(sources[-1]))
         for source in sources:
             exec(compile(source.read_text(), str(source), "exec"), agents.__dict__)
