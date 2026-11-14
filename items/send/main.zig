@@ -331,6 +331,16 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
         .status_message = status_message,
     }, .{});
     work: {
+        // A diagnostic is for the invoking caller, never a message to another pane.
+        const body = std.mem.trimStart(u8, message, " \t\n");
+        for ([_][]const u8{ "send refused:", "pane control refused;", "pane_guard_", "registered_seat_", "agent-send: not delivered", "teerex send:" }) |prefix| {
+            if (std.mem.startsWith(u8, body, prefix)) {
+                std.debug.print("teerex send: refusal_text_is_not_a_message\n", .{});
+                failure = "refusal_text_is_not_a_message";
+                outcome = "refused";
+                break :work;
+            }
+        }
         if (input_failure) |reason| {
             failure = reason;
             outcome = if (std.mem.eql(u8, reason, "StdinDeadlineExceeded")) "deadline_exceeded" else "cancel_requested";

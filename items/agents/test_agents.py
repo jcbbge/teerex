@@ -3187,6 +3187,9 @@ Path('/work/network-harness').touch()
 
     def test_contract_routes_rapid_sequence_retains_flag_in_order(self):
         self.register_starter_identity()
+        # Supervisor and hook inherit a real registered caller with another name.
+        self.env.update(AGENT_NAME="lead", AGENT_SESSION=self.session,
+                        AGENT_PANE=self.starter, REX_SESSION=self.session, REX_BLOCK=self.starter)
         p, launched = self.launch(contract=True)
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
         state = self.record(launched["launch_id"])
@@ -3215,6 +3218,28 @@ Path('/work/network-harness').touch()
         messages = [v for v in self.starter_messages() if "STEP probe" in v or "FLAG probe" in v or "DONE probe:" in v]
         self.assertEqual(len(messages), 6, messages)
         self.assertIn("DONE probe:", messages[-1])
+
+        ns = {"__name__": "generated_delivery_test", "SCRATCH_LIBRARY": True}
+        root = Path(__file__).resolve().parents[2]
+        for source in ("items/scratch/scratch.py", "src/scoped_channel.py",
+                       "items/agents/input_events.py", "items/agents/cost.py", "items/agents/agents.py"):
+            exec(compile((root / source).read_text(), source, "exec"), ns)
+        ns["RUNTIME"] = BIN
+        # Cost and UNANSWERED use the same live registered caller as the supervisor.
+        with patch.dict(os.environ, self.env, clear=True):
+            current = self.record(launched["launch_id"])
+            ns["cost_flag"](str(self.registry), current, dict(
+                threshold=dict(turn_seconds=1, turn_tokens=1), current_turn_seconds=2,
+                turn_tokens=2, turn_active=True))
+            self.assertEqual(self.record(launched["launch_id"])["cost_flag"]["outcome"], "acknowledged")
+            code, packet = ns["contract_tell"](str(self.registry), launched["launch_id"],
+                "unanswered", "UNANSWERED probe done: generated delivery proof")
+            self.assertEqual(code, 0, packet)
+        wait_for(lambda: any("COST probe:" in text for text in self.starter_messages()))
+        wait_for(lambda: any("UNANSWERED probe done:" in text for text in self.starter_messages()))
+        self.assertFalse(any("send refused:" in text for text in self.starter_messages()))
+        print("GENERATED PROOF: registered lead; brief, CLI STEP/FLAG/DONE, watcher, "
+              "Stop report, cost and UNANSWERED acknowledged", flush=True)
 
     def test_contract_routes_human_adopts_sender_and_routes_stop(self):
         target = self.register_starter_identity()

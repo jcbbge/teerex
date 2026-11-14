@@ -33,13 +33,12 @@ pub const ScriptFile = struct {
     }
 };
 
-pub fn checkSender(allocator: std.mem.Allocator, endpoint: []const u8, sender: []const u8) !bool {
+pub fn checkSender(allocator: std.mem.Allocator, endpoint: []const u8, sender: []const u8) !?[]const u8 {
     const result = try std.process.Child.run(.{ .allocator = allocator, .argv = &.{ "python3", "-I", "-c", source, endpoint, "sender", sender }, .max_output_bytes = std.math.maxInt(usize) });
     if (result.term != .Exited or result.term.Exited != 0) {
-        try std.fs.File.stderr().writeAll(result.stderr);
-        return false;
+        return if (result.stderr.len != 0) result.stderr else "sender_check_failed";
     }
-    return true;
+    return null;
 }
 
 pub fn prelude(allocator: std.mem.Allocator, endpoint: []const u8, message: bool, session: ?[]const u8) ![]const u8 {

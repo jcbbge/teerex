@@ -60,6 +60,15 @@ With label `worker` and canonical IDs, the measured preflight overhead is 234 by
 
 ## Receipt and unknowns
 
+Registered-agent sender mismatches return a `send_result` refusal with the reason
+on stderr and in `failure_reason`, before the Rex backend runs. Generated
+deliveries retain their sender marker across named-host routing.
+Bodies beginning with `send refused:`, `pane control refused;`, `pane_guard_`,
+`registered_seat_`, `agent-send: not delivered`, or `teerex send:` (after
+leading whitespace) are rejected as `refusal_text_is_not_a_message` before
+pane input or inbox recording. Diagnostics belong to the invoking caller.
+
+
 Normal controller outcomes emit one `schema_version=1`, `kind="send_result"` JSON object. Usage failures exit 2 without JSON. Input-file/OS/allocation/output failures can exit 1 without a complete receipt. Always inspect exit status and parse the whole packet; never automatically retry a missing or unsuccessful receipt.
 
 - `events_acknowledged` / exit **0**: both paste and Enter were acknowledged and the Rex invocation completed successfully. **Not “delivered,” consumed, safe, or task-complete.** On one Rex connection the calls are ordered; acknowledgement may precede completion of event effects.

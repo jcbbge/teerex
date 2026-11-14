@@ -571,6 +571,7 @@ def mutate(a):
                 if seat is None:
                     text(a.sender, 128, False)
                     body = text(read_input(a.message_file, 65536, getattr(a, "input_deadline", None)), 65536)
+                    check(not body.lstrip().startswith(("send refused:", "pane control refused;", "pane_guard_", "registered_seat_", "agent-send: not delivered", "teerex send:")), "refusal_text_is_not_a_message")
                     check(not body.startswith(("DECISION-JSON:", "DECISION-RESOLVED-JSON:")), "use_typed_ask_command")
                     store.state.setdefault("pending_seat", []).append(dict(host=a.host, server="unix://" + a.socket,
                         record=dict(kind="message", at=stamp(), **{"from": a.sender}, body=body)))
@@ -672,6 +673,7 @@ def mutate(a):
                 text(a.sender, 128, False)
                 if a.command == "inbox":
                     body = text(read_input(a.message_file, 65536, getattr(a, "input_deadline", None)), 65536)
+                    check(not body.lstrip().startswith(("send refused:", "pane control refused;", "pane_guard_", "registered_seat_", "agent-send: not delivered", "teerex send:")), "refusal_text_is_not_a_message")
                     # Legacy typed message prefixes are rejected, never silently demoted to activity.
                     check(not body.startswith(("DECISION-JSON:", "DECISION-RESOLVED-JSON:")), "use_typed_ask_command")
                     kind = "message"
@@ -1630,6 +1632,6 @@ if __name__ == "__main__":
                retry_safe=False, recovery="inspect_committed_state_before_retry")
         sys.exit(code)
     except (Refused, OSError, ValueError, KeyError, TypeError, RecursionError) as e:
-        result(kind="boards_error", outcome="refused_or_unknown", reason=str(e)[:512], terminal_input_attempted=False,
+        result(kind="boards_error", outcome="refused_or_unknown", reason=str(e)[:512], failure_reason=str(e)[:512], terminal_input_attempted=False,
                retry_safe=False, recovery="inspect_committed_state_and_state.next_before_retry")
         sys.exit(1)

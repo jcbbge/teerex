@@ -515,6 +515,26 @@ class TargetsTest(unittest.TestCase):
         self.assertEqual(result.returncode, 7, result.stderr)
         self.assertEqual(json.loads(self.output.read_text()), ["--rex", self.host["rex"], "filter", "--", "--tty"])
 
+    def test_generated_sender_survives_ssh_routing(self):
+        ssh_output = self.root / "generated-ssh.json"
+        ssh = self.root / "ssh"
+        ssh.write_text("#!/usr/bin/env python3\nimport json,sys\nfrom pathlib import Path\n"
+                       + "Path(" + repr(str(ssh_output)) + ").write_text(json.dumps(sys.argv[1:]))\n")
+        ssh.chmod(0o700)
+        self.host.update(transport="ssh", address="operator@example.invalid", port=2223,
+                         identity_file=str(self.root / "key"), known_hosts=str(self.root / "known"))
+        self.save()
+        env = dict(isolated_environment(), PATH=str(self.root) + os.pathsep + os.environ["PATH"],
+                   TEEREX_GENERATED_SENDER="teerex-contract", AGENT_NAME="registered-caller")
+        result = subprocess.run([str(BIN), "--config", str(self.config), "--host", "hive",
+                                 "send", "--session", "s", "--block", "b",
+                                 "--from", "teerex-contract", "--message-file", "-"],
+                                env=env, input="STEP proof", capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        import shlex
+        remote = shlex.split(json.loads(ssh_output.read_text())[-1])
+        self.assertIn("TEEREX_GENERATED_SENDER=teerex-contract", remote)
+
     def test_ssh_requires_explicit_pretrusted_fields_before_launch(self):
         self.host.update(transport="ssh", address="-oProxyCommand=evil", port=22)
         self.save()

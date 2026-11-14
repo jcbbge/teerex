@@ -190,6 +190,83 @@ class SendTest(unittest.TestCase):
         self.assertEqual(sent.returncode, 0, sent.stdout + sent.stderr)
         self.received(raw, expected + self.pasted(b"human script", "free-label"))
 
+    def test_sender_refusal_preserves_both_input_lines(self):
+        caller, caller_log = self.prompt(mode="codex")
+        target, target_log = self.prompt(mode="codex")
+        self.env.update(REX_SESSION=caller[0], REX_BLOCK=caller[1],
+                        LC_REX_SESSION=caller[0], LC_REX_BLOCK=caller[1],
+                        AGENT_NAME="registered-a")
+        registry = Path(self.env["AGENT_REGISTRY"])
+        registry.mkdir(mode=0o700, exist_ok=True)
+        (registry / ("agents-" + "b" * 32 + ".json")).write_text(json.dumps(dict(
+            name="registered-a", target=dict(server=self.endpoint,
+                session_id=caller[0], block_id=caller[1]))))
+        self.type_draft(caller, "caller draft α")
+        self.type_draft(target, "target draft β")
+        for _ in range(100):
+            before = [self.prompt_text(p) for p in (caller, target)]
+            if "caller draft α" in before[0] and "target draft β" in before[1]:
+                break
+            time.sleep(.02)
+        else:
+            self.fail("drafts not rendered")
+        logs_before = [p.read_bytes() for p in (caller_log, target_log)]
+        bindir = self.work / "bin"
+        bindir.mkdir()
+        (bindir / "teerex").symlink_to(BIN)
+        Path(self.env["TEEREX_BOARDS_STORE"]).mkdir(mode=0o700)
+        config = self.work / "hosts.json"
+        config.write_text(json.dumps(dict(schema_version=1, hosts=dict(test=dict(
+            host_id="test", transport="local", home=str(self.work),
+            platform="macos-arm64" if sys.platform == "darwin" else "linux-x86_64",
+            socket=str(self.socket), rex=self.rex, teerex=BIN,
+            store=self.env["TEEREX_BOARDS_STORE"])))))
+        wrapper_env = dict(self.env, PATH=str(bindir) + os.pathsep + self.env["PATH"],
+                           TEEREX_HOSTS=str(config), TEEREX_HOST="test")
+        wrapper = shutil.which("agent-send")
+        self.assertIsNotNone(wrapper, "installed agent-send required")
+        commands = [("native", self.command(target, sender="registered-b"), self.env),
+                    ("agent-send", [wrapper, *target, "registered-b", "must not arrive"], wrapper_env),
+                    ("contract-wrong-marker", self.command(target, sender="teerex-contract"),
+                     dict(self.env, TEEREX_GENERATED_SENDER="different-marker"))]
+        for prefix in ("send refused:", "pane control refused;", "pane_guard_", "registered_seat_",
+                       "agent-send: not delivered", "teerex send:"):
+            commands.append(("relay-native-" + prefix,
+                self.command(target, (prefix + " diagnostic").encode(), sender="registered-a"), self.env))
+            commands.append(("relay-wrapper-" + prefix,
+                [wrapper, *target, "registered-a", prefix + " diagnostic"], wrapper_env))
+        for label, command, environment in commands:
+            with self.subTest(path=label):
+                result = subprocess.run(command, env=environment, capture_output=True,
+                                        text=True, timeout=20)
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                if label != "agent-send" and not label.startswith("relay-wrapper-"):
+                    packet = json.loads(result.stdout)
+                    self.assertEqual(packet["outcome"], "refused")
+                    self.assertFalse(packet["backend_invoked"])
+                    self.assertFalse(packet["paste"]["attempted"])
+                    self.assertFalse(packet["enter"]["attempted"])
+                    self.assertIn("refusal_text_is_not_a_message" if label.startswith("relay-") else "use --from registered-a", packet["failure_reason"])
+                self.assertIn("refusal_text_is_not_a_message" if label.startswith("relay-") else "use --from registered-a", result.stderr)
+                self.assertEqual([self.prompt_text(p) for p in (caller, target)], before)
+                self.assertEqual([p.read_bytes() for p in (caller_log, target_log)], logs_before)
+                print("REFUSAL PROOF:", label, "both input lines byte-identical; no submissions",
+                      flush=True)
+
+        # Registered-seat routing rejects the same diagnostic before recording or input.
+        registered = subprocess.run([BIN, "seat", "register", "--store",
+            self.env["TEEREX_BOARDS_STORE"], "--host", "test", "--socket", str(self.socket),
+            "--session", target[0], "--block", target[1], "--owner", "fixture"],
+            env=self.env, capture_output=True, text=True, timeout=10)
+        self.assertEqual(registered.returncode, 0, registered.stdout + registered.stderr)
+        result = subprocess.run([wrapper, *target, "registered-a", "send refused: diagnostic"],
+                                env=wrapper_env, capture_output=True, text=True, timeout=20)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("refusal_text_is_not_a_message", result.stderr)
+        self.assertEqual([self.prompt_text(p) for p in (caller, target)], before)
+        self.assertEqual([p.read_bytes() for p in (caller_log, target_log)], logs_before)
+        print("REFUSAL PROOF: registered-seat relay both input lines byte-identical", flush=True)
+
     def test_attention_three_sends_ask_and_refusal(self):
         target, raw = self.fixture()
         self.env['TEEREX_ATTENTION_DIR'] = str(self.work / 'attention')

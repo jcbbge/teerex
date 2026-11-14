@@ -129,6 +129,8 @@ fn send(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
     }
     var socket: ?[]const u8 = null;
     var sender: ?[]const u8 = null;
+    var session: ?[]const u8 = null;
+    var block: ?[]const u8 = null;
     var index: usize = 0;
     while (index < native.items.len) {
         const arg = native.items[index];
@@ -139,11 +141,30 @@ fn send(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
         if (index + 1 >= native.items.len) break;
         if (std.mem.eql(u8, arg, "--socket")) socket = native.items[index + 1];
         if (std.mem.eql(u8, arg, "--from")) sender = native.items[index + 1];
+        if (std.mem.eql(u8, arg, "--session")) session = native.items[index + 1];
+        if (std.mem.eql(u8, arg, "--block")) block = native.items[index + 1];
         index += 2;
     }
     if (socket != null and sender != null) {
         const endpoint = try std.fmt.allocPrint(allocator, "unix://{s}", .{socket.?});
-        if (!try @import("pane_guard").checkSender(allocator, endpoint, sender.?)) return 1;
+        if (try @import("pane_guard").checkSender(allocator, endpoint, sender.?)) |reason| {
+            try std.fs.File.stderr().writeAll(reason);
+            const packet = try std.json.Stringify.valueAlloc(allocator, .{
+                .schema_version = 1,
+                .kind = "send_result",
+                .target = .{ .server = endpoint, .session_id = session, .block_id = block },
+                .outcome = "refused",
+                .failure_reason = std.mem.trim(u8, reason, "\r\n"),
+                .backend_invoked = false,
+                .paste = .{ .attempted = false, .acknowledged = false },
+                .enter = .{ .attempted = false, .acknowledged = false },
+                .draft = .{ .cleared = @as(?bool, null) },
+                .retry_safe = false,
+            }, .{});
+            try std.fs.File.stdout().writeAll(packet);
+            try std.fs.File.stdout().writeAll("\n");
+            return 1;
+        }
     }
     if (store != null or host != null) {
         if (store == null or host == null) return error.SendStoreAndHostRequiredTogether;

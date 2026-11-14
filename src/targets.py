@@ -161,6 +161,8 @@ def execute(host, command, *, tty=False):
     import socket
     forwarded = {'TEEREX_CALLER_IDENTITY': json.dumps(dict(actor, host=actor.get('host') or socket.gethostname()), separators=(',', ':'))}
     forwarded['TEEREX_CALLER_MANAGED'] = '1' if managed_agent() else '0'
+    if os.environ.get('TEEREX_GENERATED_SENDER'):
+        forwarded['TEEREX_GENERATED_SENDER'] = os.environ['TEEREX_GENERATED_SENDER']
     if not managed_agent():
         forwarded['TEEREX_CALLER_HUMAN'] = json.dumps(human_identity(), separators=(',', ':'))
     if host["transport"] == "ssh":
