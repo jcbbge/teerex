@@ -1255,6 +1255,10 @@ class RexBoardsTest(unittest.TestCase):
             return json.loads(result.stdout)
         session = json.loads(subprocess.check_output(self.base + ["api", "call", "session.create", '{"label":"dashboard fixture"}']))["session_id"]
         self.addCleanup(lambda: subprocess.run(self.base + ["api", "call", "session.destroy", json.dumps(dict(session_id=session))], capture_output=True))
+        # Presentation is an owned move: use a real disposable creator, while
+        # retaining the poisoned server to exercise explicit endpoint routing.
+        pane_authority.caller(self, lambda method, params: json.loads(subprocess.check_output(
+            self.base + ['api', 'call', method, json.dumps(params)])), env, root)
         def pane(label, osc=False):
             script = ("print('\\x1b]7501;state=working:app=fixture\\x1b\\\\',flush=True); " if osc else "") + "import time; time.sleep(120)"
             if busy and label == 'dash-agent-alpha':
@@ -1343,6 +1347,27 @@ class RexBoardsTest(unittest.TestCase):
         saved = list(saved)
         saved[3] &= ~pending
         self.assertEqual(restored, saved)
+
+    def test_present_reports_creator_refusal_without_moving_pane(self):
+        root, env, args, session, anchor, alpha, beta, view = self.dashboard_fixture()
+        before = view()
+        entry = next(e for e in json.loads((root / 'jobs/state.json').read_text())['entries']
+                     if e['block_id'] == beta)
+        # Invalid identities must never acquire authority, even when a jobs
+        # registration supplies the right owner and generation.
+        env.update(REX_SESSION='session:poison', REX_BLOCK='block:poison',
+                   LC_REX_SESSION='session:poison', LC_REX_BLOCK='block:poison')
+        result = subprocess.run([BIN, 'jobs', 'present', '--registry', str(root / 'jobs'),
+            '--socket', str(self.socket), '--session', session, '--block', beta,
+            '--owner', entry['owner'], '--generation', str(entry['generation']),
+            '--reason', 'verify creator authority', '--anchor', anchor,
+            '--focus', 'yes', '--relocate', 'yes'], env=env, capture_output=True, text=True, timeout=20)
+        packet = json.loads(result.stdout)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn('pane control refused; recorded spawner:', packet['failure_reason'])
+        self.assertEqual(packet['outcome'], 'uncertain')
+        self.assertFalse(packet['retry_safe'])
+        self.assertEqual(view(), before)
 
     def test_detached_fleet_marks_placement_and_presents_from_its_session(self):
         root, env, args, session, anchor, alpha, beta, view = self.dashboard_fixture()

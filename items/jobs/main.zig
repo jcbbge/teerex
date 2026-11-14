@@ -284,7 +284,7 @@ fn query(allocator: std.mem.Allocator, o: Options, entry: ?Entry) !Live {
         .collector = c,
         .outcome = outcome,
         .code = if (sig != 0) 128 + sig else if (deadline) 124 else if (success) 0 else 1,
-        .failure = failure orelse c.reason orelse if (!success) @as(?[]const u8, "rex_transport_incomplete") else null,
+        .failure = failure orelse c.reason orelse (if (r) |result| supervised.guardFailure(result.stderr) else null) orelse if (!success) @as(?[]const u8, "rex_transport_incomplete") else null,
         .backend_term = if (r) |result| result.term else null,
     };
 }
