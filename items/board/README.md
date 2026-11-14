@@ -246,3 +246,11 @@ Worker rows show the starter, contract step n/m and age since last contact. Stal
 Expanded agent machines preserve step executor, `■ outcome` and `⇥ handoff` annotations when present. Plain scratchpads remain supported; absent executor evidence is labelled `agent`.
 
 Waiting edges (`⧗`) show the scratchpad Waiting text and its explicit check time. Existing stalled contracts stay red; a known idle/done/error agent target or an idle agent with no Now/Waiting is also shown as stalled. Missing target evidence is not treated as proof of death.
+The interactive board decorates its containing tab’s starting label with `○`
+(calm), `🟠` (a stalled agent row), or `🔴` (an agent error, unavailable
+host, invalid event or ended live feed). It considers rows from every host,
+including the host not currently selected. Existing glyph prefixes are removed
+at startup. Only health transitions rename the tab; the existing feed updates
+drive them without a new timer. Exit restores the base label, best effort.
+Missing pane context disables decoration; label failures are reported and leave
+the board running. Held work does not contribute to this agent health signal.

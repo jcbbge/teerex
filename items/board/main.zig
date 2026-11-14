@@ -700,6 +700,83 @@ fn scratch(allocator: A, self: []const u8, config: []const u8, row: Value) !?Par
     return std.json.parseFromSlice(Value, allocator, result.stdout, .{ .allocate = .alloc_always }) catch null;
 }
 
+const Health = enum {
+    calm,
+    amber,
+    broken,
+    fn glyph(self: Health) []const u8 {
+        return switch (self) {
+            .calm => "○",
+            .amber => "🟠",
+            .broken => "🔴",
+        };
+    }
+};
+fn health(model: *Model) Health {
+    if (model.invalid > 0 or (model.ended and !model.replay)) return .broken;
+    for (model.hosts) |host| if (host.reachable == false) return .broken;
+    var result: Health = .calm;
+    for (model.agents.items) |entry| {
+        const row = entry.value;
+        const state = text(row, "state");
+        if (eq(state, "error")) return .broken;
+        if (stalled(model, row)) result = .amber;
+    }
+    return result;
+}
+const TabLabel = struct {
+    allocator: A,
+    self: []const u8,
+    session: []const u8,
+    window: []const u8,
+    base: []const u8,
+    previous: ?Health = null,
+    fn init(a: A, self: []const u8) !?TabLabel {
+        var env = try std.process.getEnvMap(a);
+        defer env.deinit();
+        const session = env.get("LC_REX_SESSION") orelse env.get("REX_SESSION") orelse return null;
+        const block = env.get("LC_REX_BLOCK") orelse env.get("REX_BLOCK") orelse return null;
+        const result = try std.process.Child.run(.{ .allocator = a, .argv = &.{ self, "surfaces", "inspect", "--session", session, "--pane", block } });
+        defer a.free(result.stdout);
+        defer a.free(result.stderr);
+        if (result.term != .Exited or result.term.Exited != 0) return error.BoardTabInspectFailed;
+        const parsed = try std.json.parseFromSlice(Value, a, result.stdout, .{});
+        defer parsed.deinit();
+        const actual = get(parsed.value, "actual");
+        const window = text(actual, "window_id");
+        if (window.len == 0 or get(actual, "window_label") != .string) return error.BoardTabMissing;
+        var base = text(actual, "window_label");
+        for ([_][]const u8{ "○ ", "🟠 ", "🔴 " }) |prefix| {
+            if (std.mem.startsWith(u8, base, prefix)) {
+                base = base[prefix.len..];
+                break;
+            }
+        }
+        return .{ .allocator = a, .self = self, .session = try a.dupe(u8, session), .window = try a.dupe(u8, window), .base = try a.dupe(u8, base) };
+    }
+    fn rename(self: *TabLabel, label: []const u8) !void {
+        const a = self.allocator;
+        const result = try std.process.Child.run(.{ .allocator = a, .argv = &.{ self.self, "surfaces", "rename", "--session", self.session, "--window", self.window, "--label", label } });
+        defer a.free(result.stdout);
+        defer a.free(result.stderr);
+        if (result.term != .Exited or result.term.Exited != 0) return error.BoardTabRenameFailed;
+    }
+    fn update(self: *TabLabel, state: Health) !void {
+        if (self.previous == state) return;
+        // A failed mutation is not retried on another event with the same state.
+        self.previous = state;
+        const label = try fmt(self.allocator, "{s} {s}", .{ state.glyph(), self.base });
+        defer self.allocator.free(label);
+        try self.rename(label);
+    }
+    fn deinit(self: *TabLabel) void {
+        self.rename(self.base) catch |err| std.debug.print("board: restore tab: {s}\n", .{@errorName(err)});
+        self.allocator.free(self.session);
+        self.allocator.free(self.window);
+        self.allocator.free(self.base);
+    }
+};
+
 const Options = struct { config: []const u8, hosts: []const u8 = "hive,m5", replay: ?[]const u8 = null, once: bool = false, json: bool = false, graphics: bool = true, benchmark: usize = 0 };
 fn options(a: A, args: []const []const u8) !Options {
     const home = try std.process.getEnvVarOwned(a, "HOME");
@@ -823,6 +900,12 @@ pub fn run(_: A, args: []const []const u8) !u8 {
     try std.fs.File.stdout().writeAll(ESC ++ "[?1049h" ++ ESC ++ "[?25l" ++ ESC ++ "[?1000h" ++ ESC ++ "[?1006h" ++ ESC ++ "[?1004h");
     defer std.fs.File.stdout().writeAll(ESC ++ "[?2026l" ++ ESC ++ "_Ga=d,d=I,i=197845,q=2" ++ ESC ++ "\\" ++ ESC ++ "[0m" ++ ESC ++ "[?1000l" ++ ESC ++ "[?1006l" ++ ESC ++ "[?1004l" ++ ESC ++ "[?25h" ++ ESC ++ "[?1049l" ++ ESC ++ "]7501;state=clear:id=teerex/board:app=teerex-board" ++ ESC ++ "\\") catch {};
     const self = try std.fs.selfExePathAlloc(allocator);
+    defer allocator.free(self);
+    var tab = TabLabel.init(allocator, self) catch |err| blk: {
+        std.debug.print("board: tab label unavailable: {s}\n", .{@errorName(err)});
+        break :blk null;
+    };
+    defer if (tab) |*label| label.deinit();
     var child: ?std.process.Child = null;
     var replay: ?std.fs.File = null;
     var fd: p.fd_t = undefined;
@@ -865,6 +948,7 @@ pub fn run(_: A, args: []const []const u8) !u8 {
             try query();
         }
         if (dirty) {
+            if (tab) |*label| label.update(health(&model)) catch |err| std.debug.print("board: tab label: {s}\n", .{@errorName(err)});
             try ui.visible(&model);
             // Reuse only the last frame's scratch storage; no event history.
             _ = frame_arena.reset(.retain_capacity);

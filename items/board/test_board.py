@@ -145,6 +145,53 @@ class BoardTest(unittest.TestCase):
         p.until(lambda: b'Choose a sound' in p.output)
         p.settle()
         return p
+    def test_tab_glyph_transitions_and_restore(self):
+        rex=str(Path(os.environ.get('REX_BIN') or shutil.which('rex') or 'MISSING_REX').resolve())
+        socket=self.root/'rex.sock'
+        log=(self.root/'server.log').open('w');self.addCleanup(log.close)
+        server=subprocess.Popen([rex,'server','run','--listen','unix://'+str(socket),'--restore=false','--config','/dev/null','--state-dir',str(self.root/'server')],stdout=log,stderr=log)
+        def stop():
+            server.terminate();server.wait(timeout=5)
+        self.addCleanup(stop)
+        end=time.monotonic()+5
+        while not socket.exists():
+            if server.poll() is not None or time.monotonic()>end:raise AssertionError((self.root/'server.log').read_text())
+            time.sleep(.02)
+        def rpc(method,args):
+            return json.loads(subprocess.check_output([rex,'--autostart=false','--server','unix://'+str(socket),'api','call',method,json.dumps(args)],timeout=5))
+        sid=rpc('session.create',dict(label='glyph fixture'))['session_id']
+        opened=json.loads(subprocess.check_output([BIN,'--rex',rex,'surfaces','open','--socket',str(socket),'--session',sid,'--layout','tab','--label','🟠 fixture','--','/bin/sh','-c','sleep 60'],timeout=10))['actual']
+        fifo=self.root/'events';os.mkfifo(fifo)
+        writer=os.open(fifo,os.O_RDWR|os.O_NONBLOCK);self.addCleanup(os.close,writer)
+        pane=Pane(self.root,fixture=fifo,extra_env=dict(REX_SERVER='unix://'+str(socket),REX_SESSION=sid,REX_BLOCK=opened['block_id'],LC_REX_SESSION=sid,LC_REX_BLOCK=opened['block_id'],PATH=str(Path(rex).parent)+os.pathsep+os.environ.get('PATH','')))
+        self.addCleanup(pane.close)
+        def label():
+            view=rpc('session.view',dict(session_id=sid))
+            return next(w['label'] for w in view['windows'] if w['window_id']==opened['window_id'])
+        def expect(value):
+            pane.until(lambda:label()==value)
+        def emit(**fields):
+            event=dict(v=1,t=int(time.time()*1000),kind='agent',host='hive',id='worker',name='glyph-worker',state='working',stalled=False)
+            event.update(fields);os.write(writer,(json.dumps(event)+'\n').encode())
+        expect('○ fixture')
+        emit();expect('○ fixture')
+        emit(stalled=True);expect('🟠 fixture')
+        calls=self.root/'calls'/'calls.jsonl'
+        def renames():
+            return [r for r in map(json.loads,calls.read_text().splitlines()) if r.get('phase')=='start' and r.get('verb')=='surfaces' and r.get('subverb')=='rename']
+        before=renames()
+        self.assertEqual(len(before),2)
+        emit(stalled=True,now='same health changed row')
+        pane.until(lambda:b'same health changed row' in pane.output);pane.settle()
+        self.assertEqual(renames(),before)
+        emit(state='error',stalled=True);expect('🔴 fixture')
+        emit();expect('○ fixture')
+        emit(state='idle');expect('🟠 fixture')
+        emit(state='gone');expect('○ fixture')
+        os.write(writer,(json.dumps(dict(v=1,t=int(time.time()*1000),kind='host',host='m5',reachable=False))+'\n').encode())
+        expect('🔴 fixture')
+        pane.key(b'q');pane.proc.wait(timeout=5);self.assertEqual(label(),'fixture')
+
     def test_replaced_events_release_memory(self):
         # A command-lifetime arena retained every superseded JSON allocation.
         # Compare equal live state after different numbers of replacements.
