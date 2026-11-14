@@ -175,6 +175,21 @@ class BoardsTest(unittest.TestCase):
         p = self.invoke("try-route", code=1, **opts)
         self.assertNotEqual(p.get("outcome"), "not_registered")
 
+    def test_exact_inherited_inbox_routes_without_rex_read(self):
+        self.register()
+        state = self.inspect()
+        old = state['seats'][0]
+        successor = dict(old['target'], block_id='block:' + OTHER)
+        old['inherited_to'] = successor
+        state['seats'].append(dict(target=successor, owner='next-seat', registered_at=1, records=[]))
+        (self.store / 'state.json').write_text(json.dumps(state))
+        receipt = self.invoke('try-route', **{'from': 'worker', 'message_file': self.message})
+        self.assertEqual(receipt['outcome'], 'recorded')
+        self.assertEqual(receipt['target'], successor)
+        state = self.inspect()
+        self.assertEqual(state['seats'][0]['records'], [])
+        self.assertEqual(state['seats'][1]['records'][0]['body'], self.message.read_text())
+
     def test_private_files_symlinks_hardlinks_and_lock_contention(self):
         self.register()
         for name in ("lock", "state.json"):

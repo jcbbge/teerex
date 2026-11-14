@@ -64,8 +64,10 @@ teerex send --store "$STORE" --host "$HOST_ID" --socket "$SOCKET" \
 
 The resolver returns `outcome=resolved` and `target`, or `outcome=no_seat` and
 `target=null`. Unavailable Rex reads refuse; they never establish absence.
-Role sends and historical registered seat addresses reach the current live
-seat's inbox. With no live seat, `outcome=queued` means the message is durably
+Role sends freshly resolve the current live seat. Exact registered addresses
+save to their inbox without a Rex read, including while Rex is unavailable;
+recorded `inherited_to` mappings redirect them to the successor inbox in the
+same store. With no live seat, a role send's `outcome=queued` means it is durably
 retained in `pending_seat`, without terminal input. The fleet view shows a red
 `NO SEAT` line until a seat is available.
 

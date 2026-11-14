@@ -411,7 +411,19 @@ def mutate(a):
     with contextlib.closing(Store(a.store)) as store:
         seat = seat_for(store, t)
         if a.command == "try-route":
-            if role or seat is not None:
+            # Exact registrations remain a durable inbox even while Rex is unavailable.
+            if not role and seat is not None:
+                visited = []
+                while seat.get("inherited_to"):
+                    check(seat["target"] not in visited, "seat_inheritance_cycle")
+                    visited.append(seat["target"])
+                    successor = seat_for(store, seat["inherited_to"])
+                    if successor is None:
+                        break
+                    seat = successor
+                t = seat["target"]
+                a.session, a.block = t["session_id"], t["block_id"]
+            if role:
                 seat = live_seat(store, a.host, a.socket)
                 if seat is None:
                     text(a.sender, 128, False)
