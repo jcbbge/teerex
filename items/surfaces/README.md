@@ -151,11 +151,11 @@ Open/inspect/focus/close default to a 5000ms local budget (`--timeout-ms 100..60
 
 ### Focus an existing pane from the palette
 
-Generate a fragment with `teerex surfaces palette focus --file ABS --teerex ABS --name jump_seat --title "Jump to seat" --label seat`. The action resolves the label (or unique pane ID) server-wide through native `surfaces resolve --session any` semantics, then focuses and verifies that pane. It refuses absent or ambiguous matches and never opens a replacement.
+Generate a fragment with `teerex surfaces palette focus --file ABS --teerex ABS --name jump_board --title "Jump to board" --label board`. The action resolves the label (or unique pane ID) server-wide through native `surfaces resolve --session any` semantics, then focuses and verifies that pane. It refuses absent or ambiguous matches and never opens a replacement.
 
 Add `--config ABS --host NAME` to focus a label on a named host instead of the palette server. The generated action calls `surfaces resolve --session any --pane LABEL` through that host, then focuses the returned canonical session and pane through the same named host. Missing or ambiguous labels refuse before focus; neither command creates a pane. Named focus requires `--label` and cannot combine local `--socket`, `--board-store`, or `--seat` options. Config paths belong to the palette server, while the selected host's paths belong to that command host.
 
-For the registered seat, replace `--label seat` with `--seat --board-store ABS --socket ABS`. The explicit socket selects the board references for the palette's server; exactly one seat registration must match, and its canonical pane must still exist. Install either fragment with the normal palette install plan/apply workflow. Generation alone does not register it.
+For the registered seat, replace `--label seat` with `--seat --board-store ABS --socket ABS`. The explicit socket selects the board references for the palette's server; exactly one seat registration must match, and its canonical pane must still exist. Install either fragment with the normal palette install plan/apply workflow. (Jump to seat itself is native Rex Lua in rexconfig's `rex/seat.lua`.) Generation alone does not register it.
 
 ### Prepare and register a palette action
 
