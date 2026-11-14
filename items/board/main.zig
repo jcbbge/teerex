@@ -671,7 +671,10 @@ fn options(a: A, args: []const []const u8) !Options {
     return result;
 }
 
-pub fn run(allocator: A, args: []const []const u8) !u8 {
+pub fn run(_: A, args: []const []const u8) !u8 {
+    // The command allocator is a lifetime arena. Frames and replaced events
+    // must return their storage immediately instead of growing that arena.
+    const allocator = std.heap.page_allocator;
     if (args.len > 0 and eq(args[0], "--help")) {
         try std.fs.File.stdout().writeAll(usage);
         return 0;
@@ -798,6 +801,8 @@ pub fn run(allocator: A, args: []const []const u8) !u8 {
     defer pending.deinit(allocator);
     var keys: std.ArrayList(u8) = .empty;
     defer keys.deinit(allocator);
+    var frame_arena = std.heap.ArenaAllocator.init(allocator);
+    defer frame_arena.deinit();
     var size = dimensions();
     var dirty = true;
     var kitty = false;
@@ -841,9 +846,9 @@ pub fn run(allocator: A, args: []const []const u8) !u8 {
             if (total_waiting > 0 and waiting_count == 0) try std.fs.File.stdout().writeAll(ESC ++ "]7501;state=blocked:id=teerex/board:app=teerex-board" ++ ESC ++ "\\");
             if (total_waiting == 0 and waiting_count > 0) try std.fs.File.stdout().writeAll(ESC ++ "]7501;state=working:id=teerex/board:app=teerex-board" ++ ESC ++ "\\");
             waiting_count = total_waiting;
-            var arena = std.heap.ArenaAllocator.init(allocator);
-            defer arena.deinit();
-            const a = arena.allocator();
+            // Reuse only the last frame's scratch storage; no event history.
+            _ = frame_arena.reset(.retain_capacity);
+            const a = frame_arena.allocator();
             const lines = try ui.layout(a, &model, size.col, size.row);
             // Frame + optional graphic share one DEC 2026 transaction.
             try std.fs.File.stdout().writeAll(ESC ++ "[?2026h");

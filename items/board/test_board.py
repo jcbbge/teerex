@@ -145,6 +145,25 @@ class BoardTest(unittest.TestCase):
         p.until(lambda: b'Which sound' in p.output)
         p.settle()
         return p
+    def test_replaced_events_release_memory(self):
+        # A command-lifetime arena retained every superseded JSON allocation.
+        # Compare equal live state after different numbers of replacements.
+        resident=[]
+        for count in (200, 2000):
+            path=self.root/('memory-%d.jsonl'%count)
+            event=dict(v=1,t=1,host='hive',kind='agent',id='memory',name='memory',
+                       state='working',now='x'*8192,done=0,total=1)
+            path.write_text((json.dumps(event)+'\n')*count+json.dumps(dict(event,name='memory-finished'))+'\n')
+            pane=Pane(self.root,fixture=path)
+            try:
+                pane.until(lambda:b'memory-finished' in pane.output)
+                pane.settle()
+                resident.append(int(subprocess.check_output(
+                    ['ps','-p',str(pane.proc.pid),'-o','rss='],text=True)))
+            finally:pane.close()
+        self.assertLessEqual(resident[1],resident[0]+2048,
+                             'replaced events retained RSS (KiB): %r'%resident)
+
     def test_contract_stalled_row_contact_and_width(self):
         path=self.root/'contract.jsonl'
         event=dict(v=1,t=200000,host='hive',kind='agent',id='worker',name='worker',state='working',now='Build',done=1,total=3,starter='starter界'*12,step_n=2,step_total=3,last_contact_at=80000,since=1,stalled=True)

@@ -26,6 +26,15 @@ def rss(pid):
     return int(subprocess.check_output(['ps', '-p', str(pid), '-o', 'rss='], text=True).strip())
 
 
+def cpu(pid):
+    if os.uname().sysname=='Linux':
+        fields=Path('/proc/%d/stat'%pid).read_text().rsplit(')',1)[1].split()
+        return (int(fields[11])+int(fields[12]))/os.sysconf('SC_CLK_TCK')
+    value=subprocess.check_output(['ps','-p',str(pid),'-o','time='],text=True).strip()
+    minutes,seconds=value.split(':')
+    return int(minutes)*60+float(seconds)
+
+
 def measure():
     binary = os.environ.get('TEEREX_BIN', str(ROOT/'zig-out/bin/teerex'))
     rex = os.environ.get('REX_BIN') or shutil.which('rex')
@@ -43,9 +52,9 @@ def measure():
         drained = threading.Event()
         def drain():
             while not drained.is_set():
-                if select.select([master], [], [], .05)[0]:
-                    try: os.read(master, 65536)
-                    except OSError: return
+                try:
+                    if select.select([master], [], [], .05)[0]: os.read(master, 65536)
+                except OSError: return
         threading.Thread(target=drain, daemon=True).start()
         try:
             server = subprocess.Popen([rex,'server','run','--listen','unix://'+str(socket),'--restore=false','--config','/dev/null','--state-dir',str(root/'rex-state')], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -61,18 +70,20 @@ def measure():
                 with open(fifo, 'wb', buffering=0) as out:
                     out.write((ROOT/'items/board/fixture.jsonl').read_bytes())
                     for line in feed.stdout:
-                        out.write(line)
-                        if json.loads(line).get('kind')=='stream': events.put(1)
+                        try: out.write(line)
+                        except BrokenPipeError: return
+                        if json.loads(line).get('kind')=='stream':
+                            # Pace the renderer independently of filesystem notifications.
+                            time.sleep(.002)
+                            events.put(1)
             threading.Thread(target=relay, daemon=True).start()
             board = subprocess.Popen([binary,'board','--replay',str(fifo),'--no-graphics'], stdin=slave, stdout=slave, stderr=slave, env=env)
             children.append(board)
             samples = []
             with open(calls/'fixture.jsonl', 'w', buffering=1) as source:
-                for i in range(1,2001):
-                    source.write(json.dumps(dict(command='send', fixture=i))+'\n')
-                    events.get(timeout=10)
-                    # Let each event render, rather than measuring a single batched read.
-                    time.sleep(.002)
+                for i in range(100,2001,100):
+                    source.write(''.join(json.dumps(dict(command='send',fixture=j))+'\n' for j in range(i-99,i+1)))
+                    for _ in range(100): events.get(timeout=10)
                     if i%100==0:
                         table = subprocess.check_output(['ps','-axo','pid=,ppid=,rss=,comm='],text=True)
                         known = {board.pid:'board', feed.pid:'python_feed', server.pid:'rex_server'}
@@ -84,9 +95,10 @@ def measure():
                             for row in rows:
                                 if int(row[1])==parent:
                                     pending.append(int(row[0])); descendants.append(dict(pid=int(row[0]),rss_kib=int(row[2]),command=row[3]))
-                        samples.append(dict(events=i, **{name:rss(pid) for pid,name in known.items()}, children=descendants))
+                        samples.append(dict(events=i, board_cpu_seconds=cpu(board.pid), **{name:rss(pid) for pid,name in known.items()}, children=descendants))
+            board_cpu_seconds=cpu(board.pid)
             os.write(master,b'q'); board.wait(timeout=5)
-            return dict(machine=os.uname().sysname, samples=samples)
+            return dict(machine=os.uname().sysname, board_cpu_seconds=board_cpu_seconds, samples=samples)
         finally:
             for child in reversed(children):
                 if child.poll() is None: child.terminate()

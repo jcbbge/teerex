@@ -192,6 +192,28 @@ read failures are differences, never empty inventories accepted as success.
 The disposable two-host test checks live JSON and injects an incorrect header
 total to prove the check fails and names the difference.
 
+## Memory reproduction
+
+```sh
+REX_BIN=/absolute/rex TEEREX_BIN="$PWD/zig-out/bin/teerex" python3 items/board/measure_memory.py --output /tmp/board-memory.json
+```
+
+This drives 2,000 fixture call events through a local Python feed connected to
+its own disposable Rex server, relays each event into the board's replay FIFO,
+and continuously drains the board PTY. Calls arrive in 100-event batches;
+the relay paces individual events by 2 ms. Every 100 events it samples RSS
+separately for the native board, Python feed, disposable server and feed
+children, plus native board CPU time. It never reads personal state.
+
+The board uses a reclaiming allocator for replaced events and renderer rows.
+The command's lifetime arena cannot reclaim those allocations as they expire.
+Frame scratch storage is an independent arena reset between redraws, retaining
+only its peak frame capacity. No live rows or events are dropped to control
+memory. [Kept measurements](memory-measure.json) contain all 100-event samples
+and board CPU time before/after on hive and the M5. The fast
+`BoardTest.test_replaced_events_release_memory` compares equal
+live state after 200 and 2,000 replacements and catches the former retention.
+
 ## Held work section
 
 Hosts declaring [`held_command` and `held_open`](../boardfeed/README.md#held-work)
