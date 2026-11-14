@@ -21,8 +21,8 @@ class DoctorAllTest(unittest.TestCase):
             root = Path(directory)
             home = root / 'home'
             config_root = home / 'rexconfig'
-            (config_root / 'test/teerex').mkdir(parents=True)
-            (config_root / 'test/teerex/build-pin.txt').write_text('versions/wrong')
+            config_root.mkdir(parents=True)
+            (config_root / 'teerex.version').write_text('versions/wrong')
             current = home / '.local/opt/teerex-managed/current'
             current.parent.mkdir(parents=True)
             current.symlink_to('versions/actual')
@@ -47,6 +47,33 @@ class DoctorAllTest(unittest.TestCase):
             failures = [(h['host'], c['check']) for h in packet['hosts'] for c in h['checks'] if not c['ok']]
             self.assertEqual(failures, [('good', 'teerex_build'), ('bad', 'host_reachable')])
             self.assertTrue(all(c['fix'] for h in packet['hosts'] for c in h['checks']))
+
+    def test_shared_pin_match_mismatch_and_missing(self):
+        with resources.temporary_directory() as directory:
+            home = Path(directory)
+            root = home / 'rexconfig'
+            (root / 'test/teerex').mkdir(parents=True)
+            # A legacy pin must never affect the shared-pin result or act as fallback.
+            (root / 'test/teerex/build-pin.txt').write_text('versions/actual')
+            current = home / '.local/opt/teerex-managed/current'
+            current.parent.mkdir(parents=True)
+            current.symlink_to('versions/actual')
+            host = dict(home=str(home), host_id='test', rex='/rex',
+                        teerex='/teerex', socket='/socket')
+            for pin, expected in [('versions/actual', True), ('versions/wrong', False), (None, False)]:
+                with self.subTest(pin=pin):
+                    pin_path = root / 'teerex.version'
+                    if pin is None:
+                        pin_path.unlink()
+                    else:
+                        pin_path.write_text(pin + '\n')
+                    with patch.object(doctor_all, 'run_command', return_value=(0, '{}', '')):
+                        check = doctor_all.inspect_host(host)[0]
+                    self.assertEqual(check['check'], 'teerex_build')
+                    self.assertEqual(check['ok'], expected)
+                    self.assertEqual(check['fix'], str(root / 'install'))
+                    if pin is not None:
+                        self.assertEqual(check['detail'], f'installed versions/actual; pinned {pin}')
 
 
 if __name__ == '__main__':

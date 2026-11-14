@@ -106,7 +106,7 @@ The current source executes the full doctor suite on a private Linux Rex server 
 
 `teerex doctor --all [--config ~/.config/teerex/hosts.json] [--json]`
 checks each configured host independently. It reports the installed managed build
-against `<home>/rexconfig/<host_id>/teerex/build-pin.txt`, the selected Rex server
+against `<home>/rexconfig/teerex.version`, the selected Rex server
 version/API, `rexconfig/install --check`, and enabled Claude/Codex per-launch hook
 profiles plus the installed hook adapter. It does not inspect private transcripts
 or require global harness hooks; teerex injects these adapters at launch.
