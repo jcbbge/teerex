@@ -481,15 +481,27 @@ class RecoveryTest(unittest.TestCase):
         stale["target"]["block_id"] = "block:00000000-0000-0000-0000-000000000002"
         value["entries"].append(stale)
         metadata.write_text(json.dumps(value))
-        result = self.invoke("snapshot", "--metadata", str(metadata))
+        registry = self.root / "registry"
+        registry.mkdir(mode=0o700)
+        (registry / "agents.lock").touch(mode=0o600)
+        for i, entry in enumerate(value["entries"]):
+            record = registry / ("agents-%s.json" % i)
+            record.write_text(json.dumps(entry))
+            record.chmod(0o600)
+        result = self.invoke("snapshot", "--registry", str(registry))
+        self.assertEqual(result["omissions"]["absent_references"], [
+            {"reason": "launch_target_absent_at_snapshot", "target": stale["target"]}])
+        saved = json.loads((self.store / "snapshot.json").read_text())
+        self.assertEqual(saved["sessions"][0]["panes"][0]["launch"]["target"], value["entries"][0]["target"])
+        self.assertEqual(len(saved["sessions"][0]["panes"]), 1)
         self.assertEqual(result["omissions"]["absent_references"][0]["reason"], "launch_target_absent_at_snapshot")
         other = self.root / "other"
         other.mkdir(mode=0o700)
         stale["target"]["block_id"] = value["entries"][0]["target"]["block_id"]
         stale["target"]["session_id"] = "session:00000000-0000-0000-0000-000000000002"
-        metadata.write_text(json.dumps(value))
+        (registry / "agents-1.json").write_text(json.dumps(stale))
         self.store = other
-        result = self.invoke("snapshot", "--metadata", str(metadata), code=1)
+        result = self.invoke("snapshot", "--registry", str(registry), code=1)
         self.assertIn("contradiction", result["reason"])
 
     def test_agents_registry_sanitized_under_nonblocking_shared_lock(self):

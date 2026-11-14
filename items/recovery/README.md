@@ -110,7 +110,7 @@ For independently owned non-agent panes, an optional private `--metadata /ABS/me
 }
 ```
 
-Only provide reviewed argv you own and authorize to run. Declaring `harness: null` is not a way to bypass an agent's protocol requirements. Metadata for absent panes, duplicate/conflicting addresses, malformed argv and unbounded files is refused.
+Only provide reviewed argv you own and authorize to run. Declaring `harness: null` is not a way to bypass an agent's protocol requirements. Historical launch targets absent from the live inventory are skipped and listed individually in `omissions.absent_references`, with reason `launch_target_absent_at_snapshot` and their full target address. Live panes still retain their launch metadata. A block found under a different session identity is refused as `metadata_pane_identity_contradiction`; duplicate addresses and malformed metadata are also refused.
 
 The combined read-only update/snapshot step is:
 
