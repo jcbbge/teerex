@@ -13,7 +13,7 @@ const usage =
     \\  surfaces resolve|session ensure|ensure|open|inspect|rename|move|focus|close|palette  Visible terminals and native palette plans
     \\  tour                                        Six guided pages of live practice; cleans up on quit
     \\  board [--replay FILE] | feed              Live themed stream and machine vitals
-    \\  boards inbox|fleet|calls|friction|probe|state                Live boards, typed store and remap plans
+    \\  boards inbox|fleet|calls|attention|friction|probe|state                Live boards, typed store and remap plans
     \\  seat register|inspect|clear              Exact-address operator seat
     \\  inbox append|inspect|clear                    Private retained messages
     \\  ask                                          Complete typed decisions or explicit resolution

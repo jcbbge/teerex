@@ -419,3 +419,29 @@ and expiry times. Questions expire after **30 minutes** on the next running flee
 refresh or successful send; one-shot probes remain read-only, and `probe --dashboard --expire-asks` explicitly enables expiry; this includes legacy `ask/` records seen by the board.
 Without either activity, no background timer runs. Expiry clears the status, not
 stored history, and does not claim that an answer was delivered.
+
+## Seat attention counts
+
+`teerex boards attention [--json] [--since today|1h|30m|ISO-UTC]` reads
+messages and words per sender and UTC hour (default: last hour). Counts begin
+with this build; earlier scrollback is not backfilled. An acknowledged native
+send into a seat-labelled or explicitly registered pane counts once, including
+questions and managed turn-end reports. Saved legacy inbox appends also count.
+Failed/uncertain sends do not count. Acknowledgement does not prove consumption.
+
+The host-local private `~/.local/state/teerex/attention/deliveries.jsonl` retains
+only timestamps, sender, target and word counts, never message bodies. Unicode
+whitespace separates words; the transport's `FROM` prefix is excluded.
+`TEEREX_ATTENTION_DIR` selects an isolated private directory. There is no daemon,
+retention cap, throttle or refusal. Accounting errors leave delivery unchanged
+and are reported as `attention_unavailable` in native status or
+`attention_count=unavailable` in inbox receipts; never resend to repair a count.
+
+Set `attention_messages_per_hour` in an agent profile (or profile defaults) in
+`~/.config/teerex/profiles.json`; the default share is 6. The newest tracked
+launch maps a sender to its profile; untracked senders use the default (or a
+profile matching their name). `--profiles` and `--agents-registry` select other
+read-only inputs. Senders exceeding their rolling-hour share are amber, with no
+delivery restriction. JSON exposes `senders` totals, `messages_last_hour`,
+`share_per_hour`, `over_share`, `color`, plus `hours` rows. Named-host invocation
+reads that host's counts; it does not combine independent host logs.

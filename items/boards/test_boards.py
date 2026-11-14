@@ -44,7 +44,7 @@ class BoardsTest(unittest.TestCase):
         self.store = self.root / "store"
         self.store.mkdir(mode=0o700)
         self.target = dict(host="hive", socket=str(self.root / "rex.sock"), session="session:" + ZERO, block="block:" + ZERO)
-        self.env = dict(os.environ, TEEREX_ASK_STATE_DIR=str(self.root / "asks"), TEEREX_CLUTCH_DIR=str(self.root / "clutch"))
+        self.env = dict(os.environ, TEEREX_ATTENTION_DIR=str(self.root / "attention"), TEEREX_ASK_STATE_DIR=str(self.root / "asks"), TEEREX_CLUTCH_DIR=str(self.root / "clutch"))
         self.message = self.root / "message"
         self.message.write_text("first line\noperator input stays untouched · α")
         self.card = self.root / "card.json"
@@ -517,7 +517,7 @@ class CallsTest(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
         self.log = self.root / "calls"
-        self.env = dict(os.environ, TEEREX_ASK_STATE_DIR=str(self.root / "asks"), TEEREX_CLUTCH_DIR=str(self.root / "clutch"), TEEREX_CALL_LOG_DIR=str(self.log))
+        self.env = dict(os.environ, TEEREX_ATTENTION_DIR=str(self.root / "attention"), TEEREX_ASK_STATE_DIR=str(self.root / "asks"), TEEREX_CLUTCH_DIR=str(self.root / "clutch"), TEEREX_CALL_LOG_DIR=str(self.log))
 
     def call(self, *args, **kw):
         return subprocess.run([BIN, *args], env=self.env, capture_output=True, text=True, timeout=15, **kw)

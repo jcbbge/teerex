@@ -384,7 +384,9 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
     if (signal != 0) outcome = "cancel_requested";
     // Keep acknowledged input events ordered with delivery, including concurrent senders.
     const delivered = std.mem.eql(u8, outcome, "events_acknowledged") and failure == null;
-    const status_outcome = if (delivered) statusReport(allocator, &env, collector.status_pid, sender, message, status_id, state, status_message, collector.seat, collector.tinted_agent, collector.agent, collector.input_at_ns, status_context) catch "failed" else "not_requested";
+    const words = countWords(message);
+    const attention_context = try std.fmt.allocPrint(allocator, "{s},\"attention_words\":{d},\"attention_seat\":{s}}}", .{ status_context[0 .. status_context.len - 1], words, if (collector.seat) "true" else "false" });
+    const status_outcome = if (delivered) statusReport(allocator, &env, collector.status_pid, sender, message, status_id, state, status_message, collector.seat, collector.tinted_agent, collector.agent, collector.input_at_ns, attention_context) catch "failed" else "not_requested";
     // Keep the lock through subprocess cleanup. Never remove another sender's lock.
     if (locked) {
         std.fs.cwd().deleteDir(lock_path) catch |err| {
@@ -427,6 +429,22 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
     try std.fs.File.stdout().writeAll(output);
     try std.fs.File.stdout().writeAll("\n");
     return if (signal != 0) 128 + signal else if (std.mem.eql(u8, outcome, "deadline_exceeded")) 124 else if (success) 0 else 1;
+}
+
+// Match Python str.split() for Unicode whitespace, without passing message text to accounting.
+fn countWords(message: []const u8) usize {
+    var it = std.unicode.Utf8View.initUnchecked(message).iterator();
+    var words: usize = 0;
+    var inside = false;
+    while (it.nextCodepoint()) |cp| {
+        const whitespace = switch (cp) {
+            9...13, 28...32, 0x85, 0xa0, 0x1680, 0x2000...0x200a, 0x2028, 0x2029, 0x202f, 0x205f, 0x3000 => true,
+            else => false,
+        };
+        if (!whitespace and !inside) words += 1;
+        inside = !whitespace;
+    }
+    return words;
 }
 
 const StatusCollector = struct {

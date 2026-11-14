@@ -443,7 +443,12 @@ def mutate(a):
         if getattr(a, "input_deadline", None) is not None and time.monotonic() >= a.input_deadline:
             raise Deadline("inbox_deadline_before_save_no_record_saved")
         store.save()
-        result(kind="boards_result", command=a.command, operation=a.operation, outcome="recorded", target=t,
+        attention_count = "not_requested"
+        if a.command == "inbox" and a.operation == "append":
+            from teerex_seat_status import attention_record
+            attention_count = attention_record(dict(socket=a.socket, session=a.session, block=a.block, sender=a.sender),
+                             len(body.split()), seat=True)
+        result(kind="boards_result", command=a.command, operation=a.operation, outcome="recorded", target=t, attention_count=attention_count,
                generation=store.state["generation"], store=a.store, provenance="report", terminal_input_attempted=False,
                application_consumption="not_assessed", global_atomicity=False)
         return 0
@@ -568,7 +573,10 @@ def _deliver_ask(a):
              "--status-message", "" if a.resolve is not None else value["ask"]]
     # No store/host selectors: native send must type even into a registered seat.
     a.delivery_attempted = True
-    proc = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+    delivery_env = dict(os.environ)
+    if a.store:
+        delivery_env['TEEREX_BOARDS_STORE'] = a.store
+    proc = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, env=delivery_env)
     try:
         output, _ = proc.communicate(body.encode())
     except Cancelled as e:

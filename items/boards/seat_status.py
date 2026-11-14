@@ -250,6 +250,7 @@ def expire(socket, live_rows):
 
 
 def apply(pid, report, context):
+    attention = attention_record(context, context.get('attention_words', 0), context.get('attention_seat', False)) if 'attention_words' in context else 'not_requested'
     outcome = write_status(pid, report) if report and pid else 'tty_unavailable' if report else 'not_requested'
     input_outcome = None
     try:
@@ -268,6 +269,8 @@ def apply(pid, report, context):
         answered(context)
     except (OSError, ValueError, subprocess.SubprocessError):
         return 'written_tracking_unavailable' if outcome == 'written' else 'tracking_unavailable'
+    if attention == 'unavailable':
+        return 'attention_unavailable'
     return input_outcome if input_outcome and outcome == 'not_requested' else outcome
 
 

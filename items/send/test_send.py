@@ -147,6 +147,68 @@ class SendTest(unittest.TestCase):
         return self.rpc("com.superlogical.terminal.format", {"session_id": target[0], "block_id": target[1],
                         "args": {"format": "text", "max_bytes": 65536}})["content"]
 
+    def test_attention_three_sends_ask_and_refusal(self):
+        target, raw = self.fixture()
+        self.env['TEEREX_ATTENTION_DIR'] = str(self.work / 'attention')
+        self.rpc('session.set_block_label', dict(session_id=target[0], block_id=target[1], label='seat'))
+        expected = b''
+        for _ in range(3):
+            message = 'hello\u00a0world three'.encode()
+            result, packet = self.send(target, message, sender='attention-worker')
+            self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+            expected += self.pasted(message, 'attention-worker')
+        self.received(raw, expected)
+        def snapshot():
+            result = subprocess.run([BIN, 'boards', 'attention', '--json', '--since', 'today',
+                                     '--profiles', str(self.work / 'no-profiles'),
+                                     '--agents-registry', str(self.work / 'no-agents')],
+                                    env=self.env, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+            return json.loads(result.stdout)
+        counts = snapshot()
+        self.assertEqual((counts['messages'], counts['words']), (3, 9))
+        self.assertEqual(counts['senders'][0]['sender'], 'attention-worker')
+        result = subprocess.run([BIN, 'ask', '--socket', str(self.socket), '--host', 'test',
+                                 '--session', target[0], '--block', target[1], '--from', 'attention-worker',
+                                 '--title', 'Fixture question', '--ask', 'Choose one?', '--context', 'Test only',
+                                 '--option', 'One :: gain :: loss', '--option', 'Two :: gain :: loss',
+                                 '--recommend', 'One', '--draft', 'ignore'],
+                                env=self.env, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertEqual(snapshot()['messages'], 4, 'ask child send counts once')
+        # Failed sends never enter attention accounting.
+        result, _ = self.send((target[0], 'block:00000000-0000-0000-0000-000000000000'), sender='attention-worker')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(snapshot()['messages'], 4)
+        # Count failure is visible but cannot change acknowledged input or encourage replay.
+        (self.work / 'attention/deliveries.jsonl').chmod(0o644)
+        result, packet = self.send(target, b'count failure', sender='attention-worker')
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(packet['status_record'], 'attention_unavailable')
+        (self.work / 'attention/deliveries.jsonl').chmod(0o600)
+        # Explicit registration, without the native seat label, covers custom stores.
+        self.rpc('session.set_block_label', dict(session_id=target[0], block_id=target[1], label='fixture'))
+        store = self.work / 'boards'
+        store.mkdir(mode=0o700)
+        common = ['--store', str(store), '--host', 'test', '--socket', str(self.socket),
+                  '--session', target[0], '--block', target[1]]
+        result = subprocess.run([BIN, 'boards', 'seat', 'register', *common, '--owner', 'fixture'],
+                                env=self.env, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        for _ in range(3):
+            result = subprocess.run(self.command(target, b'legacy route', sender='attention-worker') + ['--store', str(store), '--host', 'test'],
+                                    env=self.env, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+            self.assertEqual(json.loads(result.stdout)['attention_count'], 'written')
+        self.assertEqual(snapshot()['messages'], 7)
+        result = subprocess.run([BIN, 'ask', *common, '--from', 'attention-worker',
+                                 '--title', 'Registered question', '--ask', 'Choose one?', '--context', 'Test only',
+                                 '--option', 'One :: gain :: loss', '--option', 'Two :: gain :: loss',
+                                 '--recommend', 'One', '--draft', 'ignore'],
+                                env=self.env, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertEqual(snapshot()['messages'], 8, 'custom registered ask counted once')
+
     def test_harness_app_records_keep_managed_send_bookkeeping(self):
         for app, identifier in (("codex", "teerex/tint"), ("claude", "teerex"), ("teerex-agent", "legacy")):
             with self.subTest(app=app):

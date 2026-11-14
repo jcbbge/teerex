@@ -13,7 +13,7 @@ fn routeSignal(sig: i32) callconv(.c) void {
 pub fn tryRoute(allocator: std.mem.Allocator, args: []const []const u8) !?u8 {
     var argv: std.ArrayList([]const u8) = .empty;
     defer argv.deinit(allocator);
-    try argv.appendSlice(allocator, &.{ "python3", "-I", "-c", @embedFile("boards.py"), "try-route" });
+    try argv.appendSlice(allocator, &.{ "python3", "-I", "-c", "import sys,types\n_seat=types.ModuleType('teerex_seat_status')\nexec(sys.argv.pop(1),_seat.__dict__)\nsys.modules['teerex_seat_status']=_seat\nexec(sys.argv.pop(1))", seat_status_source, @embedFile("boards.py"), "try-route" });
     try argv.appendSlice(allocator, args);
     var child = std.process.Child.init(argv.items, allocator);
     child.stdin_behavior = .Inherit;
@@ -83,6 +83,12 @@ pub fn stableSelfPath(allocator: std.mem.Allocator) ![]const u8 {
 }
 
 pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
+    if (args.len > 0 and std.mem.eql(u8, args[0], "attention")) {
+        var attention_args: std.ArrayList([]const u8) = .empty;
+        try attention_args.appendSlice(allocator, &.{ "python3", "-I", "-c", @embedFile("attention.py") ++ "\nraise SystemExit(attention_main())" });
+        try attention_args.appendSlice(allocator, args[1..]);
+        return std.process.execv(allocator, attention_args.items);
+    }
     var argv: std.ArrayList([]const u8) = .empty;
     defer argv.deinit(allocator);
     const dashboard_source = try std.json.Stringify.valueAlloc(allocator, @embedFile("dashboard.py"), .{});
