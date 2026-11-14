@@ -170,10 +170,8 @@ class VisibleTest(unittest.TestCase):
         import pane_authority
         pane_authority.caller(self, self.rpc, self.runtime_env, self.work)
         self.runtime_env.update(AGENT_SESSION=self.runtime_env['REX_SESSION'], AGENT_PANE=self.runtime_env['REX_BLOCK'])
-        # The Rex server supplies this same state root to its supervisor, while
-        # the controller supplies the real creator identity to surfaces open.
-        self.runtime_env.pop('XDG_STATE_HOME')
-        self.runtime_env['HOME'] = str(self.root)
+        # Deliberately differ from the Rex server's state root: the detached
+        # supervisor must retain this controller's authority-store selection.
         sentinel_result = subprocess.run([BIN, '--rex', self.rex, 'surfaces', 'open', '--socket', str(self.socket),
                             '--session', self.session, '--layout', 'tab', '--label', 'unrelated sentinel',
                             '--', '/bin/sleep', '60'], env=self.runtime_env, capture_output=True, text=True, timeout=10)
@@ -987,6 +985,8 @@ print('exact environment received')
             self.assertIn(sentinel, self.blocks())
 
     def test_observed_foreign_identity_refuses_without_executing_argv(self):
+        import pane_authority
+        pane_authority.caller(self, self.rpc, self.runtime_env, self.work)
         wrapper, log = self.wrapper("foreign-identity")
         marker = self.work / "must-not-run"
         r, v = self.invoke(f"from pathlib import Path;Path({str(marker)!r}).touch()", rex=wrapper)

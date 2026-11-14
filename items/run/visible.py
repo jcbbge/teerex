@@ -589,7 +589,14 @@ def controller(runtime, source, args):
     config = dict(argv=o.argv[1:], cwd=o.cwd, environment=environment, timeout_ms=o.timeout_ms, startup_ms=o.startup_ms,
                   max_bytes=o.max_bytes, full_output=bool(o.output_dir), app=o.app, title=o.title)
     if o.detach:
+        # Rex starts the supervisor with its own environment. Control must read
+        # the same creator records and seat registrations as this controller.
+        state_root = Path(os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local/state")))
+        authority = dict(XDG_STATE_HOME=str(state_root),
+                         TEEREX_BOARDS_STORE=os.environ.get("TEEREX_BOARDS_STORE", str(state_root / "teerex-boards")),
+                         AGENT_REGISTRY=os.environ.get("AGENT_REGISTRY") or os.environ.get("LC_AGENT_REGISTRY") or str(state_root / "teerex-agents"))
         config["detach"] = dict(runtime=runtime, pin=pin, launch_id=secrets.token_hex(16),
+                                authority=authority,
                                 options={key: getattr(o, key) for key in ("socket", "session", "output_dir", "max_bytes", "keep_open", "app", "channel_dir", "report_to_session", "report_to_block")})
     if len(json.dumps(dict(config, env=request_env)).encode()) > 131072:
         root.rmdir()
@@ -782,6 +789,7 @@ def detached_supervise(root):
     global BROKER
     config = load(root / "request.json")
     detached = config["detach"]
+    os.environ.update(detached["authority"])
     runtime, pin = detached["runtime"], detached["pin"]
     o = argparse.Namespace(**detached["options"])
     if o.channel_dir:
