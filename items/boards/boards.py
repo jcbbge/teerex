@@ -1300,11 +1300,17 @@ def parser():
             q.add_argument("--generation", required=True, type=int)
             q.add_argument("--reason", required=True)
     history_policy = "Above 128 non-open records, archive oldest complete groups to 96; open decisions stay pinned. Immutable private archives retain all history, never deleted. Byte pressure also archives eligible records."
-    for cmd, operations in (("seat", ("register", "inspect", "clear")), ("inbox", ("append", "inspect", "clear")), ("fleet", ("report", "forget"))):
+    for cmd, operations in (("seat", ("register", "resolve", "inspect", "clear")), ("inbox", ("append", "inspect", "clear")), ("fleet", ("report", "forget"))):
         c = commands.add_parser(cmd, description=history_policy if cmd == "inbox" else None)
         ops = c.add_subparsers(dest="operation", required=True)
         for op in operations:
             q = ops.add_parser(op, description=history_policy if cmd == "inbox" else None)
+            if cmd == "seat" and op == "resolve":
+                common(q, False)
+                q.add_argument("--host", required=True)
+                q.add_argument("--socket", required=True)
+                q.add_argument("--json", action="store_true", help="JSON is always emitted")
+                continue
             common(q)
             if op in ("register", "report"):
                 q.add_argument("--owner", required=True)

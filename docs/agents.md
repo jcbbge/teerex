@@ -44,6 +44,18 @@ runs after the turn and sends a reminder instead of vetoing it. Managed Pi
 continues settlement once. See the [scratch contract](../items/scratch/README.md)
 and [harness enforcement](../items/agents/README.md#scratchpad-enforcement-at-turn-end).
 
+## Find the seat
+
+```sh
+teerex --config ~/.config/teerex/hosts.json --host hive seat resolve
+```
+
+This reads the live registered seat and returns its address or `no_seat`.
+Resolve by role each time; never reuse a remembered pane ID. Without named-host
+configuration, `teerex seat resolve` requires explicit `--store`, `--host`
+and `--socket`. Send questions to your starter when your brief requires it;
+only the seat asks the operator.
+
 ## Read and wait
 
 ```sh

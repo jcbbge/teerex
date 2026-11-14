@@ -14,6 +14,12 @@ BIN = str(Path(os.environ.get("TEEREX_BIN", Path(__file__).resolve().parents[1] 
 
 
 class PythonHelpTest(unittest.TestCase):
+    def test_seat_help_lists_resolve(self):
+        result = subprocess.run([BIN, "seat", "--help"], env=isolated_environment(),
+                                capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("{register,resolve,inspect,clear}", result.stdout)
+
     def test_embedded_python_help_uses_public_command_names(self):
         commands = [
             ("records",), ("replay",), ("mcp",), ("agents",),
