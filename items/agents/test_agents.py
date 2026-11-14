@@ -317,6 +317,14 @@ class ContractHelpersTest(unittest.TestCase):
                 registry.save(record, new=True)
                 self.assertEqual(registry.read(record["launch_id"])["purpose"], record["purpose"])
 
+    def test_brief_sender_is_registered_starter_or_launcher(self):
+        with resources.temporary_directory() as directory:
+            address = dict(host="hive", server="unix:///tmp/test", session_id="s", block_id="b")
+            Path(directory, "agents-" + "a" * 32 + ".json").touch()
+            self.ns["load"] = lambda *a: dict(target=address, name="lead")
+            self.assertEqual(self.ns["starter_name"](directory, dict(starter=address, name="worker")), "lead")
+            self.assertEqual(self.ns["starter_name"](directory, dict(starter=None, name="worker")), "teerex-launcher")
+
     def test_journal_delivers_rapid_transitions_in_order_once(self):
         with resources.temporary_directory() as directory:
             pad = Path(directory) / "pad.md"

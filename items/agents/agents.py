@@ -649,6 +649,18 @@ def delivery_destination(root, state, destination):
     return destination
 
 
+def starter_name(root, state):
+    """Attribute a brief to its registered starter, never its recipient."""
+    address = state.get("starter")
+    if address:
+        for path in Path(root).glob("agents-*.json"):
+            candidate = load(root, path.stem[7:])
+            if candidate.get("target") == address:
+                return candidate["name"]
+    # An unregistered caller has no verified agent name.
+    return "teerex-launcher"
+
+
 def send(root, state, destination, body, label):
     if destination != state["target"]:
         destination = delivery_destination(root, state, destination)
@@ -1812,7 +1824,7 @@ def deliver(root, launch_id):
         state["phase"] = "brief_attempt_uncertain"
         registry.save(state)
     code, packet = invoke(["send", "--socket", state["socket"], "--session", state["target"]["session_id"],
-                           "--block", state["target"]["block_id"], "--from", state["name"], "--message-file", state["brief_file"]],
+                           "--block", state["target"]["block_id"], "--from", starter_name(root, state), "--message-file", state["brief_file"]],
                           client_path=state["client_path"], rex_executable=state["rex_executable"])
     def delivered(s):
         s["brief_receipt"] = packet
