@@ -738,12 +738,16 @@ class AgentsTest(unittest.TestCase):
         for source in sources:
             exec(compile(source.read_text(), str(source), "exec"), agents.__dict__)
         agents.RUNTIME = BIN
+        store = self.work / "boards"
+        store.mkdir(mode=0o700)
+        self.settings["defaults"]["store"] = str(store)
+        self.config.write_text(json.dumps(self.settings))
         options = agents.parser().parse_args(["launch", "--config", str(self.config), "--profile", "probe",
                                              "--brief-file", str(self.brief), "--ack-timeout-ms", "10000"])
         spans, active = [], {}
         origin = time.monotonic()
         def profile(frame, event, unused):
-            if frame.f_code.co_filename != agents.__file__:
+            if frame.f_code.co_filename not in {str(source) for source in sources}:
                 return
             name = frame.f_code.co_name
             if name not in ("__enter__", "__exit__", "invoke", "prune_records", "scratch_init", "publish_fleet", "deliver"):
@@ -768,45 +772,109 @@ class AgentsTest(unittest.TestCase):
         self.assertEqual(code, 0, receipt)
         self.assertEqual(receipt["outcome"], "brief_submitted")
 
-    def test_four_concurrent_launches_are_all_tracked_and_delivered(self):
-        with ThreadPoolExecutor(max_workers=4) as pool:
-            futures = [pool.submit(self.run_cli, "launch", "--config", str(self.config), "--profile", "probe",
-                                   "--name", "concurrent-" + str(index), "--brief-file", str(self.brief),
-                                   "--ack-timeout-ms", "4000", timeout=30) for index in range(4)]
-            launches = [future.result() for future in futures]
+    def test_concurrent_launches_from_two_panes(self):
+        count = int(os.environ.get("TEEREX_PARALLEL_LAUNCHES", "6"))
+        store = self.work / "boards"
+        store.mkdir(mode=0o700)
+        self.settings["defaults"]["store"] = str(store)
+        self.settings["profiles"]["probe"]["argv"][-1] = "lateack"
+        self.settings["profiles"]["codex"] = dict(self.settings["profiles"]["probe"])
+        self.config.write_text(json.dumps(self.settings))
+        before = time.monotonic()
+        process, alone = self.run_cli("launch", "--config", str(self.config), "--profile", "probe",
+                                     "--brief-file", str(self.brief), "--ack-timeout-ms", "10000")
+        single_s = time.monotonic() - before
+        self.assertEqual(process.returncode, 0, process.stdout + process.stderr)
+        wrapper = os.environ.get("TEEREX_TEST_AGENT_SPAWN")
+        if wrapper:
+            hosts = self.work / "hosts.json"
+            hosts.write_text(json.dumps(dict(schema_version=1, hosts=dict(disposable=dict(
+                host_id="disposable", transport="local", home=str(self.root), socket=str(self.socket),
+                platform="macos-arm64" if sys.platform == "darwin" else "linux-x86_64", rex=REX, teerex=BIN, store=str(store))))))
+            self.env.update(TEEREX_HOSTS=str(hosts), TEEREX_HOST="disposable", TEEREX_PROFILES=str(self.config))
+        runner = self.work / "launcher.py"
+        runner.write_text("""
+from concurrent.futures import ThreadPoolExecutor
+import json, os, subprocess, sys, time
+from pathlib import Path
+binary, config, brief, directory, first, last, wrapper = sys.argv[1:]
+root = Path(directory)
+(root / ('ready-' + first)).touch()
+while not (root / 'go').exists(): time.sleep(.01)
+def launch(index):
+    started = time.monotonic()
+    command = [binary, 'agents', 'launch', '--config', config, '--profile', 'probe',
+        '--name', 'parallel-' + str(index), '--brief-file', brief, '--ack-timeout-ms', '10000',
+        '--starter-session', os.environ['REX_SESSION'], '--starter-block', os.environ['REX_BLOCK']]
+    if wrapper:
+        os.environ.update(TEEREX_HOSTS=str(root / 'hosts.json'), TEEREX_HOST='disposable', TEEREX_PROFILES=config)
+        os.environ.pop('AGENT_SESSION', None)
+        os.environ.pop('AGENT_PANE', None)
+        os.environ['PATH'] = str(Path(binary).parent) + os.pathsep + os.environ.get('PATH', '')
+        command = [wrapper, '--brief-file', brief, os.environ['REX_SESSION'], 'parallel-' + str(index), '--', 'codex']
+    result = subprocess.run(command, capture_output=True, text=True)
+    if wrapper and result.returncode == 0:
+        rows = [json.loads(p.read_text()) for p in Path(json.loads(Path(config).read_text())['defaults']['registry']).glob('agents-*.json')]
+        state = next(row for row in rows if row['target']['block_id'] == result.stdout.strip())
+        result.stdout = json.dumps(dict(outcome=state['phase'], **{k:state[k] for k in
+            ('launch_id', 'target', 'tracked', 'protocol_acknowledged')}))
+    return dict(code=result.returncode, stdout=result.stdout, stderr=result.stderr, wall_s=time.monotonic()-started)
+with ThreadPoolExecutor() as pool:
+    results = list(pool.map(launch, range(int(first), int(last))))
+(root / ('results-' + first + '.json')).write_text(json.dumps(results))
+""")
+        split = (count + 1) // 2
+        callers = []
+        for first, last in ((0, split), (split, count)):
+            result = subprocess.run([BIN, "surfaces", "open", "--socket", str(self.socket), "--session", self.session,
+                "--layout", "tab", "--label", "launcher-" + str(first), "--cwd", str(self.work), "--",
+                sys.executable, str(runner), BIN, str(self.config), str(self.brief), str(self.work), str(first), str(last), wrapper or ""],
+                env=self.env, capture_output=True, text=True, timeout=10)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            callers.append(json.loads(result.stdout)["created"]["block_id"])
+        wait_for(lambda: all((self.work / ("ready-" + str(i))).exists() for i in (0, split)))
+        started = time.monotonic()
+        (self.work / "go").touch()
+        wait_for(lambda: all((self.work / ("results-" + str(i) + ".json")).exists() for i in (0, split)), timeout=30)
+        parallel_s = time.monotonic() - started
+        launches = sum((json.loads((self.work / ("results-" + str(i) + ".json")).read_text()) for i in (0, split)), [])
+        print("PARALLEL_LAUNCHES " + json.dumps(dict(count=count, single_s=round(single_s, 3),
+              parallel_s=round(parallel_s, 3), callers=callers, launch_s=[round(r["wall_s"], 3) for r in launches])), flush=True)
         blocks = set()
-        for process, receipt in launches:
-            self.assertEqual(process.returncode, 0, process.stdout + process.stderr)
+        for row in launches:
+            self.assertEqual(row["code"], 0, row)
+            receipt = json.loads(row["stdout"])
             self.assertEqual(receipt["outcome"], "brief_submitted")
             self.assertTrue(receipt["tracked"] and receipt["protocol_acknowledged"])
             state = self.record(receipt["launch_id"])
             self.assertEqual(state["protocol_outcome"], "argument_supplied")
             self.assertEqual(state["brief_outcome"], "events_acknowledged")
+            self.assertTrue(state["scratch_pane_opened"], state.get("scratch_pane_receipt"))
+            self.assertEqual(state["fleet_report"]["outcome"], "reported")
+            self.assertIn(state["starter"]["block_id"], callers)
             blocks.add(state["target"]["block_id"])
-        self.assertEqual(len(blocks), 4)
-        jobs = json.loads(subprocess.check_output([BIN, "jobs", "list", "--registry", str(self.registry)], env=self.env))
-        self.assertEqual({e["block_id"] for e in jobs["entries"]}, blocks)
-        self.assertEqual(len(self.rpc("session.view", dict(session_id=self.session))["windows"]), 5)
+        self.assertEqual(len(blocks), count)
+        wait_for(lambda: len([e for e in events(self.worker_log) if e["event"] == "input"]) == count + 1)
+        self.assertLess(parallel_s, single_s * count * .85, "launches must overlap rather than serialize")
 
-    def test_launch_queue_timeout_creates_no_panes_or_launch_records(self):
-        lock_path = self.registry / "launch.lock"
-        lock_path.touch(mode=0o600)
-        before = self.rpc("session.view", dict(session_id=self.session))
-        with lock_path.open("r+") as lock:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            with ThreadPoolExecutor(max_workers=4) as pool:
-                futures = [pool.submit(self.run_cli, "launch", "--config", str(self.config), "--profile", "probe",
-                                       "--launch-wait-ms", "20") for _ in range(4)]
-                for future in futures:
-                    process, receipt = future.result()
-                    self.assertEqual(process.returncode, 1, process.stdout + process.stderr)
-                    self.assertEqual(receipt["failure_reason"], "launch_queue_busy")
-                    self.assertTrue(receipt["retry_safe"])
-                    self.assertFalse(receipt["creation_attempted"])
-                    self.assertIsNone(receipt["created"])
-        self.assertEqual(self.rpc("session.view", dict(session_id=self.session)), before)
-        self.assertEqual(list(self.registry.glob("agents-*.json")), [])
-        self.assertFalse(self.worker_log.exists())
+    def test_launch_ignores_legacy_queue_and_busy_maintenance(self):
+        locks = [self.registry / name for name in ("launch.lock", "prune.lock")]
+        handles = []
+        try:
+            for path in locks:
+                path.touch(mode=0o600)
+                handle = path.open("r+")
+                fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                handles.append(handle)
+            process, receipt = self.run_cli("launch", "--config", str(self.config), "--profile", "probe",
+                                           "--brief-file", str(self.brief), "--launch-wait-ms", "0",
+                                           "--ack-timeout-ms", "5000")
+            self.assertEqual(process.returncode, 0, process.stdout + process.stderr)
+            self.assertEqual(receipt["outcome"], "brief_submitted")
+            self.assertEqual(receipt["auto_prune"], dict(outcome="skipped", reason="prune_in_progress"))
+        finally:
+            for handle in handles:
+                handle.close()
 
     def test_launch_queue_is_released_before_waiting_for_ack(self):
         quiet = dict(self.settings["profiles"]["probe"])

@@ -183,7 +183,7 @@ class Registry:
                     fcntl.flock(self.lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
                     break
                 except BlockingIOError:
-                    require(time.monotonic() < end, "launch_queue_busy" if self.lock_name == "launch.lock" else "registry_busy_after_2s_lock_wait")
+                    require(time.monotonic() < end, "prune_in_progress" if self.lock_name == "prune.lock" else "registry_busy_after_2s_lock_wait")
                     time.sleep(.005)
         except BaseException:
             if hasattr(self, "lock"):
@@ -500,7 +500,7 @@ def prune_records(root, apply):
 
 def prune(o):
     root = absolute(o.registry)
-    with Registry(root, lock_name="launch.lock", wait_ms=o.launch_wait_ms):
+    with Registry(root, lock_name="prune.lock", wait_ms=o.launch_wait_ms):
         result = prune_records(root, o.apply)
     return 0, dict(schema_version=1, kind="agents_result", outcome="pruned" if o.apply else "prune_plan", **result,
                    archive=str(Path(root) / "archive"), process_lifetime="unchanged_not_verified", panes_closed=False)
@@ -1280,128 +1280,132 @@ def launch_agent(o):
     name, owner, purpose = text(o.name or o.profile), text(o.owner), text(o.purpose, 256)
     host = text(o.host)
     cwd = absolute(o.cwd)
-    with Registry(root, lock_name="launch.lock", wait_ms=o.launch_wait_ms):
-        review = o.review_at or now() + cfg.get("defaults", {}).get("review_after_ms", 3600000)
-        require(type(review) is int and now() < review <= now() + 30 * 86400000, "invalid_review_at")
-        brief = message(read_file(o.brief_file, 32768)) if o.brief_file else None
-        intent = scratch_line(profile["intent"] if "intent" in profile else
-                              next((line.strip() for line in (brief or "").splitlines() if line.strip()), purpose))
-        launch_id, token = secrets.token_hex(16), secrets.token_hex(32)
-        target = dict(host=host, server="unix://" + socket, session_id=session, block_id=None)
-        starter = dict(host=host, server="unix://" + socket, session_id=ss, block_id=sb) if not human else None
-        report_to = dict(host=host, server="unix://" + socket, session_id=rs, block_id=rb) if not human else None
-        state = dict(schema_version=1, launch_id=launch_id, token=token, name=name, owner=owner, purpose=purpose,
-                     review_at=review, target=target, starter=starter, report_to=report_to, profile=o.profile, argv=argv,
-                     cwd=cwd, harness=text(profile.get("harness", o.profile)), resume_session_id=profile.get("resume_session_id"),
-                     store=o.store, created_at=now(), socket=socket, registry=root, phase="creation_uncertain", tracked=False,
-                     protocol_acknowledged=False, protocol_outcome=None, brief_attempted=False, brief_outcome=None,
-                     immediate_child_term=None, notifications={}, brief_file=None, protocol_file=None,
-                     hook_events=profile.get("hook_events", False), client_path=os.environ.get("PATH", os.defpath),
-                     rex_executable=os.environ.get("TEEREX_INTERNAL_REX"), delivery=delivery, execution=execution,
-                     callbacks=callbacks, cost=accounting, remote_child_term=None, human=human, scratch_pane=profile.get("scratch_pane", True), tint=tint, layout=layout, come_forward=profile.get("come_forward", False))
-        if not human:
-            state["intent"] = intent
-            state["contract"] = contract_init(state, profile, brief, o.done_when, o.contract_interval_s)
-        # Every launch archives closed panes, regardless of registry size or record age.
-        pruned = prune_records(root, apply=True)
+    review = o.review_at or now() + cfg.get("defaults", {}).get("review_after_ms", 3600000)
+    require(type(review) is int and now() < review <= now() + 30 * 86400000, "invalid_review_at")
+    brief = message(read_file(o.brief_file, 32768)) if o.brief_file else None
+    intent = scratch_line(profile["intent"] if "intent" in profile else
+                          next((line.strip() for line in (brief or "").splitlines() if line.strip()), purpose))
+    launch_id, token = secrets.token_hex(16), secrets.token_hex(32)
+    target = dict(host=host, server="unix://" + socket, session_id=session, block_id=None)
+    starter = dict(host=host, server="unix://" + socket, session_id=ss, block_id=sb) if not human else None
+    report_to = dict(host=host, server="unix://" + socket, session_id=rs, block_id=rb) if not human else None
+    state = dict(schema_version=1, launch_id=launch_id, token=token, name=name, owner=owner, purpose=purpose,
+                 review_at=review, target=target, starter=starter, report_to=report_to, profile=o.profile, argv=argv,
+                 cwd=cwd, harness=text(profile.get("harness", o.profile)), resume_session_id=profile.get("resume_session_id"),
+                 store=o.store, created_at=now(), socket=socket, registry=root, phase="creation_uncertain", tracked=False,
+                 protocol_acknowledged=False, protocol_outcome=None, brief_attempted=False, brief_outcome=None,
+                 immediate_child_term=None, notifications={}, brief_file=None, protocol_file=None,
+                 hook_events=profile.get("hook_events", False), client_path=os.environ.get("PATH", os.defpath),
+                 rex_executable=os.environ.get("TEEREX_INTERNAL_REX"), delivery=delivery, execution=execution,
+                 callbacks=callbacks, cost=accounting, remote_child_term=None, human=human, scratch_pane=profile.get("scratch_pane", True), tint=tint, layout=layout, come_forward=profile.get("come_forward", False))
+    if not human:
+        state["intent"] = intent
+        state["contract"] = contract_init(state, profile, brief, o.done_when, o.contract_interval_s)
+    # Maintenance is independent of creation. One caller prunes; concurrent launches
+    # proceed without waiting on its pane reads, jobs cleanup or fleet updates.
+    try:
+        with Registry(root, lock_name="prune.lock", wait_ms=0):
+            pruned = prune_records(root, apply=True)
         state["auto_prune"] = dict(retired=len(pruned["retired"]), live_before=pruned["live_before"])
-        with Registry(root) as registry:
-            if brief is not None:
-                state["brief_file"] = registry.write_message(launch_id, "brief", brief)
-            registry.save(state, new=True)
-        o.launch_id = launch_id  # Preserve the reason for every failure after the record exists.
-        command = [RUNTIME, "agents", "supervise", "--registry", root, "--launch-id", launch_id]
-        if layout == 'detached':
-            try:
-                made = detached_operation(state, 'create', command)
-                code, packet = 0, dict(outcome='created_and_verified', created=dict(block_id=made['block_id']), placement=made['placement'])
-            except (OSError, ValueError, Refusal, subprocess.TimeoutExpired):
-                code, packet = 1, dict(outcome='creation_uncertain')
-        elif human:
-            code, packet = invoke(["surfaces", "open", "--socket", socket, "--session", session, "--layout", "tab",
-                                   "--label", name, "--cwd", cwd, "--", *command])
-        else:
-            code, packet = invoke(["spawn", "--socket", socket, "--session", session, "--name", name, "--cwd", cwd,
-                                   "--report-to-session", rs, "--report-to-block", rb, "--", *command])
-        def created(s):
-            s["spawn_receipt"] = packet
-            s["placement"] = packet.get("placement", "placed") if isinstance(packet, dict) and code == 0 else "unknown"
-            if isinstance(packet, dict) and packet.get("created"):
-                s["target"]["block_id"] = address_id(packet["created"]["block_id"], "block")
-        state = update(root, launch_id, created)
-        if not succeeded(code, packet, "created_and_verified" if human or layout == "detached" else "created_and_attached"):
-            state = launch_failed(root, launch_id, (packet or {}).get("failure_reason") or (packet or {}).get("reason") or "creation_uncertain")
-            return 1, receipt(state, "creation_uncertain", client_exit=code)
+    except (Refusal, OSError, ValueError, KeyError, subprocess.SubprocessError) as exc:
+        state["auto_prune"] = dict(outcome="skipped", reason=str(exc))
+    with Registry(root) as registry:
+        if brief is not None:
+            state["brief_file"] = registry.write_message(launch_id, "brief", brief)
+        registry.save(state, new=True)
+    o.launch_id = launch_id  # Preserve the reason for every failure after the record exists.
+    command = [RUNTIME, "agents", "supervise", "--registry", root, "--launch-id", launch_id]
+    if layout == 'detached':
         try:
-            block = state["target"]["block_id"]
-            try:
-                scratchpad = scratch_init(session, block, name, purpose, scratch_line(intent), (state.get("contract") or {}).get("done_when", ""))
-            except Exception as exc:
-                scratchpad = str(scratch_path(session, block))
-                state = update(root, launch_id, lambda s: s.update(scratchpad_failure_reason=str(exc)[:600]))
-            state = update(root, launch_id, lambda s: s.update(scratchpad=scratchpad))
-            if state["scratch_pane"] and layout != "detached":
-                side_code, side_packet = invoke(["surfaces", "open", "--socket", socket, "--session", session,
-                                                "--layout", "tiled", "--anchor", block, "--label", name + " scratchpad",
-                                                "--", RUNTIME, *(["--rex", state["rex_executable"]] if state.get("rex_executable") else []),
-                                                "scratch", "watch", "--socket", socket, "--session", session, "--block", block])
-                state = update(root, launch_id, lambda s: s.update(scratch_pane_receipt=side_packet,
-                                scratch_pane_opened=succeeded(side_code, side_packet, "created_and_verified")))
-            code, packet = invoke(["jobs", "track", "--registry", root, "--socket", socket, "--session", session, "--block", block,
-                                   "--owner", owner, "--kind", "agent", "--purpose", purpose,
-                                   "--deadline-unix-ms", str(review), "--cleanup", "manual"])
-            def tracked(s):
-                s["track_receipt"] = packet
-                s["tracked"] = succeeded(code, packet, "verified")
-                s["phase"] = "protocol_pending" if s["tracked"] else "tracking_uncertain"
-            state = update(root, launch_id, tracked)
-            if not state["tracked"]:
-                state = launch_failed(root, launch_id, (packet or {}).get("failure_reason") or (packet or {}).get("reason") or "tracking_uncertain")
-                return 1, receipt(state, "tracking_uncertain", client_exit=code)
-            publish_fleet(root, state, "launch", "unknown", "Visible agent registered; protocol not acknowledged; readiness not assessed")
-            state = load(root, launch_id)
-            if human:
-                with Registry(root) as registry:
-                    state = registry.read(launch_id)
-                    state["protocol_file"] = registry.write_message(launch_id, "human", "Human interactive launch; no brief or ACK.")
-                    state["phase"] = "human_interactive"
-                    registry.save(state)
-                return 0, receipt(state, "human_launched")
-            # The first harness prompt is an explicit profile-supported argv argument. Sending terminal input
-            # immediately after creation would race shell/harness startup and silently lose the protocol.
-            ack_command = [RUNTIME, "agents", "ack", "--registry", root, "--launch-id", launch_id,
-                           "--token", token, "--session", session, "--block", block]
-            if delivery is not None:
-                ack_command = [RUNTIME, "agents", "channel", "--handle", str(Path(delivery["directory"]) / launch_id / "handle.json"),
-                               "--request-id", secrets.token_hex(16), "--operation", "ack", "--session", session, "--block", block]
-            report_command = [RUNTIME, "send", "--socket", socket, "--session", rs, "--block", rb, "--from", name,
-                              "--message-file", "-", *send_options(state)]
-            if delivery is not None:
-                report_command = [RUNTIME, "agents", "channel", "--handle", str(Path(delivery["directory"]) / launch_id / "handle.json"),
-                                  "--request-id", "NEW_HEX32", "--operation", "send", "--to", "report-to", "--message-file", "-"]
-            protocol = ("Messaging protocol (not a task brief):\n"
-                        f"Your name is {name}; your pane is {session} {block}.\n"
-                        f"Your starter is {ss} {sb}; report-to is {rs} {rb}.\n"
-                        f"Your session scratchpad is {scratchpad} (AGENT_SCRATCHPAD).\n"
-                        + ('Contract: write your steps first; every turn after the brief ends declared — finished (every step checked off, To-do empty), blocked (teerex scratch flag "what is stuck; what you tried; what you need"; never check off steps you could not do), or waiting (teerex scratch now STEP --waiting "on what" --check 10m). teerex tells your starter each step and each declaration.\n' if state.get("contract") else "") +
-                        "Keep its Now/To-do/Done current before and after every step; Now has at most one task.\n"
-                        "Report stops, results, blockers and questions directly to report-to; never type into a registered human seat.\n"
-                        "A finished turn is idle, not process death. Supply report bytes on stdin then EOF using:\n" +
-                        shlex.join(report_command) + "\n" +
-                        ("Replace NEW_HEX32 with a fresh 32-lowercase-hex request id for each NEW message; never retry uncertain input.\n"
-                         if delivery is not None else "Never retry uncertain input.\n") +
-                        "Do not begin a task or launch another agent before the brief. Acknowledge this protocol now by running:\n" +
-                        shlex.join(ack_command) +
-                        "\nThis ACK records protocol acknowledgment only, not readiness, authorization or exclusive input control.")
+            made = detached_operation(state, 'create', command)
+            code, packet = 0, dict(outcome='created_and_verified', created=dict(block_id=made['block_id']), placement=made['placement'])
+        except (OSError, ValueError, Refusal, subprocess.TimeoutExpired):
+            code, packet = 1, dict(outcome='creation_uncertain')
+    elif human:
+        code, packet = invoke(["surfaces", "open", "--socket", socket, "--session", session, "--layout", "tab",
+                               "--label", name, "--cwd", cwd, "--", *command])
+    else:
+        code, packet = invoke(["spawn", "--socket", socket, "--session", session, "--name", name, "--cwd", cwd,
+                               "--report-to-session", rs, "--report-to-block", rb, "--", *command])
+    def created(s):
+        s["spawn_receipt"] = packet
+        s["placement"] = packet.get("placement", "placed") if isinstance(packet, dict) and code == 0 else "unknown"
+        if isinstance(packet, dict) and packet.get("created"):
+            s["target"]["block_id"] = address_id(packet["created"]["block_id"], "block")
+    state = update(root, launch_id, created)
+    if not succeeded(code, packet, "created_and_verified" if human or layout == "detached" else "created_and_attached"):
+        state = launch_failed(root, launch_id, (packet or {}).get("failure_reason") or (packet or {}).get("reason") or "creation_uncertain")
+        return 1, receipt(state, "creation_uncertain", client_exit=code)
+    try:
+        block = state["target"]["block_id"]
+        try:
+            scratchpad = scratch_init(session, block, name, purpose, scratch_line(intent), (state.get("contract") or {}).get("done_when", ""))
+        except Exception as exc:
+            scratchpad = str(scratch_path(session, block))
+            state = update(root, launch_id, lambda s: s.update(scratchpad_failure_reason=str(exc)[:600]))
+        state = update(root, launch_id, lambda s: s.update(scratchpad=scratchpad))
+        if state["scratch_pane"] and layout != "detached":
+            side_code, side_packet = invoke(["surfaces", "open", "--socket", socket, "--session", session,
+                                            "--layout", "tiled", "--anchor", block, "--label", name + " scratchpad",
+                                            "--", RUNTIME, *(["--rex", state["rex_executable"]] if state.get("rex_executable") else []),
+                                            "scratch", "watch", "--socket", socket, "--session", session, "--block", block])
+            state = update(root, launch_id, lambda s: s.update(scratch_pane_receipt=side_packet,
+                            scratch_pane_opened=succeeded(side_code, side_packet, "created_and_verified")))
+        code, packet = invoke(["jobs", "track", "--registry", root, "--socket", socket, "--session", session, "--block", block,
+                               "--owner", owner, "--kind", "agent", "--purpose", purpose,
+                               "--deadline-unix-ms", str(review), "--cleanup", "manual"])
+        def tracked(s):
+            s["track_receipt"] = packet
+            s["tracked"] = succeeded(code, packet, "verified")
+            s["phase"] = "protocol_pending" if s["tracked"] else "tracking_uncertain"
+        state = update(root, launch_id, tracked)
+        if not state["tracked"]:
+            state = launch_failed(root, launch_id, (packet or {}).get("failure_reason") or (packet or {}).get("reason") or "tracking_uncertain")
+            return 1, receipt(state, "tracking_uncertain", client_exit=code)
+        publish_fleet(root, state, "launch", "unknown", "Visible agent registered; protocol not acknowledged; readiness not assessed")
+        state = load(root, launch_id)
+        if human:
             with Registry(root) as registry:
                 state = registry.read(launch_id)
-                state["protocol_file"] = registry.write_message(launch_id, "protocol", protocol)
-                state["phase"] = "awaiting_protocol_ack"
+                state["protocol_file"] = registry.write_message(launch_id, "human", "Human interactive launch; no brief or ACK.")
+                state["phase"] = "human_interactive"
                 registry.save(state)
-        except BaseException as exc:
-            with contextlib.suppress(Exception):
-                launch_failed(root, launch_id, str(exc) or type(exc).__name__)
-            raise
+            return 0, receipt(state, "human_launched")
+        # The first harness prompt is an explicit profile-supported argv argument. Sending terminal input
+        # immediately after creation would race shell/harness startup and silently lose the protocol.
+        ack_command = [RUNTIME, "agents", "ack", "--registry", root, "--launch-id", launch_id,
+                       "--token", token, "--session", session, "--block", block]
+        if delivery is not None:
+            ack_command = [RUNTIME, "agents", "channel", "--handle", str(Path(delivery["directory"]) / launch_id / "handle.json"),
+                           "--request-id", secrets.token_hex(16), "--operation", "ack", "--session", session, "--block", block]
+        report_command = [RUNTIME, "send", "--socket", socket, "--session", rs, "--block", rb, "--from", name,
+                          "--message-file", "-", *send_options(state)]
+        if delivery is not None:
+            report_command = [RUNTIME, "agents", "channel", "--handle", str(Path(delivery["directory"]) / launch_id / "handle.json"),
+                              "--request-id", "NEW_HEX32", "--operation", "send", "--to", "report-to", "--message-file", "-"]
+        protocol = ("Messaging protocol (not a task brief):\n"
+                    f"Your name is {name}; your pane is {session} {block}.\n"
+                    f"Your starter is {ss} {sb}; report-to is {rs} {rb}.\n"
+                    f"Your session scratchpad is {scratchpad} (AGENT_SCRATCHPAD).\n"
+                    + ('Contract: write your steps first; every turn after the brief ends declared — finished (every step checked off, To-do empty), blocked (teerex scratch flag "what is stuck; what you tried; what you need"; never check off steps you could not do), or waiting (teerex scratch now STEP --waiting "on what" --check 10m). teerex tells your starter each step and each declaration.\n' if state.get("contract") else "") +
+                    "Keep its Now/To-do/Done current before and after every step; Now has at most one task.\n"
+                    "Report stops, results, blockers and questions directly to report-to; never type into a registered human seat.\n"
+                    "A finished turn is idle, not process death. Supply report bytes on stdin then EOF using:\n" +
+                    shlex.join(report_command) + "\n" +
+                    ("Replace NEW_HEX32 with a fresh 32-lowercase-hex request id for each NEW message; never retry uncertain input.\n"
+                     if delivery is not None else "Never retry uncertain input.\n") +
+                    "Do not begin a task or launch another agent before the brief. Acknowledge this protocol now by running:\n" +
+                    shlex.join(ack_command) +
+                    "\nThis ACK records protocol acknowledgment only, not readiness, authorization or exclusive input control.")
+        with Registry(root) as registry:
+            state = registry.read(launch_id)
+            state["protocol_file"] = registry.write_message(launch_id, "protocol", protocol)
+            state["phase"] = "awaiting_protocol_ack"
+            registry.save(state)
+    except BaseException as exc:
+        with contextlib.suppress(Exception):
+            launch_failed(root, launch_id, str(exc) or type(exc).__name__)
+        raise
     end = time.monotonic() + o.ack_timeout_ms / 1000
     while time.monotonic() < end:
         state = load(root, launch_id)
@@ -1894,7 +1898,7 @@ def supervise(o):
             except Exception as exc:
                 supervisor_error(o, "last_supervisor_cleanup_error", exc)
             try:
-                with Registry(o.registry, lock_name="launch.lock", wait_ms=60000):
+                with Registry(o.registry, lock_name="prune.lock", wait_ms=60000):
                     current = load(o.registry, o.launch_id)
                     if pane_absent(current) is True:
                         retire_record(o.registry, current, "pane_gone", dict(basis="supervisor_exit_pane_absent"))
@@ -2241,7 +2245,7 @@ def parser():
         q.add_argument("--" + key)
     q.add_argument("--review-at", type=int, help="absolute future Unix milliseconds, <=30 days; default config review_after_ms")
     q.add_argument("--launch-wait-ms", type=bounded_int(0, 60000), default=60000, metavar="0..60000",
-                   help="pre-creation launch queue wait, default60000ms; busy refuses retry-safe before pane creation; released before ACK wait")
+                   help="legacy compatibility option; launches no longer use a global creation queue")
     q.add_argument("--ack-timeout-ms", type=bounded_int(100, 60000), default=10000, metavar="100..60000")
     q.add_argument("--done-when")
     q.add_argument("--contract-interval-s", type=bounded_int(1, 2147483647))
@@ -2344,11 +2348,8 @@ def main():
         print("next: " + refusal_next(o), file=sys.stderr)
         return 128 + sig
     except (Refusal, OSError, ValueError, KeyError, TypeError, RecursionError, subprocess.SubprocessError) as exc:
-        queue_busy = o.operation == "launch" and isinstance(exc, Refusal) and str(exc) == "launch_queue_busy"
-        result = dict(schema_version=1, kind="agents_result", outcome="launch_queue_busy" if queue_busy else "refused_or_uncertain",
-                      failure_reason=str(exc), retry_safe=queue_busy, agent_readiness="not_assessed", all_processes_verified_gone=False)
-        if queue_busy:
-            result.update(creation_attempted=False, created=None)
+        result = dict(schema_version=1, kind="agents_result", outcome="refused_or_uncertain",
+                      failure_reason=str(exc), retry_safe=False, agent_readiness="not_assessed", all_processes_verified_gone=False)
         if o.operation == "supervise":
             supervisor_error(o, "last_supervisor_error", exc)
         else:

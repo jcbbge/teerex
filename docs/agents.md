@@ -70,7 +70,7 @@ teerex surfaces rename|focus|move|close --socket "$S" --session "$SES" --pane "$
   - The new agent acknowledges the messaging protocol before it gets the brief.
   - It is tracked as a job.
   - When its turn ends, its last message reaches you once, as its stop report (Claude, Codex and pi).
-- **Several at once:** concurrent launches queue. If the queue wait runs out, the launch refuses with `launch_queue_busy`, which is safe to retry; nothing was created.
+- **Several at once:** launches run independently; only short registry writes serialize. A busy maintenance pass is skipped and reported without delaying creation.
 - **Send:** `agent-send SES PANE ME "message"`. This is `teerex send`.
   - The message arrives as `FROM ME: …` followed by Enter.
   - If someone is typing in that pane, send waits until they stop, then puts their draft back after the message.
