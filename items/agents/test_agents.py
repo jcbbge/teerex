@@ -2077,6 +2077,52 @@ Path('/work/network-harness').touch()
         self.assertEqual(packet["outcome"], "scratchpad_blocked")
         self.assertIn("write your steps first", packet["scratchpad_check"]["reason"])
 
+    def test_ack_before_brief_consumes_empty_turn_exemption_across_adapters(self):
+        for harness in ("claude", "codex", "pi"):
+            with self.subTest(harness=harness):
+                p, launched = self.run_cli("launch", "--config", str(self.config), "--profile", "probe", "--ack-timeout-ms", "5000")
+                self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+                launch_id = launched["launch_id"]
+                state = self.record(launch_id)
+                self.assertFalse(state["brief_attempted"])
+                def fresh():
+                    result = subprocess.run([BIN, "scratch", "flag", "", "--session", state["target"]["session_id"],
+                                             "--block", state["target"]["block_id"]], env=self.env, capture_output=True, text=True)
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                def end(turn):
+                    if harness == "codex":
+                        return self.enforcement_hook(launch_id, harness, dict(type="agent-turn-complete", **{
+                            "last-assistant-message": turn, "turn-id": turn, "input-messages": [turn]}), notify=True)
+                    return self.enforcement_hook(launch_id, harness, dict(
+                        hook_event_name="ScratchCheck" if harness == "pi" else "Stop", last_assistant_message=turn))
+                fresh()
+                ack = end("protocol-ack")
+                if harness == "pi":
+                    self.assertEqual(ack["scratchpad_check"]["action"], "allow")
+                    ack = self.enforcement_hook(launch_id, harness, dict(hook_event_name="Stop", last_assistant_message="ACK"))
+                self.assertFalse(ack["delivery_rule"].startswith("contract_"))
+                state = self.record(launch_id)
+                self.assertFalse(state["brief_attempted"])
+                self.assertTrue(state["contract_turn_ended"])
+                self.assertEqual(state["contract"]["steps_total"], 0)
+                with (self.registry / "agents.lock").open("a") as lock:
+                    fcntl.flock(lock, fcntl.LOCK_EX)
+                    state = self.record(launch_id)
+                    state["brief_file"] = str(self.brief)
+                    (self.registry / ("agents-" + launch_id + ".json")).write_text(json.dumps(state))
+                p, _ = self.run_cli("deliver", "--registry", str(self.registry), "--launch-id", launch_id)
+                self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+                self.assertTrue(self.record(launch_id)["brief_attempted"])
+                fresh()
+                result = end("brief-with-no-steps")
+                if harness == "claude":
+                    self.assertEqual(result["decision"], "block")
+                    reason = result["reason"]
+                else:
+                    self.assertEqual(result["scratchpad_check"]["action"], "reminded" if harness == "codex" else "block")
+                    reason = result["scratchpad_check"]["reason"]
+                self.assertEqual(reason, CONTRACT_REFUSAL + "; write your steps first")
+
     def test_contract_steps_and_flag_are_delivered_once(self):
         p, launched = self.launch(contract=True)
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
