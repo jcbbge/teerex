@@ -149,8 +149,11 @@ pub fn collect(allocator: std.mem.Allocator, argv: []const []const u8, env: *con
     } else argv;
     defer if (selected_argv.ptr != argv.ptr) allocator.free(selected_argv);
     // All native Lua transports share the guard, including cleanup paths.
-    const guarded_argv = try allocator.dupe([]const u8, selected_argv);
-    defer allocator.free(guarded_argv);
+    var guarded: std.ArrayList([]const u8) = .empty;
+    defer guarded.deinit(allocator);
+    try guarded.appendSlice(allocator, selected_argv);
+    var script_file: ?@import("pane_guard").ScriptFile = null;
+    defer if (script_file) |file| file.deinit();
     var guard_source: ?[]const u8 = null;
     defer if (guard_source) |s| allocator.free(s);
     var endpoint: ?[]const u8 = null;
@@ -159,18 +162,32 @@ pub fn collect(allocator: std.mem.Allocator, argv: []const []const u8, env: *con
         if (std.mem.eql(u8, arg, "--server") and i + 1 < selected_argv.len) endpoint = selected_argv[i + 1];
         if (std.mem.eql(u8, arg, "do")) lua = true;
     }
+    var guard_session: ?[]const u8 = null;
+    for (selected_argv, 0..) |arg, i| {
+        if (std.mem.eql(u8, arg, "--args") and i + 1 < selected_argv.len) {
+            const parsed = std.json.parseFromSlice(std.json.Value, allocator, selected_argv[i + 1], .{}) catch continue;
+            if (parsed.value == .object) {
+                if (parsed.value.object.get("session_id")) |sid| {
+                    if (sid == .string and std.mem.startsWith(u8, sid.string, "session:")) guard_session = sid.string;
+                }
+            }
+        }
+    }
     if (endpoint != null and lua) {
         for (selected_argv, 0..) |arg, i| {
             if (std.mem.eql(u8, arg, "-e") and i + 1 < selected_argv.len) {
                 const script = selected_argv[i + 1];
-                const prefix = try @import("pane_guard").prelude(allocator, endpoint.?, std.mem.startsWith(u8, script, "-- teerex-guarded-message\n"));
+                const prefix = try @import("pane_guard").prelude(allocator, endpoint.?, std.mem.startsWith(u8, script, "-- teerex-guarded-message\n"), guard_session);
                 defer allocator.free(prefix);
                 guard_source = try std.mem.concat(allocator, u8, &.{ prefix, script });
-                guarded_argv[i + 1] = guard_source.?;
+                script_file = try @import("pane_guard").ScriptFile.init(allocator, guard_source.?);
+                guarded.items[i] = script_file.?.path;
+                _ = guarded.orderedRemove(i + 1);
+                break;
             }
         }
     }
-    var child = std.process.Child.init(guarded_argv, allocator);
+    var child = std.process.Child.init(guarded.items, allocator);
     child.stdin_behavior = if (@hasDecl(@TypeOf(receiver.*), "inherit_stdin") and @TypeOf(receiver.*).inherit_stdin) .Inherit else .Ignore;
     child.stdout_behavior = .Pipe;
     child.stderr_behavior = .Pipe;

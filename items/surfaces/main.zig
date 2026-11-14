@@ -215,6 +215,16 @@ fn luaString(allocator: std.mem.Allocator, input: []const u8) ![]const u8 {
     return out.items;
 }
 
+fn executionFailure(allocator: std.mem.Allocator, action: []const u8, err: anyerror) ![]const u8 {
+    const detail = switch (err) {
+        error.SystemResources => "system resources unavailable (exec may exceed argument/environment limits: E2BIG)",
+        error.FileNotFound, error.RexExecutableNotFound => "executable not found (ENOENT)",
+        error.AccessDenied => "permission denied (EACCES)",
+        else => @errorName(err),
+    };
+    return std.fmt.allocPrint(allocator, "{s}: {s}", .{ action, detail });
+}
+
 const RawOutput = struct {
     allocator: std.mem.Allocator,
     bytes: std.ArrayList(u8) = .empty,
@@ -240,7 +250,7 @@ fn paletteController(allocator: std.mem.Allocator, args: []const []const u8, scr
     var output: RawOutput = .{ .allocator = allocator };
     var failure: ?[]const u8 = null;
     const result = supervised.collect(allocator, argv.items, &env, 15000, &output) catch |err| blk: {
-        failure = @errorName(err);
+        failure = try executionFailure(allocator, "running surfaces palette controller", err);
         break :blk null;
     };
     const sig = supervised.requestedSignal();
@@ -522,7 +532,7 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
     var c: Collector = .{ .allocator = allocator };
     var failure: ?[]const u8 = null;
     const transport = supervised.collect(allocator, &argv, &env, @max(1, transport_budget), &c) catch |err| blk: {
-        failure = @errorName(err);
+        failure = try executionFailure(allocator, "starting or executing Rex for the pane guard", err);
         break :blk null;
     };
     const sig = supervised.requestedSignal();

@@ -75,6 +75,42 @@ class GuardTest(_fixtures.SurfacesTest):
             pass
         self.assertIn(reason, output)
 
+    def test_large_creator_store_guarded_round_trip(self):
+        directory = Path(self.env['XDG_STATE_HOME']) / 'teerex/pane-creators' / hashlib.sha256(('unix://' + str(self.socket)).encode()).hexdigest()
+        directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+        def seed():
+            for index in range(3000):
+                bid = 'block:00000000-0000-0000-0000-' + format(index, '012x')
+                record = dict(id=bid, session_id=self.session, server='unix://' + str(self.socket),
+                              spawner=dict(session_id=self.session, block_id=self.anchor),
+                              allowed=[dict(session_id=self.session, block_id=self.anchor)])
+                (directory / (bid.replace(':', '-') + '.json')).write_text(json.dumps(record))
+            self.assertGreater(sum(p.stat().st_size for p in directory.glob('*.json')), 128 * 1024)
+        seed()
+        self.inspect(self.anchor)
+        # A complete view proves synthetic panes absent, while retaining the live pane.
+        self.assertEqual(len(list(directory.glob('*.json'))), 1)
+        seed()
+        pane = self.open('tab', '/bin/sh', '-c', 'exit 0')['actual']['block_id']
+        seed()
+        closed = self.control('close', pane)
+        self.assertEqual(closed.returncode, 0, closed.stdout + closed.stderr)
+        self.assertFalse((directory / (pane.replace(':', '-') + '.json')).exists())
+        seed()
+        ensured = self.cli('surfaces', 'session', 'ensure', '--socket', str(self.socket), '--label', 'guard disposable')
+        self.assertEqual(ensured.returncode, 0, ensured.stdout + ensured.stderr)
+        detached = self.open('tab')['actual']['block_id']
+        self.rpc('session.detach_block', dict(session_id=self.session, block_id=detached))
+        self.inspect(self.anchor)
+        self.assertTrue((directory / (detached.replace(':', '-') + '.json')).exists())
+
+    def test_execution_failure_names_action(self):
+        result = self.cli('--rex', str(self.work / 'missing-rex'), 'surfaces', 'inspect',
+                          '--socket', str(self.socket), '--session', self.session, '--pane', self.anchor)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Rex for the pane guard', json.loads(result.stdout)['failure_reason'])
+        self.assertIn('executable not found', json.loads(result.stdout)['failure_reason'])
+
     def test_seat_controls(self):
         neighbour = self.open('tiled', label='seat neighbour')['actual']['block_id']
         other = self.open('tab', label='other tab')['actual']['block_id']
@@ -436,6 +472,7 @@ class GuardTest(_fixtures.SurfacesTest):
             os.close(master)
 
     def test_seat_message_guard(self):
+        seed()
         pane = self.open('tab', '/bin/sh', '-c', 'printf "\\n❯ "; exec cat', label='message target')['actual']['block_id']
         self.register(pane)
         message = self.work / 'message.txt'

@@ -41,7 +41,7 @@ def canonical_server(value):
     return 'unix://' + os.path.realpath(path)
 
 
-def snapshot(server, human_launch=False):
+def snapshot(server, human_launch=False, session=None):
     server = canonical_server(server)
     if server is None:
         raise ValueError('pane_guard_absolute_unix_socket_required')
@@ -60,7 +60,7 @@ def snapshot(server, human_launch=False):
     creators = {}
     for path in directory.glob('*.json'):
         record = read(path)
-        if canonical_server(record['server']) == server:
+        if canonical_server(record['server']) == server and (session is None or record.get('session_id') == session or record.get('id') == session):
             creators[record['id']] = record
     registry = Path(os.environ.get('AGENT_REGISTRY') or os.environ.get('LC_AGENT_REGISTRY') or root / 'teerex-agents')
     for path in registry.glob('agents-*.json'):
@@ -82,6 +82,10 @@ def snapshot(server, human_launch=False):
             supervisor = {k: target.get(k) for k in ('session_id', 'block_id')}
             existing = creators.get(side['block_id'], {})
             creators[side['block_id']] = dict(existing, spawner=spawner, allowed=[spawner, supervisor, report_to], viewer=True)
+    if session is not None:
+        creators = {id: r for id, r in creators.items() if r.get('session_id') == session or id == session or
+                    (r.get('spawner') or {}).get('session_id') == session or
+                    any(who.get('session_id') == session for who in r.get('allowed', []))}
     seats = [s['target'] for s in boards['seats'] if canonical_server(s['target']['server']) == server and not s.get('inherited_to')]
     operator = (os.environ.get('TEEREX_OPERATOR') == '1' and
                 os.environ.get('TEEREX_OPERATOR_ACTIVE') in (str(os.getpid()), str(os.getppid())) and
@@ -95,6 +99,33 @@ def snapshot(server, human_launch=False):
 LUA = r'''
 local guard_call=rex.call
 local guard_policy=rex.json.decode(GUARD_DATA)
+local function guard_forget(id)
+ if type(id)~='string' or not id:match('^[a-z]+:[0-9a-f%-]+$') then return end
+ local path=guard_policy.directory..'/'..id:gsub(':','-')..'.json'
+ local ok,err,code=os.remove(path)
+ if not ok and code~=2 then io.stderr:write('removing absent pane creator receipt: '..tostring(err)..'\n') end
+ guard_policy.creators[id]=nil
+end
+local function guard_prune(method,p,value)
+ local present={}
+ if method=='session.view' and value.session_id==p.session_id and type(value.windows)=='table' then
+  -- A view omits detached panes. Only the complete block list proves absence.
+  local blocks,err=guard_call('session.list_blocks',{session_id=p.session_id})
+  if err or type(blocks)~='table' or type(blocks.blocks)~='table' then return end
+  for _,b in ipairs(blocks.blocks) do present[b.block_id]=true end
+ elseif method=='session.list_blocks' and type(value.blocks)=='table' then
+  for _,b in ipairs(value.blocks) do present[b.block_id]=true end
+ elseif method=='session.list' and type(value.sessions)=='table' then
+  for _,session in ipairs(value.sessions) do present[session.session_id]=true end
+  for id,r in pairs(guard_policy.creators) do
+   if r.session_id and not present[r.session_id] then guard_forget(id) end
+  end
+  return
+ else return end
+ for id,r in pairs(guard_policy.creators) do
+  if r.session_id==p.session_id and id:match('^block:') and not present[id] then guard_forget(id) end
+ end
+end
 local function guard_view(sid)
  guard_call('session.attach',{session_id=sid})
  local v,e=guard_call('session.view',{session_id=sid})
@@ -229,6 +260,7 @@ rex.call=function(method,p)
  if method=='teerex.guard.take' then return {allowed=true} end
  local value,err=guard_call(method,p)
  if type(value)=='table' then
+  if not err then guard_prune(method,p,value) end
   if method=='session.create' then guard_record(value.session_id,value.session_id) end
   if method=='session.new_window' or method=='session.new_split' or method=='session.new_layer' then
    for _,bid in ipairs(value.block_ids or {}) do guard_record(bid,p.session_id) end
@@ -239,8 +271,8 @@ end
 '''
 
 
-def prelude(server, message=False, human_launch=False, creator=None):
-    policy = snapshot(server, human_launch=human_launch)
+def prelude(server, message=False, human_launch=False, creator=None, session=None):
+    policy = snapshot(server, human_launch=human_launch, session=session)
     if creator is not None:
         policy['actor'] = dict(host=policy['local_host'], session_id=creator['session_id'], block_id=creator['block_id'])
     data = json.dumps(json.dumps(policy, separators=(',', ':')))
@@ -342,6 +374,6 @@ def record_created(server, method, payload, result):
 
 if __name__ == '__main__':
     try:
-        print(prelude(sys.argv[1], len(sys.argv) > 2 and sys.argv[2] == 'message'))
+        print(prelude(sys.argv[1], len(sys.argv) > 2 and sys.argv[2] == 'message', session=sys.argv[3] if len(sys.argv) > 3 and sys.argv[3] else None))
     except Exception as exc:
         sys.exit('pane_guard_unavailable: ' + str(exc))
