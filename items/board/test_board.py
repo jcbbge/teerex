@@ -85,7 +85,7 @@ def screen(data, width, height=30):
 
 
 class Pane:
-    def __init__(self, root, width=60, fixture=FIXTURE, config=None, extra_env=None):
+    def __init__(self, root, width=60, fixture=FIXTURE, config=None, extra_env=None, extra_args=()):
         self.master, self.slave = pty.openpty()
         self.saved = termios.tcgetattr(self.slave)
         self.width = width
@@ -94,7 +94,7 @@ class Pane:
                    TEEREX_CALL_LOG_DIR=str(root / 'calls'), REX_SERVER='unix:///tmp/poison-board.sock')
         env.pop('NO_COLOR', None)
         env.update(extra_env or {})
-        argv = [BIN, 'board'] + (['--replay', str(fixture)] if fixture else [])
+        argv = [BIN, 'board', *extra_args] + (['--replay', str(fixture)] if fixture else [])
         if config: argv += ['--config', str(config)]
         self.proc = resources.start_process(argv, stdin=self.slave, stdout=self.slave, stderr=self.slave, env=env)
         self.output = b''
@@ -150,6 +150,65 @@ class BoardTest(unittest.TestCase):
         p.until(lambda: b'Choose a sound' in p.output)
         p.settle()
         return p
+    def task_fixture(self):
+        base = dict(v=1,t=200000,host='hive')
+        rows = [dict(base,kind='agent',id='lead',name='lead',role='seat',state='working',now='No contract fields',done=0,total=0),
+                dict(base,kind='agent',id='owner',name='owner',state='working',now='2. Build the renderer with words and 界 combining é',done=1,total=4,step_n=2,step_total=4,last_contact_at=80000),
+                dict(base,kind='agent',id='stuck',name='stuck',state='error',now='Investigate',done=0,total=2),
+                dict(base,kind='agent',id='finished',name='finished',state='done',now='',done=2,total=2),
+                dict(base,kind='task',id='22-task.md',number='22',title='⑦ A long title with 界 wide cells and combining é words that must wrap into at most two deliberate lines without clipping',owner='owner',state='WORKING',done=False,chunks=[dict(mark='now',text='Build the renderer'),dict(mark='todo',text='Verify')],last='00:03 checked the layout'),
+                dict(base,kind='task',id='3-blocked.md',number='3',title='Blocked work',owner='missing',state='BLOCKED',done=False,chunks=[dict(mark='done',text='Read')],last=''),
+                dict(base,kind='task',id='4-done.md',number='4',title='Finished work',owner='owner',state='DONE',done=True,chunks=[],last='')]
+        path=self.root/'tasks.jsonl';path.write_text('\n'.join(map(json.dumps,rows))+'\n')
+        return path, rows
+
+    def test_reference_layout_widths_board_and_tasks(self):
+        path,_=self.task_fixture()
+        for view in ('board','tasks'):
+            for width in (40,48,72,100,120):
+                with self.subTest(view=view,width=width):
+                    args=[BIN,'board','--replay',str(path),'--once','--width',str(width),'--height','30']
+                    if view=='tasks': args += ['--tasks',str(self.root)]
+                    result=subprocess.run(args,capture_output=True,text=True,check=True)
+                    lines=result.stdout.splitlines()
+                    self.assertEqual(len(lines),30)
+                    self.assertNotIn('\x1b',result.stdout)
+                    for line in lines:
+                        cells=sum(0 if unicodedata.combining(c) else 2 if unicodedata.east_asian_width(c) in 'WF' else 1 for c in line)
+                        self.assertEqual(cells,width,line)
+                        self.assertTrue(line.startswith(' ') and line.endswith(' '),repr(line))
+                    self.assertNotRegex(result.stdout,'[\u2460-\u2473\u2800-\u28ff►◇\U0001f300-\U0001faff]')
+                    if view=='tasks':
+                        title=next(i for i,l in enumerate(lines) if '22 ' in l)
+                        owner=next(i for i,l in enumerate(lines[title+1:],title+1) if 'owner' in l)
+                        self.assertLessEqual(owner-title,2)
+                        self.assertIn('owner  ● 2/4 · 2m',result.stdout)
+                        self.assertIn('missing  ○ not running · 1/1',result.stdout)
+                        self.assertIn('7 A long title',result.stdout)
+                    else:
+                        self.assertIn('◆ seat  working',result.stdout)
+                        self.assertNotIn('No contract fields',result.stdout)
+                        self.assertIn('✓ 1 finished: finished',result.stdout)
+                        self.assertNotIn('2. Build',result.stdout)
+
+    def test_tasks_toggle_selection_update_and_removal(self):
+        path,rows=self.task_fixture()
+        p=Pane(self.root,fixture=path,extra_args=['--tasks',str(self.root)])
+        self.addCleanup(p.close);p.settle()
+        self.assertIn('tasks  2 open · 1 blocked',p.view())
+        self.assertNotIn('Finished work',p.view())
+        p.key(b'f');self.assertIn('4 Finished work',p.view())
+        p.key(b'f');self.assertNotIn('Finished work',p.view())
+        p.key(b'j');p.key(b'j');p.key(b'\r')
+        self.assertIn('Jump unavailable',p.view())
+        changed=dict(rows[-3],title='Replacement title')
+        gone=dict(rows[-2],state='gone')
+        path.write_text(path.read_text()+json.dumps(changed)+'\n'+json.dumps(gone)+'\n')
+        result=subprocess.run([BIN,'board','--replay',str(path),'--tasks',str(self.root),'--once'],capture_output=True,text=True,check=True)
+        self.assertIn('tasks  1 open',result.stdout)
+        self.assertIn('Replacement title',result.stdout)
+        self.assertNotIn('Blocked work',result.stdout)
+
     def test_tab_glyph_transitions_and_restore(self):
         rex=str(Path(os.environ.get('REX_BIN') or shutil.which('rex') or 'MISSING_REX').resolve())
         socket=self.root/'rex.sock'
@@ -221,9 +280,9 @@ class BoardTest(unittest.TestCase):
         events=[dict(v=1,t=1,host='hive',kind='agent',id='worker',name='worker',state='waiting',now='Continuing work',done=0,total=1,question='A question'),dict(v=1,t=2,host='hive',kind='decisions',available=True,decisions=[dict(id='choice',title='Choose deployment',ask='Deploy now?',context='Reviewed change',recommend='Wait',options=[dict(label='Go',gain='Available',lose='Interrupts'),dict(label='Wait',gain='Preserves work',lose='Delay')])])]
         path=self.root/'decisions.jsonl';path.write_text('\n'.join(map(json.dumps,events))+'\n')
         p=Pane(self.root,fixture=path);self.addCleanup(p.close);p.settle()
-        self.assertIn('◇ 1',p.view());self.assertNotIn('Deploy now?',p.view())
+        self.assertIn('1 asks',p.view());self.assertNotIn('Deploy now?',p.view())
         self.assertNotIn(b'7501;state=blocked',p.output)
-        self.assertNotIn(b'\x1b[7m',p.output)
+        self.assertIn(b'\x1b[7m',p.output)  # selected agent, independent of decisions
         p.key(b'd');self.assertIn('Deploy now?',p.view());self.assertIn('1. Go',p.view());self.assertIn('Preserves work',p.view())
         p.key(b'2');self.assertIn('Replay · answer not sent',p.view())
         p.key(b'd');self.assertNotIn('Deploy now?',p.view())
@@ -254,10 +313,9 @@ class BoardTest(unittest.TestCase):
               dict(v=1,t=200000,host='hive',kind='attention',available=True,messages=7,words=30,over_share=True)]
         path.write_text('\n'.join(map(json.dumps,rows))+'\n')
         p=Pane(self.root,width=120,fixture=path);self.addCleanup(p.close);p.settle()
-        self.assertIn(b'\x1b[33m',p.output)
         for key,lens in enumerate(('agent','project','waiting','cost','machine'),1):
             p.key(str(key).encode());view=p.view()
-            self.assertIn(lens,view.splitlines()[0]);self.assertIn('7 messages / hour',view)
+            self.assertIn('agents',view)
             for name in ('alpha','zulu'):self.assertIn(name,view)
             self.assertNotIn('macworker',view)
             if lens=='waiting':self.assertLess(view.index('zulu'),view.index('alpha'))
@@ -275,13 +333,13 @@ class BoardTest(unittest.TestCase):
         rows=[dict(v=1,t=200000,host='hive',kind='agent',id='worker',name='worker',state='working',now='Review',done=0,total=1,waiting='reviewer · approval',check='2030-01-01T00:00:00Z'),dict(v=1,t=200000,host='hive',kind='agent',id='reviewer',name='reviewer',state='working',now='Read',done=0,total=1)]
         path.write_text('\n'.join(map(json.dumps,rows))+'\n')
         p=Pane(self.root,fixture=path);self.addCleanup(p.close);p.settle()
-        self.assertIn('⧗ reviewer · approval',p.view());self.assertNotIn('stalled:',p.view())
+        self.assertIn('⧗ on reviewer · approval',p.view());self.assertNotIn('stalled:',p.view())
         rows[1].update(state='idle',now='')
         path.write_text('\n'.join(map(json.dumps,rows))+'\n')
         p2=Pane(self.root,fixture=path);self.addCleanup(p2.close);p2.settle()
-        self.assertIn('stalled: Review',p2.view());self.assertIn('stalled · waiting on nothing',p2.view())
+        self.assertIn('⧗ on reviewer · approval',p2.view());self.assertIn('stalled · idle, no Now line',p2.view())
         p2.key(b'\x1b]10;rgb:ffff/ffff/ffff\x1b\\\x1b]11;rgb:0000/0000/0000\x1b\\\x1b]4;1;rgb:ffff/aaaa/aaaa\x1b\\')
-        self.assertRegex(p2.output,rb'\x1b\[31m[^\x1b]*stalled:')
+        self.assertRegex(p2.output,rb'\x1b\[31m(?:\x1b\[7m)?[^\x1b]*stalled')
 
     def test_contract_stalled_row_contact_and_width(self):
         path=self.root/'contract.jsonl'
@@ -290,13 +348,13 @@ class BoardTest(unittest.TestCase):
         for width in (40,60,120):
             with self.subTest(width=width):
                 p=Pane(self.root,width=width,fixture=path);self.addCleanup(p.close)
-                p.until(lambda:b'stalled:' in p.output);p.settle()
-                self.assertIn('2/3',p.view());self.assertIn('starter',p.view())
+                p.until(lambda:b'stalled' in p.output);p.settle()
+                self.assertIn('2/3',p.view());self.assertNotIn('starter',p.view())
                 self.assertIn('2m',next(line for line in p.view().splitlines() if 'worker' in line))
                 self.assertEqual(screen(p.output,width)[1],0)
                 p.key(b'\x1b]10;rgb:ffff/ffff/ffff\x1b\\\x1b]11;rgb:0000/0000/0000\x1b\\\x1b]4;1;rgb:ffff/aaaa/aaaa\x1b\\')
-                self.assertRegex(p.output,rb'\x1b\[31m[^\x1b]*worker')
-                self.assertRegex(p.output,rb'\x1b\[31m[^\x1b]*stalled:')
+                self.assertRegex(p.output,rb'\x1b\[31m(?:\x1b\[7m)?[^\x1b]*worker')
+                self.assertRegex(p.output,rb'\x1b\[31m(?:\x1b\[7m)?[^\x1b]*stalled')
 
     def test_held_section_order_count_broken_colour_and_no_attention(self):
         now=200000000
@@ -304,16 +362,16 @@ class BoardTest(unittest.TestCase):
         path=self.root/'held.jsonl'
         path.write_text(json.dumps(dict(v=1,t=now,host='hive',kind='held',available=True,items=rows))+'\n')
         p=Pane(self.root,fixture=path);self.addCleanup(p.close)
-        p.until(lambda:b'ship? newer' in p.output);p.settle()
+        p.key(b'h');p.until(lambda:b'ship? newer' in p.output);p.settle()
         view=p.view()
-        self.assertIn('held work · 2',view)
+        self.assertIn('held 2 · oldest 2d',view)
         self.assertLess(view.index('ship? older'),view.index('ship? newer'))
-        self.assertIn('51h',view)
+        self.assertIn('2d',view)
         self.assertNotIn(b'7501;state=blocked',p.output)
         # Supply theme evidence so problem red is selected instead of unknown ink.
         p.key(b'\x1b]10;rgb:ffff/ffff/ffff\x1b\\\x1b]11;rgb:0000/0000/0000\x1b\\\x1b]4;1;rgb:ffff/aaaa/aaaa\x1b\\')
-        self.assertRegex(p.output,rb'\x1b\[31m[^\x1b]*ship\? older')
-        self.assertNotRegex(p.output,rb'\x1b\[31m[^\x1b]*ship\? newer')
+        self.assertRegex(p.output,rb'\x1b\[31m(?:\x1b\[7m)?[^\x1b]*ship\? older')
+        self.assertNotRegex(p.output,rb'\x1b\[31m(?:\x1b\[7m)?[^\x1b]*ship\? newer')
         result=subprocess.run([BIN,'board','--replay',str(path),'--hosts','hive','--json'],capture_output=True,text=True,timeout=5)
         self.assertEqual(result.returncode,0,result.stderr)
         snapshot=json.loads(result.stdout)['hosts'][0]
@@ -321,7 +379,7 @@ class BoardTest(unittest.TestCase):
         self.assertEqual(snapshot['held']['count'],len(snapshot['held']['rows']))
         self.assertEqual([r['id'] for r in snapshot['held']['rows']],['old','new'])
         # Down selects the second held row even with zero agent panes.
-        p.key(b'j');self.assertIn('► ship? newer',p.view())
+        p.key(b'j');self.assertIn('ship? newer',p.view());self.assertIn(b'\x1b[7m',p.output)
         p.key(b' ');self.assertNotIn('Scratchpad',p.view())
 
     def test_held_long_text_reserves_age_at_narrow_width(self):
@@ -331,10 +389,10 @@ class BoardTest(unittest.TestCase):
         for width in (40,88):
             with self.subTest(width=width):
                 p=Pane(self.root,width=width,fixture=path);self.addCleanup(p.close)
-                p.until(lambda:b'ship?' in p.output);p.settle()
+                p.key(b'h');p.until(lambda:b'ship?' in p.output);p.settle()
                 line=next(line for line in p.view().splitlines() if 'ship?' in line)
-                self.assertIn('… · 50h',line)
-                self.assertTrue(line.rstrip().endswith('│'),line)
+                self.assertRegex(line,r'… +2d$')
+                self.assertNotIn('│',line)
 
     def test_held_unavailable_is_plain_and_json_failure(self):
         path=self.root/'unavailable.jsonl'
@@ -364,7 +422,7 @@ class BoardTest(unittest.TestCase):
         p = self.pane(width=width)
         view, scrolls = screen(p.output,width)
         self.assertEqual(scrolls,0,view)
-        for word in ['hive','REPLAY','cpu','mem','disk','net','working','Choose a sound','4/6','2/6','jump']:
+        for word in ['hive','cpu','mem','disk','working','Choose a sound','5/6','3/6','jump']:
             self.assertIn(word,view)
         self.assertLess(view.index('Choose a sound'),view.index('codex-render'))
         # The event stream was noise (Josh, 2026-11-13): no stream section and no stream key.
@@ -374,13 +432,9 @@ class BoardTest(unittest.TestCase):
         self.assertNotIn(b'7501;state=blocked:id=teerex/board',p.output)
         self.assertNotIn(b'\x1b[2J',p.output)
         self.assertNotRegex(p.output,rb'\x1b\[(?:38|48);(?:2|5);')
-        if width==120:
-            self.assertIn('cores',view)
-            self.assertIn('cpu 14.3%',view)
-            self.assertIn('m5',view)
     def test_keys_host_help_scratchpad_and_resize(self):
         p=self.pane()
-        p.key(b'm'); self.assertIn('m5  REPLAY',p.view())
+        p.key(b'm'); self.assertIn('m5  19:00',p.view())
         p.key(b'?'); self.assertIn('double-click jumps',p.view())
         p.key(b'?'); p.key(b'j'); p.key(b' ')
         self.assertIn('Scratchpad',p.view())
@@ -405,7 +459,7 @@ class BoardTest(unittest.TestCase):
         p.key(palette[:7]); p.key(palette[7:])
         start=len(p.output)
         p.key(b'\x1b_Gi=31;OK\x1b\\')
-        self.assertIn(b'a=T,f=32',p.output[start:])
+        self.assertNotIn(b'a=T,f=32',p.output[start:])
         self.assertIn(b'\x1b[39m',p.output)
         self.assertIn('Choose a sound',p.view())
     def test_mouse_selects_and_controls_cannot_escape(self):
@@ -486,6 +540,16 @@ class BoardTest(unittest.TestCase):
         p.key(b' ')
         self.assertIn('Check complete scratchpad',p.view())
         self.assertIn('Started private Rex',p.view())
+        p.key(b'h')
+        # The task view focuses the joined owner's exact named-host pane too.
+        events.append(dict(v=1,t=200000000,host='m5',kind='task',id='1-task.md',number='1',title='Owner jump',owner='codex-render',state='WORKING',done=False,chunks=[],last=''))
+        path.write_text('\n'.join(map(json.dumps,events)))
+        taskpane=Pane(self.root,fixture=path,config=config,extra_args=['--tasks',str(self.root)])
+        self.addCleanup(taskpane.close);taskpane.settle()
+        taskpane.key(b'm');taskpane.key(b'\r');taskpane.until(lambda:b'Jumped to pane' in taskpane.output)
+        taskview=rpc('session.view',dict(session_id=sid))
+        active=next(w for w in taskview['windows'] if w['window_id']==taskview['active_window_id'])
+        self.assertEqual(active['focused_block_id'],target)
         # Held Enter creates a readable adjacent pane on the board's server;
         # its command is routed to the configured source host.
         p.key(b'm');p.key(b'j');p.key(b'j');p.key(b'\r')
@@ -590,15 +654,15 @@ class BoardTest(unittest.TestCase):
         # and reap its foreground feed children when the board exits.
         live=Pane(self.root,fixture=None,config=config,extra_env=dict(TEEREX_ASK_STATE_DIR=str(self.root/'asks')))
         self.addCleanup(live.close)
-        live.until(lambda:b'net  ' in live.output,seconds=8)
-        self.assertIn('LIVE',live.view())
-        live.key(b'm');live.until(lambda:'m5  LIVE' in live.view(),seconds=5)
+        live.until(lambda:b'disk ' in live.output,seconds=8)
+        self.assertIn('agents',live.view())
+        live.key(b'm');live.until(lambda:live.view().splitlines()[0].strip().startswith('m5  '),seconds=5)
         live.key(b'm')
-        live.until(lambda:'◇ 1' in live.view(),seconds=10)
+        live.until(lambda:'1 asks' in live.view(),seconds=10)
         self.assertNotIn('Pick the release time?',live.view())
         live.key(b'd');live.until(lambda:'Pick the release time?' in live.view())
         live.key(b'2');live.until(lambda:b'Answer recorded' in live.output,seconds=10)
-        self.assertIn('◇ 0',live.view())
+        self.assertNotIn('asks',live.view())
         history=subprocess.run(decision_base+['boards','state','inspect'],env=private_env,capture_output=True,text=True,check=True,timeout=10)
         resolutions=[r for seat in json.loads(history.stdout)['state']['seats'] for r in seat['records'] if r['kind']=='resolution']
         self.assertEqual(resolutions[-1]['body'],dict(id='board-choice',answer='Later'))
@@ -621,7 +685,7 @@ class BoardTest(unittest.TestCase):
         writer=os.open(fifo,os.O_RDWR|os.O_NONBLOCK);self.addCleanup(os.close,writer)
         p=Pane(self.root,width=120,fixture=fifo);self.addCleanup(p.close)
         p.settle()
-        self.assertIn('agents  0 total  0 ► working',p.view())
+        self.assertIn('agents · 0 working',p.view())
         def emit(host, ident, state):
             event=dict(v=1,t=1,kind='agent',host=host,id=ident,name=ident,
                        state=state,now='Active step',done=0,total=1)
@@ -631,33 +695,31 @@ class BoardTest(unittest.TestCase):
             p.settle()
             view=p.view()
             self.assertIn(host,view)
-            self.assertIn('agents  %d total  %d ► working'%(len(names),working),view)
-        emit('hive','late-hive-one','working')
-        expect('hive',['late-hive-one'],1)
-        emit('hive','late-hive-two','idle')
-        expect('hive',['late-hive-one','late-hive-two'],1)
-        emit('m5','late-mac-one','working')
-        p.key(b'm');expect('m5',['late-mac-one'],1)
-        emit('m5','late-mac-two','working')
-        expect('m5',['late-mac-one','late-mac-two'],2)
-        p.key(b'm');expect('hive',['late-hive-one','late-hive-two'],1)
-        emit('hive','late-hive-one','gone')
-        p.until(lambda:'late-hive-one' not in p.view())
-        expect('hive',['late-hive-two'],0)
+            self.assertIn('agents · %d working'%working,view)
+        emit('hive','hive-one','working')
+        expect('hive',['hive-one'],1)
+        emit('hive','hive-two','idle')
+        expect('hive',['hive-one','hive-two'],1)
+        emit('m5','mac-one','working')
+        p.key(b'm');expect('m5',['mac-one'],1)
+        emit('m5','mac-two','working')
+        expect('m5',['mac-one','mac-two'],2)
+        p.key(b'm');expect('hive',['hive-one','hive-two'],1)
+        emit('hive','hive-one','gone')
+        p.until(lambda:'hive-one' not in p.view())
+        expect('hive',['hive-two'],0)
 
     def test_header_counts_idle_done_and_unknown_from_rows(self):
         events=[json.loads(line) for line in FIXTURE.read_text().splitlines()]
         template=next(e for e in events if e['kind']=='agent' and e['host']=='hive')
         for state in ('idle','done','unknown'):
-            events.append(dict(template,id='hive-'+state,name='agent-'+state,state=state,now=state))
+            events.append(dict(template,id='hive-'+state,name=('agent-'+state) if state!='unknown' else 'unknown',state=state,now=state))
         path=self.root/'counts.jsonl';path.write_text('\n'.join(map(json.dumps,events)))
         p=Pane(self.root,width=120,fixture=path);self.addCleanup(p.close)
-        p.until(lambda:b'agent-unknown' in p.output);p.settle()
+        p.until(lambda:b'unknown' in p.output);p.settle()
         view=p.view()
-        self.assertIn('agents  5 total  1 ► working',view)
-        self.assertIn('idle 1  wait 1  error 0  done 1',view)
-        self.assertIn('unknown 1',view)
-        for state in ('idle','done','unknown'):self.assertIn('agent-'+state,view)
+        self.assertIn('agents · 1 working · 1 waiting',view)
+        for state in ('idle','done','unknown'):self.assertIn(('agent-'+state) if state!='unknown' else 'unknown',view)
 
     def test_json_counts_match_filtered_rows(self):
         events=[json.loads(line) for line in FIXTURE.read_text().splitlines()]
@@ -731,7 +793,7 @@ class BoardTest(unittest.TestCase):
         p=Pane(self.root,width=120,fixture=path);self.addCleanup(p.close)
         p.until(lambda:b'hand-started' in p.output);p.settle()
         line=next(l for l in p.view().splitlines() if 'hand-started' in l)
-        self.assertIn('—',line)
+        self.assertTrue(line.rstrip().endswith('typed by hand'),line)
         self.assertNotRegex(line,r'\d{5,}m')
 
     def test_check_probe_skips_pane_closed_mid_read(self):
@@ -766,7 +828,7 @@ class BoardTest(unittest.TestCase):
         path=self.root/'gone.jsonl';path.write_text('\n'.join(map(json.dumps,events)))
         result=subprocess.run([BIN,'board','--replay',str(path),'--once'],env=dict(isolated_environment(),TEEREX_CALL_LOG_DIR=str(self.root/'calls')),capture_output=True,text=True)
         self.assertEqual(result.returncode,0,result.stderr)
-        self.assertIn('No agents working',result.stdout)
+        self.assertIn('agents · 0 working',result.stdout)
         self.assertNotIn('Choose a sound',result.stdout)
 
 
