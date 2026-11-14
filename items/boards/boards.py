@@ -294,13 +294,15 @@ class Store:
 
 
 def validate_state(s):
-    exact(s, ("schema_version", "generation", "seats", "fleet"))
+    exact(s, ("schema_version", "generation", "seats", "fleet"), ("pending_seat",))
     check(s["schema_version"] == 1 and type(s["generation"]) is int and 0 <= s["generation"] < 2**53,
           "invalid_store_version_or_generation")
     check(isinstance(s["seats"], list) and isinstance(s["fleet"], list), "invalid_store_capacity")
     seen = []
     for seat in s["seats"]:
-        exact(seat, ("target", "owner", "registered_at", "records"))
+        exact(seat, ("target", "owner", "registered_at", "records"), ("inherited_to",))
+        if "inherited_to" in seat:
+            target(seat["inherited_to"])
         target(seat["target"])
         text(seat["owner"], 128, False)
         check(type(seat["registered_at"]) is int and seat["registered_at"] > 0, "invalid_timestamp")
@@ -325,6 +327,16 @@ def validate_state(s):
                 decisions[r["body"]["id"]] = True
             else:
                 raise Refused("unknown_record_kind")
+    check(isinstance(s.get("pending_seat", []), list), "invalid_pending_seat")
+    for entry in s.get("pending_seat", []):
+        exact(entry, ("host", "server", "record"))
+        check(isinstance(entry["host"], str) and HOST.fullmatch(entry["host"]), "invalid_host_name")
+        check(isinstance(entry["server"], str) and entry["server"].startswith("unix:///"), "absolute_unix_server_required")
+        record = entry["record"]
+        exact(record, ("kind", "at", "from", "body"))
+        check(record["kind"] == "message" and type(record["at"]) is int and record["at"] > 0, "invalid_pending_message")
+        text(record["from"], 128, False)
+        text(record["body"], 65536)
     seen = []
     for r in s["fleet"]:
         exact(r, ("target", "owner", "purpose", "state", "at", "detail"))
@@ -362,7 +374,7 @@ def seat_for(store, t):
 def live_seat(store, host, socket):
     """Only a successful fresh inventory may establish a missing seat."""
     seats = [s for s in store.state["seats"]
-             if s["target"]["host"] == host and s["target"]["server"] == "unix://" + socket]
+             if s["target"]["host"] == host and s["target"]["server"] == "unix://" + socket and not s.get("inherited_to")]
     if not seats:
         return None
     live = probe(socket)
@@ -394,10 +406,25 @@ def folded(seat):
 
 
 def mutate(a):
-    t = selected(a)
+    role = a.command == "try-route" and a.session == "seat" and a.block == "seat"
+    t = None if role else selected(a)
     with contextlib.closing(Store(a.store)) as store:
         seat = seat_for(store, t)
         if a.command == "try-route":
+            if role or seat is not None:
+                seat = live_seat(store, a.host, a.socket)
+                if seat is None:
+                    text(a.sender, 128, False)
+                    body = text(read_input(a.message_file, 65536, getattr(a, "input_deadline", None)), 65536)
+                    check(not body.startswith(("DECISION-JSON:", "DECISION-RESOLVED-JSON:")), "use_typed_ask_command")
+                    store.state.setdefault("pending_seat", []).append(dict(host=a.host, server="unix://" + a.socket,
+                        record=dict(kind="message", at=stamp(), **{"from": a.sender}, body=body)))
+                    store.save()
+                    result(kind="inbox_route", outcome="queued", reason="no_seat", store=a.store,
+                           generation=store.state["generation"], terminal_input_attempted=False)
+                    return 0
+                t = seat["target"]
+                a.session, a.block = t["session_id"], t["block_id"]
             if seat is None:
                 result(kind="inbox_route", outcome="not_registered", target=t,
                        generation=store.state["generation"], terminal_input_attempted=False)
@@ -409,9 +436,38 @@ def mutate(a):
             return 0
         if a.command == "seat" and a.operation == "register":
             text(a.owner, 128, False)
-            check(seat is None, "seat_already_registered_inspect_before_clear")
-            seat = dict(target=t, owner=a.owner, registered_at=stamp(), records=[])
-            store.state["seats"].append(seat)
+            peers = [s for s in store.state["seats"] if s["target"]["host"] == a.host
+                     and s["target"]["server"] == t["server"] and s["target"] != t]
+            inherited = []
+            if peers:
+                live = probe(a.socket)
+                present = {(row["session"], row["block"]) for row in live["rows"]}
+                check((t["session_id"], t["block_id"]) in present, "new_seat_not_live")
+                check(not any((s["target"]["session_id"], s["target"]["block_id"]) in present
+                              and not s.get("inherited_to") for s in peers), "previous_seat_still_live")
+                inherited = [s for s in peers if (s["target"]["session_id"], s["target"]["block_id"]) not in present]
+            if seat is None:
+                seat = dict(target=t, owner=a.owner, registered_at=stamp(), records=[])
+                store.state["seats"].append(seat)
+            else:
+                check(seat["owner"] == a.owner, "seat_already_registered_by_another_owner")
+            if inherited:
+                check(a.teerex and os.path.isabs(a.teerex), "seat_inheritance_requires_teerex")
+                registry = a.agents_registry or os.path.expanduser("~/.local/state/teerex-agents")
+                if os.path.exists(registry):
+                    args = [a.teerex, "agents", "rebind_seat", "--registry", registry, "--new-target", json.dumps(t)]
+                    for previous in inherited:
+                        args += ["--old-target", json.dumps(previous["target"])]
+                    rebound = bounded_command(args)
+                    check(rebound.get("outcome") == "rebound", "seat_inheritance_rebind_failed")
+                for previous in inherited:
+                    seat["records"].extend(previous["records"])
+                    previous["records"] = []
+                    previous["inherited_to"] = t
+            pending = store.state.get("pending_seat", [])
+            ready = [entry for entry in pending if entry["host"] == a.host and entry["server"] == t["server"]]
+            seat["records"].extend(entry["record"] for entry in ready)
+            store.state["pending_seat"] = [entry for entry in pending if entry not in ready]
         elif a.command == "fleet":
             existing = next((r for r in store.state["fleet"] if r["target"] == t), None)
             if a.operation == "report":
@@ -962,6 +1018,10 @@ def fleet_snapshot(a, state):
             found.update(local_found)
             sources.append(dict(**cfg, configured_name=item.get("name"), outcome="observed", provenance="observation",
                                 source=live["identity"], version=live["version"], observed_at=stamp()))
+            present = {(b["session"], b["block"]) for b in live["rows"]}
+            sources[-1]["seat_state"] = "live" if any(s["target"]["host"] == cfg["host"]
+                and s["target"]["server"] == cfg["server"] and not s.get("inherited_to")
+                and (s["target"]["session_id"], s["target"]["block_id"]) in present for s in state["seats"]) else "no_seat"
             if dashboard:
                 sources[-1]["dashboard_errors"] = metadata.get("errors", [])
         except (Refused, OSError, ValueError, KeyError, TypeError, subprocess.TimeoutExpired) as e:
@@ -1027,6 +1087,8 @@ def render_fleet(snapshot, width):
     for src in snapshot["sources"]:
         lines += wrap(src.get("host", src.get("name", "unknown")) + " · OBSERVATION " + src["outcome"]
                       + " · " + src.get("reason", "API13 read completed"), width)
+        if src.get("seat_state") == "no_seat":
+            lines.append("NO SEAT · messages retained until the next seat registers")
     for row in snapshot["rows"]:
         t, r, obs = row["target"], row["report"], row["observation"]
         lines += ["─" * min(width, 76)]
@@ -1218,6 +1280,9 @@ def parser():
             common(q)
             if op in ("register", "report"):
                 q.add_argument("--owner", required=True)
+            if cmd == "seat" and op == "register":
+                q.add_argument("--agents-registry", help="private agents registry for inheritance; defaults to the local managed registry")
+                q.add_argument("--teerex", help="absolute CLI for registry-locked seat inheritance")
             if op in ("clear", "forget"):
                 q.add_argument("--generation", required=True, type=int)
                 q.add_argument("--reason", required=True)

@@ -916,6 +916,70 @@ class RexBoardsTest(unittest.TestCase):
         with self.assertRaisesRegex(api['Refusal'], 'presence_unknown'):
             api['delivery_destination'](str(root), saved, grandparent)
 
+    def test_seat_successor_inherits_agents_and_pending_messages_once(self):
+        root = self.root / ('successor-' + str(time.monotonic_ns()))
+        root.mkdir(mode=0o700)
+        store, registry = root / 'store', root / 'agents'
+        store.mkdir(mode=0o700)
+        registry.mkdir(mode=0o700)
+        def pane():
+            made = json.loads(subprocess.check_output(self.base + ['new', '--json', '--keep-open', '--shell=none', '--', '/bin/sleep', '120']))
+            return dict(host='fixture', server='unix://' + str(self.socket), session_id=made['session_id'],
+                        block_id=made['initial_windows'][0]['block_ids'][0])
+        old, new = pane(), pane()
+        command = [BIN, '--rex', self.rex]
+        common = ['--store', str(store), '--host', 'fixture', '--socket', str(self.socket)]
+        def register(target):
+            return json.loads(subprocess.check_output(command + ['seat', 'register', *common, '--session', target['session_id'],
+                '--block', target['block_id'], '--owner', 'test', '--agents-registry', str(registry)]))
+        register(old)
+        record = registry / ('agents-' + 'a' * 32 + '.json')
+        record.write_text(json.dumps(dict(schema_version=1, launch_id='a' * 32, target=new, starter=old, report_to=old,
+            contract=dict(starter=old, stalled=True, lapses=3, starter_lapses=2, last_contact_at=1))))
+        record.chmod(0o600)
+        def send(session, block, body):
+            message = root / 'message'
+            message.write_text(body)
+            return json.loads(subprocess.check_output(command + ['send', *common, '--session', session, '--block', block,
+                '--from', 'worker', '--message-file', str(message)]))
+        self.assertEqual(send('seat', 'seat', 'before death')['outcome'], 'recorded')
+        # A successor cannot steal a still-live seat or its workers.
+        refused = subprocess.run(command + ['seat', 'register', *common, '--session', new['session_id'], '--block', new['block_id'],
+            '--owner', 'test', '--agents-registry', str(registry)], capture_output=True, text=True)
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertIn('previous_seat_still_live', refused.stdout)
+        subprocess.check_output(self.base + ['block', 'close', '-s', old['session_id'], old['block_id']])
+        queued = send('seat', 'seat', 'between seats')
+        self.assertEqual(queued['outcome'], 'queued')
+        self.assertEqual(queued['reason'], 'no_seat')
+        state = json.loads((store / 'state.json').read_text())
+        self.assertEqual(len(state['pending_seat']), 1)
+        targets = root / 'targets.json'
+        targets.write_text(json.dumps([dict(host='fixture', server='unix://' + str(self.socket))]))
+        snapshot = json.loads(subprocess.check_output(command + ['boards', 'fleet', '--store', str(store), '--targets-file', str(targets), '--once', '--json']))
+        self.assertEqual(snapshot['sources'][0]['seat_state'], 'no_seat')
+        import runpy
+        dashboard = runpy.run_path(str(ROOT / 'items/boards/dashboard.py'))
+        rendered = '\n'.join(dashboard['fleet_lines'](snapshot, [], 1, 90, color=True))
+        self.assertIn('\x1b[31mNO SEAT', rendered)
+        register(new)
+        rebound = json.loads(record.read_text())
+        self.assertEqual(rebound['starter'], new)
+        self.assertEqual(rebound['report_to'], new)
+        self.assertEqual(rebound['contract']['starter'], new)
+        self.assertFalse(rebound['contract']['stalled'])
+        self.assertEqual(rebound['contract']['lapses'], 0)
+        state = json.loads((store / 'state.json').read_text())
+        self.assertEqual(state['pending_seat'], [])
+        inbox = next(seat for seat in state['seats'] if seat['target'] == new)
+        self.assertEqual([r['body'] for r in inbox['records']], ['before death', 'between seats'])
+        register(new)
+        send(old['session_id'], old['block_id'], 'historical address')
+        state = json.loads((store / 'state.json').read_text())
+        inbox = next(seat for seat in state['seats'] if seat['target'] == new)
+        self.assertEqual([r['body'] for r in inbox['records']], ['before death', 'between seats', 'historical address'])
+        self.assertEqual(len(json.loads(record.read_text())['seat_inheritance']), 1)
+
     def test_fleet_full_evicts_dead_and_all_live_grows(self):
         store = self.root / 'capacity-store'
         store.mkdir(mode=0o700)

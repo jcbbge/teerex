@@ -2529,6 +2529,42 @@ def timeline(o):
     return 0, None
 
 
+def rebind_seat(o):
+    old, new = [json.loads(value) for value in o.old_target], json.loads(o.new_target)
+    for address in old + [new]:
+        address_id(address["session_id"], "session")
+        address_id(address["block_id"], "block")
+    require(all(address.get("host") == new.get("host") and address.get("server") == new.get("server")
+                for address in old), "seat_inheritance_same_server_required")
+    require(isinstance(new.get("server"), str) and new["server"].startswith("unix:///"), "absolute_seat_server_required")
+    transport = dict(socket=new["server"][7:], client_path=os.environ.get("PATH", os.defpath),
+                     rex_executable=os.environ.get("TEEREX_INTERNAL_REX") or "rex")
+    require(pane_presence(transport, new), "new_seat_not_live")
+    require(all(not pane_presence(transport, address) for address in old), "previous_seat_still_live")
+    rebound = []
+    with Registry(o.registry) as registry:
+        for path in Path(o.registry).glob("agents-*.json"):
+            if not re.fullmatch(r"agents-[0-9a-f]{32}\.json", path.name):
+                continue
+            state = registry.read(path.stem[7:])
+            fields = [field for field in ("starter", "report_to") if state.get(field) in old]
+            if not fields:
+                continue
+            for field in fields:
+                state[field] = new
+            c = state.get("contract")
+            if c:
+                if c.get("starter") in old:
+                    c["starter"] = new
+                c.update(stalled=False, lapses=0, starter_lapses=0, last_contact_at=now())
+                c.pop("last_lapse_at", None)
+                c.pop("starter_reminded_at", None)
+            state.setdefault("seat_inheritance", []).append(dict(at=now(), previous=old, target=new, fields=fields))
+            registry.save(state)
+            rebound.append(state["launch_id"])
+    return 0, dict(schema_version=1, kind="agents_result", outcome="rebound", launches=rebound)
+
+
 def profiles(o):
     cfg = config(o.config)
     return 0, dict(schema_version=1, kind="agent_profiles", profiles=cfg["profiles"], defaults=cfg.get("defaults", {}),
@@ -2564,6 +2600,10 @@ def parser():
         "Profiles accept layout: tab|detached and opt-in come_forward: true (place on Stop/StopFailure/exit without focus). "
         "No readiness claim, input lease, untracked agent, daemon, automatic retry/close or whole-tree death guarantee."))
     sub = p.add_subparsers(dest="operation", required=True)
+    q = sub.add_parser("rebind_seat", help="registry-locked inheritance after boards verifies the previous seat absent")
+    q.add_argument("--registry", required=True)
+    q.add_argument("--old-target", action="append", required=True)
+    q.add_argument("--new-target", required=True)
     for op in ("profiles", "shell"):
         q = sub.add_parser(op, help="inspect profiles" if op == "profiles" else "print replacement human-launch functions; no starter/brief needed; never edits shell files")
         q.add_argument("--config", required=True)

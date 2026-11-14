@@ -231,6 +231,9 @@ def fleet_lines(snapshot, rows, now, width, selected=None, flash=(), color=False
         header = header.ljust(width - len(clock)) + clock
     lines = textwrap.wrap(header, width) + ['']
     for source in snapshot.get('sources', []):
+        if source.get('seat_state') == 'no_seat':
+            warning = 'NO SEAT · messages retained until the next seat registers'
+            lines += [('\x1b[31m' + line + '\x1b[0m') if color else line for line in textwrap.wrap(warning, width)]
         if source.get('outcome') != 'observed':
             lines += textwrap.wrap((source.get('configured_name') or source.get('host') or 'Host') + ' · unavailable', width)
     for row, value in zip(rows, values):
