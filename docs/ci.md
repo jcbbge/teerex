@@ -61,7 +61,7 @@ From the repository root with Zig 0.15.2, Python 3 and a deliberately selected c
 ```sh
 zig version
 zig fmt --check build.zig src items
-# Linux; use aarch64-macos on an arm64 Mac instead.
+# Disposable Linux CI environment (estate installation is linked below).
 zig build -Doptimize=ReleaseSmall -Dtarget=x86_64-linux-musl
 zig test --dep pane_guard -Mroot=src/child_test.zig -Mpane_guard=src/pane_guard.zig
 export TEEREX_BIN="$PWD/zig-out/bin/teerex"
@@ -81,7 +81,7 @@ python3 tools/install/test_install.py --public -v
 zig build -Doptimize=ReleaseSmall -Dtarget=aarch64-macos --prefix zig-out/mac
 ```
 
-On a disposable arm64 macOS 26 machine, run the common commands with the Mac target, then:
+On a disposable hosted arm64 macOS 26 runner with the selected CI Xcode, run the common commands with the Mac target, then:
 
 ```sh
 python3 items/run/test_run.py -v
@@ -104,3 +104,7 @@ Local combined alpha.3 runtime validation passed **83** checks on native Debian1
 The shipping owner must verify checks on the exact pushed commit before reporting hosted CI green. A local result or another commit's green status does not establish that. Combined-runtime and release evidence is recorded in the [direction record](direction.md) and item contracts. Source snapshots, compiler versions and executable hashes distinguish preliminary runs from final-byte tests.
 
 Cross-compilation alone is not Mac runtime coverage. Linux Debian and Ubuntu-userland chroot results do not establish hive, a distinct Ubuntu kernel or a minimum supported kernel. Process-group tests do not establish sandboxing, arbitrary detached-descendant cleanup, all-build compatibility, M5 compatibility or human task completion. Offstage tests demonstrate surviving descendants and owner-crash leaks. Doctor's advertised checks are not behavior certification. Historical research and deferred non-Rex material remain unchanged.
+
+## Estate builds (hive and M5)
+
+Use only the [rexconfig build and install procedure](https://github.com/jcbbge/rexconfig#readme) for the estate. It owns the pinned build, cross-compilation on hive, verified installation and live checks on both machines. The disposable CI commands above are not an M5 native-build or estate-install procedure.
