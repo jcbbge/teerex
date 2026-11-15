@@ -1,110 +1,135 @@
-**Lanes (Josh, 13 November 2026):** CI runs the two environments Josh uses, Linux API13 (like hive) and Mac API13 (like the M5). The Mac API10 and API12 lanes were dropped. CI is a background check, never an install gate: changes are tested locally on hive and the M5, installed, and CI turning red means fix it or roll back.
-
 # Build and regression CI
 
-[The workflow](../.github/workflows/ci.yml) runs on pull requests and pushes to `main`. It does not release, deploy, create tags, install a service or change Rex configuration. Its token has only `contents: read`; checkout credentials are not persisted. No repository secrets or paid/larger/self-hosted runners are required. Standard hosted runners are free for this public repository; changing repository visibility requires reviewing that assumption.
+[The workflow](../.github/workflows/ci.yml) is started manually with
+`workflow_dispatch`. Pushes and pull requests do not start it. It is a background
+check, not an estate installation gate. Changes are checked locally on hive and
+the M5; the estate build and installation procedure is linked below.
 
-## Alpha.5 additions
+The workflow does not release, deploy, create tags, install a service or change
+personal Rex configuration. Its token has `contents: read`, and checkout does
+not persist credentials. It uses GitHub-hosted runners. This page describes the
+workflow source, not a claim that the current commit has passed a hosted run.
 
-The published alpha.5 source `682489d66dfdb39992b1b2e9f05054bcc009e6d7` passed [all four hosted lanes](https://github.com/jcbbge/teerex/actions/runs/43294504395). Fresh public-byte lifecycle acceptance on both OSes is recorded in the [release guide](releases/v0.1.0-alpha.5.md#quick-changelog-and-current-setup-handoff). Later documentation-only pushes require their own exact-head checks; they do not rebuild those immutable release archives or imply personal-host acceptance.
+## Active lanes
 
-The existing four lanes retain their pinned toolchains/Rex builds and legacy suites. Alpha.5 adds root targets/version/embedded-native-fleet acceptance (`src/test_targets.py`) and surfaces15 on all four lanes. API13 lanes additionally run recovery11 and fleet11. API10/12 lanes run recovery update inventory and explicit snapshot refusal; snapshot/restore and managed launch are not certified on those APIs. Core installer suite is now20. The existing catalog uses version0.1.0-alpha.5 but retains ten Mac/seven Linux native payloads; the new composed operating-layer commands are combined-CLI only.
-
-Local real loopback SSH tests are separate opt-in checks (`python3 tools/fleet-install/test_ssh.py`), requiring disposable sshd/sudo and generated keys. They are not silently counted as hosted CI. No personal endpoints/credentials are required. A green diagnostic85c3f29 workflow predates the new alpha.5 source and is not its exact-head CI result.
-
-## Unreleased visible-runner source coverage
-
-Current source adds the separate `run-visible` root verb and the opt-in `targets exec --tty` transport. These are not rebuilt alpha.5 assets. All four lanes run the expanded10 named-target contracts, including literal program options after `--`, selected run-visible socket placement and default-versus-opt-in SSH transport. API13 lanes run `items/run/test_visible.py` (13 tests); API10/12 lanes select its actual observed-API pre-creation refusal case. The previous wrapper-only refusal fixture was split from input-validation coverage so older lanes can execute this check against their real pinned servers. Legacy Mac run11 remains unchanged and still runs.
-
-Local combined Linux/Mac acceptance passes the new suites, surfaces15 on both, Mac legacy run11, and actual Mac API10/API12 refusal. Real loopback OpenSSH separately checks actual PTY allocation, literal argv/status and unknown/changed host-key refusal; it is not silently counted as hosted CI. That source head ebd6fc0817e429b327e3e8a42da3bb9145380282 subsequently [passed all four exact-head hosted lanes](https://github.com/jcbbge/teerex/actions/runs/43367904691). No release, personal operation, Rivet application or fallback deletion follows a green workflow.
-
-## Removed agent controller
-
-The agents command and its launch, callback, channel and fence tests were removed in plan step 10. Named-host routing and visible execution retain their own tests.
-
-## Required lanes and coverage
-
-| Check | Explicit runner | Selected coverage |
+| Lane | Runner | Target |
 | --- | --- | --- |
-| Linux API13 and Apple-silicon cross-build | `ubuntu-24.04`, x86-64 | Static musl CLI, child supervision, observe/compare/watch, send, jobs, doctor and installer contracts and Mac cross-build. |
-| Mac API10 (Rex preview.13) | `macos-26`, arm64 | Child supervision, observe/compare/watch, run/send and doctor. |
-| Mac API12 (Rex preview.14) | `macos-26`, arm64 | Same public suites as Mac API10. |
-| Mac API13 (Rex preview.16) | `macos-26`, arm64 | Same public suites plus API13 jobs and installer controls. |
+| Linux API13 and Apple-silicon cross-build | `ubuntu-24.04`, x86-64 | `x86_64-linux-musl`; also cross-build `aarch64-macos` |
+| Mac API13 (Rex preview.16) | `macos-26`, arm64 | `aarch64-macos` |
 
-Every lane checks Zig formatting and builds `ReleaseSmall`. Zig **0.15.2** is downloaded from its versioned official archive and checked against the platform-specific SHA-256 from [Zig's download index](https://ziglang.org/download/index.json). Python **3.13** is selected explicitly. GitHub actions use immutable commit pins. There is no `zig build test` interface: CI invokes the listed Python public-CLI suites and `zig test --dep pane_guard -Mroot=src/child_test.zig -Mpane_guard=src/pane_guard.zig` directly.
+The Mac API10 and API12 lanes were removed. The workflow still contains
+conditional older-API refusal steps, but neither active matrix entry selects
+them. API11 and other Rex builds are not certified by this matrix.
 
-The four cells continue independently when another fails. Tests are not retried, allowed to fail or skipped for missing dependencies. A failed download, checksum, startup, wrong architecture/OS family or regression fails its lane. Platform/revision-specific steps are deliberately selected; Linux alone is not full integration coverage. Linux run/doctor runtime are unsupported, not covered by a successful cell. Branch-protection settings are unchanged.
+Both lanes check Zig formatting, build `ReleaseSmall`, and run the native child
+supervisor regressions. They select Python 3.13 and checksum-pinned Zig 0.15.2.
+The Mac lane selects Xcode 26.1.1 through its per-job `DEVELOPER_DIR`; an absent
+selection fails rather than falling back. The workflow records tool versions,
+runner image metadata and the actual Rex commit/API. Runner labels select an OS
+family; they do not freeze subsequent image updates.
 
-The [official runner reference](https://docs.github.com/en/actions/reference/runners/github-hosted-runners) lists `macos-26` as standard Apple-silicon/arm64. CI checks arm64 and macOS major version 26 at runtime. These labels avoid `*-latest`, but GitHub updates patch versions and image contents: they are not immutable VM-image pins. Jobs log image metadata, architecture, tools and actual Rex identity. Updated images must pass the tests again.
+The matrix has `fail-fast: false`. A failed dependency download, checksum,
+platform check, server startup or regression fails that lane. A newer dispatch
+for the same workflow/ref cancels an older run through the concurrency setting.
+The workflow does not configure branch protection.
 
-Mac jobs explicitly select installed **Xcode26.1.1** through per-job `DEVELOPER_DIR=/Applications/Xcode_26.1.1.app/Contents/Developer` and log its SDK. This does not change the machine-wide Xcode selection. The first hosted alpha.3 API10 job on image20261102.0473.1 failed before tests: its default Xcode26.6/SDK26.5 uses arm64e-only system-library stubs that Zig0.15.2 cannot match when linking its native build runner. The previously successful disposable macOS26 environment used Xcode26.1.1/SDK26.1; OS-family parity alone did not establish SDK parity. An absent selected Xcode fails explicitly rather than falling back or skipping native tests. See Zig upstream issues [31658](https://github.com/ziglang/zig/issues/31658), [31669](https://github.com/ziglang/zig/issues/31669) and [31673](https://github.com/ziglang/zig/issues/31673).
+## Selected regression suites
+
+The workflow's commands are the source of truth for suite selection. Current
+runtime selections on both API13 lanes are:
+
+- observation, comparison, watch and inferred state:
+  `items/observe/test_observe.py`, `items/observe/test_state.py`;
+- guarded send and cooperative holds: `items/send/test_send.py`,
+  `items/clutch/test_clutch.py`;
+- board event feed and responsibility registry:
+  `items/boardfeed/test_feed.py`, `items/jobs/test_jobs.py`;
+- public help and named-host routing: `src/test_help.py`, `src/test_targets.py`;
+- surfaces: `items/surfaces/test_surfaces.py`;
+- recovery and fleet installation: `items/recovery/test_recovery.py`,
+  `tools/fleet-install/test_fleet_install.py`;
+- board replay: `items/board/test_board.py`;
+- records and decisions: `items/records/test_records.py`,
+  `items/records/test_decisions.py`;
+- visible execution and execution cleanup: `items/run/test_visible.py`,
+  `items/run/test_run.py`;
+- doctor: `items/doctor/test_doctor.py`;
+- installer lifecycle and public-release controls:
+  `tools/install/test_install.py --public`.
+
+These are file selections, not fixed test counts. Individual suites can select
+platform-specific cases; the workflow source and test decorators show those
+limits. The removed agent controller's launch/callback/channel/fence suites are
+not part of this workflow.
+
+Linux additionally runs the comparison class before downloading Rex, an
+explicit offline-only doctor pass, static executable checks, and the Mac
+cross-build. The comparison class repeats cases in the later full observation
+suite. The Linux preparation step installs disposable SSH/fence dependencies
+and a fixture-specific bubblewrap AppArmor profile; it does not disable the
+system-wide user-namespace restriction.
+
+Linux execution and doctor regression suites are selected by the workflow.
+Doctor's Linux receipt still labels `run` as `not_applicable` with a macOS-only
+reason in [its implementation](../items/doctor/main.zig). That is a diagnostic
+limitation: it does not establish that Linux execution is unavailable. Doctor
+checks advertised bindings; it does not certify command behavior.
+
+The separate [loopback SSH acceptance](../tools/fleet-install/test_ssh.py) is an
+opt-in check requiring disposable sshd/sudo and generated keys. The workflow
+prepares SSH dependencies, but does not directly invoke that script. Preparation
+alone must not be counted as an executed SSH acceptance result.
 
 ## Rex pins and isolation
 
-Rex is proprietary and downloaded separately in every runtime lane. It is not bundled or uploaded as an artifact. Public availability is not redistribution permission. Each URL uses `https://blob.superlogical.com/download/rex/preview/COMMIT/ARCHIVE` with these immutable selections:
+Each runtime lane downloads Rex separately. The workflow matrix owns the exact
+Rex commit, archive names and SHA-256 values; read those there rather than
+substituting an installed or rolling preview. Both current entries select
+preview.16/API13. The Mac archive is `rex-darwin-arm64.zip`; Linux uses
+`rex-linux-amd64.tar.gz`. Preview numbers are not API revisions.
 
-| Lane | Preview / API | Commit | Archive SHA-256 |
-| --- | --- | --- | --- |
-| Mac API10 | preview.13 / 10 | `1b6654811346488b696ded8f3c7e6701c57242f1` | `dfc3c5d57c9637ac21f41a7fa425a453fed64d68152b90772afb2d815b028977` |
-| Mac API12 | preview.14 / 12 | `7e460d02f51573990bfcdc6c44a5606d11c7d47a` | `728df49b2cefcd62b7dde14cfcbd238cac69ec1524d71c19e6a389728ebe5374` |
-| Mac API13 | preview.16 / 13 | `aa2db1b21261b479a550559fb70e2c3a66c07ba2` | `3055299e4fe881d97e8ca452e33906b8a9c7aedf36b836845ebb587829b29a29` |
-| Linux API13 | preview.16 / 13 | `aa2db1b21261b479a550559fb70e2c3a66c07ba2` | `90b2429036d26f317aaac2490d014e07c9351b0b994b1329afce94b8ad4d333c` |
+The downloaded executable is checked for its expected commit/API and prepended
+to `PATH`; `TEEREX_BIN` selects the absolute checkout-built CLI. Test fixtures use
+private temporary state and explicit disposable sockets. See each selected
+suite for its setup, skips and cleanup. Hosted jobs do not attach to the
+operator's live Rex on hive or the M5. Rex is not uploaded as a workflow artifact.
 
-Mac archives are `rex-darwin-arm64.zip`; Linux is `rex-linux-amd64.tar.gz`. Preview numbers are not API revisions. API11 remains actual-build unverified; numeric acceptance is not all-build certification.
+## Reproducing a selected check
 
-There is no rolling-preview lookup or fallback to another installed Rex. The verified executable is prepended to `PATH`; `TEEREX_BIN` selects the absolute checkout-built CLI. Tests use private temporary directories, explicit sockets, `/dev/null` config and `--restore=false` servers, then stop their fixtures. They never attach to default/personal Rex, Joshua's M5 or hive. Execution fixtures run only on the disposable machine. No raw terminal captures, vendor binaries or private receipts are published.
+Use the exact command and environment from the relevant workflow step, in a
+disposable environment with its toolchain and checksum-verified Rex already
+provisioned. Preserve that step's platform and API conditions. Run the suite
+needed for the change; this page is not an instruction to run every suite.
 
-## Reproduce the checks
-
-From the repository root with Zig 0.15.2, Python 3 and a deliberately selected checksum-verified Rex on PATH:
-
-```sh
-zig version
-zig fmt --check build.zig src items
-# Disposable Linux CI environment (estate installation is linked below).
-zig build -Doptimize=ReleaseSmall -Dtarget=x86_64-linux-musl
-zig test --dep pane_guard -Mroot=src/child_test.zig -Mpane_guard=src/pane_guard.zig
-export TEEREX_BIN="$PWD/zig-out/bin/teerex"
-export REX_BIN="$(command -v rex)"
-rex version
-python3 items/observe/test_observe.py -v
-python3 items/send/test_send.py -v
-# API13 only:
-python3 items/jobs/test_jobs.py -v
-```
-
-On Linux, also run:
+For example, after building the selected commit for the execution host, a
+public-help check needs only that executable:
 
 ```sh
-TEEREX_OFFLINE_ONLY=1 python3 items/doctor/test_doctor.py -v
-python3 tools/install/test_install.py --public -v
-zig build -Doptimize=ReleaseSmall -Dtarget=aarch64-macos --prefix zig-out/mac
+TEEREX_BIN="$PWD/zig-out/bin/teerex" python3 src/test_help.py -v
 ```
 
-On a disposable hosted arm64 macOS 26 runner with the selected CI Xcode, run the common commands with the Mac target, then:
-
-```sh
-python3 items/run/test_run.py -v
-python3 items/doctor/test_doctor.py -v
-# Only the API13 cell:
-python3 tools/install/test_install.py --public -v
-```
-
-Historical alpha.4 baseline executions per cell (retained for provenance; alpha.5 additions/counts above supersede this inventory):
-
-
-The runtime payload suite uses direct installed executable paths to preserve deliberate HOME changes and concurrent senders; direct invocation bypasses manager leases. Managed help/offline acceptance and lifecycle14 test the manager separately. Its short registry mutex is nonblocking, and a selected root remains HOME-bound; concurrent manager starts can refuse before payload dispatch. Do not describe direct payload success as managed concurrent-start coverage.
-
-The extra Linux eight comparisons intentionally repeat cases contained in observe28 before Rex download; do not count them as new behaviors. CI discovers no unlisted suites. Installer public-download controls deliberately select the historical alpha.1 Mac release and Linux absent-asset case; other versions are native help-only fixtures. Those tests are not public alpha.4-download or live Rex proof. Final release archives receive a separate exact-byte install/upgrade/rollback/remove check.
+A source snapshot without `zig-out/bin/teerex` must build it with the workflow's
+selected target/toolchain first, or use `TEEREX_BIN` pointing to an already-built
+executable of that same commit. Do not treat another commit's binary as proof.
+A runtime suite also needs the deliberately selected Rex and any step-specific
+prerequisites. A cross-build alone does not establish Mac runtime coverage.
 
 ## Evidence and limits
 
-Local combined alpha.3 runtime validation passed **83** checks on native Debian13/kernel6.1.189+/API13 and **107** on disposable arm64 macOS27.2/API13 using the packaged executable bytes. The Linux total omits CI's repeated eight offline comparisons. A separate final-byte matrix on disposable arm64 macOS26.3.1 passed **86/86/107** executions on actual API10/API12/API13; Linux passed91 including the eight repeats. All27 runtime/test/installer source files matched published alpha.3 commit8b282786. The Mac matrix deliberately executed the packaged `99679a4f…61cd0` candidate, not its different-hash native rebuild; native compilation and child tests were exercised separately. These results do not establish hosted-image success, API11, M5 or hive compatibility.
+Historical release evidence lives in the [alpha.5 release guide](releases/v0.1.0-alpha.5.md)
+and the [direction record](direction.md). Historical four-lane results do not
+make API10/API12 active lanes today. Release acceptance, local machine checks and
+hosted CI are distinct evidence; one does not establish another's result.
+The owner reporting hosted success must inspect the run for the exact pushed
+commit. This page's source inventory is not such a success report.
 
-The shipping owner must verify checks on the exact pushed commit before reporting hosted CI green. A local result or another commit's green status does not establish that. Combined-runtime and release evidence is recorded in the [direction record](direction.md) and item contracts. Source snapshots, compiler versions and executable hashes distinguish preliminary runs from final-byte tests.
-
-Cross-compilation alone is not Mac runtime coverage. Linux Debian and Ubuntu-userland chroot results do not establish hive, a distinct Ubuntu kernel or a minimum supported kernel. Process-group tests do not establish sandboxing, arbitrary detached-descendant cleanup, all-build compatibility, M5 compatibility or human task completion. Offstage tests demonstrate surviving descendants and owner-crash leaks. Doctor's advertised checks are not behavior certification. Historical research and deferred non-Rex material remain unchanged.
+Process-group cleanup tests do not prove arbitrary detached-descendant cleanup,
+all-build compatibility, graphical painting or human task completion. See the
+individual contracts and receipts for what each check establishes.
 
 ## Estate builds (hive and M5)
 
-Use only the [rexconfig build and install procedure](https://github.com/jcbbge/rexconfig#readme) for the estate. It owns the pinned build, cross-compilation on hive, verified installation and live checks on both machines. The disposable CI commands above are not an M5 native-build or estate-install procedure.
+Use the [rexconfig build and install procedure](https://github.com/jcbbge/rexconfig#readme)
+for the estate. It owns the pinned build, cross-compilation on hive, verified
+installation and live checks on both machines. Disposable CI commands are not
+an M5 native-build or estate-install procedure.
