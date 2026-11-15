@@ -28,6 +28,47 @@ def raw(node):
     return node["content"].encode() if node["encoding"] == "utf8" else base64.b64decode(node["content"], validate=True)
 
 
+class ReceiptTest(unittest.TestCase):
+    def test_atomic_replacement_after_open_preserves_private_receipt_snapshot(self):
+        import contextlib
+        import importlib.util
+        import io
+        import tempfile
+        from unittest.mock import patch
+        spec = importlib.util.spec_from_file_location("receipt_visible", Path(__file__).with_name("visible.py"))
+        visible = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(visible)
+        with tempfile.TemporaryDirectory() as directory:
+            receipt = Path(directory) / "receipt.json"
+            old = dict(schema_version=1, kind="run_visible_result", receipt_state="final", outcome="old")
+            new = dict(old, outcome="new")
+            visible.save(receipt, old)
+            fstat = os.fstat
+            observed = []
+
+            def replace_before_stat(fd):
+                visible.save(receipt, new)
+                info = fstat(fd)
+                observed.append(info.st_nlink)
+                return info
+
+            output = io.StringIO()
+            with patch.object(visible.os, "fstat", replace_before_stat), contextlib.redirect_stdout(output):
+                self.assertEqual(visible.read_receipt(["--file", str(receipt)]), 0)
+            self.assertEqual(observed, [0])
+            self.assertEqual(json.loads(output.getvalue()), old)
+            self.assertEqual(json.loads(receipt.read_text()), new)
+            # Retain the safety checks for shared or non-private files.
+            link = Path(directory) / "linked"
+            os.link(receipt, link)
+            with self.assertRaisesRegex(ValueError, "private_owned_regular_receipt_required"):
+                visible.read_receipt(["--file", str(receipt)])
+            link.unlink()
+            receipt.chmod(0o644)
+            with self.assertRaisesRegex(ValueError, "private_owned_regular_receipt_required"):
+                visible.read_receipt(["--file", str(receipt)])
+
+
 class VisibleTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

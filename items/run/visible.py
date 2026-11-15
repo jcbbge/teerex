@@ -711,8 +711,10 @@ def read_receipt(args):
             continue
         with os.fdopen(descriptor, "rb") as f:
             info = os.fstat(f.fileno())
-            if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o600 or info.st_nlink != 1:
+            if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o600 or info.st_nlink > 1:
                 raise ValueError("private_owned_regular_receipt_required")
+            # Atomic publication can unlink this already-open private inode.
+            # Its bytes remain a valid snapshot; multiple links still refuse.
             raw = f.read(INPUT_LIMIT + 1)
         if len(raw) > INPUT_LIMIT:
             raise ValueError("receipt_exceeds_1MiB")
