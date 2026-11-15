@@ -238,12 +238,12 @@ class FeedTests(unittest.TestCase):
         self.assertGreater(a['mem']['total'],0);self.assertTrue(b['cpu']);self.assertTrue(b['disks'])
         self.assertTrue(all(0<=x<=100 for x in b['cpu']))
 
-    def test_status_scratch_calls_and_removal(self):
+    def test_status_scratch_and_retired_calls_ignored(self):
         with resources.temporary_directory() as tmp:
             root=Path(tmp)
             class Args:pass
             a=Args();a.host='fixture';a.rex='/not-found';a.socket=str(root/'none')
-            for field in ('scratch','calls'):
+            for field in ('scratch',):
                 setattr(a,field,root/field);getattr(a,field).mkdir()
             session='session:11111111-1111-1111-1111-111111111111';block='block:22222222-2222-2222-2222-222222222222'
             (a.scratch/session).mkdir();pad=a.scratch/session/(block+'.md')
@@ -256,18 +256,20 @@ class FeedTests(unittest.TestCase):
                 state.scan();state.scan()
                 state.scan()
                 pad.write_text('## Now\n- [ ] Test feed\n');state.scan()
+                a.calls=root/'calls';a.calls.mkdir()
                 (a.calls/'calls.jsonl').write_text(json.dumps(dict(phase='start',call_id='one',verb='send',body='SECRET'))+'\n'+json.dumps(dict(phase='end',call_id='one',exit=0))+'\n');state.scan()
                 state.live={};state.scan()
             rows=[json.loads(x) for x in out.getvalue().splitlines()]
             agents=[r for r in rows if r['kind']=='agent']
             self.assertEqual(len(agents),3);self.assertEqual(agents[0]['total'],3);self.assertEqual(agents[-1]['state'],'gone')
-            self.assertIn('message delivered',out.getvalue());self.assertNotIn('SECRET',out.getvalue());self.assertNotIn('DO NOT PRINT',out.getvalue())
+            self.assertFalse(any(r['kind']=='stream' for r in rows))
+            self.assertNotIn('SECRET',out.getvalue())
 
     def test_agent_hook_status_classifies_panes(self):
         with resources.temporary_directory() as tmp:
             root=Path(tmp)
             a=SimpleNamespace(host='fixture',rex='/not-found',socket=str(root/'none'))
-            for field in ('scratch','calls'):
+            for field in ('scratch',):
                 setattr(a,field,root/field);getattr(a,field).mkdir()
             state=feed.State(a);state.refresh_inventory=lambda:True
             block='block:worker'
@@ -328,7 +330,7 @@ class FeedTests(unittest.TestCase):
                     if server.poll() is not None:raise RuntimeError('fixture Rex exited')
                     time.sleep(.02)
                 command=([os.environ['TEEREX_BIN'],'board','feed'] if os.environ.get('TEEREX_BIN') else [sys.executable,str(SOURCE),'/not-used'])+['--local','--host-name','fixture','--socket',str(socket),'--rex',REX]
-                for flag in ('scratch','calls'):
+                for flag in ('scratch',):
                     (root/flag).mkdir();command+=['--'+flag,str(root/flag)]
                 process=resources.start_process(command,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,env=dict(isolated_environment(),HOME=tmp))
                 events=queue.Queue()
@@ -366,7 +368,7 @@ class FeedTests(unittest.TestCase):
                 plain_created=json.loads(plain.stdout)
                 class Args:pass
                 args=Args();args.host='fixture';args.rex=REX;args.socket=str(socket)
-                for key,folder in [('scratch','scratch'),('calls','calls')]:setattr(args,key,root/folder)
+                for key,folder in [('scratch','scratch')]:setattr(args,key,root/folder)
                 inventory=feed.State(args)
                 with contextlib.redirect_stdout(io.StringIO()):inventory.scan()
                 self.assertEqual(set(inventory.rows),{block,other_block})
@@ -379,8 +381,6 @@ class FeedTests(unittest.TestCase):
                 probe=importlib.util.module_from_spec(probe_spec);probe_spec.loader.exec_module(probe)
                 observed=json.loads(subprocess.check_output([sys.executable,'-c',probe.PROBE,REX,str(socket)],timeout=15))
                 self.assertEqual({r['block'] for r in observed},{block,other_block})
-                (root/'calls'/'calls.jsonl').write_text(json.dumps(dict(phase='start',call_id='x',verb='send'))+'\n'+json.dumps(dict(phase='end',call_id='x',exit=0))+'\n')
-                wait_for(lambda e:e['kind']=='stream' and e['text']=='message delivered')
                 closed=subprocess.run([REX,'--autostart=false','-S',endpoint,'block','close','--session',session,block],capture_output=True,text=True,timeout=5)
                 self.assertEqual(closed.returncode,0,closed.stderr)
                 wait_for(lambda e:e['kind']=='agent' and e['state']=='gone')

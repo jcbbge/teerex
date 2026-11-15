@@ -81,9 +81,8 @@ class SendTest(unittest.TestCase):
     def setUp(self):
         self.work = self.root / str(time.monotonic_ns())
         self.work.mkdir()
-        (self.work / "inbox").mkdir()
         # Exact same TMPDIR lock namespace as agent-send; no test lock in /tmp root.
-        self.env = dict(isolated_environment(), TEEREX_ASK_STATE_DIR=str(self.work / "asks"), TEEREX_CLUTCH_DIR=str(self.work / "clutch"), TMPDIR=str(self.work), AGENT_INBOX_DIR=str(self.work / "inbox"),
+        self.env = dict(isolated_environment(), TEEREX_ASK_STATE_DIR=str(self.work / "asks"), TEEREX_CLUTCH_DIR=str(self.work / "clutch"), TMPDIR=str(self.work),
                         REX_SERVER="unix:///tmp/never-this-server.sock", REX_BLOCK="block:wrong",
                         REX_SESSION="session:wrong", REX_CLIENT="client:wrong",
                         PATH=str(Path(self.rex).parent) + os.pathsep + os.environ.get("PATH", ""))
@@ -573,24 +572,6 @@ class SendTest(unittest.TestCase):
             "session_id": target[0], "block_id": target[1], "args": {"data": "BYPASS"}})
         self.received(raw, b"BYPASS")
         self.lock(target).rmdir()
-
-    def test_inbox_marker_custom_and_home_default(self):
-        target, raw = self.fixture()
-        marker = self.work / "inbox" / (target[1].split(":")[1] + ".inbox")
-        marker.write_text("hive\n")
-        r, p = self.send(target)
-        self.assertEqual(r.returncode, 1)
-        self.assertEqual(p["outcome"], "inbox_refused")
-        self.assertFalse(p["backend_invoked"])
-        marker.unlink()
-        self.env["AGENT_INBOX_DIR"] = ""  # Bash ${AGENT_INBOX_DIR:-...} semantics.
-        self.env["HOME"] = str(self.work)
-        marker = self.work / ".local/state/agent-inbox" / marker.name
-        marker.parent.mkdir(parents=True)
-        marker.touch()
-        r, p = self.send(target)
-        self.assertEqual(p["outcome"], "inbox_refused")
-        self.assertEqual(raw.read_bytes(), b"")
 
     def test_cancel_lock_wait_leaves_other_lock(self):
         target, raw = self.fixture()

@@ -7,17 +7,16 @@ installation, retry, or SSH fallback is started. Disconnects produce `host`
 events while the other host continues.
 
 `--local --host-name NAME --socket ABS --rex ABS` runs a transport worker on
-one host. Read-only source overrides: `--scratch ABS`, `--calls ABS`. Defaults are the host's
-`~/.local/state/agent/scratch` (owned by rexconfig) and
-`~/.local/state/teerex/calls`; `TEEREX_CALL_LOG_DIR` selects the call directory.
+one host. Read-only scratchpad override: `--scratch ABS`. The default is the host’s
+`~/.local/state/agent/scratch`, owned by rexconfig. Retired command call logs
+and launch profiles are not read.
 The named-host transport injects the configured socket and Rex executable.
 Python 3.9+ is required, using only its standard library.
 
 Rex `events --all --json` provides pane, title, focus, process and program status
 changes. Initial process/status reads seed registered panes. Session view events refresh
 placement and remove closed panes from the agent view. inotify on Linux
-and kqueue vnode notifications on macOS watch registries, call logs and
-scratchpads, including directory creation and atomic replacement. Only changed
+and kqueue vnode notifications on macOS watch scratchpads, including directory creation and atomic replacement. Only changed
 agent projections are emitted; a removed record emits `gone`. Successful call
 end records are joined to their starts before projecting plain descriptions.
 Tokens, arguments, brief/report bodies and arbitrary call fields are excluded.

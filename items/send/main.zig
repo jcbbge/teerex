@@ -16,10 +16,10 @@ const usage =
     \\Send reads clutch state; only a confirmed hold creates private queue records. release drains in order.
     \\State: TEEREX_CLUTCH_DIR or ~/.local/state/teerex/clutch; same command/Rex host required.
     \\--draft-wait-ms N defaults 30000 (0..55000); quiet window1500ms, restore delay400ms.
-    \\Ignore preserves paste/Enter behavior after release. No chunking, resend, inbox forwarding, or autostart.
+    \\Ignore preserves paste/Enter behavior after release. No chunking, resend or autostart.
     \\File: regular, or - reads stdin until EOF within the same deadline/cancellation budget, before any dispatch.
     \\Input: 1..65536 UTF-8 bytes; LF/tab allowed, other C0/DEL rejected. Encoded RPC capped at 60000 bytes.
-    \\Local inbox markers refuse input. Same-host/TMPDIR agent-send mkdir lock serializes cooperating senders only.
+    \\Same-host/TMPDIR agent-send mkdir lock serializes cooperating senders only.
     \\Timeout defaults to draft wait+10000ms (including ignore), range100..115000; includes lock/Rex.
     \\Draft text is never reported. Keystrokes between final read and Ctrl-U can still race clearing.
     \\Restore polls100ms up to1500ms; unverified/failed restore warns without failing acknowledged send.
@@ -138,17 +138,6 @@ fn fullId(value: []const u8, prefix: []const u8) bool {
 fn textValid(value: []const u8, multiline: bool) bool {
     if (!std.unicode.utf8ValidateSlice(value)) return false;
     for (value) |c| if ((c < 32 and !(multiline and (c == '\n' or c == '\t'))) or c == 127) return false;
-    return true;
-}
-
-fn inboxMarked(allocator: std.mem.Allocator, env: *const std.process.EnvMap, suffix: []const u8) !bool {
-    const configured = env.get("AGENT_INBOX_DIR") orelse "";
-    const root = if (configured.len != 0) configured else try std.fs.path.join(allocator, &.{ env.get("HOME") orelse return error.HomeRequiredForInboxCheck, ".local/state/agent-inbox" });
-    const path = try std.fmt.allocPrint(allocator, "{s}/{s}.inbox", .{ root, suffix });
-    std.fs.cwd().access(path, .{}) catch |err| {
-        if (err == error.FileNotFound) return false;
-        return err;
-    };
     return true;
 }
 
@@ -314,10 +303,6 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
                 outcome = "deadline_exceeded";
                 break :work;
             }
-            if (try inboxMarked(allocator, &env, suffix)) {
-                outcome = "inbox_refused";
-                break :work;
-            }
             std.fs.cwd().makeDir(lock_path) catch |err| {
                 if (err != error.PathAlreadyExists) return err;
                 std.Thread.sleep(@as(u64, @min(20, timeout_ms - elapsed)) * std.time.ns_per_ms);
@@ -326,10 +311,6 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
             locked = true;
             acquired = true;
             break;
-        }
-        if (try inboxMarked(allocator, &env, suffix)) {
-            outcome = "inbox_refused";
-            break :work;
         }
         const elapsed = timer.read() / std.time.ns_per_ms;
         if (elapsed >= timeout_ms) {

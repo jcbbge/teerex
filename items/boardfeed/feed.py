@@ -335,7 +335,7 @@ class Tasks:
 
 class State:
     def __init__(self, a):
-        self.a=a; self.rows={};self.calls={};self.call_starts={};self.roots={};self.pids={};self.status={};self.questions={};self.reports={};self.seeded=set();self.live={};self.reachable=None
+        self.a=a; self.rows={};self.roots={};self.pids={};self.status={};self.questions={};self.reports={};self.seeded=set();self.live={};self.reachable=None
         self.lock=threading.RLock()
         self.processes={}
 
@@ -403,7 +403,6 @@ class State:
             self.seeded.intersection_update(self.live)
             self.processes={b:p for b,p in self.processes.items() if b in self.live}
             self.roots={self.pids[row['block']]:row['name'] for row in rows.values() if row['block'] in self.pids}
-            self.tail_calls()
 
     def refresh_process(self,block,session):
         self.processes.pop(block,None)
@@ -414,39 +413,6 @@ class State:
             root=process.get('child') or process.get('foreground') or {}
             if type(root.get('pid')) is int:self.pids[block]=root['pid']
         except (OSError,ValueError,subprocess.SubprocessError):pass
-
-    def tail_calls(self):
-        for path in self.a.calls.glob('*.jsonl') if self.a.calls.exists() else []:
-            try:
-                fd=os.open(path,os.O_RDONLY|os.O_NONBLOCK|os.O_NOFOLLOW)
-                with os.fdopen(fd,'r') as f:
-                    st=os.fstat(f.fileno())
-                    if not stat.S_ISREG(st.st_mode):continue
-                    key=(str(path),st.st_ino); offset=self.calls.get(key,0)
-                    if offset>st.st_size:offset=0
-                    f.seek(offset)
-                    while True:
-                        at=f.tell();line=f.readline(65537)
-                        if not line or not line.endswith('\n'):f.seek(at);break
-                        try:
-                            r=json.loads(line)
-                            # Never project command arguments, message bodies, tokens or paths.
-                            if r.get('phase')=='start':
-                                if len(self.call_starts)>=4096:self.call_starts.pop(next(iter(self.call_starts)))
-                                self.call_starts[r.get('call_id')]=r
-                                continue
-                            if r.get('phase')=='end':
-                                start=self.call_starts.pop(r.get('call_id'),{})
-                                if r.get('exit')!=0:continue
-                                r=dict(start,**r)
-                            command=r.get('command',r.get('verb',''))
-                            if isinstance(command,list):command=command[0] if command else ''
-                            if command in ('send','run','run-visible'):
-                                text={'send':'message delivered','run':'command updated','run-visible':'command updated'}[command]
-                                emit(self.a.host,'stream',agent=None,text=text,role='words')
-                        except (ValueError,TypeError):pass
-                    self.calls[key]=f.tell()
-            except (OSError,UnicodeError):pass
 
     def update_status(self,block,payload):
         reports=self.reports.setdefault(block,{})
@@ -606,7 +572,7 @@ def local(a):
         if held:held.poll()
         state.scan()
         return
-    watcher=Watcher([a.scratch,a.calls] + ([a.tasks] if a.tasks else []))
+    watcher=Watcher([a.scratch] + ([a.tasks] if a.tasks else []))
     sample=LinuxVitals() if sys.platform=='linux' else MacVitals()
     thread=threading.Thread(target=rex_events,args=(a,state),daemon=True);thread.start()
     if tasks:tasks.scan()
@@ -683,17 +649,14 @@ def main(argv=None):
     parser.add_argument('--host-name',dest='host',default=platform.node().split('.')[0])
     parser.add_argument('--socket',default=os.environ.get('TEEREX_BOARD_SOCKET', '/run/user/%d/rex/server.sock'%os.getuid() if sys.platform=='linux' else os.path.expanduser('~/Library/Application Support/rex/server.sock')))
     parser.add_argument('--rex',default=os.environ.get('TEEREX_INTERNAL_REX',os.environ.get('REX_BIN','rex')))
-    parser.add_argument('--profiles',type=Path,default=Path.home()/'.config/teerex/profiles.json',help='absolute read-only profiles file on this host')
     home=Path.home()/'.local/state'
-    for flag,default in [('scratch',home/'agent/scratch'),('calls',Path(os.environ.get('TEEREX_CALL_LOG_DIR',home/'teerex/calls')))]:
-        parser.add_argument('--'+flag,type=Path,default=default,help='absolute read-only source directory on this host')
+    parser.add_argument('--scratch',type=Path,default=home/'agent/scratch',help='absolute read-only scratchpad directory on this host')
     args=parser.parse_args(argv)
     args.executable=EXECUTABLE
     if not os.path.isabs(args.config) or any(not re.fullmatch(r'[A-Za-z0-9_-]+',h) for h in args.hosts.split(',')):
         parser.error('absolute --config and valid host names required')
     if args.tasks is not None and not args.tasks.is_absolute():parser.error('--tasks must be absolute')
-    for path in (args.scratch,args.calls,args.profiles):
-        if not path.is_absolute():parser.error('source paths must be absolute')
+    if not args.scratch.is_absolute():parser.error('--scratch must be absolute')
     if args.open_held or args.held_pane or args.held_open_json is not None:
         try:open_held(args)
         except (OSError,ValueError,KeyError,EOFError,subprocess.SubprocessError):
