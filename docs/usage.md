@@ -1,0 +1,89 @@
+# Using teerex
+
+teerex provides inspectable Rex utilities for reading, waiting, guarded sends, surfaces, records, recovery and boards. Exact flags are in `teerex COMMAND --help`; each item README has its full contract.
+
+## Addresses
+
+- A pane is a Rex **block**. You address it by session and block: `session:UUID` and `block:UUID`.
+- Your own pane is in `REX_SESSION`/`REX_BLOCK` (over ssh: `LC_REX_SESSION`/`LC_REX_BLOCK`).
+- **The socket:** `observe`, `watch`, `run-visible`, `send`, `doctor` and `run` fill in `--socket` for you, from `REX_SERVER` or else the personal server, so you can leave it out, even where `--help` still lists it as required. For other verbs (`surfaces`, `jobs`), pass `--socket /run/user/$UID/rex/server.sock` on hive, or `~/Library/Application Support/rex/server.sock` on a Mac. `REX_SERVER` is often empty inside agent panes.
+- **Labels and short ids work.** A command that needs a canonical id gets one from `teerex surfaces resolve`:
+
+```sh
+teerex surfaces resolve --socket "$S" --session rivet --pane "codex-feat20"   # label or unique id suffix; a tab's label works too
+```
+
+- **Another machine:** add `--config ~/.config/teerex/hosts.json --host hive|m5` before the command.
+
+## Read and wait
+
+```sh
+teerex observe --session "$SES" --block "$B" --tail                                 # newest output; text is in .capture.content
+teerex observe --session "$SES" --block "$B" --state                                # is that agent idle, working or waiting?
+teerex observe --session "$SES" --block "$B" > before.json                          # a baseline for watch
+teerex watch   --session "$SES" --block "$B" --baseline before.json \
+               --status-state done --status-state error --no-deadline                # wake on done OR error
+teerex compare --before before.json --after after.json [--view progress-v1]          # offline
+```
+
+- `watch` exits 0 on a change or a matched status, 124 on its deadline, and 1 on error. For a status watch, `--no-deadline` waits for as long as the work takes.
+- Add `--view progress-v1` to `watch` or `compare` to ignore spinners and timers. Raw evidence is never masked.
+- A change, or a `done` status, is evidence the pane did something. It is not proof the work succeeded: read the program's exit (`run-visible` reports it).
+- Use one `watch` in place of any sleep-and-read loop.
+
+## Run a command visibly
+
+```sh
+teerex run-visible --session "$SES" --cwd "$PWD" --env-file env.json --stdin-file /dev/null \
+  --app build --title "make test" --timeout-ms 600000 -- make test
+```
+
+- The command runs in a tab Josh can see, and you get back its real exit code and its output.
+- `--env-file` is a JSON object that **replaces** the whole environment, so include at least `PATH`: `printf '{"PATH":"/usr/bin:/bin"}' > "$PWD/env.json"`. Paths given to teerex (`--env-file`, `--cwd`, `--stdin-file`) must be absolute. Use `--stdin-file /dev/null` for no input.
+- The tab closes when the command ends. Add `--keep-open` to leave it up for Josh to read.
+- teerex itself exits 1 when your command fails. Your command's own exit code is in the result at `exit_report.exit_code`; read that, not teerex's exit status.
+- Long or unbounded work: use `--no-deadline`.
+- Track it as a job: add `--registry … --owner … --purpose …`.
+## Panes
+
+```sh
+teerex surfaces open   --socket "$S" --session "$SES" --layout tiled --anchor "$ME" --label logs -- tail -f app.log
+teerex surfaces ensure --socket "$S" --session "$SES" --label "dev server" -- npm run dev        # reuse or create
+teerex surfaces session ensure --socket "$S" --label rivet                                      # find or create a session
+teerex surfaces rename|focus|move|close --socket "$S" --session "$SES" --pane "$P" …
+```
+
+
+- Every pane you open is visible, and yours to close when your work lands.
+- Use `surfaces open` to show a document or terminal command in a visible pane.
+
+## Jobs, boards, recovery
+
+```sh
+teerex jobs list|present|forget --registry "$REG" …     # who owns which pane; bring a finished pane beside you
+teerex board                                           # live panes and machine vitals
+teerex recovery update --socket "$S" --snapshot          # before any Rex restart: panes at risk + snapshot
+```
+
+Never restart the Rex server or kill Rex processes without Josh's yes. A restart closes every pane.
+
+## Inspect and repair state
+
+```sh
+teerex jobs doctor --registry "$REG" [--socket "$S"]     # read-only: stale, due, uncertain, orphaned registrations
+```
+
+## Machine check
+
+```sh
+teerex doctor --socket "$S"     # rex executable used, client/server mismatch, what this server supports
+```
+
+## What teerex never does
+
+- It never starts a hidden agent or a daemon.
+- It never retries on its own.
+- It never closes a pane you did not ask it to close.
+- It never infers that work is done.
+
+Every result says what is known, and names anything unknown (`unknown`, `uncertain`, `not_assessed`).

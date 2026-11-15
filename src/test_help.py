@@ -14,12 +14,13 @@ BIN = str(Path(os.environ.get("TEEREX_BIN", Path(__file__).resolve().parents[1] 
 
 
 class PythonHelpTest(unittest.TestCase):
-    def test_root_help_points_agents_to_current_guide(self):
+    def test_root_help_describes_rex_utilities(self):
         result = subprocess.run([BIN, "--help"], env=isolated_environment(),
                                 capture_output=True, text=True, timeout=10)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn("Guides: docs/agents.md", result.stdout)
+        self.assertIn("Guides: docs/usage.md", result.stdout)
         self.assertNotIn("docs/alpha5.md", result.stdout)
+        self.assertNotIn("agent", result.stdout.lower())
 
     def test_scratch_command_is_unknown(self):
         result = subprocess.run([BIN, "scratch", "--help"], env=isolated_environment(),

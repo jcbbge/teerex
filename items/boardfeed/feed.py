@@ -685,7 +685,7 @@ def main(argv=None):
     parser.add_argument('--rex',default=os.environ.get('TEEREX_INTERNAL_REX',os.environ.get('REX_BIN','rex')))
     parser.add_argument('--profiles',type=Path,default=Path.home()/'.config/teerex/profiles.json',help='absolute read-only profiles file on this host')
     home=Path.home()/'.local/state'
-    for flag,default in [('scratch',home/'teerex/scratch'),('calls',Path(os.environ.get('TEEREX_CALL_LOG_DIR',home/'teerex/calls')))]:
+    for flag,default in [('scratch',home/'agent/scratch'),('calls',Path(os.environ.get('TEEREX_CALL_LOG_DIR',home/'teerex/calls')))]:
         parser.add_argument('--'+flag,type=Path,default=default,help='absolute read-only source directory on this host')
     args=parser.parse_args(argv)
     args.executable=EXECUTABLE

@@ -24,15 +24,15 @@ const usage =
     \\Socket verbs default --socket from percent-decoded REX_SERVER (unix://), then platform home/runtime path.
     \\Defaulted observe/watch/doctor receipts report socket_source. Explicit and named-host calls retain their contracts.
     \\Use COMMAND --help for exact flags, effects, evidence and limits.
-    \\Who: operators and agents. What: inspectable programs, not a Rex fork/plugin daemon.
-    \\When: explicit invocation; every managed agent/board remains visible and controllable.
+    \\Inspectable Rex utilities: reads, waits, guarded sends, surfaces, records, recovery and boards.
+    \\When: explicit invocation; visible commands and boards remain inspectable.
     \\Where: configured command host; paths belong there, never silently uploaded.
     \\Why: report actual activity/results and unknowns, not infer readiness or completion.
     \\How: explicit config/host or socket/full IDs; no retries, fallback or autostart.
     \\Python3.9+ is required for targets, recovery, records and fleet.
     \\Seat-tab label protection is shared by pane closing and moving paths. SSH trust/key are explicit.
     \\Personal install/restart/close/config actions need their own authorization.
-    \\Guides: docs/agents.md and items/{surfaces,recovery,records}/README.md.
+    \\Guides: docs/usage.md and items/{surfaces,recovery,records}/README.md.
     \\
 ;
 

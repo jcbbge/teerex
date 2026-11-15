@@ -2,7 +2,7 @@
 
 Josh's operating layer for [Rex](https://www.superlogical.com/rex): one CLI that every agent and every human uses to run, watch, message and arrange work in Rex terminals on his machines (hive and the M5). It is personal software for an opinionated SDLC. It is not a Rex fork, a daemon or a plugin.
 
-**Agents start with [docs/agents.md](docs/agents.md)**, the one-page guide to every verb an agent uses.
+Start with [docs/usage.md](docs/usage.md), the guide to the Rex utilities.
 
 Licensed under [Apache-2.0](LICENSE) for teerex's original material. Third-party rights are in [RIGHTS.md](RIGHTS.md).
 

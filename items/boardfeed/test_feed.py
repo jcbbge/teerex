@@ -26,6 +26,15 @@ feed=importlib.util.module_from_spec(spec);spec.loader.exec_module(feed)
 REX=os.environ.get('REX_BIN') or shutil.which('rex')
 
 class FeedTests(unittest.TestCase):
+    def test_default_scratch_source_is_agent_owned(self):
+        with mock.patch.object(feed, 'EXECUTABLE', '/teerex', create=True), \
+                mock.patch.object(feed, 'local') as local, \
+                mock.patch.object(feed.signal, 'signal'), \
+                mock.patch.object(feed.STOP, 'set'):
+            feed.main(['--local', '--once'])
+        self.assertEqual(local.call_args.args[0].scratch,
+                         Path.home()/'.local/state/agent/scratch')
+
     def test_task_parse_reference_format(self):
         with resources.temporary_directory() as tmp:
             path=Path(tmp)/'7-example.md'

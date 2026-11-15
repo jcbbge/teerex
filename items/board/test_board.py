@@ -580,7 +580,7 @@ class BoardTest(unittest.TestCase):
             hosts[name]=dict(host_id=name,transport='local',home=str(self.root),platform='macos-arm64' if os.uname().sysname=='Darwin' else 'linux-x86_64',socket=str(socket),rex=rex,teerex=BIN,store=str(root/'store'))
             for e in events:
                 if e['host']==name and e['kind']=='agent':e.update(session=sid,block=target)
-            pad=self.root/'.local/state/teerex/scratch'/sid/(target+'.md')
+            pad=self.root/'.local/state/agent/scratch'/sid/(target+'.md')
             pad.parent.mkdir(parents=True)
             pad.write_text('# target\nPurpose: board test\nIntent: inline scratchpad\nUpdated: 2026-11-13T19:00:00Z\n\n## Now\n- [ ] Complete board test\n\n## To-do\n- [ ] Check complete scratchpad\n\n## Done\n- [x] Started private Rex\n')
         held_rows=[dict(id='held-old',project='fixture',title='Archive',waits='ship',text='ship? Archive',on='',since=1,broken=True,broken_why='fixture')]

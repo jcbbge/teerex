@@ -8,7 +8,8 @@ events while the other host continues.
 
 `--local --host-name NAME --socket ABS --rex ABS` runs a transport worker on
 one host. Read-only source overrides: `--scratch ABS`, `--calls ABS`. Defaults are the host's
-standard teerex state paths; `TEEREX_CALL_LOG_DIR` selects the call directory.
+`~/.local/state/agent/scratch` (owned by rexconfig) and
+`~/.local/state/teerex/calls`; `TEEREX_CALL_LOG_DIR` selects the call directory.
 The named-host transport injects the configured socket and Rex executable.
 Python 3.9+ is required, using only its standard library.
 
