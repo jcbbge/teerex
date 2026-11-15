@@ -23,10 +23,10 @@ Open never asks for focus, retries creation, falls back to a different layout, o
 ## Pane authority
 
 Only close or move panes you opened: this is a written rule, not an ownership registry.
-The shared guard refuses closing, moving or detaching panes labelled `seat`, `tasks`,
-`board` or `alarm` in the tab containing a pane labelled `seat`. Window, layer and
-session closure cannot bypass that refusal. The same labels in other tabs are ordinary
-panes. Creator records and caller identity are neither read nor written.
+The shared guard refuses closing, moving or detaching the pane labelled `seat`; closing
+the tab or layer that holds it, or destroying its session, is refused too. Window, layer and
+session closure cannot bypass that refusal. Every other pane, in that tab or any other, is
+ordinary. Creator records and caller identity are neither read nor written.
 `--operator` remains accepted for compatibility and does not bypass this refusal.
 The focused checks in `src/test_pane_guard.py` use disposable Rex servers.
 

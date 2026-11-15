@@ -19,14 +19,22 @@ class GuardTest(fixtures.SurfacesTest):
     def test_seat_tab_labels_refuse_close_and_move(self):
         self.rpc('session.set_block_label', dict(session_id=self.session, block_id=self.anchor, label='seat'))
         other = self.open('tab', label='elsewhere')['actual']['block_id']
-        for label in ('seat', 'tasks', 'board', 'alarm'):
-            pane = self.anchor if label == 'seat' else self.open('tiled', label=label)['actual']['block_id']
-            for op, extra in (('close', ()), ('move', ('--anchor', other, '--focus', 'yes'))):
-                with self.subTest(label=label, op=op):
-                    result, packet = self.control(op, pane, *extra)
-                    self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-                    self.assertIn('seat_tab_label_protected', packet['failure_reason'])
-                    self.assertIn(pane, {b['block_id'] for b in self.rpc('session.list_blocks', dict(session_id=self.session))['blocks']})
+        for op, extra in (('close', ()), ('move', ('--anchor', other, '--focus', 'yes'))):
+            with self.subTest(op=op):
+                result, packet = self.control(op, self.anchor, *extra)
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn('seat_tab_label_protected', packet['failure_reason'])
+                self.assertIn(self.anchor, {b['block_id'] for b in self.rpc('session.list_blocks', dict(session_id=self.session))['blocks']})
+
+    def test_former_companions_in_seat_tab_close(self):
+        # Josh, 2026-11-15: only the seat pane and its tab stay protected.
+        self.rpc('session.set_block_label', dict(session_id=self.session, block_id=self.anchor, label='seat'))
+        for label in ('tasks', 'board', 'alarm'):
+            with self.subTest(label=label):
+                pane = self.open('tiled', label=label)['actual']['block_id']
+                result, packet = self.control('close', pane)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertTrue(packet['block_absence_verified'])
 
     def test_any_creator_and_plain_rex_panes_close(self):
         made = self.open('tab')['actual']['block_id']

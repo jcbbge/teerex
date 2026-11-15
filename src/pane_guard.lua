@@ -1,4 +1,4 @@
--- Ownership is a written rule. Only the seat tab's named companions are guarded.
+-- Ownership is a written rule. Only the pane labelled seat, and its tab, are guarded.
 do
  local call=rex.call
  rex.call=function(method,p)
@@ -17,7 +17,7 @@ do
     if seat then
      for _,l in ipairs(w.layers or {}) do for _,b in ipairs(l.blocks or {}) do
       local label=b.label
-      if (label=='seat' or label=='tasks' or label=='board' or label=='alarm') and
+      if label=='seat' and
        (method=='session.destroy' or p.block_id==b.block_id or
         p.window_id==w.window_id or p.layer_id==l.layer_id) then
        error('seat_tab_label_protected: '..label,0)
