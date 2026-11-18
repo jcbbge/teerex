@@ -129,7 +129,7 @@ local function gate(no_wait)
 end
 -- Match all visible text, allowing layout to split words or wrap at a space
 -- near the right rule. A rendered short row cannot stand in for a missing line break.
-local function matches_paste(parts, text, width)
+local function matches_paste(parts, text, width, allow_prefix)
     if not parts then return false end
     local at = 1
     for i, part in ipairs(parts) do
@@ -152,7 +152,7 @@ local function matches_paste(parts, text, width)
             end
         end
     end
-    return at == #text + 1
+    return allow_prefix or at == #text + 1
 end
 
 local function finish(reason, attempted)
@@ -243,8 +243,10 @@ if guarded then
             local content = parts and table.concat(parts, "\n")
             local lines = content and content:match("^%[Pasted text #%d+ %+(%d+) lines?%]$")
             if matches_paste(parts, a.text, width) or tonumber(lines) == newline_count then break end
-            finish("input_changed_before_enter", true)
-            return
+            if not matches_paste(parts, a.text, width, true) then
+                finish("input_changed_before_enter", true)
+                return
+            end
         end
         -- Preserve the no-echo path for terminals without a recognized editor.
         editor = editor or tracked

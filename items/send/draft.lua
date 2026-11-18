@@ -159,6 +159,13 @@ local function rule(line)
         (plain:gsub("─", ""):match("^%s*$") ~= nil or plain:find("↑", 1, true) ~= nil)
 end
 
+local function frame_edge(line)
+    if not line then return false end
+    local plain = trim((line:gsub(csi, "")))
+    local box_drawing = "\226[\148\149][\128-\191]" -- U+2500 through U+257F
+    return plain:match("^" .. box_drawing) or plain:match(box_drawing .. "$")
+end
+
 -- Return a state, visible editor rows for local verification, and whether a tracked editor was found.
 local function input_state(text, rows, app, process, columns)
     local lines, row, col = active_screen(text, rows)
@@ -211,6 +218,9 @@ local function input_state(text, rows, app, process, columns)
     if process == "zsh" then
         local body, start = shell_draft_from_vt(text, rows)
         if body then return (trim(body) ~= "" or col > start) and "present" or "empty", {trim(body)}, true end
+    end
+    if above or below or frame_edge(lines[row]) or frame_edge(lines[row - 1]) or frame_edge(lines[row + 1]) then
+        return "unknown"
     end
     return "empty", nil, false
 end

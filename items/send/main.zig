@@ -252,7 +252,6 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
     var failure: ?[]const u8 = null;
     var backend: ?supervised.Result = null;
     var encoded_argument_bytes: ?usize = null;
-    var queue_uncertain: usize = 0;
     var queued_id: ?[]const u8 = null;
     var deferred_reason: ?[]const u8 = null;
     const queue_request = try std.json.Stringify.valueAlloc(allocator, .{
@@ -269,8 +268,10 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
     const drain_child = no_queue and exchange != null and
         std.mem.eql(u8, env.get("TEEREX_QUEUE_LOCK") orelse "", lock_path);
     var settle_file: ?[]const u8 = if (drain_child) try std.fs.path.join(allocator, &.{ exchange.?, "previous" }) else null;
-    defer if (!drain_child) {
-        if (settle_file) |file| std.fs.deleteFileAbsolute(file) catch {};
+    var settle_owner: ?std.fs.File = null;
+    defer if (settle_owner) |owner| {
+        std.fs.deleteFileAbsolute(settle_file.?) catch {};
+        owner.close();
     };
     work: {
         // A diagnostic is for the invoking caller, never a message to another pane.
@@ -337,7 +338,7 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
         }
         if (!drain_child and std.mem.eql(u8, mode, "guard")) {
             if (clutch) |*store| {
-                const stopped = drainPending(allocator, &env, store, timeout_ms, if (no_queue) draft_wait_ms else 0, &timer, &settle_file, &queue_uncertain) catch |err| {
+                const stopped = drainPending(allocator, &env, store, timeout_ms, if (no_queue) draft_wait_ms else 0, &timer, &settle_file, &settle_owner) catch |err| {
                     failure = @errorName(err);
                     outcome = "refused";
                     break :work;
@@ -403,6 +404,7 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
             std.mem.eql(u8, deferred_reason orelse "", "input_state_unknown"));
     const signal = supervised.requestedSignal();
     if (signal != 0) outcome = "cancel_requested";
+    const queue_uncertain = if (clutch) |store| countInflight(allocator, store) catch 0 else 0;
     // Keep the lock through subprocess cleanup. Never remove another sender's lock.
     if (locked) {
         std.fs.cwd().deleteDir(lock_path) catch |err| {
@@ -488,7 +490,20 @@ fn enqueue(allocator: std.mem.Allocator, env: *const std.process.EnvMap, store: 
     return error.QueueWriteFailed;
 }
 
-fn drainPending(allocator: std.mem.Allocator, env: *const std.process.EnvMap, store: *clutch_state.Store, timeout: u64, draft_wait_ms: u64, timer: *std.time.Timer, settle_file: *?[]const u8, uncertain: *usize) !?[]const u8 {
+fn countInflight(allocator: std.mem.Allocator, store: clutch_state.Store) !usize {
+    const path = try std.fmt.allocPrint(allocator, "{s}.queue", .{store.path[0 .. store.path.len - ".json".len]});
+    var queue = try std.fs.openDirAbsolute(path, .{ .iterate = true, .no_follow = true });
+    defer queue.close();
+    try clutch_state.privateStat(queue.fd, true);
+    var count: usize = 0;
+    var entries = queue.iterate();
+    while (try entries.next()) |entry| {
+        if (entry.kind == .file and std.mem.endsWith(u8, entry.name, ".inflight.json")) count += 1;
+    }
+    return count;
+}
+
+fn drainPending(allocator: std.mem.Allocator, env: *const std.process.EnvMap, store: *clutch_state.Store, timeout: u64, draft_wait_ms: u64, timer: *std.time.Timer, settle_file: *?[]const u8, settle_owner: *?std.fs.File) !?[]const u8 {
     const queue_path = try std.fmt.allocPrint(allocator, "{s}.queue", .{store.path[0 .. store.path.len - ".json".len]});
     var queue = std.fs.openDirAbsolute(queue_path, .{ .iterate = true, .no_follow = true }) catch |err| switch (err) {
         error.FileNotFound => return null,
@@ -499,8 +514,10 @@ fn drainPending(allocator: std.mem.Allocator, env: *const std.process.EnvMap, st
     var entries = queue.iterate();
     var pending = false;
     while (try entries.next()) |entry| {
-        if (std.mem.endsWith(u8, entry.name, ".pending.json")) pending = true;
-        if (std.mem.endsWith(u8, entry.name, ".inflight.json")) uncertain.* += 1;
+        if (std.mem.endsWith(u8, entry.name, ".pending.json")) {
+            pending = true;
+            break;
+        }
     }
     if (!pending) return null;
     const elapsed = timer.read() / std.time.ns_per_ms;
@@ -511,8 +528,13 @@ fn drainPending(allocator: std.mem.Allocator, env: *const std.process.EnvMap, st
     const name = try std.fmt.allocPrint(allocator, "{s}.settle", .{std.fmt.bytesToHex(random, .lower)});
     const settle_path = try std.fs.path.join(allocator, &.{ std.fs.path.dirname(store.path).?, name });
     const file = try std.fs.createFileAbsolute(settle_path, .{ .exclusive = true, .mode = 0o600 });
+    errdefer if (settle_owner.* == null) file.close();
+    errdefer if (settle_owner.* == null) std.fs.deleteFileAbsolute(settle_path) catch {};
+    try std.posix.flock(file.handle, std.posix.LOCK.SH);
+    // Prune can win the interval between creation and locking. Never dispatch using an unlinked file.
+    try clutch_state.privateStat(file.handle, false);
     settle_file.* = settle_path;
-    file.close();
+    settle_owner.* = file;
     const raw = try std.json.Stringify.valueAlloc(allocator, .{
         .target = .{ .socket = store.socket, .session = store.session, .pane = store.pane },
         .draft_wait_ms = draft_wait_ms,
@@ -522,9 +544,8 @@ fn drainPending(allocator: std.mem.Allocator, env: *const std.process.EnvMap, st
     var collector = QueueCollector{ .allocator = allocator };
     const result = try supervised.collect(allocator, &argv, env, timeout - elapsed, &collector);
     if (result.stopped or result.term != .Exited) return "queued_messages_pending";
-    const Reply = struct { queue: struct { inflight: ?usize = null, stopped: ?struct { reason: []const u8 } = null } };
+    const Reply = struct { queue: struct { stopped: ?struct { reason: []const u8 } = null } };
     const reply = (try std.json.parseFromSlice(Reply, allocator, collector.bytes.items, .{ .allocate = .alloc_always, .ignore_unknown_fields = true })).value;
-    uncertain.* = reply.queue.inflight orelse uncertain.*;
     if (reply.queue.stopped) |stopped| return if (deferrable(stopped.reason)) stopped.reason else "queued_messages_pending";
     return null;
 }

@@ -7,7 +7,7 @@ const usage =
     \\Held panes and guarded drafts queue without input; send --no-queue uses a bounded wait.
     \\release deletes the hold and drains. drain leaves the hold unchanged. Uncertain claims never replay.
     \\Private state: TEEREX_CLUTCH_DIR or ~/.local/state/teerex/clutch (0700), per canonical socket/session/pane.
-    \\prune [--apply]: plan/remove released records whose socket/session/pane is absent; preserves held/unknown. Python3.9+.
+    \\prune [--apply]: plan/remove released records whose socket/session/pane is absent; preserves held/unknown; also cleans unowned settle files. Python3.9+.
     \\status and queue inspection read only; release also drains any pending queue on repeat. status is saved state, not live evidence.
     \\No expiry, automatic release, background drain or retry loop. Python3.9+ required for queue/drain.
     \\Store errors produce named failure_reason; send treats unreadable state as unknown and continues.

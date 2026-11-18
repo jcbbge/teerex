@@ -235,6 +235,36 @@ class ClutchTest(fixtures.SendTest):
         self.assertFalse(Path(taken["state_file"]).exists())
         self.assertEqual(list(root.iterdir()), [root / "clutch.lock"])
 
+    def test_prune_settle_preserves_live_owner_until_killed(self):
+        root = Path(self.env["TEEREX_CLUTCH_DIR"])
+        root.mkdir(mode=0o700)
+        settle = root / ("a" * 32 + ".settle")
+        settle.touch(mode=0o600)
+        link = root / ("b" * 32 + ".settle")
+        link.symlink_to(settle)
+        owner = resources.start_process([
+            sys.executable, "-c",
+            "import fcntl, sys, signal; f = open(sys.argv[1], 'w'); "
+            "fcntl.flock(f, fcntl.LOCK_SH); print('locked', flush=True); signal.pause()",
+            str(settle),
+        ], stdout=subprocess.PIPE, text=True)
+        self.addCleanup(self.cleanup_process, owner)
+        self.assertEqual(owner.stdout.readline().strip(), "locked")
+        result, applied = self.prune("--apply")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(applied["removed"], [])
+        self.assertIn(dict(file=settle.name, reason="live_settle_owner"), applied["skipped"])
+        self.cleanup_process(owner)
+        result, plan = self.prune()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(plan["selected"], [dict(file=settle.name, reason="unowned_settle_file")])
+        self.assertTrue(settle.exists())
+        result, applied = self.prune("--apply")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(applied["removed"], [settle.name])
+        self.assertFalse(settle.exists())
+        self.assertTrue(link.is_symlink())
+
     def test_prune_plans_then_removes_only_released_gone_records(self):
         live, _ = self.fixture()
         dead, _ = self.fixture()

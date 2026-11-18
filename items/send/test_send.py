@@ -177,14 +177,15 @@ io.write(rex.json.encode(out))
                              str(fixture), str(directory), draft, mode)
         target = made["session_id"], made["initial_windows"][0]["block_ids"][0]
         for _ in range(100):
-            if (directory / "draft").exists() and "─" in self.prompt_text(target):
+            if (directory / "draft").exists() and ("│" if mode == "vertical" else "─") in self.prompt_text(target):
                 return target, directory
             time.sleep(.02)
         self.fail("boxed editor did not start")
 
     def clutch(self, target, operation, *options):
+        fmt = ["--json"] if operation in ("drain", "queue") else []
         result = subprocess.run([BIN, "clutch", operation, "--socket", str(self.socket),
-                                 "--session", target[0], "--pane", target[1], "--json", *options],
+                                 "--session", target[0], "--pane", target[1], *fmt, *options],
                                 env=self.env, capture_output=True, text=True, timeout=10)
         return result, json.loads(result.stdout) if result.stdout else None
 
@@ -214,6 +215,32 @@ io.write(rex.json.encode(out))
                 self.received(directory / "bytes", b"\x18" + self.pasted(b"first") + self.pasted(b"second"))
                 self.assertEqual((directory / "submissions").read_text().splitlines(),
                                  ['"FROM worker: first"', '"FROM worker: second"'])
+
+    def test_send_waits_for_progressive_paste(self):
+        target, directory = self.editor("", "progressive")
+        message = b"progressive " * 8 + b"done"
+        result, receipt = self.send(target, message)
+        self.assertEqual(result.returncode, 0, receipt)
+        self.received(directory / "bytes", self.pasted(message))
+        self.assertEqual(json.loads((directory / "submissions").read_text()),
+                         "FROM worker: " + message.decode())
+
+    def test_stop_drain_reserves_paste_verification_before_claim(self):
+        target, directory = self.editor("draft", "stop-budget")
+        for message in (b"first", b"second"):
+            self.assertEqual(self.send(target, message)[1]["outcome"], "queued")
+        self.type_draft(target, "\x18")
+        self.received(directory / "bytes", b"\x18")
+        self.env["TEEREX_DRAIN_BUDGET_MS"] = "2000"
+        started = time.monotonic()
+        _, receipt = self.clutch(target, "drain")
+        self.assertLess(time.monotonic() - started, 4)
+        queue = receipt["queue"]
+        self.assertEqual((len(queue["delivered"]), queue["pending"], queue["inflight"]),
+                         (1, 1, 0), receipt)
+        self.assertEqual(queue["stopped"]["reason"], "drain_budget_exhausted")
+        self.assertTrue(queue["stopped"]["retry_safe"])
+        self.received(directory / "bytes", b"\x18" + self.pasted(b"first"))
 
     def test_drain_waits_for_delayed_paste_redraw(self):
         target, directory = self.editor("human draft", "delayed-paste")
@@ -385,6 +412,18 @@ os.execv({self.rex!r}, [{self.rex!r}, *args])
                     '{session_id=a.session_id, block_id=a.block_id, args={data="human"}})\n')
         return self.rewrite_send_lua(attempt, injected + attempt)
 
+    def test_unidentified_frame_defers_unknown_without_input(self):
+        for mode in ("rounded", "square", "vertical", "single-rule"):
+            with self.subTest(mode=mode):
+                target, directory = self.editor("my private draft", mode)
+                result, receipt = self.send(target, b"agent msg")
+                self.assertEqual(result.returncode, 0, receipt)
+                self.assertEqual(receipt["outcome"], "queued", receipt)
+                self.assertEqual(receipt["deferred_reason"], "input_state_unknown")
+                self.assertEqual((directory / "bytes").read_bytes(), b"")
+                self.assertEqual((directory / "submissions").read_bytes(), b"")
+                self.assertEqual((directory / "draft").read_text(), "my private draft")
+
     def test_unidentified_box_defers_and_verifies_before_enter(self):
         target, directory = self.editor("draft", "unmarked")
         result, receipt = self.send(target)
@@ -422,11 +461,18 @@ os.execv({self.rex!r}, [{self.rex!r}, *args])
         self.assertEqual(receipt["queue"]["stopped"]["reason"], "input_changed_before_enter")
         self.assertFalse(receipt["queue"]["stopped"]["retry_safe"])
         self.assertEqual(receipt["queue"]["inflight"], 1)
+        self.assertEqual(receipt["queue_uncertain"], 1)
         self.assertEqual((directory / "submissions").read_bytes(), b"")
 
         self.env["PATH"] = normal_path
         _, pending = self.send(target, b"pending")
         self.assertEqual(pending["outcome"], "queued")
+        self.assertEqual(pending["queue_uncertain"], 1)
+        self.assertEqual(self.clutch(target, "take", "--reason", "fixture hold")[0].returncode, 0)
+        _, held = self.send(target, b"held")
+        self.assertEqual(held["outcome"], "queued")
+        self.assertEqual(held["queue_uncertain"], 1)
+        self.assertEqual(self.clutch(target, "release")[1]["queue_uncertain"], 1)
         self.assertNotEqual(self.clutch(target, "queue", "--resolve", pending["queue_id"])[0].returncode, 0)
         self.type_draft(target, "\x18")
         for message in (b"later", b"last"):
@@ -434,10 +480,11 @@ os.execv({self.rex!r}, [{self.rex!r}, *args])
             self.assertEqual(result.returncode, 0, receipt)
             self.assertEqual(receipt["outcome"], "events_acknowledged")
         self.assertEqual([json.loads(line) for line in (directory / "submissions").read_text().splitlines()],
-                         ["FROM worker: pending", "FROM worker: later", "FROM worker: last"])
+                         ["FROM worker: pending", "FROM worker: held", "FROM worker: later", "FROM worker: last"])
         result, receipt = self.clutch(target, "drain")
         self.assertEqual(result.returncode, 0, receipt)
         self.assertEqual(receipt["queue"]["uncertain"], [queued["queue_id"]])
+        self.assertEqual(receipt["queue_uncertain"], 1)
         self.assertEqual(self.clutch(target, "queue")[1]["messages"][0]["delivery"], "uncertain")
         self.assertEqual(self.clutch(target, "queue", "--resolve", queued["queue_id"])[0].returncode, 0)
         self.assertEqual(self.clutch(target, "queue")[1]["messages"], [])

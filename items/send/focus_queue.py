@@ -13,6 +13,8 @@ import tempfile
 import time
 import uuid
 
+# 1500 ms of paste polling plus room for final screen reads, paste and Enter.
+PASTE_RESERVE_MS = 1750
 ENTRY = re.compile(r"([0-9]{20}-[0-9a-f]{32})\.(pending|inflight)\.json\Z")
 
 
@@ -176,7 +178,7 @@ def sender_lock(path, already_locked):
         path.rmdir()
 
 
-def dispatch(queue, queue_path, pane_lock, name, inflight, command, record, timeout, previous):
+def dispatch(queue, queue_path, pane_lock, name, inflight, command, record, timeout, previous, paste_deadline):
     # The native guard asks for a permit only after observing empty input.
     # Publish the permit after the claim is durable. A controller failure after
     # that point leaves an uncertain claim which a later drain cannot replay.
@@ -196,6 +198,8 @@ def dispatch(queue, queue_path, pane_lock, name, inflight, command, record, time
             try:
                 while time.monotonic() < deadline:
                     if not claimed and (permit / "ready").exists():
+                        if paste_deadline is not None and time.monotonic() > paste_deadline:
+                            return None, dict(failure_reason="drain_budget_exhausted"), False
                         rename(queue, name, inflight)
                         claimed = True
                         (permit / "claimed").touch()
@@ -217,11 +221,11 @@ def dispatch(queue, queue_path, pane_lock, name, inflight, command, record, time
                         child.kill()
 
 
-def drain(path, executable, receipt, already_locked=False):
+def drain(path, executable, receipt, already_locked=False, settle=None):
     result = dict(delivered=[], pending=0, inflight=0, uncertain=[], stopped=None)
     receipt["queue"] = result
     wait_until = time.monotonic() + receipt.pop("draft_wait_ms", 0) / 1000
-    settle_file = receipt.pop("settle_file", None)
+    receipt["queue_uncertain"] = 0
     previous = None
     budget_ms = os.environ.get("TEEREX_DRAIN_BUDGET_MS")
     deadline = time.monotonic() + int(budget_ms) / 1000 if budget_ms else None
@@ -255,9 +259,12 @@ def drain(path, executable, receipt, already_locked=False):
                 if any(record.get(k) != receipt["target"][k] for k in ("socket", "session", "pane")):
                     raise ValueError("queue_target_mismatch")
                 timeout_ms = record["timeout_ms"]
+                paste_deadline = None
                 if deadline is not None:
-                    timeout_ms = min(timeout_ms, int((deadline - time.monotonic()) * 1000))
-                    if timeout_ms < 100:
+                    now = time.monotonic()
+                    timeout_ms = min(timeout_ms, int((deadline - now) * 1000))
+                    paste_deadline = now + (timeout_ms - PASTE_RESERVE_MS) / 1000
+                    if paste_deadline < now:
                         result["stopped"] = dict(id=match[1], reason="drain_budget_exhausted", retry_safe=True)
                         break
                 inflight = match[1] + ".inflight.json"
@@ -271,7 +278,8 @@ def drain(path, executable, receipt, already_locked=False):
                     if record.get(key) is not None:
                         command.extend(["--" + key.replace("_", "-"), record[key]])
                 code, packet, claimed = dispatch(queue, queue_path, pane_lock, name, inflight, command, record,
-                                                 timeout_ms / 1000 + (.5 if deadline is not None else 5), previous)
+                                                 timeout_ms / 1000 + (.5 if deadline is not None else 5),
+                                                 previous, paste_deadline)
                 if claimed and code == 0 and packet.get("outcome") == "events_acknowledged":
                     os.unlink(inflight, dir_fd=queue)
                     os.fsync(queue)
@@ -291,8 +299,9 @@ def drain(path, executable, receipt, already_locked=False):
             result["pending"] = sum(".pending." in n for n in remaining)
             result["uncertain"] = [ENTRY.fullmatch(n)[1] for n in remaining if ".inflight." in n]
             result["inflight"] = len(result["uncertain"])
-        if settle_file and previous is not None and not result["stopped"]:
-            Path(settle_file).write_text(previous, encoding="utf-8")
+            receipt["queue_uncertain"] = result["inflight"]
+        if settle is not None and previous is not None and not result["stopped"]:
+            settle.write(previous)
         return receipt, 1 if result["stopped"] else 0
     finally:
         queue_context.__exit__(None, None, None)
@@ -321,7 +330,17 @@ def main():
             raise SystemExit(128 + signum)
 
         signal.signal(signal.SIGTERM, stop)
-        value, code = drain(path, sys.argv[3], json.loads(sys.argv[4]), "--locked" in sys.argv[5:])
+        receipt = json.loads(sys.argv[4])
+        settle_file = receipt.pop("settle_file", None)
+        already_locked = "--locked" in sys.argv[5:]
+        if settle_file is None:
+            value, code = drain(path, sys.argv[3], receipt, already_locked)
+        else:
+            fd = os.open(settle_file, os.O_WRONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+            with os.fdopen(fd, "w", encoding="utf-8") as settle:
+                fcntl.flock(fd, fcntl.LOCK_SH)
+                private(fd)
+                value, code = drain(path, sys.argv[3], receipt, already_locked, settle)
     else:
         raise ValueError("invalid_queue_operation")
     print(json.dumps(value, ensure_ascii=False))
@@ -336,7 +355,8 @@ if __name__ == "__main__":
         failure = dict(outcome="refused", failure_reason=reason)
         if len(sys.argv) > 4 and sys.argv[1] == "drain":
             failure = json.loads(sys.argv[4])
-            failure.update(outcome="refused", failure_reason=reason,
+            failure.pop("settle_file", None)
+            failure.update(outcome="refused", failure_reason=reason, queue_uncertain=None,
                            queue=dict(delivered=None, pending=None, inflight=None, stopped=dict(reason=reason)))
         print(json.dumps(failure))
         sys.exit(1)

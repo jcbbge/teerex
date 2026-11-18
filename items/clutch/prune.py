@@ -1,4 +1,4 @@
-"""Plan/apply cleanup of released clutch records; never remove a held or uncertain record."""
+"""Plan/apply cleanup of released clutch records and unowned settle files."""
 import argparse
 import fcntl
 import hashlib
@@ -84,6 +84,29 @@ class Liveness:
         return "pane_absent" if record["pane"] not in [b["block_id"] for b in blocks["blocks"]] else None
 
 
+def prune_settle(root, name, apply, result):
+    try:
+        fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=root)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            info = os.fstat(fd)
+            if not private(info):
+                raise ValueError("unsafe_settle_file")
+            current = os.stat(name, dir_fd=root, follow_symlinks=False)
+            if (info.st_dev, info.st_ino) != (current.st_dev, current.st_ino):
+                raise ValueError("changed_settle_file")
+            result["selected"].append(dict(file=name, reason="unowned_settle_file"))
+            if apply:
+                os.unlink(name, dir_fd=root)
+                result["removed"].append(name)
+        finally:
+            os.close(fd)
+    except BlockingIOError:
+        result["skipped"].append(dict(file=name, reason="live_settle_owner"))
+    except (OSError, ValueError):
+        result["skipped"].append(dict(file=name, reason="unsafe_or_changed_settle_file"))
+
+
 def main():
     parser = argparse.ArgumentParser(prog="teerex clutch prune", description=__doc__)
     parser.add_argument("--apply", action="store_true", help="remove eligible records; omit to plan")
@@ -99,35 +122,40 @@ def main():
     try:
         if not private(os.fstat(root), True):
             raise ValueError("unsafe_directory")
-        names = sorted(n for n in os.listdir(root) if re.fullmatch(r"[a-f0-9]{64}\.json", n))
-        if not names:
-            print(json.dumps(result)); return
-        # Never replace/unlink the stable mutation lock. Plan creates nothing.
-        lock = os.open("clutch.lock", os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=root)
-        try:
-            if not private(os.fstat(lock)):
-                raise ValueError("unsafe_lock")
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            live = Liveness()
-            for name in names:
-                try:
-                    value, identity = read_record(root, name)
-                    reason = None if value["held"] else live.gone(value)
-                    if reason is None:
-                        result["skipped"].append(dict(file=name, reason="held" if value["held"] else "live_or_unknown")); continue
-                    result["selected"].append(dict(file=name, reason=reason))
-                    if args.apply:
-                        current, same = read_record(root, name)
-                        if current["held"] or same != identity:
-                            result["skipped"].append(dict(file=name, reason="changed")); continue
-                        os.unlink(name, dir_fd=root)
-                        result["removed"].append(name)
-                except (OSError, ValueError, TypeError, KeyError):
-                    result["skipped"].append(dict(file=name, reason="unsafe_or_invalid_record"))
-            if args.apply and result["removed"]:
-                os.fsync(root)
-        finally:
-            os.close(lock)
+        directory_names = sorted(os.listdir(root))
+        names = [n for n in directory_names if re.fullmatch(r"[a-f0-9]{64}\.json", n)]
+        if names:
+            # Never replace/unlink the stable mutation lock. Plan creates nothing.
+            lock = os.open("clutch.lock", os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=root)
+            try:
+                if not private(os.fstat(lock)):
+                    raise ValueError("unsafe_lock")
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                live = Liveness()
+                for name in names:
+                    try:
+                        value, identity = read_record(root, name)
+                        reason = None if value["held"] else live.gone(value)
+                        if reason is None:
+                            result["skipped"].append(dict(file=name, reason="held" if value["held"] else "live_or_unknown")); continue
+                        result["selected"].append(dict(file=name, reason=reason))
+                        if args.apply:
+                            current, same = read_record(root, name)
+                            if current["held"] or same != identity:
+                                result["skipped"].append(dict(file=name, reason="changed")); continue
+                            os.unlink(name, dir_fd=root)
+                            result["removed"].append(name)
+                    except (OSError, ValueError, TypeError, KeyError):
+                        result["skipped"].append(dict(file=name, reason="unsafe_or_invalid_record"))
+                if args.apply and result["removed"]:
+                    os.fsync(root)
+            finally:
+                os.close(lock)
+        for name in directory_names:
+            if re.fullmatch(r"[a-f0-9]{32}\.settle", name):
+                prune_settle(root, name, args.apply, result)
+        if args.apply and result["removed"]:
+            os.fsync(root)
     finally:
         os.close(root)
     print(json.dumps(result))

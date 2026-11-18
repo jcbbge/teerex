@@ -18,7 +18,7 @@ pasting = False
 
 def draw():
     (root / "draft").write_text("".join(draft))
-    prefix = "" if mode == "unmarked" else "❯ "
+    prefix = "" if mode in ("unmarked", "rounded", "square", "vertical", "single-rule") else "❯ "
     rows = [prefix]
     column = len(prefix)
     positions = [(0, column + 1)]
@@ -45,6 +45,15 @@ def draw():
         screen += "\x1b]7501;state=idle:app=claude\x07" + rule + "\r\nRewind\r\n  ❯ (current)"
         os.write(1, (screen + "\x1b[3;3H").encode())
         return
+    if mode in ("rounded", "square", "vertical"):
+        corners = "╭╮╰╯" if mode == "rounded" else "┌┐└┘"
+        visible = ["│ " + line.ljust(60) + " │" for line in visible]
+        col += 2
+        top, rule = corners[0] + rule + corners[1], corners[2] + rule + corners[3]
+        if mode == "vertical":
+            top = rule = ""
+    elif mode == "single-rule":
+        rule = ""
     screen += "\r\n".join([top, *visible, rule])
     os.write(1, (screen + f"\x1b[{max(0, row-start)+2};{col}H").encode())
 
@@ -63,6 +72,16 @@ with (root / "bytes").open("ab", buffering=0) as raw, (root / "submissions").ope
                 pasting = not pasting
                 if not pasting and mode == "delayed-paste":
                     select.select([], [], [], .55)
+                if not pasting and mode == "stop-budget":
+                    select.select([], [], [], 1.35)
+                if not pasting and mode == "progressive":
+                    full = draft[:]
+                    del draft[len(full) * 2 // 3:]
+                    cursor = len(draft)
+                    draw()
+                    select.select([], [], [], .2)
+                    draft[:] = full
+                    cursor = len(draft)
                 pending = pending[len(marker):]
                 continue
             match = re.match(rb"[\xc0-\xff][\x80-\xbf]*|.", pending, re.S)
