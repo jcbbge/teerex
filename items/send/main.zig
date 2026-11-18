@@ -251,6 +251,7 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
     var failure: ?[]const u8 = null;
     var backend: ?supervised.Result = null;
     var encoded_argument_bytes: ?usize = null;
+    var queue_uncertain: usize = 0;
     var queued_id: ?[]const u8 = null;
     var deferred_reason: ?[]const u8 = null;
     const queue_request = try std.json.Stringify.valueAlloc(allocator, .{
@@ -335,7 +336,7 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
         }
         if (!drain_child) {
             if (clutch) |*store| {
-                const stopped = drainPending(allocator, &env, store, mode, timeout_ms, if (no_queue) draft_wait_ms else 0, &timer, &settle_file) catch |err| {
+                const stopped = drainPending(allocator, &env, store, mode, timeout_ms, if (no_queue) draft_wait_ms else 0, &timer, &settle_file, &queue_uncertain) catch |err| {
                     failure = @errorName(err);
                     outcome = "refused";
                     break :work;
@@ -424,6 +425,7 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
         .max_encoded_rpc_bytes = 60000,
         .outcome = outcome,
         .queue_id = queued_id,
+        .queue_uncertain = queue_uncertain,
         .deferred_reason = deferred_reason,
         .failure_reason = failure orelse collector.reason orelse if (backend != null and !success and queued_id == null) @as(?[]const u8, "rex_transport_incomplete") else null,
         .cancellation_signal = if (signal == 0) @as(?u8, null) else signal,
@@ -485,7 +487,7 @@ fn enqueue(allocator: std.mem.Allocator, env: *const std.process.EnvMap, store: 
     return error.QueueWriteFailed;
 }
 
-fn drainPending(allocator: std.mem.Allocator, env: *const std.process.EnvMap, store: *clutch_state.Store, mode: []const u8, timeout: u64, draft_wait_ms: u64, timer: *std.time.Timer, settle_file: *?[]const u8) !?[]const u8 {
+fn drainPending(allocator: std.mem.Allocator, env: *const std.process.EnvMap, store: *clutch_state.Store, mode: []const u8, timeout: u64, draft_wait_ms: u64, timer: *std.time.Timer, settle_file: *?[]const u8, uncertain: *usize) !?[]const u8 {
     const queue_path = try std.fmt.allocPrint(allocator, "{s}.queue", .{store.path[0 .. store.path.len - ".json".len]});
     var queue = std.fs.openDirAbsolute(queue_path, .{ .iterate = true, .no_follow = true }) catch |err| switch (err) {
         error.FileNotFound => return null,
@@ -494,9 +496,12 @@ fn drainPending(allocator: std.mem.Allocator, env: *const std.process.EnvMap, st
     defer queue.close();
     try clutch_state.privateStat(queue.fd, true);
     var entries = queue.iterate();
+    var pending = false;
     while (try entries.next()) |entry| {
-        if (std.mem.endsWith(u8, entry.name, ".pending.json") or std.mem.endsWith(u8, entry.name, ".inflight.json")) break;
-    } else return null;
+        if (std.mem.endsWith(u8, entry.name, ".pending.json")) pending = true;
+        if (std.mem.endsWith(u8, entry.name, ".inflight.json")) uncertain.* += 1;
+    }
+    if (!pending) return null;
     if (std.mem.eql(u8, mode, "ignore")) return "queued_messages_pending";
     const elapsed = timer.read() / std.time.ns_per_ms;
     if (elapsed >= timeout) return "queued_messages_pending";
@@ -517,8 +522,9 @@ fn drainPending(allocator: std.mem.Allocator, env: *const std.process.EnvMap, st
     var collector = QueueCollector{ .allocator = allocator };
     const result = try supervised.collect(allocator, &argv, env, timeout - elapsed, &collector);
     if (result.stopped or result.term != .Exited) return "queued_messages_pending";
-    const Reply = struct { queue: struct { stopped: ?struct { reason: []const u8 } = null } };
+    const Reply = struct { queue: struct { inflight: ?usize = null, stopped: ?struct { reason: []const u8 } = null } };
     const reply = (try std.json.parseFromSlice(Reply, allocator, collector.bytes.items, .{ .allocate = .alloc_always, .ignore_unknown_fields = true })).value;
+    uncertain.* = reply.queue.inflight orelse uncertain.*;
     if (reply.queue.stopped) |stopped| return if (deferrable(stopped.reason)) stopped.reason else "queued_messages_pending";
     return null;
 }

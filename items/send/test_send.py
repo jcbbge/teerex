@@ -182,9 +182,9 @@ io.write(rex.json.encode(out))
             time.sleep(.02)
         self.fail("boxed editor did not start")
 
-    def clutch(self, target, operation):
+    def clutch(self, target, operation, *options):
         result = subprocess.run([BIN, "clutch", operation, "--socket", str(self.socket),
-                                 "--session", target[0], "--pane", target[1], "--json"],
+                                 "--session", target[0], "--pane", target[1], "--json", *options],
                                 env=self.env, capture_output=True, text=True, timeout=10)
         return result, json.loads(result.stdout) if result.stdout else None
 
@@ -360,8 +360,7 @@ io.write(rex.json.encode(out))
         self.assertEqual(sender.returncode, 0, stdout + stderr)
         self.received(directory / "bytes", b"\x18" + self.pasted(b"older") + self.pasted(b"later"))
 
-    def test_human_input_between_empty_read_and_paste_is_not_submitted(self):
-        target, directory = self.editor("", "race")
+    def inject_human_before_paste(self):
         wrapper = self.work / "wrapper"
         wrapper.mkdir()
         script = wrapper / "rex"
@@ -381,6 +380,42 @@ os.execv({self.rex!r}, [{self.rex!r}, *args])
 """)
         script.chmod(0o700)
         self.env["PATH"] = str(wrapper) + os.pathsep + self.env["PATH"]
+        return self.env["PATH"].split(os.pathsep, 1)[1]
+
+    def test_uncertain_drain_does_not_block_later_sends(self):
+        target, directory = self.editor("draft", "race")
+        _, queued = self.send(target, b"uncertain")
+        self.assertEqual(queued["outcome"], "queued")
+        self.type_draft(target, "\x18")
+        normal_path = self.inject_human_before_paste()
+        result, receipt = self.clutch(target, "drain")
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(receipt["queue"]["stopped"]["reason"], "input_changed_before_enter")
+        self.assertFalse(receipt["queue"]["stopped"]["retry_safe"])
+        self.assertEqual(receipt["queue"]["inflight"], 1)
+        self.assertEqual((directory / "submissions").read_bytes(), b"")
+
+        self.env["PATH"] = normal_path
+        _, pending = self.send(target, b"pending")
+        self.assertEqual(pending["outcome"], "queued")
+        self.assertNotEqual(self.clutch(target, "queue", "--resolve", pending["queue_id"])[0].returncode, 0)
+        self.type_draft(target, "\x18")
+        for message in (b"later", b"last"):
+            result, receipt = self.send(target, message)
+            self.assertEqual(result.returncode, 0, receipt)
+            self.assertEqual(receipt["outcome"], "events_acknowledged")
+        self.assertEqual([json.loads(line) for line in (directory / "submissions").read_text().splitlines()],
+                         ["FROM worker: pending", "FROM worker: later", "FROM worker: last"])
+        result, receipt = self.clutch(target, "drain")
+        self.assertEqual(result.returncode, 0, receipt)
+        self.assertEqual(receipt["queue"]["uncertain"], [queued["queue_id"]])
+        self.assertEqual(self.clutch(target, "queue")[1]["messages"][0]["delivery"], "uncertain")
+        self.assertEqual(self.clutch(target, "queue", "--resolve", queued["queue_id"])[0].returncode, 0)
+        self.assertEqual(self.clutch(target, "queue")[1]["messages"], [])
+
+    def test_human_input_between_empty_read_and_paste_is_not_submitted(self):
+        target, directory = self.editor("", "race")
+        self.inject_human_before_paste()
         result, packet = self.send(target)
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertEqual(packet["outcome"], "uncertain")

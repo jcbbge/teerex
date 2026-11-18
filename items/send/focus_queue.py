@@ -139,6 +139,7 @@ def inspect(path, show):
                 value = read(queue, name)
                 validate(value, match[1])
                 item = dict(id=match[1], state=match[2], sender=value["sender"],
+                            delivery="uncertain" if match[2] == "inflight" else "pending",
                             age_ms=max(0, time.time_ns() // 1000000 - value["created_at_unix_ms"]),
                             first_line=value["body"].splitlines()[0] if value["body"].splitlines() else "")
                 if show:
@@ -147,6 +148,17 @@ def inspect(path, show):
             return dict(outcome="inspected", messages=messages)
     except FileNotFoundError:
         return dict(outcome="inspected", messages=[])
+
+
+def resolve(path, identity):
+    name = identity + ".inflight.json"
+    if not ENTRY.fullmatch(name):
+        raise ValueError("invalid_queue_id")
+    with directory(path.parent), directory(path.with_suffix(".queue")) as queue, lock(queue, "drain.lock"):
+        validate(read(queue, name), identity)
+        os.unlink(name, dir_fd=queue)
+        os.fsync(queue)
+    return dict(outcome="resolved", id=identity, delivery="uncertain")
 
 
 @contextlib.contextmanager
@@ -206,7 +218,7 @@ def dispatch(queue, queue_path, pane_lock, name, inflight, command, record, time
 
 
 def drain(path, executable, receipt, already_locked=False):
-    result = dict(delivered=[], pending=0, inflight=0, stopped=None)
+    result = dict(delivered=[], pending=0, inflight=0, uncertain=[], stopped=None)
     receipt["queue"] = result
     wait_until = time.monotonic() + receipt.pop("draft_wait_ms", 0) / 1000
     settle_file = receipt.pop("settle_file", None)
@@ -229,8 +241,7 @@ def drain(path, executable, receipt, already_locked=False):
             for name in names(queue):
                 match = ENTRY.fullmatch(name)
                 if match[2] == "inflight":
-                    result["stopped"] = dict(id=match[1], reason="delivery_uncertain")
-                    break
+                    continue
                 with directory(path.parent) as root:
                     try:
                         hold = read(root, path.name)
@@ -278,7 +289,8 @@ def drain(path, executable, receipt, already_locked=False):
                 break
             remaining = names(queue)
             result["pending"] = sum(".pending." in n for n in remaining)
-            result["inflight"] = sum(".inflight." in n for n in remaining)
+            result["uncertain"] = [ENTRY.fullmatch(n)[1] for n in remaining if ".inflight." in n]
+            result["inflight"] = len(result["uncertain"])
         if settle_file and previous is not None and not result["stopped"]:
             Path(settle_file).write_text(previous, encoding="utf-8")
         return receipt, 1 if result["stopped"] else 0
@@ -300,6 +312,9 @@ def main():
         code = 0
     elif operation == "inspect":
         value = inspect(path, "--show" in sys.argv[3:])
+        code = 0
+    elif operation == "resolve":
+        value = resolve(path, sys.argv[3])
         code = 0
     elif operation == "drain":
         def stop(signum, _frame):

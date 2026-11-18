@@ -3,11 +3,12 @@ const state = @import("rex_send").clutch_state;
 const usage =
     \\Usage: teerex clutch take|release|drain|status|queue --socket ABS --session session:UUID --pane block:UUID [--reason TEXT]
     \\queue [--json] [--show]: inspect ordered pending/inflight ids, sender, age, first line; --show includes bodies.
+    \\queue --resolve ID: remove one uncertain inflight record without replay.
     \\Held panes and guarded drafts queue without input; send --no-queue uses a bounded wait.
     \\release deletes the hold and drains. drain leaves the hold unchanged. Uncertain claims never replay.
     \\Private state: TEEREX_CLUTCH_DIR or ~/.local/state/teerex/clutch (0700), per canonical socket/session/pane.
     \\prune [--apply]: plan/remove released records whose socket/session/pane is absent; preserves held/unknown. Python3.9+.
-    \\status/queue read only; release also drains any pending queue on repeat. status is saved state, not live evidence.
+    \\status and queue inspection read only; release also drains any pending queue on repeat. status is saved state, not live evidence.
     \\No expiry, automatic release, background drain or retry loop. Python3.9+ required for queue/drain.
     \\Store errors produce named failure_reason; send treats unreadable state as unknown and continues.
     \\Binds teerex writers only, never raw Rex writers or human keys. Not a server input lease.
@@ -73,6 +74,7 @@ fn execute(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
         for ([_][]const u8{ "--socket", "--session", "--pane", "--reason" }) |key| {
             if (std.mem.eql(u8, key, args[i])) known = true;
         }
+        if (queue and std.mem.eql(u8, args[i], "--resolve")) known = true;
         if (!known) return usageError("InvalidClutchOptions");
         try options.put(args[i], args[i + 1]);
         i += 2;
@@ -90,7 +92,11 @@ fn execute(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
     if (queue) {
         var argv: std.ArrayList([]const u8) = .empty;
         try argv.appendSlice(allocator, &.{ "python3", "-I", "-c", @import("rex_send").queue_source, "inspect", store.path });
-        if (show) try argv.append(allocator, "--show");
+        if (options.get("--resolve")) |id| {
+            if (show) return usageError("ResolveCannotShow");
+            argv.items[4] = "resolve";
+            try argv.append(allocator, id);
+        } else if (show) try argv.append(allocator, "--show");
         return std.process.execv(allocator, argv.items);
     }
     var changed = false;
