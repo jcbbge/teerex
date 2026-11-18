@@ -150,27 +150,39 @@ local function finish(reason, attempted)
 end
 
 local guarded = a.draft_mode == "guard"
-if not gate() then finish(clutch_reason); return end
+local previous
+if guarded and type(a.settle_file) == "string" then
+    local file = io.open(a.settle_file, "r")
+    if file then previous = file:read("*a"); file:close() end
+    if previous == "" then previous = nil end
+end
+if not gate(previous ~= nil) then finish(clutch_reason); return end
 local editor
 if guarded then
     local waited = 0
     while true do
-        local state, _, tracked = read_input()
+        local state, parts, tracked, width = read_input()
         draft.state, editor = state, tracked
         if state == "empty" then break end
-        if a.queue_on_hold or waited >= a.draft_wait_ms then
+        local wait_ms = a.queue_on_hold and 0 or a.draft_wait_ms
+        if previous then
+            -- Wait only for this drain's last submission. A different draft,
+            -- an ambiguous placeholder, or unknown input stops immediately.
+            wait_ms = state == "present" and matches_paste(parts, previous, width) and 2000 or 0
+        end
+        if waited >= wait_ms then
             report()
             finish(state == "present" and "draft_present" or "input_state_unknown")
             return
         end
-        local delay = math.min(100, a.draft_wait_ms - waited)
+        local delay = math.min(100, wait_ms - waited)
         rex.sleep(delay / 1000)
         waited = waited + delay
-        if not gate() then finish(clutch_reason); return end
+        if not gate(previous ~= nil) then finish(clutch_reason); return end
     end
 end
 report()
-if not gate() then finish(clutch_reason); return end
+if not gate(previous ~= nil) then finish(clutch_reason); return end
 if guarded then
     local state, _, tracked = read_input()
     draft.state, editor = state, tracked

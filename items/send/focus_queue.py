@@ -164,7 +164,7 @@ def sender_lock(path, already_locked):
         path.rmdir()
 
 
-def dispatch(queue, queue_path, pane_lock, name, inflight, command, record, timeout):
+def dispatch(queue, queue_path, pane_lock, name, inflight, command, record, timeout, previous):
     # The native guard asks for a permit only after observing empty input.
     # Publish the permit after the claim is durable. A controller failure after
     # that point leaves an uncertain claim which a later drain cannot replay.
@@ -172,6 +172,10 @@ def dispatch(queue, queue_path, pane_lock, name, inflight, command, record, time
     deadline = time.monotonic() + timeout
     with tempfile.TemporaryDirectory(prefix=".dispatch-", dir=queue_path) as exchange:
         permit = Path(exchange)
+        if previous is not None:
+            fd = os.open(permit / "previous", os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as stream:
+                stream.write(previous)
         env = dict(os.environ, TEEREX_GENERATED_SENDER=record["sender"],
                    TEEREX_QUEUE_LOCK=str(pane_lock), TEEREX_QUEUE_DISPATCH=exchange)
         with subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
@@ -205,6 +209,8 @@ def drain(path, executable, receipt, already_locked=False):
     result = dict(delivered=[], pending=0, inflight=0, stopped=None)
     receipt["queue"] = result
     wait_until = time.monotonic() + receipt.pop("draft_wait_ms", 0) / 1000
+    settle_file = receipt.pop("settle_file", None)
+    previous = None
     budget_ms = os.environ.get("TEEREX_DRAIN_BUDGET_MS")
     deadline = time.monotonic() + int(budget_ms) / 1000 if budget_ms else None
     queue_path = path.with_suffix(".queue")
@@ -254,11 +260,12 @@ def drain(path, executable, receipt, already_locked=False):
                     if record.get(key) is not None:
                         command.extend(["--" + key.replace("_", "-"), record[key]])
                 code, packet, claimed = dispatch(queue, queue_path, pane_lock, name, inflight, command, record,
-                                                 timeout_ms / 1000 + (.5 if deadline is not None else 5))
+                                                 timeout_ms / 1000 + (.5 if deadline is not None else 5), previous)
                 if claimed and code == 0 and packet.get("outcome") == "events_acknowledged":
                     os.unlink(inflight, dir_fd=queue)
                     os.fsync(queue)
                     result["delivered"].append(match[1])
+                    previous = f'FROM {record["sender"]}: {record["body"]}'
                     continue
                 # No input attempted is replayable. Any partial/uncertain input keeps the claim.
                 safe = not claimed or (packet.get("paste", {}).get("attempted") is False and
@@ -272,6 +279,8 @@ def drain(path, executable, receipt, already_locked=False):
             remaining = names(queue)
             result["pending"] = sum(".pending." in n for n in remaining)
             result["inflight"] = sum(".inflight." in n for n in remaining)
+        if settle_file and previous is not None and not result["stopped"]:
+            Path(settle_file).write_text(previous, encoding="utf-8")
         return receipt, 1 if result["stopped"] else 0
     finally:
         queue_context.__exit__(None, None, None)

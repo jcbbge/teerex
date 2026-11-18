@@ -3,6 +3,7 @@ import json
 import os
 from pathlib import Path
 import re
+import select
 import sys
 import tty
 import unicodedata
@@ -52,6 +53,7 @@ with (root / "bytes").open("ab", buffering=0) as raw, (root / "submissions").ope
     while chunk := os.read(0, 65536):
         raw.write(chunk)
         pending += chunk
+        redraw = True
         while pending:
             marker = b"\x1b[201~" if pasting else b"\x1b[200~"
             if marker.startswith(pending) and pending != marker:
@@ -78,9 +80,14 @@ with (root / "bytes").open("ab", buffering=0) as raw, (root / "submissions").ope
                 cursor = start
             elif not pasting and char in "\r\n":
                 submitted.write(json.dumps("".join(draft)) + "\n")
+                if mode == "settle":
+                    draw()
+                    readable, _, _ = select.select([0], [], [], .55)
+                    redraw = not readable
                 draft.clear()
                 cursor = 0
             else:
                 draft.insert(cursor, char)
                 cursor += 1
-        draw()
+        if redraw:
+            draw()

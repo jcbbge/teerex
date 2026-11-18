@@ -215,6 +215,68 @@ io.write(rex.json.encode(out))
                 self.assertEqual((directory / "submissions").read_text().splitlines(),
                                  ['"FROM worker: first"', '"FROM worker: second"'])
 
+    def test_drain_delivers_three_records_after_submitted_text_clears(self):
+        target, directory = self.editor("human draft", "settle")
+        messages = [b"first", b"second", b"third"]
+        ids = []
+        for message in messages:
+            result, packet = self.send(target, message)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(packet["outcome"], "queued")
+            ids.append(packet["queue_id"])
+        self.type_draft(target, "\x18")
+        self.received(directory / "bytes", b"\x18")
+
+        result, packet = self.clutch(target, "drain")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(packet["queue"]["delivered"], sorted(ids))
+        self.assertEqual((packet["queue"]["pending"], packet["queue"]["inflight"]), (0, 0))
+        self.received(directory / "bytes", b"\x18" + b"".join(map(self.pasted, messages)))
+        self.assertEqual([json.loads(line) for line in (directory / "submissions").read_text().splitlines()],
+                         ["FROM worker: " + message.decode() for message in messages])
+
+    def test_send_waits_for_last_drained_record_to_clear(self):
+        target, directory = self.editor("human draft", "settle")
+        queued, receipt = self.send(target, b"older")
+        self.assertEqual(queued.returncode, 0, queued.stdout + queued.stderr)
+        self.assertEqual(receipt["outcome"], "queued")
+        self.type_draft(target, "\x18")
+        self.received(directory / "bytes", b"\x18")
+
+        result, packet = self.send(target, b"new")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(packet["outcome"], "events_acknowledged")
+        self.received(directory / "bytes", b"\x18" + self.pasted(b"older") + self.pasted(b"new"))
+        self.assertEqual(self.clutch(target, "drain")[1]["queue"]["delivered"], [])
+
+    def test_human_input_during_settling_leaves_next_record_pending(self):
+        target, directory = self.editor("human draft", "settle")
+        ids = []
+        for message in (b"first", b"second"):
+            result, packet = self.send(target, message)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(packet["outcome"], "queued")
+            ids.append(packet["queue_id"])
+        self.type_draft(target, "\x18")
+        self.received(directory / "bytes", b"\x18")
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            drain = pool.submit(self.clutch, target, "drain")
+            deadline = time.monotonic() + 3
+            while not (directory / "submissions").stat().st_size:
+                self.assertLess(time.monotonic(), deadline)
+                time.sleep(.01)
+            self.type_draft(target, "new human draft")
+            result, packet = drain.result()
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertEqual(packet["queue"]["delivered"], ids[:1])
+        self.assertEqual(packet["queue"]["stopped"]["id"], ids[1])
+        self.assertEqual(packet["queue"]["stopped"]["reason"], "draft_present")
+        self.assertEqual((packet["queue"]["pending"], packet["queue"]["inflight"]), (1, 0))
+        self.received(directory / "bytes", b"\x18" + self.pasted(b"first") + b"new human draft")
+        self.assertEqual((directory / "draft").read_text(), "new human draft")
+        self.assertEqual((directory / "submissions").read_text().splitlines(), ['"FROM worker: first"'])
+
     def test_boxed_editor_submits_exact_wrapped_multiline_message(self):
         target, directory = self.editor("", "wrap")
         message = b"answer\nreply-to: " + b"x" * 50 + b" " + b"y" * 50

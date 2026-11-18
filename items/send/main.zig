@@ -266,6 +266,10 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
     const exchange = env.get("TEEREX_QUEUE_DISPATCH");
     const drain_child = no_queue and exchange != null and
         std.mem.eql(u8, env.get("TEEREX_QUEUE_LOCK") orelse "", lock_path);
+    var settle_file: ?[]const u8 = if (drain_child) try std.fs.path.join(allocator, &.{ exchange.?, "previous" }) else null;
+    defer if (!drain_child) {
+        if (settle_file) |file| std.fs.deleteFileAbsolute(file) catch {};
+    };
     work: {
         // A diagnostic is for the invoking caller, never a message to another pane.
         const body = std.mem.trimStart(u8, message, " \t\n");
@@ -303,18 +307,6 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
             outcome = "deadline_exceeded";
             break :work;
         }
-        const request = try std.json.Stringify.valueAlloc(allocator, .{
-            .session_id = sid,
-            .block_id = bid,
-            .draft_mode = mode,
-            .draft_wait_ms = draft_wait_ms,
-            .clutch_file = clutch_file,
-            .clutch_failure = clutch_failure,
-            .queue_on_hold = !no_queue,
-            .queue_exchange = if (drain_child) exchange else null,
-            .text = try std.fmt.allocPrint(allocator, "FROM {s}: {s}", .{ sender, message }),
-        }, .{});
-        encoded_argument_bytes = request.len;
         // Only paste text is a lower bound on RPC size; clutch metadata belongs
         // to the local controller and must not shrink the existing paste budget.
         const paste_lower_bound = try std.json.Stringify.valueAlloc(allocator, .{
@@ -343,7 +335,7 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
         }
         if (!drain_child) {
             if (clutch) |*store| {
-                const stopped = drainPending(allocator, &env, store, mode, timeout_ms, if (no_queue) draft_wait_ms else 0, &timer) catch |err| {
+                const stopped = drainPending(allocator, &env, store, mode, timeout_ms, if (no_queue) draft_wait_ms else 0, &timer, &settle_file) catch |err| {
                     failure = @errorName(err);
                     outcome = "refused";
                     break :work;
@@ -356,6 +348,19 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
                 }
             }
         }
+        const request = try std.json.Stringify.valueAlloc(allocator, .{
+            .session_id = sid,
+            .block_id = bid,
+            .draft_mode = mode,
+            .draft_wait_ms = draft_wait_ms,
+            .clutch_file = clutch_file,
+            .clutch_failure = clutch_failure,
+            .queue_on_hold = !no_queue,
+            .queue_exchange = if (drain_child) exchange else null,
+            .settle_file = settle_file,
+            .text = try std.fmt.allocPrint(allocator, "FROM {s}: {s}", .{ sender, message }),
+        }, .{});
+        encoded_argument_bytes = request.len;
         const argv = [_][]const u8{ "rex", "--autostart=false", "--server", endpoint, "--timeout", "3s", "--color", "never", "do", "--session", sid, "--block", bid, "-e", "-- teerex-guarded-message\n" ++ @embedFile("draft.lua") ++ "\n" ++ @embedFile("send.lua"), "--args", request };
         const before_spawn = timer.read() / std.time.ns_per_ms;
         if (before_spawn >= timeout_ms or supervised.requestedSignal() != 0) {
@@ -480,7 +485,7 @@ fn enqueue(allocator: std.mem.Allocator, env: *const std.process.EnvMap, store: 
     return error.QueueWriteFailed;
 }
 
-fn drainPending(allocator: std.mem.Allocator, env: *const std.process.EnvMap, store: *clutch_state.Store, mode: []const u8, timeout: u64, draft_wait_ms: u64, timer: *std.time.Timer) !?[]const u8 {
+fn drainPending(allocator: std.mem.Allocator, env: *const std.process.EnvMap, store: *clutch_state.Store, mode: []const u8, timeout: u64, draft_wait_ms: u64, timer: *std.time.Timer, settle_file: *?[]const u8) !?[]const u8 {
     const queue_path = try std.fmt.allocPrint(allocator, "{s}.queue", .{store.path[0 .. store.path.len - ".json".len]});
     var queue = std.fs.openDirAbsolute(queue_path, .{ .iterate = true, .no_follow = true }) catch |err| switch (err) {
         error.FileNotFound => return null,
@@ -495,9 +500,18 @@ fn drainPending(allocator: std.mem.Allocator, env: *const std.process.EnvMap, st
     if (std.mem.eql(u8, mode, "ignore")) return "queued_messages_pending";
     const elapsed = timer.read() / std.time.ns_per_ms;
     if (elapsed >= timeout) return "queued_messages_pending";
+    // Keep the previous envelope in a private file, outside argv and receipts.
+    var random: [16]u8 = undefined;
+    std.crypto.random.bytes(&random);
+    const name = try std.fmt.allocPrint(allocator, "{s}.settle", .{std.fmt.bytesToHex(random, .lower)});
+    const settle_path = try std.fs.path.join(allocator, &.{ std.fs.path.dirname(store.path).?, name });
+    const file = try std.fs.createFileAbsolute(settle_path, .{ .exclusive = true, .mode = 0o600 });
+    settle_file.* = settle_path;
+    file.close();
     const raw = try std.json.Stringify.valueAlloc(allocator, .{
         .target = .{ .socket = store.socket, .session = store.session, .pane = store.pane },
         .draft_wait_ms = draft_wait_ms,
+        .settle_file = settle_path,
     }, .{});
     const argv = [_][]const u8{ "python3", "-I", "-c", queue_source, "drain", store.path, try std.fs.selfExePathAlloc(allocator), raw, "--locked" };
     var collector = QueueCollector{ .allocator = allocator };
