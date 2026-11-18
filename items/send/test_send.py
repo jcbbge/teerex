@@ -215,6 +215,26 @@ io.write(rex.json.encode(out))
                 self.assertEqual((directory / "submissions").read_text().splitlines(),
                                  ['"FROM worker: first"', '"FROM worker: second"'])
 
+    def test_drain_waits_for_delayed_paste_redraw(self):
+        target, directory = self.editor("human draft", "delayed-paste")
+        messages = [b"first", b"second"]
+        ids = []
+        for message in messages:
+            result, packet = self.send(target, message)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(packet["outcome"], "queued")
+            ids.append(packet["queue_id"])
+        self.type_draft(target, "\x18")
+        self.received(directory / "bytes", b"\x18")
+
+        result, packet = self.clutch(target, "drain")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(packet["queue"]["delivered"], sorted(ids), packet)
+        self.assertEqual((packet["queue"]["pending"], packet["queue"]["inflight"]), (0, 0))
+        self.received(directory / "bytes", b"\x18" + b"".join(map(self.pasted, messages)))
+        self.assertEqual([json.loads(line) for line in (directory / "submissions").read_text().splitlines()],
+                         ["FROM worker: " + message.decode() for message in messages])
+
     def test_drain_delivers_three_records_after_submitted_text_clears(self):
         target, directory = self.editor("human draft", "settle")
         messages = [b"first", b"second", b"third"]

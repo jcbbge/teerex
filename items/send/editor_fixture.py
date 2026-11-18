@@ -60,6 +60,8 @@ with (root / "bytes").open("ab", buffering=0) as raw, (root / "submissions").ope
                 break
             if pending.startswith(marker):
                 pasting = not pasting
+                if not pasting and mode == "delayed-paste":
+                    select.select([], [], [], .55)
                 pending = pending[len(marker):]
                 continue
             match = re.match(rb"[\xc0-\xff][\x80-\xbf]*|.", pending, re.S)

@@ -217,18 +217,26 @@ emit({event="attempt", stage="paste"})
 if not rex.call("block.event", paste) then finish("paste_call_failed", true); return end
 emit({event="ack", stage="paste"})
 -- Rex acknowledges dispatch before the editor necessarily redraws.
-if guarded then rex.sleep(.08) end
-if not gate(guarded) then finish(clutch_reason, true); return end
 if guarded then
-    local state, parts, tracked, width = read_input()
-    local content = parts and table.concat(parts, "\n")
-    local lines = content and content:match("^%[Pasted text #%d+ %+(%d+) lines?%]$")
-    local placeholder = lines and tonumber(lines) == select(2, a.text:gsub("\n", ""))
-    if (editor or tracked or state ~= "empty") and
-       (not matches_paste(parts, a.text, width) and not placeholder) then
-        finish("input_changed_before_enter", true)
-        return
+    local newline_count = select(2, a.text:gsub("\n", ""))
+    for waited = 75, 1500, 75 do
+        rex.sleep(.075)
+        if not gate(true) then finish(clutch_reason, true); return end
+        local state, parts, tracked, width = read_input()
+        if state == "present" then
+            local content = parts and table.concat(parts, "\n")
+            local lines = content and content:match("^%[Pasted text #%d+ %+(%d+) lines?%]$")
+            if matches_paste(parts, a.text, width) or tonumber(lines) == newline_count then break end
+            finish("input_changed_before_enter", true)
+            return
+        end
+        -- Preserve the no-echo path for terminals without a recognized editor.
+        if state == "empty" and not editor and not tracked then break end
+        if waited == 1500 then finish("input_changed_before_enter", true); return end
     end
+elseif not gate(false) then
+    finish(clutch_reason, true)
+    return
 end
 emit({event="attempt", stage="enter"})
 local ok = rex.call("block.event", {session_id=a.session_id, block_id=a.block_id,
