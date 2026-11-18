@@ -196,18 +196,25 @@ class ClutchTest(fixtures.SendTest):
         self.type_draft(target, "keep this draft")
         result, saved = self.clutch("release", target)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        process = resources.start_process(self.command(target) + ["--draft-wait-ms", "500"], env=self.env,
+        process = resources.start_process(self.command(target) + ["--no-queue", "--draft-wait-ms", "500"], env=self.env,
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         self.addCleanup(lambda: self.cleanup_process(process))
         time.sleep(.2)
         Path(saved["state_file"]).write_text("corrupt JSON")
         stdout, stderr = process.communicate(timeout=6)
-        self.assertEqual(process.returncode, 0, stdout + stderr)
+        self.assertEqual(process.returncode, 1, stdout + stderr)
         packet = json.loads(stdout)
         self.assertEqual(packet["clutch"]["state"], "unknown")
         self.assertEqual(packet["clutch"]["failure_reason"], "clutch_state_invalid")
-        self.assertTrue(packet["draft"]["restore_verified"])
+        self.assertEqual(packet["failure_reason"], "draft_present")
+        self.assertTrue(packet["retry_safe"])
+        self.assertFalse(packet["paste"]["attempted"] or packet["enter"]["attempted"])
+        self.assertEqual(log.with_suffix(".bytes").read_bytes(), b"keep this draft")
         self.assertIn("keep this draft", self.prompt_text(target))
+        sent, deferred = self.send(target)
+        self.assertEqual(sent.returncode, 0, sent.stdout + sent.stderr)
+        self.assertEqual(deferred["clutch"]["state"], "unknown")
+        self.assert_deferred(deferred, log, "keep this draft")
 
     def prune(self, *extra):
         result = subprocess.run([fixtures.BIN, "clutch", "prune", *extra], env=self.env,

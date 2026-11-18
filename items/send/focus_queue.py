@@ -5,9 +5,11 @@ import json
 import os
 from pathlib import Path
 import re
+import signal
 import stat
 import subprocess
 import sys
+import tempfile
 import time
 import uuid
 
@@ -69,16 +71,17 @@ def rename(root, source, target):
     os.fsync(root)
 
 
-def enqueue(path, request):
+def enqueue(path, request, reason="pane_held_by_human"):
     with directory(path.parent) as root, lock(root, "clutch.lock"):
-        try:
-            held = read(root, path.name)
-        except FileNotFoundError:
-            return dict(outcome="released")
-        if not held.get("held"):
-            return dict(outcome="released")
-        if any(held.get(k) != request[k] for k in ("socket", "session", "pane")):
-            raise ValueError("queue_target_mismatch")
+        if reason == "pane_held_by_human":
+            try:
+                held = read(root, path.name)
+            except FileNotFoundError:
+                return dict(outcome="released")
+            if not held.get("held"):
+                return dict(outcome="released")
+            if any(held.get(k) != request[k] for k in ("socket", "session", "pane")):
+                raise ValueError("queue_target_mismatch")
         qname = path.stem + ".queue"
         try:
             os.mkdir(qname, 0o700, dir_fd=root)
@@ -146,9 +149,64 @@ def inspect(path, show):
         return dict(outcome="inspected", messages=[])
 
 
-def drain(path, executable, receipt):
+@contextlib.contextmanager
+def sender_lock(path, already_locked):
+    if already_locked:
+        yield
+        return
+    try:
+        path.mkdir(mode=0o700)
+    except FileExistsError as exc:
+        raise ValueError("queue_sender_busy") from exc
+    try:
+        yield
+    finally:
+        path.rmdir()
+
+
+def dispatch(queue, queue_path, pane_lock, name, inflight, command, record, timeout):
+    # The native guard asks for a permit only after observing empty input.
+    # Publish the permit after the claim is durable. A controller failure after
+    # that point leaves an uncertain claim which a later drain cannot replay.
+    claimed = False
+    deadline = time.monotonic() + timeout
+    with tempfile.TemporaryDirectory(prefix=".dispatch-", dir=queue_path) as exchange:
+        permit = Path(exchange)
+        env = dict(os.environ, TEEREX_GENERATED_SENDER=record["sender"],
+                   TEEREX_QUEUE_LOCK=str(pane_lock), TEEREX_QUEUE_DISPATCH=exchange)
+        with subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                              text=True, env=env) as child:
+            body = record["body"]
+            try:
+                while time.monotonic() < deadline:
+                    if not claimed and (permit / "ready").exists():
+                        rename(queue, name, inflight)
+                        claimed = True
+                        (permit / "claimed").touch()
+                    try:
+                        stdout, _ = child.communicate(input=body, timeout=.02)
+                        return child.returncode, json.loads(stdout), claimed
+                    except subprocess.TimeoutExpired:
+                        body = None  # communicate retains the unsent part across timeouts.
+                return None, {}, claimed
+            except (OSError, ValueError):
+                return None, {}, claimed
+            finally:
+                if child.poll() is None:
+                    # Allow the native sender to reap its separately supervised Rex process.
+                    child.terminate()
+                    try:
+                        child.wait(timeout=.55)
+                    except subprocess.TimeoutExpired:
+                        child.kill()
+
+
+def drain(path, executable, receipt, already_locked=False):
     result = dict(delivered=[], pending=0, inflight=0, stopped=None)
     receipt["queue"] = result
+    wait_until = time.monotonic() + receipt.pop("draft_wait_ms", 0) / 1000
+    budget_ms = os.environ.get("TEEREX_DRAIN_BUDGET_MS")
+    deadline = time.monotonic() + int(budget_ms) / 1000 if budget_ms else None
     queue_path = path.with_suffix(".queue")
     try:
         queue_context = directory(queue_path)
@@ -156,48 +214,60 @@ def drain(path, executable, receipt):
     except FileNotFoundError:
         return receipt, 0
     try:
-        # One release owns the drain. Taking the clutch stays independent of delivery waits.
-        with lock(queue, "drain.lock"):
+        if not names(queue):
+            return receipt, 0
+        pane_id = receipt["target"]["pane"].removeprefix("block:")
+        pane_lock = Path(os.environ.get("TMPDIR") or "/tmp") / f"agent-send.{pane_id}.lock"
+        # Serialize the entire transaction with direct sends, while clutch take stays independent.
+        with sender_lock(pane_lock, already_locked), lock(queue, "drain.lock"):
             for name in names(queue):
                 match = ENTRY.fullmatch(name)
                 if match[2] == "inflight":
                     result["stopped"] = dict(id=match[1], reason="delivery_uncertain")
                     break
+                with directory(path.parent) as root:
+                    try:
+                        hold = read(root, path.name)
+                    except FileNotFoundError:
+                        hold = None
+                if hold and hold.get("held"):
+                    result["stopped"] = dict(id=match[1], reason="pane_held_by_human", retry_safe=True)
+                    break
                 record = read(queue, name)
                 validate(record, match[1])
                 if any(record.get(k) != receipt["target"][k] for k in ("socket", "session", "pane")):
                     raise ValueError("queue_target_mismatch")
+                timeout_ms = record["timeout_ms"]
+                if deadline is not None:
+                    timeout_ms = min(timeout_ms, int((deadline - time.monotonic()) * 1000))
+                    if timeout_ms < 100:
+                        result["stopped"] = dict(id=match[1], reason="drain_budget_exhausted", retry_safe=True)
+                        break
                 inflight = match[1] + ".inflight.json"
-                rename(queue, name, inflight)
                 # Message bytes stay on disk/stdin, never in the child command line or receipts.
+                wait_ms = str(max(0, int((wait_until - time.monotonic()) * 1000)))
                 command = [executable, "send", "--socket", record["socket"], "--session", record["session"],
                            "--block", record["pane"], "--from", record["sender"], "--message-file", "-",
-                           "--no-queue", "--draft", record["draft"], "--draft-wait-ms", str(record["draft_wait_ms"]),
-                           "--timeout-ms", str(record["timeout_ms"])]
+                           "--no-queue", "--draft", "guard", "--draft-wait-ms", wait_ms,
+                           "--timeout-ms", str(timeout_ms)]
                 for key in ("status_id", "status_state", "status_message"):
                     if record.get(key) is not None:
                         command.extend(["--" + key.replace("_", "-"), record[key]])
-                try:
-                    sent = subprocess.run(command, input=record["body"], text=True, capture_output=True,
-                                          timeout=record["timeout_ms"] / 1000 + 5,
-                                          env=dict(os.environ, TEEREX_GENERATED_SENDER=record["sender"]))
-                    packet = json.loads(sent.stdout)
-                except (OSError, ValueError, subprocess.TimeoutExpired):
-                    result["stopped"] = dict(id=match[1], reason="delivery_uncertain")
-                    break
-                if sent.returncode == 0 and packet.get("outcome") == "events_acknowledged":
+                code, packet, claimed = dispatch(queue, queue_path, pane_lock, name, inflight, command, record,
+                                                 timeout_ms / 1000 + (.5 if deadline is not None else 5))
+                if claimed and code == 0 and packet.get("outcome") == "events_acknowledged":
                     os.unlink(inflight, dir_fd=queue)
                     os.fsync(queue)
                     result["delivered"].append(match[1])
                     continue
                 # No input attempted is replayable. Any partial/uncertain input keeps the claim.
-                safe = (packet.get("paste", {}).get("attempted") is False and
-                        packet.get("enter", {}).get("attempted") is False and
-                        packet.get("draft", {}).get("cleared") is None)
-                if safe:
+                safe = not claimed or (packet.get("paste", {}).get("attempted") is False and
+                                       packet.get("enter", {}).get("attempted") is False and
+                                       packet.get("outcome") == "refused")
+                if claimed and safe:
                     rename(queue, inflight, name)
-                result["stopped"] = dict(id=match[1], reason=packet.get("failure_reason") or packet.get("outcome"),
-                                         retry_safe=safe)
+                reason = packet.get("failure_reason") or packet.get("outcome") or "delivery_uncertain"
+                result["stopped"] = dict(id=match[1], reason=reason, retry_safe=safe)
                 break
             remaining = names(queue)
             result["pending"] = sum(".pending." in n for n in remaining)
@@ -217,14 +287,17 @@ def main():
             raise ValueError("invalid_queue_request_path")
         with directory(path.parent) as root:
             request = read(root, request_path.name)
-        value = enqueue(path, request)
+        value = enqueue(path, request, sys.argv[4])
         code = 0
     elif operation == "inspect":
         value = inspect(path, "--show" in sys.argv[3:])
         code = 0
     elif operation == "drain":
-        with directory(path.parent):
-            value, code = drain(path, sys.argv[3], json.loads(sys.argv[4]))
+        def stop(signum, _frame):
+            raise SystemExit(128 + signum)
+
+        signal.signal(signal.SIGTERM, stop)
+        value, code = drain(path, sys.argv[3], json.loads(sys.argv[4]), "--locked" in sys.argv[5:])
     else:
         raise ValueError("invalid_queue_operation")
     print(json.dumps(value, ensure_ascii=False))

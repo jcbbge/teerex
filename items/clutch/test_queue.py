@@ -191,12 +191,25 @@ sys.exit(p.returncode)
             packet = json.loads(out)
             self.assertEqual(packet["outcome"], "queued")
             self.assertFalse(packet["paste"]["attempted"])
-            self.assertIsNone(packet["draft"]["cleared"])
+            self.assertFalse(packet["enter"]["attempted"])
             self.assertIn("operator unfinished", self.prompt_text(target))
             self.assertEqual(log.read_text(), "")
-            self.clutch("release", target)
+            release, packet = self.clutch("release", target, check=False)
+            self.assertEqual(release.returncode, 1)
+            self.assertFalse(packet["held"])
+            self.assertEqual(packet["queue"]["stopped"]["reason"], "draft_present")
+            self.assertEqual((packet["queue"]["pending"], packet["queue"]["inflight"]), (1, 0))
             self.assertIn("operator unfinished", self.prompt_text(target))
-            self.assertEqual([json.loads(line) for line in log.read_text().splitlines()], ["FROM worker: hello"])
+            self.assertEqual(log.with_suffix(".bytes").read_bytes(), b"operator unfinished")
+            self.assertEqual(log.read_text(), "")
+            self.type_draft(target, "\r")
+            for _ in range(100):
+                if "operator unfinished" in log.read_text():
+                    break
+                time.sleep(.02)
+            self.clutch("drain", target)
+            self.assertEqual([json.loads(line) for line in log.read_text().splitlines()],
+                             ["operator unfinished", "FROM worker: hello"])
         finally:
             if process.poll() is None:
                 process.kill()

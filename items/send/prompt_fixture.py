@@ -14,6 +14,7 @@ mode = sys.argv[3] if len(sys.argv) > 3 else "clear"
 ignore_clear = mode == "ignore-clear" or mode.endswith("-ignore-clear")
 submitted = 0
 draft, pending, pasting = b"", b"", False
+raw = log.with_suffix(".bytes").open("ab", buffering=0)
 log.touch()
 os.write(1, b"\x1b[?2004h")
 
@@ -41,7 +42,9 @@ def draw():
 
 draw()
 while True:
-    pending += os.read(0, 65536)
+    chunk = os.read(0, 65536)
+    raw.write(chunk)
+    pending += chunk
     while pending:
         if pending.startswith(b"\x1b"):
             marker = b"\x1b[201~" if pasting else b"\x1b[200~"

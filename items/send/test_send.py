@@ -153,6 +153,161 @@ class SendTest(unittest.TestCase):
                         "args": {"format": "text", "max_bytes": 65536}})["content"]
 
 
+    def test_boxed_capture_input_states(self):
+        expected = {"empty": "empty", "menu-rewind": "unknown"}
+        fixtures = sorted(Path(__file__).with_name("fixtures").glob("*.vt"))
+        self.assertEqual(len(fixtures), 9)
+        cases = [p.read_bytes().decode() for p in fixtures]
+        lua = Path(__file__).with_name("draft.lua").read_text() + """
+local out={}
+for _,v in ipairs(rex.args.cases) do
+    local state = input_state(v, 24, "claude")
+    table.insert(out, state)
+end
+io.write(rex.json.encode(out))
+"""
+        result = self.rex_json("do", "-e", lua, "--args", json.dumps({"cases": cases}))
+        self.assertEqual(result, [expected.get(p.stem, "present") for p in fixtures])
+
+    def editor(self, draft, mode):
+        directory = self.work / str(time.monotonic_ns())
+        directory.mkdir()
+        fixture = Path(__file__).with_name("editor_fixture.py")
+        made = self.rex_json("new", "--json", "--keep-open", "--shell=none", "--", sys.executable,
+                             str(fixture), str(directory), draft, mode)
+        target = made["session_id"], made["initial_windows"][0]["block_ids"][0]
+        for _ in range(100):
+            if (directory / "draft").exists() and "─" in self.prompt_text(target):
+                return target, directory
+            time.sleep(.02)
+        self.fail("boxed editor did not start")
+
+    def clutch(self, target, operation):
+        result = subprocess.run([BIN, "clutch", operation, "--socket", str(self.socket),
+                                 "--session", target[0], "--pane", target[1], "--json"],
+                                env=self.env, capture_output=True, text=True, timeout=10)
+        return result, json.loads(result.stdout) if result.stdout else None
+
+    def test_boxed_drafts_receive_zero_bytes_and_drain_once(self):
+        for mode, draft in (("wrap", "wrapped " * 22), ("wide", "界🙂" * 60),
+                            ("mid", "cursor " * 22), ("placeholder", "pasted\n" * 12),
+                            ("tall", "line\n" * 22)):
+            with self.subTest(mode=mode):
+                target, directory = self.editor(draft, mode)
+                for message in (b"first", b"second"):
+                    result, packet = self.send(target, message, timeout=2500)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(packet["outcome"], "queued")
+                    self.assertEqual(packet["deferred_reason"], "draft_present")
+                    self.assertFalse(packet["paste"]["attempted"] or packet["enter"]["attempted"])
+                self.assertEqual((directory / "bytes").read_bytes(), b"")
+                self.assertEqual((directory / "draft").read_bytes(), draft.encode())
+                self.type_draft(target, "\x18")
+                for _ in range(100):
+                    if (directory / "draft").read_bytes() == b"":
+                        break
+                    time.sleep(.02)
+                result, packet = self.clutch(target, "drain")
+                self.assertEqual(result.returncode, 0, (packet, result.stderr))
+                self.assertEqual(len(packet["queue"]["delivered"]), 2)
+                self.assertEqual(self.clutch(target, "drain")[1]["queue"]["delivered"], [])
+                self.received(directory / "bytes", b"\x18" + self.pasted(b"first") + self.pasted(b"second"))
+                self.assertEqual((directory / "submissions").read_text().splitlines(),
+                                 ['"FROM worker: first"', '"FROM worker: second"'])
+
+    def test_boxed_editor_submits_exact_wrapped_multiline_message(self):
+        target, directory = self.editor("", "wrap")
+        message = b"answer\nreply-to: " + b"x" * 50 + b" " + b"y" * 50
+        result, packet = self.send(target, message)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(packet["outcome"], "events_acknowledged")
+        self.received(directory / "bytes", self.pasted(message))
+        self.assertEqual(json.loads((directory / "submissions").read_text()), "FROM worker: " + message.decode())
+
+    def test_agent_menu_defers_unknown_without_input_or_inflight_claim(self):
+        target, directory = self.editor("", "menu")
+        result, packet = self.send(target)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(packet["outcome"], "queued")
+        self.assertEqual(packet["deferred_reason"], "input_state_unknown")
+        self.assertEqual(packet["draft"], {"mode": "guard", "state": "unknown", "deferred": True})
+        refused, receipt = self.clutch(target, "drain")
+        self.assertEqual(refused.returncode, 1)
+        self.assertEqual(receipt["queue"]["stopped"]["reason"], "input_state_unknown")
+        self.assertEqual((receipt["queue"]["pending"], receipt["queue"]["inflight"]), (1, 0))
+        self.assertEqual((directory / "bytes").read_bytes(), b"")
+
+    def test_concurrent_drafts_queue_and_later_send_drains_in_id_order(self):
+        target, directory = self.editor("human draft " * 15, "wrap")
+        messages = [b"first", b"second", b"third"]
+        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
+            queued = list(pool.map(lambda body: self.send(target, body), messages))
+        for result, receipt in queued:
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(receipt["outcome"], "queued")
+            self.assertEqual(receipt["deferred_reason"], "draft_present")
+        ordered = [body for _, body in sorted(zip([r["queue_id"] for _, r in queued], messages))]
+        pending = self.clutch(target, "drain")[1]["queue"]
+        self.assertEqual((pending["pending"], pending["inflight"]), (3, 0))
+        self.assertEqual(pending["stopped"]["reason"], "draft_present")
+        self.assertEqual((directory / "bytes").read_bytes(), b"")
+        self.type_draft(target, "\x18")
+        self.received(directory / "bytes", b"\x18")
+        result, packet = self.send(target, b"last")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(packet["outcome"], "events_acknowledged")
+        self.received(directory / "bytes", b"\x18" + b"".join(map(self.pasted, [*ordered, b"last"])))
+        self.assertEqual(self.clutch(target, "drain")[1]["queue"]["delivered"], [])
+
+    def test_no_queue_waits_for_empty_to_dispatch_older_message_first(self):
+        target, directory = self.editor("unfinished", "wrap")
+        queued, receipt = self.send(target, b"older")
+        self.assertEqual(queued.returncode, 0, queued.stdout + queued.stderr)
+        self.assertEqual(receipt["outcome"], "queued")
+        command = self.command(target, b"later") + ["--no-queue", "--draft-wait-ms", "2000"]
+        with resources.start_process(command, env=self.env, stdout=subprocess.PIPE,
+                                     stderr=subprocess.PIPE, text=True) as sender:
+            deadline = time.monotonic() + 2
+            while not list(Path(self.env["TEEREX_CLUTCH_DIR"]).glob("*.queue/.dispatch-*")):
+                self.assertIsNone(sender.poll())
+                self.assertLess(time.monotonic(), deadline)
+                time.sleep(.01)
+            self.assertEqual((directory / "bytes").read_bytes(), b"")
+            self.type_draft(target, "\x18")
+            stdout, stderr = sender.communicate(timeout=5)
+        self.assertEqual(sender.returncode, 0, stdout + stderr)
+        self.received(directory / "bytes", b"\x18" + self.pasted(b"older") + self.pasted(b"later"))
+
+    def test_human_input_between_empty_read_and_paste_is_not_submitted(self):
+        target, directory = self.editor("", "race")
+        wrapper = self.work / "wrapper"
+        wrapper.mkdir()
+        script = wrapper / "rex"
+        # Inject a human key at a deterministic point in the same Rex connection.
+        attempt = 'emit({event="attempt", stage="paste"})'
+        injected = ('rex.call("com.superlogical.terminal.write", '
+                    '{session_id=a.session_id, block_id=a.block_id, args={data="human"}})\n')
+        script.write_text(f"""#!{sys.executable}
+import os, sys
+from pathlib import Path
+args = sys.argv[1:]
+script = Path(args[args.index('--args') - 1])
+old = script.read_text()
+assert {attempt!r} in old
+script.write_text(old.replace({attempt!r}, {injected + attempt!r}))
+os.execv({self.rex!r}, [{self.rex!r}, *args])
+""")
+        script.chmod(0o700)
+        self.env["PATH"] = str(wrapper) + os.pathsep + self.env["PATH"]
+        result, packet = self.send(target)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertEqual(packet["outcome"], "uncertain")
+        self.assertEqual(packet["failure_reason"], "input_changed_before_enter")
+        self.assertFalse(packet["enter"]["attempted"])
+        self.received(directory / "bytes", b"human" + self.pasted(b"hello")[:-1])
+        self.assertEqual((directory / "submissions").read_bytes(), b"")
+        self.assertEqual((directory / "draft").read_text(), "humanFROM worker: hello")
+
     def test_sender_name_does_not_require_caller_identity(self):
         target, raw = self.fixture()
         self.env.update(AGENT_NAME="different-caller", AGENT_SESSION="unrelated", AGENT_PANE="unrelated")
@@ -263,12 +418,20 @@ class SendTest(unittest.TestCase):
                                "--args", json.dumps(dict(cases=[f[0] for f in cases])))
         self.assertEqual([r.get("draft") for r in result], [f[1] for f in cases])
 
-    def test_codex_dim_placeholder_does_not_clear_and_real_text_is_restored(self):
+    def assert_deferred(self, packet, log, typed):
+        self.assertEqual(packet["outcome"], "queued")
+        self.assertEqual(packet["deferred_reason"], "draft_present")
+        self.assertEqual(packet["draft"], {"mode": "guard", "state": "present", "deferred": True})
+        self.assertFalse(packet["paste"]["attempted"] or packet["enter"]["attempted"])
+        self.assertEqual(log.read_text(), "")
+        self.assertEqual(log.with_suffix(".bytes").read_bytes(), typed.encode())
+
+    def test_codex_dim_placeholder_delivers_and_real_text_defers(self):
         target, log = self.prompt("Ask Codex to do anything", mode="codex-ignore-clear")
         result, packet = self.send(target, b"placeholder regression")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertFalse(packet["draft"]["detected"])
-        self.assertIsNone(packet["draft"]["cleared"])
+        self.assertEqual(packet["draft"]["state"], "empty")
+        self.assertFalse(packet["draft"]["deferred"])
         for _ in range(100):
             if log.read_text():
                 break
@@ -278,10 +441,8 @@ class SendTest(unittest.TestCase):
         self.type_draft(typed, "Ask Codex to do anything")
         result, packet = self.send(typed, b"typed draft regression")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertTrue(packet["draft"]["detected"])
-        self.assertTrue(packet["draft"]["cleared"] and packet["draft"]["restore_verified"])
+        self.assert_deferred(packet, typed_log, "Ask Codex to do anything")
         self.assertIn("Ask Codex to do anything", self.prompt_text(typed))
-        self.assertEqual([json.loads(line) for line in typed_log.read_text().splitlines()], ["FROM worker: typed draft regression"])
 
     def test_detached_terminal_keeps_draft_guard_and_process(self):
         if Path(BIN).name != "teerex":
@@ -302,30 +463,21 @@ class SendTest(unittest.TestCase):
         self.assertEqual(released.returncode, 0, released.stdout + released.stderr)
         result, packet = self.send(target)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertTrue(packet['draft']['detected'])
-        self.assertTrue(packet['draft']['restored'] and packet['draft']['restore_verified'])
-        self.assertEqual([json.loads(line) for line in log.read_text().splitlines()], ['FROM worker: hello'])
+        self.assert_deferred(packet, log, "PRIVATE_DETACHED_DRAFT")
         self.assertIn('PRIVATE_DETACHED_DRAFT', self.prompt_text(target))
         self.assertNotIn('PRIVATE_DETACHED_DRAFT', result.stdout + result.stderr)
         self.assertEqual(self.rpc('com.superlogical.terminal.process', dict(session_id=target[0], block_id=target[1], args={}))['child'], child)
         blocks = self.rpc('session.list_blocks', dict(session_id=target[0]))['blocks']
         self.assertEqual(next(b for b in blocks if b['block_id'] == target[1])['placement'], 'detached')
 
-    def test_guard_restores_existing_unicode_draft_without_submitting_it(self):
+    def test_guard_defers_existing_unicode_draft_without_touching_it(self):
         for text in ("OPERATOR_PRIVATE_DRAFT", "α😀 private café"):
             target, log = self.prompt()
             self.type_draft(target, text)
             r, packet = self.send(target)
             self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
-            self.assertEqual([json.loads(line) for line in log.read_text().splitlines()], ["FROM worker: hello"])
+            self.assert_deferred(packet, log, text)
             self.assertIn("❯\xa0" + text, self.prompt_text(target))
-            draft = packet["draft"]
-            self.assertEqual(draft["mode"], "guard")
-            self.assertTrue(draft["detected"])
-            self.assertEqual(draft["chars"], len(text))
-            self.assertGreaterEqual(draft["waited_ms"], 1400)
-            self.assertFalse(draft["bound_reached"])
-            self.assertTrue(draft["cleared"] and draft["restored"] and draft["restore_verified"])
             self.assertNotIn(text, r.stdout + r.stderr)
 
     def test_guard_preserves_cursor_forward_spaces_with_nbsp_prompt(self):
@@ -336,14 +488,11 @@ class SendTest(unittest.TestCase):
                                 env=self.env, capture_output=True, text=True, timeout=6)
         packet = json.loads(result.stdout)
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
-        self.assertTrue(packet["draft"]["restore_verified"])
-        self.assertEqual(packet["draft"]["chars"], len(text))
-        self.assertIsNone(packet["draft_warning"])
+        self.assert_deferred(packet, log, text)
         self.assertIn("❯\xa0" + text, self.prompt_text(target))
-        self.assertEqual([json.loads(line) for line in log.read_text().splitlines()], ["FROM worker: hello"])
         self.assertNotIn(text, result.stdout + result.stderr)
 
-    def test_guard_waits_for_typing_and_restores_in_order(self):
+    def test_guard_defers_during_typing(self):
         target, log = self.prompt()
         text = "typingPRIVATE123"
         self.type_draft(target, text[0])
@@ -358,12 +507,11 @@ class SendTest(unittest.TestCase):
         finally:
             writer.join()
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-        self.assertGreater(packet["draft"]["waited_ms"], 3500)
-        self.assertEqual([json.loads(line) for line in log.read_text().splitlines()], ["FROM worker: hello"])
+        self.assert_deferred(packet, log, text)
         self.assertIn("❯\xa0" + text, self.prompt_text(target))
         self.assertNotIn(text, r.stdout + r.stderr)
 
-    def test_busy_grey_marker_draft_is_cleared_sent_alone_and_restored(self):
+    def test_busy_grey_marker_draft_defers(self):
         # Josh's interruption: a busy Claude greys its marker, the guard saw no draft and pasted onto it.
         target, log = self.prompt(mode="busy")
         text = "seat typing"
@@ -379,12 +527,11 @@ class SendTest(unittest.TestCase):
         finally:
             writer.join()
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-        self.assertTrue(packet["draft"]["detected"])
-        self.assertEqual([json.loads(line) for line in log.read_text().splitlines()], ["FROM worker: hello"])
+        self.assert_deferred(packet, log, text)
         self.assertIn(text, self.prompt_text(target).splitlines()[-1])
 
-    def test_restore_late_redraw_and_dropped_paste_preserve_send_ack(self):
-        for mode, verified in (("late-redraw", True), ("drop-restore", False)):
+    def test_guard_does_not_depend_on_editor_clear_or_restore(self):
+        for mode in ("late-redraw", "drop-restore"):
             with self.subTest(mode=mode):
                 target, log = self.prompt(mode=mode)
                 text = "PRIVATE_RESTORE_DRAFT_α"
@@ -393,19 +540,12 @@ class SendTest(unittest.TestCase):
                                         env=self.env, capture_output=True, text=True, timeout=6)
                 packet = json.loads(result.stdout)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-                self.assertEqual(packet["outcome"], "events_acknowledged")
                 self.assertIsNone(packet["failure_reason"])
-                self.assertEqual(packet["draft"]["restored"], verified)
-                self.assertEqual(packet["draft"]["restore_verified"], verified)
-                self.assertEqual(packet["draft_warning"], None if verified else "draft_restore_unverified")
-                self.assertEqual([json.loads(line) for line in log.read_text().splitlines()], ["FROM worker: hello"])
+                self.assert_deferred(packet, log, text)
                 self.assertNotIn(text, result.stdout + result.stderr)
-                if verified:
-                    self.assertIn("❯\xa0" + text, self.prompt_text(target))
-                else:
-                    self.assertNotIn(text, self.prompt_text(target))
+                self.assertIn("❯\xa0" + text, self.prompt_text(target))
 
-    def test_guard_refuses_uncleared_draft_and_validates_limits(self):
+    def test_guard_defers_or_refuses_draft_and_validates_limits(self):
         target, log = self.prompt(ignore_clear=True)
         text = "PRIVATE_UNCLEARABLE_DRAFT"
         self.type_draft(target, text)
@@ -413,12 +553,17 @@ class SendTest(unittest.TestCase):
         del command[-2:]  # Exercise the new default overall timeout.
         result = subprocess.run(command, env=self.env, capture_output=True, text=True, timeout=5)
         packet = json.loads(result.stdout)
-        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(packet["timeout_ms"], 40000)
-        self.assertEqual(packet["failure_reason"], "draft_not_cleared")
-        self.assertFalse(packet["draft"]["cleared"])
-        self.assertFalse(packet["paste"]["attempted"])
-        self.assertEqual(log.read_text(), "")
+        self.assert_deferred(packet, log, text)
+        bounded = subprocess.run(command + ["--no-queue", "--draft-wait-ms", "0"], env=self.env,
+                                 capture_output=True, text=True, timeout=5)
+        refused = json.loads(bounded.stdout)
+        self.assertEqual(bounded.returncode, 1)
+        self.assertEqual(refused["failure_reason"], "draft_present")
+        self.assertTrue(refused["retry_safe"])
+        self.assertFalse(refused["paste"]["attempted"] or refused["enter"]["attempted"])
+        self.assertEqual(log.with_suffix(".bytes").read_bytes(), text.encode())
         self.assertIn(text, self.prompt_text(target))
         self.assertNotIn(text, result.stdout + result.stderr)
         for flags in (["--draft", "bad"], ["--draft-wait-ms", "55001"], ["--draft-wait-ms", "-1"]):
@@ -436,15 +581,17 @@ class SendTest(unittest.TestCase):
             target, log = self.prompt(suggestion)
             r, packet = self.send(target)
             self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
-            self.assertFalse(packet["draft"]["detected"])
-            self.assertLess(packet["draft"]["waited_ms"], 250)
+            self.assertEqual(packet["draft"]["state"], "empty")
+            self.assertLess(packet["elapsed_ms"], 1000)
             self.assertEqual([json.loads(line) for line in log.read_text().splitlines()], ["FROM worker: hello"])
         target, log = self.prompt()
         self.type_draft(target, "savedPRIVATE")
         r = subprocess.run(self.command(target) + ["--draft-wait-ms", "0"], env=self.env, capture_output=True, text=True, timeout=5)
         self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
-        self.assertTrue(json.loads(r.stdout)["draft"]["bound_reached"])
+        self.assert_deferred(json.loads(r.stdout), log, "savedPRIVATE")
         self.assertIn("❯\xa0savedPRIVATE", self.prompt_text(target))
+        target, log = self.prompt()
+        self.type_draft(target, "savedPRIVATE")
         r = subprocess.run(self.command(target) + ["--draft", "ignore"], env=self.env, capture_output=True, text=True, timeout=5)
         self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
         self.assertEqual(json.loads(log.read_text().splitlines()[-1]), "savedPRIVATEFROM worker: hello")

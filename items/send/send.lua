@@ -40,35 +40,41 @@ local paste = {session_id=a.session_id, block_id=a.block_id, event={type="paste"
 local n = #rex.json.encode({jsonrpc="2.0", id=1, method="block.event", params=paste})
 emit({event="preflight", encoded_rpc_bytes=n})
 if n > 60000 then refuse("encoded_paste_exceeds_limit"); return end
-local draft = {mode=a.draft_mode, detected=false, chars=0, waited_ms=0, bound_reached=false}
-local saved = ""
-local function report(stage)
-    emit({event="draft", stage=stage, draft=draft})
+local draft = {mode=a.draft_mode, state="unknown", deferred=false}
+local function report()
+    emit({event="draft", draft=draft})
 end
-local function read_draft()
+local target = {session_id=a.session_id, block_id=a.block_id, args={}}
+local function read_input()
+    local size = rex.call("com.superlogical.terminal.size", target)
+    local process = rex.call("com.superlogical.terminal.process", target)
+    local status = rex.call("com.superlogical.terminal.program_status", target)
+    local function identify(name)
+        if type(name) ~= "string" then return end
+        name = name:match("([^/]+)$") or name
+        if name == "claude" or name == "claude-code" or name:match("^%d+%.%d+%.%d+$") then return "claude" end
+        if name == "codex" or name == "pi" then return name end
+    end
+    local foreground = type(process) == "table" and process.foreground
+    local name = type(foreground) == "table" and foreground.name
+    local child = type(process) == "table" and process.child
+    local app = identify(name) or (type(child) == "table" and identify(child.name))
+    if type(status) == "table" and type(status.records) == "table" then
+        for _, record in pairs(status.records) do
+            if type(record) == "table" then app = app or identify(record.app) end
+        end
+    end
     local capture = rex.call("com.superlogical.terminal.format", {
         session_id=a.session_id, block_id=a.block_id, args={format="vt", extra_cursor=true},
     })
-    if type(capture) ~= "table" then return nil end
-    local text = capture.text or capture.content
-    if type(text) ~= "string" or #text > 1048576 then return nil end
-    local process = rex.call("com.superlogical.terminal.process", {
-        session_id=a.session_id, block_id=a.block_id, args={},
-    })
-    local foreground = type(process) == "table" and process.foreground
-    if type(foreground) == "table" and foreground.name == "zsh" then
-        local size = rex.call("com.superlogical.terminal.size", {
-            session_id=a.session_id, block_id=a.block_id, args={},
-        })
-        local shell = shell_draft_from_vt(text, type(size) == "table" and size.rows)
-        if shell ~= nil then return shell end
-    end
-    return draft_from_vt(text)
+    if type(capture) ~= "table" or capture.id ~= nil then return "unknown" end
+    if type(size) ~= "table" then return "unknown" end
+    return input_state(capture.text or capture.content, size.rows, app, name, size.columns)
 end
 -- Cooperative state is local to the command/Rex host. No server input lease is implied.
 local clutch = {state="unknown", held_observed=false, waited_ms=0, bound_reached=false}
 local clutch_reason
-local function gate()
+local function gate(no_wait)
     local function unknown(reason)
         clutch.state, clutch.failure_reason = "unknown", reason
         emit({event="clutch", clutch=clutch})
@@ -94,7 +100,7 @@ local function gate()
         clutch.state, clutch.failure_reason = held and "held" or "released", nil
         if not held then emit({event="clutch", clutch=clutch}); return true end
         clutch.held_observed = true
-        if a.queue_on_hold or clutch.waited_ms >= a.draft_wait_ms then
+        if no_wait or a.queue_on_hold or clutch.waited_ms >= a.draft_wait_ms then
             clutch.bound_reached = true
             clutch_reason = "pane_held_by_human"
             emit({event="clutch", clutch=clutch})
@@ -106,117 +112,116 @@ local function gate()
         emit({event="clutch", clutch=clutch})
     end
 end
-local function input_failure(reason)
-    refuse(clutch_reason or reason)
-    rex.stop()
-end
-local function key(name, mods, text, codepoint)
-    if not gate() then return false end
-    return rex.call("block.event", {session_id=a.session_id, block_id=a.block_id,
-        event={type="key", payload={key=name, mods=mods, consumed_mods="", text=text,
-            unshifted_codepoint=codepoint, composing=false, action="press"}}})
-end
-local function paste_text(text)
-    if not gate() then return false end
-    return rex.call("block.event", {session_id=a.session_id, block_id=a.block_id,
-        event={type="paste", payload={text=text}}})
-end
-local function deliver()
-    if not gate() then input_failure("clutch_state_unavailable"); return end
-    emit({event="attempt", stage="paste"})
-    local ok = rex.call("block.event", paste)
-    if not ok then emit({event="failed", reason="paste_call_failed"}); rex.stop(); return end
-    emit({event="ack", stage="paste"})
-    emit({event="attempt", stage="enter"})
-    ok = key("enter", "", "\r", 13)
-    if not ok then
-        if clutch_reason then input_failure(clutch_reason) else emit({event="failed", reason="enter_call_failed"}); rex.stop() end
-        return
-    end
-    emit({event="ack", stage="enter"})
-    if saved ~= "" then
-        rex.sleep(.4)
-        local acknowledged = not not paste_text(saved)
-        draft.restored, draft.restore_verified = false, false
-        local verify_timer, restore_bound, complete
-        local function finish_restore(warning)
-            if complete then return end
-            complete = true
-            report("restored")
-            if warning then emit({event="warning", reason=warning}) end
-            -- Restoration cannot undo the already acknowledged message/Enter.
-            emit({event="finished"})
-            -- Cancelling the last active timer can end rex do immediately.
-            -- Publish every final frame before relinquishing those timers.
-            if verify_timer then verify_timer:cancel() end
-            if restore_bound then restore_bound:cancel() end
-            rex.stop()
-        end
-        if not acknowledged then finish_restore(clutch_reason or "draft_restore_failed"); return end
-        local function verify(final)
-            if read_draft() == saved then
-                draft.restored, draft.restore_verified = true, true
-                finish_restore(nil)
-            elseif final then
-                finish_restore("draft_restore_unverified")
+-- Match all visible text, allowing layout to split words or wrap at a space
+-- near the right rule. A rendered short row cannot stand in for a missing line break.
+local function matches_paste(parts, text, width)
+    if not parts then return false end
+    local at = 1
+    for i, part in ipairs(parts) do
+        if text:sub(at, at + #part - 1) ~= part then return false end
+        at = at + #part
+        local next_part = parts[i + 1]
+        if next_part then
+            local boundary = text:sub(at, at)
+            if boundary == "\n" then
+                at = at + 1
+            elseif width then
+                local next_word = next_part:match("^%S+") or ""
+                if boundary == " " and #part + #next_word + 3 >= width then
+                    at = at + 1
+                elseif #part + 3 < width then
+                    return false
+                end
+            else
+                return false
             end
         end
-        verify_timer = rex.every(.1, function() verify(false) end)
-        restore_bound = rex.after(1.5, function() verify(true) end)
-        return
     end
-    emit({event="finished"})
+    return at == #text + 1
+end
+
+local function finish(reason, attempted)
+    if reason then
+        if attempted then emit({event="failed", reason=reason}) else refuse(reason) end
+    else
+        emit({event="finished"})
+    end
     rex.stop()
 end
-if not gate() then input_failure("clutch_state_unavailable"); return end
-if a.draft_mode == "ignore" then report("ready"); deliver(); return end
-local poll_timer, quiet_timer, bound_timer
-local proceeding = false
-local function proceed(bound)
-    if proceeding then return end
-    proceeding = true
-    -- Keep the polling timer alive until final publication; rex.stop owns teardown.
-    if not gate() then input_failure("clutch_state_unavailable"); return end
-    local current = read_draft()
-    if current == nil then refuse("draft_capture_unavailable"); rex.stop(); return end
-    saved = current
-    draft.detected = draft.detected or saved ~= ""
-    draft.chars = select(2, saved:gsub("[^\128-\191]", ""))
-    draft.bound_reached = bound or false
-    report("ready")
-    if saved ~= "" then
-        local restore = {session_id=a.session_id, block_id=a.block_id, event={type="paste", payload={text=saved}}}
-        if #rex.json.encode({jsonrpc="2.0", id=1, method="block.event", params=restore}) > 60000 then
-            refuse("encoded_draft_restore_exceeds_limit"); rex.stop(); return
+
+local guarded = a.draft_mode == "guard"
+if not gate() then finish(clutch_reason); return end
+local editor
+if guarded then
+    local waited = 0
+    while true do
+        local state, _, tracked = read_input()
+        draft.state, editor = state, tracked
+        if state == "empty" then break end
+        if a.queue_on_hold or waited >= a.draft_wait_ms then
+            report()
+            finish(state == "present" and "draft_present" or "input_state_unknown")
+            return
         end
-        draft.cleared = false
-        for _ = 1, 2 do
-            if not key("u", "ctrl", "u", 117) then report("cleared"); refuse(clutch_reason or "draft_clear_call_failed"); rex.stop(); return end
-            rex.sleep(.05)
-            local remaining = read_draft()
-            if remaining == "" then draft.cleared = true; break end
-        end
-        report("cleared")
-        if not draft.cleared then refuse("draft_not_cleared"); rex.stop(); return end
+        local delay = math.min(100, a.draft_wait_ms - waited)
+        rex.sleep(delay / 1000)
+        waited = waited + delay
+        if not gate() then finish(clutch_reason); return end
     end
-    deliver()
 end
-saved = read_draft()
-if saved == nil then refuse("draft_capture_unavailable"); return end
-if saved == "" then report("ready"); deliver(); return end
-draft.detected = true
-report("waiting")
-if a.draft_wait_ms == 0 then proceed(true); return end
-bound_timer = rex.after(a.draft_wait_ms / 1000, function() proceed(true) end)
-quiet_timer = rex.after(1.5, function() proceed(false) end)
-poll_timer = rex.every(.25, function()
-    if proceeding then return end
-    local current = read_draft()
-    if current == nil then refuse("draft_capture_unavailable"); rex.stop(); return end
-    if current == "" then proceed(false); return end
-    if current ~= saved then
-        saved = current
-        quiet_timer:cancel()
-        quiet_timer = rex.after(1.5, function() proceed(false) end)
+report()
+if not gate() then finish(clutch_reason); return end
+if guarded then
+    local state, _, tracked = read_input()
+    draft.state, editor = state, tracked
+    if state ~= "empty" then
+        report()
+        finish(state == "present" and "draft_present" or "input_state_unknown")
+        return
     end
-end)
+end
+if type(a.queue_exchange) == "string" then
+    local ready = io.open(a.queue_exchange .. "/ready", "w")
+    if not ready then finish("queue_dispatch_unavailable"); return end
+    ready:close()
+    local permit
+    for _ = 1, 100 do
+        permit = io.open(a.queue_exchange .. "/claimed", "r")
+        if permit then break end
+        rex.sleep(.01)
+    end
+    if not permit then finish("queue_dispatch_unavailable"); return end
+    permit:close()
+    if not gate(true) then finish(clutch_reason); return end
+    local state = read_input()
+    if state ~= "empty" then
+        draft.state = state
+        report()
+        finish(state == "present" and "draft_present" or "input_state_unknown")
+        return
+    end
+end
+emit({event="attempt", stage="paste"})
+if not rex.call("block.event", paste) then finish("paste_call_failed", true); return end
+emit({event="ack", stage="paste"})
+-- Rex acknowledges dispatch before the editor necessarily redraws.
+if guarded then rex.sleep(.08) end
+if not gate(guarded) then finish(clutch_reason, true); return end
+if guarded then
+    local state, parts, tracked, width = read_input()
+    local content = parts and table.concat(parts, "\n")
+    local lines = content and content:match("^%[Pasted text #%d+ %+(%d+) lines?%]$")
+    local placeholder = lines and tonumber(lines) == select(2, a.text:gsub("\n", ""))
+    if (editor or tracked or state ~= "empty") and
+       (not matches_paste(parts, a.text, width) and not placeholder) then
+        finish("input_changed_before_enter", true)
+        return
+    end
+end
+emit({event="attempt", stage="enter"})
+local ok = rex.call("block.event", {session_id=a.session_id, block_id=a.block_id,
+    event={type="key", payload={key="enter", mods="", consumed_mods="", text="\r",
+        unshifted_codepoint=13, composing=false, action="press"}}})
+if not ok then finish("enter_call_failed", true); return end
+emit({event="ack", stage="enter"})
+finish()
