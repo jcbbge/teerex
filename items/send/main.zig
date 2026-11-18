@@ -10,6 +10,7 @@ const usage =
     \\Requires Linux/macOS, Rex on PATH, existing API10..13 server, and canonical lowercase full IDs.
     \\Select a dedicated agent terminal: this can submit/execute input and does not establish prompt safety.
     \\--draft guard|ignore defaults guard: defer when input is present or unknown; send only on empty input.
+    \\ignore uses raw paste and Enter on a released pane without draining queued messages.
     \\Cooperative clutch applies in both draft modes: held panes durably queue, exit 0, type nothing.
     \\--no-queue waits for empty, released input within the draft-wait budget, then refuses.
     \\Unavailable clutch state is reported unknown with a named failure_reason and does not block send.
@@ -334,9 +335,9 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
                 }
             }
         }
-        if (!drain_child) {
+        if (!drain_child and std.mem.eql(u8, mode, "guard")) {
             if (clutch) |*store| {
-                const stopped = drainPending(allocator, &env, store, mode, timeout_ms, if (no_queue) draft_wait_ms else 0, &timer, &settle_file, &queue_uncertain) catch |err| {
+                const stopped = drainPending(allocator, &env, store, timeout_ms, if (no_queue) draft_wait_ms else 0, &timer, &settle_file, &queue_uncertain) catch |err| {
                     failure = @errorName(err);
                     outcome = "refused";
                     break :work;
@@ -487,7 +488,7 @@ fn enqueue(allocator: std.mem.Allocator, env: *const std.process.EnvMap, store: 
     return error.QueueWriteFailed;
 }
 
-fn drainPending(allocator: std.mem.Allocator, env: *const std.process.EnvMap, store: *clutch_state.Store, mode: []const u8, timeout: u64, draft_wait_ms: u64, timer: *std.time.Timer, settle_file: *?[]const u8, uncertain: *usize) !?[]const u8 {
+fn drainPending(allocator: std.mem.Allocator, env: *const std.process.EnvMap, store: *clutch_state.Store, timeout: u64, draft_wait_ms: u64, timer: *std.time.Timer, settle_file: *?[]const u8, uncertain: *usize) !?[]const u8 {
     const queue_path = try std.fmt.allocPrint(allocator, "{s}.queue", .{store.path[0 .. store.path.len - ".json".len]});
     var queue = std.fs.openDirAbsolute(queue_path, .{ .iterate = true, .no_follow = true }) catch |err| switch (err) {
         error.FileNotFound => return null,
@@ -502,7 +503,6 @@ fn drainPending(allocator: std.mem.Allocator, env: *const std.process.EnvMap, st
         if (std.mem.endsWith(u8, entry.name, ".inflight.json")) uncertain.* += 1;
     }
     if (!pending) return null;
-    if (std.mem.eql(u8, mode, "ignore")) return "queued_messages_pending";
     const elapsed = timer.read() / std.time.ns_per_ms;
     if (elapsed >= timeout) return "queued_messages_pending";
     // Keep the previous envelope in a private file, outside argv and receipts.

@@ -722,6 +722,22 @@ os.execv({self.rex!r}, [{self.rex!r}, *args])
                                 env=self.env, capture_output=True, text=True, timeout=5)
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
 
+    def test_ignore_bypasses_pending_queue_on_released_pane(self):
+        target, directory = self.editor("draft", "race")
+        _, queued = self.send(target, b"pending")
+        self.assertEqual(queued["outcome"], "queued")
+        self.type_draft(target, "\x18")
+        result = subprocess.run(self.command(target, b"raw") + ["--draft", "ignore"],
+                                env=self.env, capture_output=True, text=True, timeout=10)
+        receipt = json.loads(result.stdout)
+        self.assertEqual(result.returncode, 0, receipt)
+        self.assertEqual(receipt["outcome"], "events_acknowledged")
+        self.received(directory / "bytes", b"\x18" + self.pasted(b"raw"))
+        self.assertEqual([m["id"] for m in self.clutch(target, "queue")[1]["messages"]],
+                         [queued["queue_id"]])
+        self.assertEqual(self.clutch(target, "drain")[1]["queue"]["delivered"], [queued["queue_id"]])
+        self.received(directory / "bytes", b"\x18" + self.pasted(b"raw") + self.pasted(b"pending"))
+
     def test_guard_suggestions_empty_bound_and_ignore(self):
         for suggestion in ("grey suggestion", ""):
             target, log = self.prompt(suggestion)
