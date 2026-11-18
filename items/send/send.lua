@@ -58,7 +58,18 @@ local function read_input()
     local foreground = type(process) == "table" and process.foreground
     local name = type(foreground) == "table" and foreground.name
     local child = type(process) == "table" and process.child
-    local app = identify(name) or (type(child) == "table" and identify(child.name))
+    local function identify_process(info)
+        if type(info) ~= "table" then return end
+        local app = identify(info.name) or identify(info.argv0)
+        if app then return app end
+        if type(info.script) == "string" and
+           (info.name == "node" or info.argv0 == "node" or
+            (type(info.argv0) == "string" and info.argv0:match("/node$"))) then
+            if identify(info.script) == "pi" or info.script:find("/pi/", 1, true) or
+               info.script:find("/pi-coding-agent/", 1, true) then return "pi" end
+        end
+    end
+    local app = identify_process(foreground) or identify_process(child)
     if type(status) == "table" and type(status.records) == "table" then
         for _, record in pairs(status.records) do
             if type(record) == "table" then app = app or identify(record.app) end
@@ -205,7 +216,8 @@ if type(a.queue_exchange) == "string" then
     if not permit then finish("queue_dispatch_unavailable"); return end
     permit:close()
     if not gate(true) then finish(clutch_reason); return end
-    local state = read_input()
+    local state, _, tracked = read_input()
+    editor = editor or tracked
     if state ~= "empty" then
         draft.state = state
         report()
@@ -231,7 +243,8 @@ if guarded then
             return
         end
         -- Preserve the no-echo path for terminals without a recognized editor.
-        if state == "empty" and not editor and not tracked then break end
+        editor = editor or tracked
+        if state == "empty" and not editor then break end
         if waited == 1500 then finish("input_changed_before_enter", true); return end
     end
 elseif not gate(false) then

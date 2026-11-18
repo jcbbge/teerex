@@ -168,6 +168,7 @@ local function input_state(text, rows, app, process, columns)
     for i = row + 1, #lines do if rule(lines[i]) then below = i; break end end
     if above and below then
         local first = above + 1
+        local _, width = lines[below]:gsub("─", "")
         if lines[above]:find("↑", 1, true) then return "present", nil, true end
         if marker_row(lines[first]) ~= nil then
             local body, start = prompt_body(lines[first], true)
@@ -178,16 +179,15 @@ local function input_state(text, rows, app, process, columns)
                 if visible == nil then return "unknown" end
                 table.insert(parts, (visible:gsub("^  ", "", 1)))
             end
-            local _, width = lines[below]:gsub("─", "")
             return (#parts > 1 or trim(body) ~= "" or col > start) and "present" or "empty", parts, true, width
-        elseif app == "pi" then
+        else
             local parts = {}
             for i = first, below - 1 do
                 local visible = visible_text(lines[i])
                 if visible == nil then return "unknown" end
                 table.insert(parts, visible)
             end
-            return (#parts > 1 or trim(parts[1]) ~= "" or col > 1) and "present" or "empty", parts, true, columns
+            return (#parts > 1 or trim(parts[1]) ~= "" or col > 1) and "present" or "empty", parts, true, width
         end
     end
     if app == "claude" or app == "pi" then return "unknown" end

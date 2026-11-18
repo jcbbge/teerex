@@ -360,27 +360,56 @@ io.write(rex.json.encode(out))
         self.assertEqual(sender.returncode, 0, stdout + stderr)
         self.received(directory / "bytes", b"\x18" + self.pasted(b"older") + self.pasted(b"later"))
 
-    def inject_human_before_paste(self):
+    def rewrite_send_lua(self, original, replacement):
         wrapper = self.work / "wrapper"
         wrapper.mkdir()
         script = wrapper / "rex"
-        # Inject a human key at a deterministic point in the same Rex connection.
-        attempt = 'emit({event="attempt", stage="paste"})'
-        injected = ('rex.call("com.superlogical.terminal.write", '
-                    '{session_id=a.session_id, block_id=a.block_id, args={data="human"}})\n')
         script.write_text(f"""#!{sys.executable}
 import os, sys
 from pathlib import Path
 args = sys.argv[1:]
 script = Path(args[args.index('--args') - 1])
 old = script.read_text()
-assert {attempt!r} in old
-script.write_text(old.replace({attempt!r}, {injected + attempt!r}))
+assert {original!r} in old
+script.write_text(old.replace({original!r}, {replacement!r}))
 os.execv({self.rex!r}, [{self.rex!r}, *args])
 """)
         script.chmod(0o700)
         self.env["PATH"] = str(wrapper) + os.pathsep + self.env["PATH"]
         return self.env["PATH"].split(os.pathsep, 1)[1]
+
+    def inject_human_before_paste(self):
+        # Inject a human key at a deterministic point in the same Rex connection.
+        attempt = 'emit({event="attempt", stage="paste"})'
+        injected = ('rex.call("com.superlogical.terminal.write", '
+                    '{session_id=a.session_id, block_id=a.block_id, args={data="human"}})\n')
+        return self.rewrite_send_lua(attempt, injected + attempt)
+
+    def test_unidentified_box_defers_and_verifies_before_enter(self):
+        target, directory = self.editor("draft", "unmarked")
+        result, receipt = self.send(target)
+        self.assertEqual(result.returncode, 0, receipt)
+        self.assertEqual(receipt["outcome"], "queued")
+        self.assertEqual(receipt["deferred_reason"], "draft_present")
+        self.assertEqual((directory / "bytes").read_bytes(), b"")
+        self.type_draft(target, "\x18")
+        self.inject_human_before_paste()
+        result, receipt = self.clutch(target, "drain")
+        self.assertEqual(result.returncode, 1, receipt)
+        self.assertEqual(receipt["queue"]["stopped"]["reason"], "input_changed_before_enter")
+        self.received(directory / "bytes", b"\x18human" + self.pasted(b"hello")[:-1])
+        self.assertEqual((directory / "submissions").read_bytes(), b"")
+
+    def test_node_pi_process_without_status_defers_missing_prompt(self):
+        target, raw = self.fixture()
+        self.rewrite_send_lua(
+            'rex.call("com.superlogical.terminal.process", target)',
+            '{foreground={name="node", argv0="node", script="/fixture/pi/dist/cli.js"}}')
+        result, receipt = self.send(target)
+        self.assertEqual(result.returncode, 0, receipt)
+        self.assertEqual(receipt["outcome"], "queued")
+        self.assertEqual(receipt["deferred_reason"], "input_state_unknown")
+        self.assertEqual(raw.read_bytes(), b"")
 
     def test_uncertain_drain_does_not_block_later_sends(self):
         target, directory = self.editor("draft", "race")

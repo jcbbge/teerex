@@ -18,9 +18,10 @@ pasting = False
 
 def draw():
     (root / "draft").write_text("".join(draft))
-    rows = ["❯ "]
-    column = 2
-    positions = [(0, 3)]
+    prefix = "" if mode == "unmarked" else "❯ "
+    rows = [prefix]
+    column = len(prefix)
+    positions = [(0, column + 1)]
     for char in draft:
         width = 2 if unicodedata.east_asian_width(char) in ("W", "F") else 1
         if char == "\n" or column + width > 60:
