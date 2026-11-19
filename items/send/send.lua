@@ -18,7 +18,10 @@ local terminal = false
 for _, w in ipairs(view.windows or {}) do
     for _, l in ipairs(w.layers or {}) do
         for _, b in ipairs(l.blocks or {}) do
-            if b.block_id == a.block_id and b.creator_name == "com.superlogical.terminal" then terminal = true end
+            if b.block_id == a.block_id and b.creator_name == "com.superlogical.terminal" then
+                if b.label == "seat" then refuse("seat_input_protected"); return end
+                terminal = true
+            end
         end
     end
 end
@@ -28,6 +31,7 @@ if not terminal and v.api_revision==13 then
     local listed=rex.call("session.list_blocks", {session_id=a.session_id})
     for _,b in ipairs(type(listed)=="table" and listed.blocks or {}) do
         if b.block_id==a.block_id and b.creator_name=="com.superlogical.terminal" and b.placement=="detached" then
+            if b.label == "seat" then refuse("seat_input_protected"); return end
             terminal=true
         end
     end

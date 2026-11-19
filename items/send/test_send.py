@@ -454,6 +454,30 @@ os.execv({self.rex!r}, [{self.rex!r}, *args])
         self.assertEqual((directory / "submissions").read_bytes(), b"")
         self.assertEqual((directory / "draft").read_text(), "humanFROM worker: hello")
 
+    def test_seat_refuses_paste_and_enter_and_preserves_the_draft(self):
+        target, directory = self.editor("", "race")
+        rename = subprocess.run(
+            [BIN, "surfaces", "rename", "--socket", str(self.socket), "--session", target[0],
+             "--pane", target[1], "--label", "seat"],
+            env=self.env, capture_output=True, text=True, timeout=10,
+        )
+        self.assertEqual(rename.returncode, 0, rename.stdout + rename.stderr)
+        self.type_draft(target, "partially typed instruction")
+        for mode in ("guard", "ignore"):
+            with self.subTest(mode=mode):
+                result = subprocess.run(
+                    self.command(target) + ["--draft", mode, "--no-queue"],
+                    env=self.env, capture_output=True, text=True, timeout=15,
+                )
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                receipt = json.loads(result.stdout)
+                self.assertEqual(receipt["failure_reason"], "seat_input_protected")
+                self.assertFalse(receipt["paste"]["attempted"])
+                self.assertFalse(receipt["enter"]["attempted"])
+        self.received(directory / "bytes", b"partially typed instruction")
+        self.assertEqual((directory / "draft").read_text(), "partially typed instruction")
+        self.assertEqual((directory / "submissions").read_bytes(), b"")
+
     def test_sender_name_does_not_require_caller_identity(self):
         target, raw = self.fixture()
         self.env.update(AGENT_NAME="different-caller", AGENT_SESSION="unrelated", AGENT_PANE="unrelated")
