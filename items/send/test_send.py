@@ -456,14 +456,21 @@ os.execv({self.rex!r}, [{self.rex!r}, *args])
 
     def test_seat_refuses_paste_and_enter_and_preserves_the_draft(self):
         target, directory = self.editor("", "race")
+        self.type_draft(target, "partially typed instruction")
+        result, queued = self.send(target, b"legacy report")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(queued["outcome"], "queued")
         rename = subprocess.run(
             [BIN, "surfaces", "rename", "--socket", str(self.socket), "--session", target[0],
              "--pane", target[1], "--label", "seat"],
             env=self.env, capture_output=True, text=True, timeout=10,
         )
         self.assertEqual(rename.returncode, 0, rename.stdout + rename.stderr)
-        self.type_draft(target, "partially typed instruction")
-        for mode in ("guard", "ignore"):
+        drain_result, drained = self.clutch(target, "drain")
+        self.assertEqual(drain_result.returncode, 1, drain_result.stdout + drain_result.stderr)
+        self.assertEqual(drained["queue"]["stopped"]["reason"], "seat_input_protected")
+        self.assertEqual(drained["queue"]["pending"], 1)
+        for mode, reason in (("guard", "queued_messages_pending"), ("ignore", "seat_input_protected")):
             with self.subTest(mode=mode):
                 result = subprocess.run(
                     self.command(target) + ["--draft", mode, "--no-queue"],
@@ -471,7 +478,7 @@ os.execv({self.rex!r}, [{self.rex!r}, *args])
                 )
                 self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
                 receipt = json.loads(result.stdout)
-                self.assertEqual(receipt["failure_reason"], "seat_input_protected")
+                self.assertEqual(receipt["failure_reason"], reason)
                 self.assertFalse(receipt["paste"]["attempted"])
                 self.assertFalse(receipt["enter"]["attempted"])
         self.received(directory / "bytes", b"partially typed instruction")
