@@ -159,11 +159,54 @@ local function rule(line)
         (plain:gsub("─", ""):match("^%s*$") ~= nil or plain:find("↑", 1, true) ~= nil)
 end
 
-local function frame_edge(line)
-    if not line then return false end
-    local plain = trim((line:gsub(csi, "")))
-    local box_drawing = "\226[\148\149][\128-\191]" -- U+2500 through U+257F
-    return plain:match("^" .. box_drawing) or plain:match(box_drawing .. "$")
+local shells = {bash=true, zsh=true, sh=true, fish=true, dash=true, ksh=true}
+local function frame_line(line)
+    return (line:gsub(csi, "")):gsub("%s+$", "")
+end
+
+local function frame_at(lines, row, col)
+    local cursor_line = frame_line(lines[row])
+    for _, side in ipairs({"│", "┃", "║", "|"}) do
+        local left = cursor_line:match("^(%s*)" .. side .. "(.*)" .. side .. "$")
+        if left and col > #left + 1 and col <= #cursor_line then return true end
+    end
+
+    local function matching_edge(first, last)
+        return function(line)
+            local indent, inside = line:match("^(%s*)" .. first .. "(.*)" .. last .. "$")
+            return indent, inside
+        end
+    end
+    for _, frame in ipairs({
+        {"╭", "╮", "╰", "╯", "─"}, {"┌", "┐", "└", "┘", "─"},
+        {"┏", "┓", "┗", "┛", "━"}, {"╔", "╗", "╚", "╝", "═"},
+        {"%+", "%+", "%+", "%+", "%-"},
+    }) do
+        local top, bottom = matching_edge(frame[1], frame[2]), matching_edge(frame[3], frame[4])
+        for above = row - 1, 1, -1 do
+            local indent, inside = top(frame_line(lines[above]))
+            local remainder, width
+            if inside then remainder, width = inside:gsub(frame[5], "") end
+            if indent and remainder == "" and width > 0
+                and col > #indent + 1 and col <= #indent + width + 2 then
+                for below = row + 1, #lines do
+                    local lower_indent, lower_inside = bottom(frame_line(lines[below]))
+                    if lower_indent == indent and lower_inside == inside then return true end
+                end
+                break
+            end
+        end
+    end
+
+    local previous = lines[row - 1] and frame_line(lines[row - 1])
+    if previous then
+        local indent, edge = previous:match("^(%s*)(──.*)$")
+        -- A lone bare rule is ambiguous only when it immediately tops the cursor line.
+        if edge then
+            local remainder, width = edge:gsub("─", "")
+            return remainder == "" and col > #indent and col <= #indent + width
+        end
+    end
 end
 
 -- Return a state, visible editor rows for local verification, and whether a tracked editor was found.
@@ -173,7 +216,7 @@ local function input_state(text, rows, app, process, columns)
     local above, below
     for i = row - 1, 1, -1 do if rule(lines[i]) then above = i; break end end
     for i = row + 1, #lines do if rule(lines[i]) then below = i; break end end
-    if above and below then
+    if above and below and (app or not shells[process]) then
         local first = above + 1
         local _, width = lines[below]:gsub("─", "")
         if lines[above]:find("↑", 1, true) then return "present", nil, true end
@@ -219,7 +262,7 @@ local function input_state(text, rows, app, process, columns)
         local body, start = shell_draft_from_vt(text, rows)
         if body then return (trim(body) ~= "" or col > start) and "present" or "empty", {trim(body)}, true end
     end
-    if above or below or frame_edge(lines[row]) or frame_edge(lines[row - 1]) or frame_edge(lines[row + 1]) then
+    if not shells[process] and frame_at(lines, row, col) then
         return "unknown"
     end
     return "empty", nil, false

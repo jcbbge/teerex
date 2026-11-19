@@ -169,6 +169,31 @@ io.write(rex.json.encode(out))
         result = self.rex_json("do", "-e", lua, "--args", json.dumps({"cases": cases}))
         self.assertEqual(result, [expected.get(p.stem, "present") for p in fixtures])
 
+    def test_decorated_shell_output_does_not_hold_delivery(self):
+        cases = [
+            (["└─sda1", "jrg@hive:~$ "], 2, "bash", "empty"),
+            (["└── b", "jrg@hive:~$ "], 2, "bash", "empty"),
+            (["┌┬┐", "│ │", "└┴┘", "m5% "], 4, "ssh", "empty"),
+            (["╭─ ~/work", "╰─❯ "], 2, "zsh", "empty"),
+            (["──────────", "", "", "", "", "jrg@hive:~$ "], 6, "bash", "empty"),
+            (["──────────────", "jrg@hive:~$ ", "──────────────"], 2, "bash", "empty"),
+            (["╭─────────────╮", "", "private text", "", "╰─────────────╯"], 3, "python3", "unknown"),
+            (["+-------------+", "| private     |", "+-------------+"], 2, "python3", "unknown"),
+        ]
+        fixtures = [{"text": "\n".join(lines) + f"\x1b[{row};{len(lines[row-1])+1 if result == 'empty' else 8}H",
+                     "rows": len(lines), "process": process}
+                    for lines, row, process, result in cases]
+        lua = Path(__file__).with_name("draft.lua").read_text() + """
+local out = {}
+for _, case in ipairs(rex.args.cases) do
+    local state = input_state(case.text, case.rows, nil, case.process)
+    table.insert(out, state)
+end
+io.write(rex.json.encode(out))
+"""
+        self.assertEqual(self.rex_json("do", "-e", lua, "--args", json.dumps({"cases": fixtures})),
+                         [case[3] for case in cases])
+
     def editor(self, draft, mode):
         directory = self.work / str(time.monotonic_ns())
         directory.mkdir()
