@@ -229,33 +229,40 @@ if type(a.queue_exchange) == "string" then
         return
     end
 end
+-- A program stopped by a signal reads no input: the paste and Enter would be acknowledged and
+-- then sit unread, holding every later message behind them (2026-11-20). Refuse before typing.
+do
+    local process = rex.call("com.superlogical.terminal.process", target)
+    local pid = type(process) == "table" and type(process.foreground) == "table" and process.foreground.pid
+    if type(pid) == "number" and rex.exec then
+        local r = rex.exec({"ps", "-o", "stat=", "-p", tostring(math.floor(pid))}, {timeout=3})
+        if type(r) == "table" and r.ok and type(r.stdout) == "string" and r.stdout:match("^%s*T") then
+            finish("target_paused"); return
+        end
+    end
+end
 emit({event="attempt", stage="paste"})
 if not rex.call("block.event", paste) then finish("paste_call_failed", true); return end
 emit({event="ack", stage="paste"})
--- Rex acknowledges dispatch before the editor necessarily redraws.
+-- Paste and Enter are one act (Josh, 2026-11-20: "if you input any text into the terminal
+-- input, SUBMIT THE TEXT"). The gates above protect a human draft before anything is typed; once
+-- the paste is in, Enter always follows. Rex acknowledges dispatch before the editor necessarily
+-- redraws, so wait (at most 1.5 s) for the paste to appear; whatever the box then holds, submit it.
 if guarded then
     local newline_count = select(2, a.text:gsub("\n", ""))
-    for waited = 75, 1500, 75 do
+    for _ = 75, 1500, 75 do
         rex.sleep(.075)
-        if not gate(true) then finish(clutch_reason, true); return end
         local state, parts, tracked, width = read_input()
         if state == "present" then
             local content = parts and table.concat(parts, "\n")
             local lines = content and content:match("^%[Pasted text #%d+ %+(%d+) lines?%]$")
             if matches_paste(parts, a.text, width) or tonumber(lines) == newline_count then break end
-            if not matches_paste(parts, a.text, width, true) then
-                finish("input_changed_before_enter", true)
-                return
-            end
+            if not matches_paste(parts, a.text, width, true) then break end
         end
         -- Preserve the no-echo path for terminals without a recognized editor.
         editor = editor or tracked
         if state == "empty" and not editor then break end
-        if waited == 1500 then finish("input_changed_before_enter", true); return end
     end
-elseif not gate(false) then
-    finish(clutch_reason, true)
-    return
 end
 emit({event="attempt", stage="enter"})
 local ok = rex.call("block.event", {session_id=a.session_id, block_id=a.block_id,

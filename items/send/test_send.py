@@ -459,10 +459,32 @@ os.execv({self.rex!r}, [{self.rex!r}, *args])
         self.type_draft(target, "\x18")
         self.inject_human_before_paste()
         result, receipt = self.clutch(target, "drain")
-        self.assertEqual(result.returncode, 1, receipt)
-        self.assertEqual(receipt["queue"]["stopped"]["reason"], "input_changed_before_enter")
-        self.received(directory / "bytes", b"\x18human" + self.pasted(b"hello")[:-1])
-        self.assertEqual((directory / "submissions").read_bytes(), b"")
+        # Paste and Enter are one act: whatever raced the paste is submitted with it, never stranded.
+        self.assertEqual(result.returncode, 0, receipt)
+        self.assertEqual([json.loads(line) for line in (directory / "submissions").read_text().splitlines()],
+                         ["humanFROM worker: hello"])
+        self.assertEqual((directory / "draft").read_text(), "")
+
+    def test_paused_target_is_refused_before_any_input(self):
+        stopped = subprocess.Popen(["sleep", "60"])
+        self.addCleanup(stopped.wait)
+        self.addCleanup(stopped.kill)
+        os.kill(stopped.pid, signal.SIGSTOP)
+        target, raw = self.fixture()
+        self.rewrite_send_lua(
+            'rex.call("com.superlogical.terminal.process", target)',
+            '{foreground={pid=%d}}' % stopped.pid)
+        r = subprocess.run(self.command(target) + ["--draft", "ignore"], env=self.env,
+                           capture_output=True, text=True, timeout=10)
+        packet = json.loads(r.stdout)
+        self.assertEqual(packet["outcome"], "refused", packet)
+        self.assertEqual(packet["failure_reason"], "target_paused")
+        self.assertFalse(packet["paste"]["attempted"])
+        self.assertEqual(raw.read_bytes(), b"")
+        os.kill(stopped.pid, signal.SIGCONT)
+        r = subprocess.run(self.command(target) + ["--draft", "ignore"], env=self.env,
+                           capture_output=True, text=True, timeout=10)
+        self.assertEqual(json.loads(r.stdout)["outcome"], "events_acknowledged", r.stdout)
 
     def test_node_pi_process_without_status_defers_missing_prompt(self):
         target, raw = self.fixture()
@@ -475,56 +497,34 @@ os.execv({self.rex!r}, [{self.rex!r}, *args])
         self.assertEqual(receipt["deferred_reason"], "input_state_unknown")
         self.assertEqual(raw.read_bytes(), b"")
 
-    def test_uncertain_drain_does_not_block_later_sends(self):
+    def test_racing_drain_submits_and_later_sends_follow(self):
         target, directory = self.editor("draft", "race")
-        _, queued = self.send(target, b"uncertain")
+        _, queued = self.send(target, b"first")
         self.assertEqual(queued["outcome"], "queued")
         self.type_draft(target, "\x18")
         normal_path = self.inject_human_before_paste()
         result, receipt = self.clutch(target, "drain")
-        self.assertEqual(result.returncode, 1)
-        self.assertEqual(receipt["queue"]["stopped"]["reason"], "input_changed_before_enter")
-        self.assertFalse(receipt["queue"]["stopped"]["retry_safe"])
-        self.assertEqual(receipt["queue"]["inflight"], 1)
-        self.assertEqual(receipt["queue_uncertain"], 1)
-        self.assertEqual((directory / "submissions").read_bytes(), b"")
-
+        self.assertEqual(result.returncode, 0, receipt)
+        self.assertEqual(receipt["queue_uncertain"], 0)
         self.env["PATH"] = normal_path
-        _, pending = self.send(target, b"pending")
-        self.assertEqual(pending["outcome"], "queued")
-        self.assertEqual(pending["queue_uncertain"], 1)
-        self.assertEqual(self.clutch(target, "take", "--reason", "fixture hold")[0].returncode, 0)
-        _, held = self.send(target, b"held")
-        self.assertEqual(held["outcome"], "queued")
-        self.assertEqual(held["queue_uncertain"], 1)
-        self.assertEqual(self.clutch(target, "release")[1]["queue_uncertain"], 1)
-        self.assertNotEqual(self.clutch(target, "queue", "--resolve", pending["queue_id"])[0].returncode, 0)
-        self.type_draft(target, "\x18")
         for message in (b"later", b"last"):
             result, receipt = self.send(target, message)
             self.assertEqual(result.returncode, 0, receipt)
             self.assertEqual(receipt["outcome"], "events_acknowledged")
         self.assertEqual([json.loads(line) for line in (directory / "submissions").read_text().splitlines()],
-                         ["FROM worker: pending", "FROM worker: held", "FROM worker: later", "FROM worker: last"])
-        result, receipt = self.clutch(target, "drain")
-        self.assertEqual(result.returncode, 0, receipt)
-        self.assertEqual(receipt["queue"]["uncertain"], [queued["queue_id"]])
-        self.assertEqual(receipt["queue_uncertain"], 1)
-        self.assertEqual(self.clutch(target, "queue")[1]["messages"][0]["delivery"], "uncertain")
-        self.assertEqual(self.clutch(target, "queue", "--resolve", queued["queue_id"])[0].returncode, 0)
+                         ["humanFROM worker: first", "FROM worker: later", "FROM worker: last"])
         self.assertEqual(self.clutch(target, "queue")[1]["messages"], [])
 
-    def test_human_input_between_empty_read_and_paste_is_not_submitted(self):
+    def test_input_racing_the_paste_is_submitted_never_stranded(self):
         target, directory = self.editor("", "race")
         self.inject_human_before_paste()
         result, packet = self.send(target)
-        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertEqual(packet["outcome"], "uncertain")
-        self.assertEqual(packet["failure_reason"], "input_changed_before_enter")
-        self.assertFalse(packet["enter"]["attempted"])
-        self.received(directory / "bytes", b"human" + self.pasted(b"hello")[:-1])
-        self.assertEqual((directory / "submissions").read_bytes(), b"")
-        self.assertEqual((directory / "draft").read_text(), "humanFROM worker: hello")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(packet["outcome"], "events_acknowledged")
+        self.assertTrue(packet["enter"]["acknowledged"])
+        self.assertEqual([json.loads(line) for line in (directory / "submissions").read_text().splitlines()],
+                         ["humanFROM worker: hello"])
+        self.assertEqual((directory / "draft").read_text(), "")
 
     def test_seat_refuses_paste_and_enter_and_preserves_the_draft(self):
         target, directory = self.editor("", "race")
