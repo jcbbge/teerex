@@ -3,14 +3,14 @@ local a = rex.args
 local function emit(v) io.write(rex.json.encode(v), "\n"); io.flush() end
 local function call(method, args)
     local v, err = rex.call(method, args)
-    if not v then error(err) end
+    if not v then error(method .. ": " .. tostring(err)) end
     return v
 end
 local function refuse(reason) emit({event="refused", reason=reason}) end
 local version = call("server.version")
 local status = call("server.status")
-if version.api_revision ~= 13 or (version.platform ~= "darwin_arm64" and version.platform ~= "linux_amd64") then
-    refuse("jobs_requires_API13_Mac_arm64_or_Linux_amd64"); return
+if type(version.api_revision) ~= "number" or version.api_revision % 1 ~= 0 or version.api_revision < 13 or (version.platform ~= "darwin_arm64" and version.platform ~= "linux_amd64") then
+    refuse("jobs_requires_API13_or_newer_Mac_arm64_or_Linux_amd64"); return
 end
 if type(status.instance_id) ~= "string" or #status.instance_id == 0 or
     type(status.host_id) ~= "string" or #status.host_id == 0 then error("missing_identity") end
@@ -66,6 +66,8 @@ end
 local before = call("session.view", {session_id=a.session_id})
 local window = visible(before, a.block_id)
 local process, process_error = rex.call("com.superlogical.terminal.process", {session_id=a.session_id, block_id=a.block_id, args={}})
+local incompatible = rex_method_error("com.superlogical.terminal.process", process_error)
+if incompatible then refuse(incompatible); return end
 local exit_code
 if type(process) == "table" and type(process.last_exit) == "table" then exit_code=process.last_exit.exit_code end
 local absent={}

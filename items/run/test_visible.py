@@ -145,7 +145,7 @@ class VisibleTest(unittest.TestCase):
         self.assertEqual(v["outcome"], "exit_reported")
         self.assertFalse(v["retry_safe"])
         self.assertFalse(v["all_descendants_verified_gone"])
-        self.assertEqual(v["source"]["api_revision"], 13)
+        self.assertEqual(v["source"]["api_revision"], self.version["api_revision"])
         self.assertEqual(v["placement"]["receipt"]["actual"]["block_id"], v["created"]["block_id"])
         self.assertEqual(v["pane_identity_report"]["block_id"], v["created"]["block_id"])
 
@@ -700,15 +700,11 @@ print('exact environment received')
 
     def test_observed_api_gate_precedes_creation(self):
         before = self.blocks()
-        if self.version["api_revision"] == 13:
-            wrapper, log = self.wrapper("old-api")
-        else:
-            wrapper, log = self.rex, None
+        wrapper, log = self.wrapper("old-api")
         r, v = self.invoke(rex=wrapper)
         self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
-        self.assertIn("requires_observed_api13", v["failure_reason"])
-        if log is not None:
-            self.assertFalse(log.exists(), "old API refusal must precede surfaces mutation")
+        self.assertIn("requires_API13_or_newer", v["failure_reason"])
+        self.assertFalse(log.exists(), "old API refusal must precede surfaces mutation")
         self.assertEqual(self.blocks(), before)
 
     def wrapper(self, mode):

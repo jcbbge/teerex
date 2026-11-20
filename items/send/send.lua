@@ -7,13 +7,13 @@ local function refuse(reason)
     emit({event="refused", reason=reason})
 end
 local v, err = rex.call("server.version")
-if not v then refuse("version_unavailable"); return end
+if not v then refuse(rex_method_error("server.version", err) or "version_unavailable"); return end
 emit({event="source", source={rex_version=v.rex_version, platform=v.platform, api_revision=v.api_revision}})
-if type(v.api_revision) ~= "number" or v.api_revision % 1 ~= 0 or v.api_revision < 10 or v.api_revision > 13 then
+if type(v.api_revision) ~= "number" or v.api_revision % 1 ~= 0 or v.api_revision < 10 then
     refuse("unsupported_send_api_revision"); return
 end
-local view = rex.call("session.view", {session_id=a.session_id})
-if type(view) ~= "table" or view.session_id ~= a.session_id then refuse("target_unavailable"); return end
+local view, view_error = rex.call("session.view", {session_id=a.session_id})
+if type(view) ~= "table" or view.session_id ~= a.session_id then refuse(rex_method_error("session.view", view_error) or "target_unavailable"); return end
 local terminal = false
 for _, w in ipairs(view.windows or {}) do
     for _, l in ipairs(w.layers or {}) do
@@ -27,8 +27,10 @@ for _, w in ipairs(view.windows or {}) do
 end
 -- Detached terminals remain explicit tracked destinations. Keep the same draft
 -- and clutch paths below; only presence is read from the complete inventory.
-if not terminal and v.api_revision==13 then
-    local listed=rex.call("session.list_blocks", {session_id=a.session_id})
+if not terminal then
+    local listed, list_error=rex.call("session.list_blocks", {session_id=a.session_id})
+    local incompatible=rex_method_error("session.list_blocks", list_error)
+    if incompatible then refuse(incompatible); return end
     for _,b in ipairs(type(listed)=="table" and listed.blocks or {}) do
         if b.block_id==a.block_id and b.creator_name=="com.superlogical.terminal" and b.placement=="detached" then
             if b.label == "seat" then refuse("seat_input_protected"); return end
@@ -49,10 +51,17 @@ local function report()
     emit({event="draft", draft=draft})
 end
 local target = {session_id=a.session_id, block_id=a.block_id, args={}}
+local input_error
 local function read_input()
-    local size = rex.call("com.superlogical.terminal.size", target)
-    local process = rex.call("com.superlogical.terminal.process", target)
-    local status = rex.call("com.superlogical.terminal.program_status", target)
+    input_error = nil
+    local function read(method, params)
+        local value, err = rex.call(method, params)
+        input_error = input_error or rex_method_error(method, err)
+        return value
+    end
+    local size = read("com.superlogical.terminal.size", target)
+    local process = read("com.superlogical.terminal.process", target)
+    local status = read("com.superlogical.terminal.program_status", target)
     local function identify(name)
         if type(name) ~= "string" then return end
         name = name:match("([^/]+)$") or name
@@ -79,10 +88,10 @@ local function read_input()
             if type(record) == "table" then app = app or identify(record.app) end
         end
     end
-    local capture = rex.call("com.superlogical.terminal.format", {
+    local capture = read("com.superlogical.terminal.format", {
         session_id=a.session_id, block_id=a.block_id, args={format="vt", extra_cursor=true},
     })
-    if type(capture) ~= "table" or capture.id ~= nil then return "unknown" end
+    if input_error or type(capture) ~= "table" or capture.id ~= nil then return "unknown" end
     if type(size) ~= "table" then return "unknown" end
     return input_state(capture.text or capture.content, size.rows, app, name, size.columns)
 end
@@ -185,9 +194,9 @@ if guarded then
             -- an ambiguous placeholder, or unknown input stops immediately.
             wait_ms = state == "present" and matches_paste(parts, previous, width) and 2000 or 0
         end
-        if waited >= wait_ms then
+        if input_error or waited >= wait_ms then
             report()
-            finish(state == "present" and "draft_present" or "input_state_unknown")
+            finish(input_error or (state == "present" and "draft_present" or "input_state_unknown"))
             return
         end
         local delay = math.min(100, wait_ms - waited)
@@ -203,7 +212,7 @@ if guarded then
     draft.state, editor = state, tracked
     if state ~= "empty" then
         report()
-        finish(state == "present" and "draft_present" or "input_state_unknown")
+        finish(input_error or (state == "present" and "draft_present" or "input_state_unknown"))
         return
     end
 end
@@ -225,14 +234,16 @@ if type(a.queue_exchange) == "string" then
     if state ~= "empty" then
         draft.state = state
         report()
-        finish(state == "present" and "draft_present" or "input_state_unknown")
+        finish(input_error or (state == "present" and "draft_present" or "input_state_unknown"))
         return
     end
 end
 -- A program stopped by a signal reads no input: the paste and Enter would be acknowledged and
 -- then sit unread, holding every later message behind them (2026-11-20). Refuse before typing.
 do
-    local process = rex.call("com.superlogical.terminal.process", target)
+    local process, process_error = rex.call("com.superlogical.terminal.process", target)
+    local incompatible = rex_method_error("com.superlogical.terminal.process", process_error)
+    if incompatible then finish(incompatible); return end
     local pid = type(process) == "table" and type(process.foreground) == "table" and process.foreground.pid
     if type(pid) == "number" and rex.exec then
         local r = rex.exec({"ps", "-o", "stat=", "-p", tostring(math.floor(pid))}, {timeout=3})
@@ -242,7 +253,8 @@ do
     end
 end
 emit({event="attempt", stage="paste"})
-if not rex.call("block.event", paste) then finish("paste_call_failed", true); return end
+local pasted, paste_error = rex.call("block.event", paste)
+if not pasted then finish(rex_method_error("block.event", paste_error) or "paste_call_failed", true); return end
 emit({event="ack", stage="paste"})
 -- Paste and Enter are one act (Josh, 2026-11-20: "if you input any text into the terminal
 -- input, SUBMIT THE TEXT"). The gates above protect a human draft before anything is typed; once
@@ -253,6 +265,7 @@ if guarded then
     for _ = 75, 1500, 75 do
         rex.sleep(.075)
         local state, parts, tracked, width = read_input()
+        if input_error then break end
         if state == "present" then
             local content = parts and table.concat(parts, "\n")
             local lines = content and content:match("^%[Pasted text #%d+ %+(%d+) lines?%]$")
@@ -265,9 +278,9 @@ if guarded then
     end
 end
 emit({event="attempt", stage="enter"})
-local ok = rex.call("block.event", {session_id=a.session_id, block_id=a.block_id,
+local ok, enter_error = rex.call("block.event", {session_id=a.session_id, block_id=a.block_id,
     event={type="key", payload={key="enter", mods="", consumed_mods="", text="\r",
         unshifted_codepoint=13, composing=false, action="press"}}})
-if not ok then finish("enter_call_failed", true); return end
+if not ok then finish(rex_method_error("block.event", enter_error) or "enter_call_failed", true); return end
 emit({event="ack", stage="enter"})
-finish()
+finish(input_error, input_error ~= nil)

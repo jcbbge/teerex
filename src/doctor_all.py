@@ -56,7 +56,7 @@ def inspect_host(host):
               isinstance((receipt.get('source') or {}).get('api_revision'), int)) or (
               code == 0 and receipt.get('outcome') == 'resolved')
         add('guarded_surfaces', ok, 'guarded resolve round trip passed' if ok else
-            receipt.get('failure_reason') or err or 'guarded resolve returned an unexpected receipt', install)
+            receipt.get('failure_detail') or receipt.get('failure_reason') or err or 'guarded resolve returned an unexpected receipt', install)
     except (OSError, ValueError) as exc:
         add('guarded_surfaces', False, 'running guarded surfaces resolve: ' + str(exc), install)
     try:

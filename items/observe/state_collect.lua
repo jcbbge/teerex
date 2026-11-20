@@ -2,12 +2,12 @@
 local a = rex.args
 local function read(method, args)
     local v, e = rex.call(method, args)
-    if not v then error(e) end
+    if not v then error(method .. ": " .. tostring(e)) end
     if #rex.json.encode(v) > 131072 then error("state_response_exceeds_limit") end
     return v
 end
 local version = read("server.version")
-if type(version.api_revision) ~= "number" or version.api_revision < 10 or version.api_revision > 13 then
+if type(version.api_revision) ~= "number" or version.api_revision % 1 ~= 0 or version.api_revision < 10 then
     error("unsupported_agent_state_api")
 end
 local target = {session_id=a.session_id, block_id=a.block_id, args={}}

@@ -18,7 +18,7 @@ Use for a single command whose argv/cwd/env/stdin are already decided. Wait unti
 
 ## Where
 
-Supported and tested: **Linux x86_64 and Mac arm64, Rex preview.16/API13**, Python3.9+ stdlib and Zig0.15.2. Actual Mac API10/12 builds refuse before creation; API11, future revisions and other architectures are not certified. Legacy run's API10–13 support does not imply visible-run support.
+Requires Linux x86_64 or Mac arm64, Rex API 13 or newer, Python 3.9+ and Zig 0.15.2. The launch verifies terminal placement and the command host before starting the program.
 
 All paths are **selected command-host paths**. Root named-host routing can execute this CLI on a configured host and inject its exact socket; it does not upload files or authorize an arbitrary pane host. Placement uses the current absolute teerex executable, carrying its explicit `TEEREX_INTERNAL_REX`/`TEEREX_REX` pin. The existing `surfaces` semantics apply: default tab; tiled requires an attached full-ID anchor, default right/one-third share; ratio is the new pane's share; no focus request, layout fallback or retry. First-window focus and split-ending-zoom remain Rex's behavior. Native layout attachment is not proof of GUI painting.
 

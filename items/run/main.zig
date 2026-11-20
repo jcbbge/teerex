@@ -5,7 +5,7 @@ const supervised = @import("supervised_child");
 const usage =
     \\Usage: teerex run --socket /absolute/path --cwd /absolute/path [--timeout-ms N] [--max-bytes N] -- ARGV...
     \\Run argv LOCALLY through Rex Lua exec; never type into a terminal or run on the selected server.
-    \\Requires macOS or Linux, Rex on PATH, and an existing API-10..13 server with the consumed exec bindings.
+    \\Requires macOS or Linux, Rex on PATH, and an existing Rex API 10 or newer with the consumed exec bindings.
     \\Accepted revision is not behavior certification. No server update, autostart or implicit target.
     \\Explicit cwd and -- are required; no implicit shell. Stdin is EOF; no interactive input.
     \\Timeout defaults to 10000 ms (100..60000); combined stdout/stderr retention defaults to 4096 bytes (1..65536).
@@ -81,8 +81,8 @@ const Collector = struct {
         if (std.mem.eql(u8, f.event, "source")) {
             const source = f.source orelse return error.InvalidRunFrame;
             if (self.source != null) return error.InvalidRunFrame;
-            if (source.api_revision < 10 or source.api_revision > 13) {
-                std.debug.print("teerex run: unsupported Rex API revision {d} (accepted: 10..13)\n", .{source.api_revision});
+            if (source.api_revision < 10) {
+                std.debug.print("teerex run: unsupported Rex API revision {d} (accepted: 10 and later)\n", .{source.api_revision});
                 return error.InvalidRunFrame;
             }
             self.source = .{

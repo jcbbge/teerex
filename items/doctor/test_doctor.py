@@ -85,17 +85,16 @@ data=json.loads(r.stdout)
 is_cli='version' in args and '--json' in args
 is_server='call' in args and 'server.version' in args
 is_format='describe' in args and 'com.superlogical.terminal.format' in args
-if mode=='cli_revision' and is_cli:data['api_revision']=14
 if mode=='server_revision' and is_server:data['api_revision']=9
 if mode=='legacy_revision' and is_server:data.pop('api_revision',None)
-if mode=='nonoverlap' and is_server:data['api_min_revision']=14
+if mode=='new_server_minimum' and is_server:data.update(api_revision=99, api_min_revision=98)
 if mode.startswith('accepted_') and (is_server or is_cli):data['api_revision']=int(mode.split('_')[1]);data['rex_version']='injected-numeric-control'
 if mode=='server_build' and is_server:data['rex_version']='different-build'
 if mode=='required_arg' and is_format:data['args_schema']['required']=['unknown_required_arg']
 if mode=='wrong_type' and is_format:data['output_schema']['properties']['content']['type']='integer'
 if mode=='descriptor_prose' and is_format:data['description']='changed advertised prose'
 if mode=='wrong_method' and is_format:data['invoke']['method']='session.close'
-if mode=='missing_method' and is_format:sys.exit(1)
+if mode=='missing_method' and is_format:sys.stderr.write('Error: API method not found. Run rex api list\n');sys.exit(1)
 if mode=='malformed' and is_format:sys.stdout.write('{');sys.exit(0)
 if mode=='oversize' and is_format:sys.stdout.write('x'*140000);sys.exit(0)
 if mode=='no_exec_binding' and 'do' in args:data['exec_start']='nil'
@@ -182,7 +181,7 @@ class RuntimeTest(unittest.TestCase):
         self.assertFalse(packet["behavior_certified"])
         version = json.loads(subprocess.check_output(self.base + ["api", "call", "server.version"], text=True))
         self.assertEqual(packet["source"]["api_revision"], version["api_revision"])
-        self.assertEqual(packet["accepted_api_revisions"], {"min": 10, "max": 13})
+        self.assertEqual(packet["accepted_api_revisions"], {"min": 10, "max": None})
         self.assertIsNone(packet["api_revision_refusal"])
         self.assertEqual(packet["operation_advertised_requirements_met"], {"observe": True, "watch": True, "run": True})
         self.assertEqual(packet["server"], "unix://" + str(self.socket))
@@ -250,7 +249,7 @@ class RuntimeTest(unittest.TestCase):
         self.assertEqual(baseline.read_bytes(), contents)
 
     def test_unsupported_cli_server_and_legacy_revisions_fail_closed(self):
-        for mode, found in [("cli_revision", 14), ("server_revision", 9), ("legacy_revision", 0), ("nonoverlap", 14)]:
+        for mode, found in [("server_revision", 9), ("legacy_revision", 0)]:
             with self.subTest(mode=mode):
                 result, packet = self.invoke(mode)
                 self.assertEqual(result.returncode, 1)
@@ -258,14 +257,14 @@ class RuntimeTest(unittest.TestCase):
                 self.assertFalse(packet["advertised_requirements_met"])
                 self.assertIsNone(packet["adapter_identity"])
                 self.assertIn(str(found), packet["api_revision_refusal"])
-                self.assertIn("10..13", packet["api_revision_refusal"])
+                self.assertIn("minimum accepted revision is 10", packet["api_revision_refusal"])
                 self.assertEqual({x["schema_status"] for x in packet["methods"]}, {"not_checked"})
                 self.assertEqual([x["behavior_tested"] for x in packet["methods"]], [True, False, False, False, False])
 
     def test_numeric_acceptance_is_not_behavior_certification(self):
         # Injected identities exercise the range boundary only. They are NOT
         # substitute evidence for an actual old build (especially untested API11).
-        for revision in [10, 11, 12, 13]:
+        for revision in [10, 11, 12, 13, 18, 99]:
             with self.subTest(revision=revision):
                 result, packet = self.invoke(f"accepted_{revision}")
                 self.assertEqual(result.returncode, 0, result.stderr)
@@ -274,12 +273,22 @@ class RuntimeTest(unittest.TestCase):
                 self.assertFalse(packet["behavior_certified"])
                 self.assertIn("not_inferred_from_revision", packet["recorded_build_behavior"])
 
+    def test_newer_server_still_runs_contract_checks(self):
+        result, packet = self.invoke("new_server_minimum")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(packet["advertised_requirements_met"])
+        self.assertEqual(packet["source"]["api_revision"], 99)
+        self.assertEqual(packet["source"]["api_min_revision"], 98)
+
     def test_required_field_type_method_and_binding_faults_are_not_compatibility(self):
         for mode in ["required_arg", "wrong_type", "wrong_method", "missing_method", "malformed", "oversize", "no_exec_binding", "no_sleep_binding"]:
             with self.subTest(mode=mode):
                 result, packet = self.invoke(mode)
                 self.assertEqual(result.returncode, 1, result.stderr)
                 self.assertFalse(packet["advertised_requirements_met"])
+                if mode == "missing_method":
+                    self.assertIn({"stage": "com.superlogical.terminal.format", "error_name": "method_not_found"},
+                                  packet["diagnostics"])
                 self.assertIsNone(packet["adapter_identity"])
                 self.assertTrue(packet["adapter_revalidation_required"])
                 if mode in ["required_arg", "wrong_type"]:
@@ -337,6 +346,9 @@ class RuntimeTest(unittest.TestCase):
                 packet = json.loads(out)
                 self.assertEqual(packet["outcome"], "deadline_exceeded" if sig is None else "cancel_requested")
                 self.assertFalse(packet["advertised_requirements_met"])
+                if mode == "missing_method":
+                    self.assertIn({"stage": "com.superlogical.terminal.format", "error_name": "method_not_found"},
+                                  packet["diagnostics"])
                 for pid in owned:
                     state = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True).stdout.strip()
                     self.assertTrue(not state or state.startswith("Z"), f"Owned fixture {pid} still executing: {state}")

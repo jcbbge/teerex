@@ -4,7 +4,7 @@ const supervised = @import("supervised_child");
 
 const usage =
     \\Usage: teerex doctor --socket /absolute/path [--timeout-ms N] [--baseline FILE]
-    \\Read-only, narrow API-10..13 diagnosis for observe/watch/run. Requires macOS/Linux and Rex on PATH (or global --rex ABS / TEEREX_REX).
+    \\Read-only, narrow diagnosis of observe/watch/run on Rex API 10 or newer. Requires macOS/Linux and Rex on PATH (or global --rex ABS / TEEREX_REX).
     \\Uses only the explicit existing socket; never autostarts, upgrades, configures, reads terminal text or executes argv.
     \\Combined root defaults omitted socket; defaulted JSON includes socket_source. Explicit/standalone packets stay unchanged.
     \\Reports rex_executable, client/server mismatch and platform applicability (Linux run: not_applicable).
@@ -85,7 +85,12 @@ const Diagnosis = struct {
         const result = try supervised.collect(self.allocator, argv, &self.env, self.timeout_ms - elapsed, &output);
         if (result.stop_signal != 0) return error.DoctorCancelled;
         if (result.deadline_exceeded) return error.DoctorDeadlineExceeded;
-        if (result.term != .Exited or result.term.Exited != 0) return error.RexQueryFailed;
+        if (result.term != .Exited or result.term.Exited != 0) {
+            if (std.mem.indexOf(u8, result.stderr, "code=method_not_found") != null or
+                std.mem.indexOf(u8, result.stderr, "not found. Run rex api list") != null) return error.method_not_found;
+            if (std.mem.indexOf(u8, result.stderr, "code=bad_request") != null) return error.bad_request;
+            return error.RexQueryFailed;
+        }
         return output.bytes.items;
     }
 
@@ -259,14 +264,12 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
         break :blk null;
     };
     d.server = d.identity(&.{ "api", "call", "server.version" }) catch |err| blk: {
-        try d.failure("server_version", err);
+        try d.failure("server.version", err);
         break :blk null;
     };
     const api_range = d.cli != null and d.server != null and
-        d.cli.?.api_revision >= 10 and d.cli.?.api_revision <= 13 and
-        d.server.?.api_revision >= 10 and d.server.?.api_revision <= 13 and
-        d.cli.?.api_min_revision <= d.server.?.api_revision and d.server.?.api_min_revision <= d.cli.?.api_revision;
-    const revision_refusal = if (d.cli != null and d.server != null and !api_range) try std.fmt.allocPrint(allocator, "Rex CLI API revision {d} (minimum {d}), server API revision {d} (minimum {d}); accepted revisions 10..13 with overlapping API support", .{
+        d.cli.?.api_revision >= 10 and d.server.?.api_revision >= 10;
+    const revision_refusal = if (d.cli != null and d.server != null and !api_range) try std.fmt.allocPrint(allocator, "Rex CLI API revision {d} (minimum {d}), server API revision {d} (minimum {d}); minimum accepted revision is 10", .{
         d.cli.?.api_revision, d.cli.?.api_min_revision, d.server.?.api_revision, d.server.?.api_min_revision,
     }) else null;
     for (methods, 0..) |method, index| {
@@ -297,7 +300,7 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
     var descriptors: [methods.len]?[]const u8 = undefined;
     for (d.checks, 0..) |check, index| descriptors[index] = check.descriptor_sha256;
     const identity = if (complete) try fingerprint(allocator, try std.json.Stringify.valueAlloc(allocator, .{
-        .contract = "observe_watch_run_api10_13",
+        .contract = "observe_watch_run_api10_or_newer",
         .server = endpoint,
         .cli = d.cli,
         .source = d.server,
@@ -332,7 +335,7 @@ pub fn run(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
             .run = if (builtin.os.tag == .macos) "applicable" else "not_applicable",
             .run_reason = if (builtin.os.tag == .macos) @as(?[]const u8, null) else "teerex run requires macOS; binding discovery does not establish Linux execution support",
         },
-        .accepted_api_revisions = .{ .min = 10, .max = 13 },
+        .accepted_api_revisions = .{ .min = 10, .max = @as(?u32, null) },
         .api_revision_matches = if (d.cli != null and d.server != null) api_range else @as(?bool, null),
         .api_revision_refusal = revision_refusal,
         .methods = d.checks,

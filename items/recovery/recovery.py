@@ -228,15 +228,35 @@ class Rex:
         self.base = [self.executable, "--autostart=false", "--server", self.server, "--timeout", "3s", "--color", "never"]
 
     def call(self, method, args=None):
-        script = PANE_GUARD + '\nlocal p=rex.args.params; if p.session_id then local a,e=rex.call("session.attach",{session_id=p.session_id}); if not a then error(e) end end; local v,e=rex.call(rex.args.method,p); if not v then error(e) end; return v'
+        script = PANE_GUARD + """
+local function request(method, args)
+    local value, err = rex.call(method, args)
+    if not value then
+        local incompatible = rex_method_error(method, err)
+        if incompatible then return {teerex_rpc_error=incompatible} end
+        error(err)
+    end
+    return value
+end
+local p = rex.args.params
+if p.session_id then
+    local attached = request("session.attach", {session_id=p.session_id})
+    if attached.teerex_rpc_error then return attached end
+end
+return request(rex.args.method, p)
+"""
         value = run_process(self.base + ["do", "-e", script, "--args", encoded(dict(method=method, params=args or {})).decode(), "--json"], self.timeout)
         require(isinstance(value, dict), "invalid_Rex_response_object")
+        if "teerex_rpc_error" in value:
+            raise Refusal(value["teerex_rpc_error"])
         return value
 
     def identity(self, allow_older=False):
         version = self.call("server.version")
         status = self.call("server.status")
-        require(version.get("api_revision") in ((10, 11, 12, 13) if allow_older else (13,)), "recovery_requires_API13; update_inventory_only_accepts_API10_to_13")
+        revision = version.get("api_revision")
+        require(type(revision) is int and revision >= (10 if allow_older else 13),
+                "recovery_requires_API13_or_newer; update_inventory_requires_API10_or_newer")
         require(text(status.get("host_id"), 128) and text(status.get("instance_id"), 128), "server_identity_unavailable")
         return {"server": self.server, "rex_executable": self.executable, "version": version, "host_id": status["host_id"], "instance_id": status["instance_id"]}
 
@@ -354,7 +374,9 @@ def load_snapshot(store):
     value = store.read("snapshot.json")
     require(isinstance(value, dict) and value.get("schema_version") == 1 and value.get("kind") == "recovery_snapshot", "unsupported_snapshot_schema")
     require(isinstance(value.get("sessions"), list), "invalid_snapshot_sessions")
-    require(isinstance(value.get("source"), dict) and value["source"].get("version", {}).get("api_revision") == 13, "snapshot_requires_API13_source")
+    source = value.get("source")
+    revision = source.get("version", {}).get("api_revision") if isinstance(source, dict) else None
+    require(type(revision) is int and revision >= 13, "snapshot_requires_API13_or_newer_source")
     session_ids = set()
     block_ids = set()
     for s in value["sessions"]:
@@ -630,7 +652,7 @@ def summary(saved):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(prog="teerex recovery", description="Private bounded Rex snapshot and restore (API13), update inventory (API10..13). Python 3.9+. No updater, close, screen scraping or retries.",
+    parser = argparse.ArgumentParser(prog="teerex recovery", description="Private bounded Rex snapshot and restore (API 13 or newer), update inventory (API 10 or newer). Python 3.9+. No updater, close, screen scraping or retries.",
                                      epilog="Exit 0: requested structural evidence only, not complete recovery; 1: refusal/uncertainty; 2: usage; 3: explicit partial restore; 124: controller deadline; 130/143: cancellation. See items/recovery/README.md for omissions.")
     sub = parser.add_subparsers(dest="operation", required=True)
     descriptions = {"snapshot": "Capture layout/labels/hosts/process cwd plus explicit private launch references. No drafts or automatic argv/resume discovery.",
@@ -720,10 +742,10 @@ def main(argv=None):
                           "panes_at_risk": inventory, "impact_certainty": "inventory_not_proof_every_attached_host_process_will_close",
                           "update_performed": False, "restart_performed": False, "restore_performed": False,
                           "execution_support": "manual_handoff_no_public_update_API", "drafts_recoverable": False,
-                          "snapshot_support": "supported_API13_subset" if source["version"]["api_revision"] == 13 else "unsupported_snapshot_requires_API13; preserve_manual_accounting_before_update",
+                          "snapshot_support": "supported_API13_subset" if source["version"]["api_revision"] >= 13 else "unsupported_snapshot_requires_API13; preserve_manual_accounting_before_update",
                           "next": "Review pane inventory and snapshot omissions. Use this target server's documented update/restart control manually with explicit authorization. Then run restore preview against the empty restarted server; confirm its exact token separately."}
                 if args.snapshot:
-                    if source["version"]["api_revision"] != 13:
+                    if source["version"]["api_revision"] < 13:
                         result["snapshot"] = {"outcome": "unsupported_API_revision", "written": False}
                         result["next"] = "Do not update on this receipt alone: snapshot is unavailable on this old API. Preserve manual accounting and drafts separately; no automatic recovery claim."
                         print(json.dumps(result, ensure_ascii=False))

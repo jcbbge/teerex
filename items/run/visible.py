@@ -386,7 +386,7 @@ def controller(runtime, source, args):
     global RECEIPT
     parser = argparse.ArgumentParser(prog="teerex run-visible", description=(
         "Run literal noninteractive argv in a verified visible Rex terminal on this command host. "
-        "API13 only; Python3.9+. No retries, autostart, implicit shell, hidden worker or daemon. "
+        "API 13 or newer; Python3.9+. No retries, autostart, implicit shell, hidden worker or daemon. "
         "Child stdout/stderr are pipes teed live to the terminal, not TTYs. Exact env replaces inherited env "
         "except actual REX_SESSION/REX_BLOCK. Stdin is a regular file (max1MiB) or /dev/null. "
         "Read detached evidence with run-visible receipt --file ABS [--wait-ms N]. "
@@ -442,8 +442,13 @@ def controller(runtime, source, args):
         raise ValueError("rex_executable_missing")
     v = invoke(rex, None, ["--autostart=false", "--server", "unix://" + o.socket, "api", "call", "server.version", "{}"])
     version = v["receipt"]
-    if v["code"] or not isinstance(version, dict) or version.get("api_revision") != 13:
-        raise ValueError("run_visible_requires_observed_api13")
+    if v["code"]:
+        diagnostic = base64.b64decode(v["backend_stderr_base64"]).decode(errors="replace")
+        code = re.search(r"code=(method_not_found|bad_request)\b", diagnostic)
+        raise ValueError("server.version: " + (code[1] if code else "Rex query failed"))
+    revision = version.get("api_revision") if isinstance(version, dict) else None
+    if type(revision) is not int or revision < 13:
+        raise ValueError("run_visible_requires_API13_or_newer")
     if STOP:
         print(json.dumps(dict(schema_version=1, kind="run_visible_result", outcome="cancel_requested",
                               success=False, cancellation_signal=STOP, retry_safe=False)), flush=True)

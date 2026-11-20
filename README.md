@@ -24,6 +24,8 @@ Managed workers report each turn end with one `DONE` or `NOT DONE` answer. Full 
 
 An empty session attached only by app clients may be closed; see the [session close contract](items/surfaces/README.md).
 
+Rex revision checks specify minimums. Commands verify the method and response they use, and name methods that Rex rejects.
+
 Command receipts are JSON; help output is text. It states what was verified and labels the rest `unknown`, `uncertain` or `not_assessed`. teerex never starts a hidden process, never retries on its own, never closes a pane you did not ask it to close, and never infers that work is done. Exact flags: `teerex COMMAND --help`. For `clutch take` and `clutch release`, use `teerex clutch --help`; their subcommand help currently prints usage with exit 2. Full contracts: each `items/*/README.md`.
 
 ## Named-host recovery stores

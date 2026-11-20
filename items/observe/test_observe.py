@@ -161,20 +161,18 @@ class CompareTest(unittest.TestCase):
         self.after["capture"].update(portion="prefix", incomplete_at=None, view=None)
         self.assertIsNone(self.compared()["capture"]["captured_text_changed"])
 
-    def test_api_range_preserves_revision_and_refuses_outside_bounds(self):
-        for revision in [10, 11, 12, 13]:
+    def test_api_minimum_preserves_newer_revisions(self):
+        for revision in [10, 11, 12, 13, 18, 99]:
             with self.subTest(revision=revision):
                 self.before["source"]["api_revision"] = revision
                 self.after["source"]["api_revision"] = revision
                 self.assertEqual(self.compared()["source"]["api_revision"], revision)
-        for revision in [9, 14]:
-            with self.subTest(revision=revision):
-                self.before["source"]["api_revision"] = revision
-                self.after["source"]["api_revision"] = revision
-                result = compare_packets(self.root, self.before, self.after)
-                self.assertEqual(result.returncode, 1)
-                self.assertEqual(result.stdout, "")
-                self.assertIn(f"revision {revision}", result.stderr)
+        self.before["source"]["api_revision"] = 9
+        self.after["source"]["api_revision"] = 9
+        result = compare_packets(self.root, self.before, self.after)
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("revision 9", result.stderr)
         self.before["source"]["api_revision"] = 10
         self.after["source"]["api_revision"] = 12
         self.assertEqual(compare_packets(self.root, self.before, self.after).returncode, 1)
@@ -489,8 +487,6 @@ class ObserveTest(unittest.TestCase):
         self.assertEqual(packet["server"], "unix://" + expected)
 
     def test_tail_exact_unicode_and_same_blob_continuation(self):
-        if self.rex_json("api", "call", "server.version")["api_revision"] != 13:
-            self.skipTest("tail continuation currently requires actual API13")
         text = ('head α🙂 \\ \" <&>\t\n' * 900) + "LATEST β🙂 END\n"
         target = self.fixture(text, marker="head")
         # Read the actual terminal representation, including wrapping/newlines.

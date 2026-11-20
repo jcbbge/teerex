@@ -48,7 +48,7 @@ class JobsTest(unittest.TestCase):
             raise RuntimeError("Disposable server did not start")
         cls.source = cls.rpc("server.version")
         print("Real Rex:", json.dumps(cls.source), flush=True)
-        if cls.source["api_revision"] != 13:
+        if cls.source["api_revision"] < 13:
             raise RuntimeError("Jobs integration requires actual API13")
 
     @classmethod
@@ -473,7 +473,7 @@ class JobsTest(unittest.TestCase):
                 self.assertFalse(p["automatic_cleanup"])
         self.env["PATH"] = str(self.work / "no-rex")
         r, p = self.invoke("track", **options)
-        self.assertEqual(p["failure_reason"], "FileNotFound")
+        self.assertEqual(p["failure_reason"], "RexExecutableNotFound")
         self.assertIsNone(p["backend_term"])
         self.shim("pass\n")
         (self.work / "shim" / "rex").chmod(0o644)
@@ -502,7 +502,7 @@ class JobsTest(unittest.TestCase):
                 self.assertEqual(p["outcome"], "uncertain")
                 self.assertEqual(p["mutation_attempt_frame_seen"], retain_frames)
                 if retain_frames:
-                    self.assertEqual(p["source_observed"]["api_revision"], 13)
+                    self.assertEqual(p["source_observed"]["api_revision"], self.source["api_revision"])
                     self.assertEqual(p["observation"]["placement"], "detached")
                 self.assertIsNotNone(p["failure_reason"])
                 if malformed:
@@ -779,10 +779,10 @@ class JobsTest(unittest.TestCase):
         r = subprocess.run(command, env=self.env, capture_output=True, text=True, timeout=5)
         p = json.loads(r.stdout)
         self.assertEqual(r.returncode, 1, r.stderr + r.stdout)
-        self.assertEqual(p["outcome"], "uncertain")
-        self.assertEqual(p["failure_reason"], "rex_transport_incomplete")
-        self.assertIn("session:" + ZERO, r.stderr)
-        self.assertNotEqual(p["backend_term"], {"Exited": 0})
+        self.assertEqual(p["outcome"], "refused")
+        self.assertEqual(p["failure_reason"], "target_absent_at_observation")
+        self.assertFalse(p["mutation_attempt_frame_seen"])
+        self.assertEqual(p["backend_term"], {"Exited": 0})
         self.assertEqual(self.invoke("list")[1]["entries"], [])
 
 

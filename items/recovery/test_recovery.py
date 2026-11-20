@@ -41,7 +41,7 @@ class RecoveryTest(unittest.TestCase):
         self.addCleanup(self.stop)
         self.start()
         self.version = self.rpc("server.version")
-        if self.version["api_revision"] != 13 and self._testMethodName != "test_update_preview_and_snapshot_never_restarts_or_closes":
+        if self.version["api_revision"] < 13 and self._testMethodName != "test_update_preview_and_snapshot_never_restarts_or_closes":
             self.skipTest("snapshot/restore truthfully require API13; only update inventory accepts older APIs")
         print("Recovery real Rex:", json.dumps(self.version), flush=True)
 
@@ -332,7 +332,7 @@ class RecoveryTest(unittest.TestCase):
         self.assertTrue(mismatch["build_differs"])
         self.assertTrue(mismatch["api_differs"])
         self.assertEqual(mismatch["running"]["instance_id"], identity)
-        if self.version["api_revision"] == 13:
+        if self.version["api_revision"] >= 13:
             saved = self.invoke("update", "--snapshot")
             self.assertEqual(saved["snapshot"]["panes"], 4)
         else:

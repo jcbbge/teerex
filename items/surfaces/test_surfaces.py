@@ -552,23 +552,22 @@ class SurfacesTest(unittest.TestCase):
         self.assertFalse(refused["control_attempted"])
         self.assertEqual(self.view(), before)
 
-    def test_rename_refuses_missing_server_method_before_mutation(self):
+    def test_rename_reports_native_compatibility_errors(self):
         before = self.view()
-        # Simulate an older server's advertised methods in the local Lua controller.
-        needle = 'local help=rex.call("help.all")'
-        injected = 'local help={methods={}}'
-        self.shim("import subprocess,sys\nfrom pathlib import Path\nargs=sys.argv[1:]\n"
-                  + "if '-e' in args:\n i=args.index('-e')+1\n args[i]=args[i].replace("
-                  + repr(needle) + "," + repr(injected) + ")\n"
-                  + "elif 'do' in args:\n p=Path(args[args.index('do')+1])\n p.write_text(p.read_text().replace("
-                  + repr(needle) + "," + repr(injected) + "))\n"
-                  + f"sys.exit(subprocess.run([{self.rex!r},*args]).returncode)\n")
-        r, refused = self.run_json(self.rename_command("--pane", self.anchor))
-        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
-        self.assertEqual(refused["outcome"], "refused")
-        self.assertEqual(refused["failure_reason"], "rename_label_method_unavailable")
-        self.assertFalse(refused["control_attempted"])
-        self.assertEqual(self.view(), before)
+        needle = 'local receipt=call(method,{session_id=a.session_id,window_id=a.window_id,block_id=a.block_id,label=a.label})'
+        for code in ("method_not_found", "bad_request"):
+            with self.subTest(code=code):
+                injected = ('rex.call=function() return nil, "Rex refused (status=400 code=' + code + ')" end\n'
+                            + needle)
+                self.shim("import subprocess,sys\nfrom pathlib import Path\nargs=sys.argv[1:]\n"
+                          + "p=Path(args[args.index('do')+1])\n"
+                          + "p.write_text(p.read_text().replace(" + repr(needle) + "," + repr(injected) + "))\n"
+                          + f"sys.exit(subprocess.run([{self.rex!r},*args]).returncode)\n")
+                r, refused = self.run_json(self.rename_command("--pane", self.anchor))
+                self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+                self.assertEqual(refused["failure_detail"], f"session.set_block_label: {code}")
+                self.assertFalse(refused["control_acknowledged"])
+                self.assertEqual(self.view(), before)
 
     def test_rename_normalized_label_mismatch_and_lost_receipt_stay_non_success(self):
         r, mismatch = self.run_json(self.rename_command("--pane", self.anchor, label="  trimmed α  "))

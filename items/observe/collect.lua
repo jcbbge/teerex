@@ -2,7 +2,7 @@
 local a = rex.args
 local function read(method, args)
     local value, err = rex.call(method, args)
-    if not value then error(err) end
+    if not value then error(method .. ": " .. tostring(err)) end
     local encoded = rex.json.encode(value)
     local limit = method == "com.superlogical.terminal.blob_read" and 512*1024 or 128*1024
     if #encoded > limit then error("Rex response exceeds retained limit") end
@@ -12,8 +12,8 @@ end
 local function collect()
     local version, v = read("server.version")
     local revision = version.api_revision
-    if type(revision) ~= "number" or revision % 1 ~= 0 or revision < 10 or revision > 13 then
-        error("unsupported Rex API revision " .. tostring(revision) .. " (accepted: 10..13)")
+    if type(revision) ~= "number" or revision % 1 ~= 0 or revision < 10 then
+        error("unsupported Rex API revision " .. tostring(revision) .. " (accepted: 10 and later)")
     end
     local target = {session_id=a.session_id, block_id=a.block_id, args={}}
     local captured, capture = read("com.superlogical.terminal.format", {
@@ -21,7 +21,6 @@ local function collect()
         args={format="text", max_bytes=a.max_bytes - 2},
     })
     if a.tail then
-        if revision ~= 13 then error("tail capture requires observed API13") end
         local text = captured.content
         if type(text) ~= "string" then error("invalid capture text") end
         local offset = 0

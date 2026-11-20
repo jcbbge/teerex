@@ -10,10 +10,15 @@ local function surface(a, emit)
         automatic_close=false, focus_requested=false, painted_visibility="not_assessed",
         geometry_units="window_fraction", program_readiness="not_assessed"}
     local function fail(reason) result.failure_reason=reason; result.outcome=(result.creation_attempted or result.control_attempted) and "uncertain" or "refused"; return result end
-    local version = rex.call("server.version")
+    local function call(method, params)
+        local value, err = rex.call(method, params)
+        if not value then result.failure_detail=rex_method_error(method, err) or result.failure_detail end
+        return value
+    end
+    local version = call("server.version")
     if type(version) ~= "table" then return fail("version_unavailable") end
     result.source={rex_version=version.rex_version,platform=version.platform,api_revision=version.api_revision}
-    if type(version.api_revision) ~= "number" or version.api_revision < 10 or version.api_revision > 13 then
+    if type(version.api_revision) ~= "number" or version.api_revision % 1 ~= 0 or version.api_revision < 10 then
         return fail("unsupported_surface_api_revision")
     end
     local function select_target(rows, key, text, exact_label)
@@ -40,7 +45,7 @@ local function surface(a, emit)
         end
         return matches[1]
     end
-    local sessions=rex.call("session.list")
+    local sessions=call("session.list")
     if type(sessions)~="table" or type(sessions.sessions)~="table" then return fail("session_list_unavailable") end
     if a.operation=="session-ensure" then
         local selected=select_target(sessions.sessions,"session_id",a.label,true)
@@ -49,12 +54,12 @@ local function surface(a, emit)
         if not selected then
             result.failure_reason=nil; result.candidates=nil
             result.creation_attempted=true; progress({event="attempt",control=result.control_attempted==true})
-            made=rex.call("session.create",{label=a.label})
+            made=call("session.create",{label=a.label})
             if type(made)~="table" or not made.session_id then return fail("session_creation_receipt_unavailable") end
             result.created=made
             progress({event="created",created=made})
         end
-        local fresh=rex.call("session.list")
+        local fresh=call("session.list")
         if type(fresh)~="table" or type(fresh.sessions)~="table" then return fail("session_readback_unavailable") end
         local verified=select_target(fresh.sessions,"session_id",a.label,true)
         if not verified then return result end
@@ -68,9 +73,9 @@ local function surface(a, emit)
         local inventory={}
         if #sessions.sessions>128 then return fail("global_session_limit_128") end
         for _,session in ipairs(sessions.sessions) do
-            local attached=rex.call("session.attach",{session_id=session.session_id})
+            local attached=call("session.attach",{session_id=session.session_id})
             if type(attached)~="table" then return fail("global_session_attach_unavailable") end
-            local view=rex.call("session.view",{session_id=session.session_id})
+            local view=call("session.view",{session_id=session.session_id})
             if type(view)~="table" or view.session_id~=session.session_id then return fail("global_session_view_unavailable") end
             for _,w in ipairs(view.windows or {}) do for _,l in ipairs(w.layers or {}) do for _,b in ipairs(l.blocks or {}) do
                 if b.creator_name=="com.superlogical.terminal" then
@@ -98,10 +103,10 @@ local function surface(a, emit)
         a.session_id:sub(1,8)~="session:" then
         result.failure_reason=nil; result.candidates=nil
         result.creation_attempted=true; progress({event="attempt",control=false})
-        local made=rex.call("session.create",{label=a.session_id})
+        local made=call("session.create",{label=a.session_id})
         if type(made)~="table" or not made.session_id then return fail("session_creation_receipt_unavailable") end
         result.created=made; progress({event="created",created=made})
-        local fresh=rex.call("session.list")
+        local fresh=call("session.list")
         if type(fresh)~="table" or type(fresh.sessions)~="table" then return fail("session_readback_unavailable") end
         selected=select_target(fresh.sessions,"session_id",a.session_id,true)
         if not selected then return fail(result.failure_reason) end
@@ -113,12 +118,12 @@ local function surface(a, emit)
     if a.operation=="session-close" then
         -- Observe without joining: this CLI must not become an attached client
         -- itself or cause an empty session to refuse its own closure.
-        local all=rex.call("session.attach_all",{event_scope="session"})
+        local all=call("session.attach_all",{event_scope="session"})
         if type(all)~="table" then return fail("session_attach_unavailable") end
-        local blocks=rex.call("session.list_blocks",{session_id=a.session_id})
+        local blocks=call("session.list_blocks",{session_id=a.session_id})
         if type(blocks)~="table" or type(blocks.blocks)~="table" then return fail("session_block_list_unavailable") end
         if #blocks.blocks>0 then return fail("session_has_panes") end
-        local clients=rex.call("client.list",{session_id=a.session_id})
+        local clients=call("client.list",{session_id=a.session_id})
         if type(clients)~="table" or type(clients.clients)~="table" then return fail("session_client_list_unavailable") end
         if #clients.clients>0 then
             for _,client in ipairs(clients.clients) do
@@ -131,10 +136,10 @@ local function surface(a, emit)
         result.previous=selected
         result.control_attempted=true
         progress({event="attempt",control=true})
-        local receipt=rex.call("session.destroy",{session_id=a.session_id})
+        local receipt=call("session.destroy",{session_id=a.session_id})
         if type(receipt)~="table" then return fail("session_close_receipt_unavailable") end
         result.control_acknowledged=true
-        local after=rex.call("session.list")
+        local after=call("session.list")
         if type(after)~="table" or type(after.sessions)~="table" then return fail("session_close_readback_unavailable") end
         for _,s in ipairs(after.sessions) do
             if s.session_id==a.session_id then return fail("closed_session_still_listed") end
@@ -143,7 +148,7 @@ local function surface(a, emit)
         result.outcome="session_closed_and_absent"
         return result
     end
-    local attached=rex.call("session.attach",{session_id=a.session_id})
+    local attached=call("session.attach",{session_id=a.session_id})
     if type(attached)~="table" then return fail("session_attach_unavailable") end
     local function locate(view, bid)
         if type(view) ~= "table" or view.session_id ~= a.session_id then return end
@@ -178,7 +183,7 @@ local function surface(a, emit)
             end
         end
     end
-    local before=rex.call("session.view",{session_id=a.session_id})
+    local before=call("session.view",{session_id=a.session_id})
     if type(before) ~= "table" or before.session_id ~= a.session_id then return fail("session_unavailable") end
     local panes={}
     for _,w in ipairs(before.windows or {}) do
@@ -234,13 +239,6 @@ local function surface(a, emit)
     end
     if a.operation == "rename" then
         local method=a.window_id and "session.set_window_label" or "session.set_block_label"
-        -- help.all describes the connected server, not the controller's API catalog.
-        local help=rex.call("help.all")
-        local available=false
-        if type(help)=="table" then
-            for _,m in ipairs(help.methods or {}) do if m.name==method then available=true end end
-        end
-        if not available then return fail("rename_label_method_unavailable") end
         local function target(view)
             if a.block_id then return locate(view,a.block_id) end
             for _,w in ipairs(view.windows or {}) do
@@ -255,10 +253,10 @@ local function surface(a, emit)
         result.control_attempted=true
         result.outcome="uncertain"
         progress({event="attempt",control=result.control_attempted==true})
-        local receipt=rex.call(method,{session_id=a.session_id,window_id=a.window_id,block_id=a.block_id,label=a.label})
+        local receipt=call(method,{session_id=a.session_id,window_id=a.window_id,block_id=a.block_id,label=a.label})
         if type(receipt)~="table" or type(receipt.revision)~="number" then return fail("rename_receipt_unavailable") end
         result.control_acknowledged=true
-        local after=rex.call("session.view",{session_id=a.session_id})
+        local after=call("session.view",{session_id=a.session_id})
         if type(after)~="table" or after.session_id~=a.session_id then return fail("rename_readback_unavailable") end
         result.actual=target(after)
         if not result.actual then return fail("rename_target_readback_unavailable") end
@@ -294,17 +292,17 @@ local function surface(a, emit)
         local axis=(a.direction=="left" or a.direction=="right") and "horizontal" or "vertical"
         local side=before_side and "before" or "after"
         local ratio=before_side and a.ratio or 1-a.ratio
-        local receipt=rex.call("session.move_block",{session_id=a.session_id,block_id=a.block_id,
+        local receipt=call("session.move_block",{session_id=a.session_id,block_id=a.block_id,
             anchor_block_id=a.anchor,direction=axis,side=side,ratio=ratio})
         if type(receipt) ~= "table" or type(receipt.created_split_id) ~= "string" then return fail("move_receipt_unavailable") end
         result.control_acknowledged=true
         result.move_receipt=receipt
         if a.focus then
-            local focused=rex.call("session.focus_block",{session_id=a.session_id,block_id=a.block_id})
+            local focused=call("session.focus_block",{session_id=a.session_id,block_id=a.block_id})
             if type(focused) ~= "table" then return fail("move_focus_receipt_unavailable") end
             result.focus_acknowledged=true
         end
-        local after=rex.call("session.view",{session_id=a.session_id})
+        local after=call("session.view",{session_id=a.session_id})
         if type(after) ~= "table" or after.session_id ~= a.session_id then return fail("move_readback_unavailable") end
         result.actual=locate(after,a.block_id)
         local current_anchor=locate(after,a.anchor)
@@ -342,13 +340,13 @@ local function surface(a, emit)
         progress({event="attempt",control=result.control_attempted==true})
         local receipt
         if a.operation == "focus" then
-            receipt=rex.call("session.focus_block",{session_id=a.session_id,block_id=a.block_id})
+            receipt=call("session.focus_block",{session_id=a.session_id,block_id=a.block_id})
         else
-            receipt=rex.call("block.close",{session_id=a.session_id,block_id=a.block_id,keep_last=false})
+            receipt=call("block.close",{session_id=a.session_id,block_id=a.block_id,keep_last=false})
         end
         if type(receipt) ~= "table" or type(receipt.revision) ~= "number" then return fail("control_receipt_unavailable") end
         result.control_acknowledged=true
-        local after=rex.call("session.view",{session_id=a.session_id})
+        local after=call("session.view",{session_id=a.session_id})
         if type(after) ~= "table" or after.session_id ~= a.session_id then return fail("control_readback_unavailable") end
         result.actual=locate(after,a.block_id)
         if a.operation == "focus" then
@@ -363,7 +361,7 @@ local function surface(a, emit)
             end
             result.outcome=ensuring and "existing" or "focused_and_verified"
         else
-            local blocks=rex.call("session.list_blocks",{session_id=a.session_id})
+            local blocks=call("session.list_blocks",{session_id=a.session_id})
             if type(blocks) ~= "table" or type(blocks.blocks) ~= "table" then return fail("closed_block_list_unavailable") end
             for _, b in ipairs(blocks.blocks) do if b.block_id == a.block_id then return fail("closed_block_still_listed") end end
             if result.actual then return fail("closed_pane_still_attached") end
@@ -407,14 +405,14 @@ local function surface(a, emit)
     end
     result.creation_attempted=true
     progress({event="attempt",control=result.control_attempted==true})
-    local made=rex.call(method,params)
+    local made=call(method,params)
     result.outcome="uncertain"
     if type(made) ~= "table" or type(made.block_ids) ~= "table" or #made.block_ids ~= 1 then
         return fail("creation_receipt_unavailable")
     end
     result.created={block_id=made.block_ids[1],window_id=made.window_id,layer_id=made.layer_id,revision=made.revision}
     progress({event="created",created=result.created})
-    local after=rex.call("session.view",{session_id=a.session_id})
+    local after=call("session.view",{session_id=a.session_id})
     result.actual=locate(after,made.block_ids[1])
     local actual=result.actual
     if actual and ensuring then result.resolved.block_id=actual.block_id end
@@ -451,8 +449,8 @@ local function surface(a, emit)
     if not matches then result.failure_reason="requested_geometry_not_verified" end
     if ensuring and matches then
         if a.focus then
-            local receipt=rex.call("session.focus_block",{session_id=a.session_id,block_id=actual.block_id})
-            local focused=rex.call("session.view",{session_id=a.session_id})
+            local receipt=call("session.focus_block",{session_id=a.session_id,block_id=actual.block_id})
+            local focused=call("session.view",{session_id=a.session_id})
             result.actual=locate(focused,actual.block_id)
             if type(receipt)~="table" or not result.actual or not result.actual.in_active_window or result.actual.focused_block_id~=actual.block_id then return fail("ensure_focus_not_verified") end
             result.focus_acknowledged=true

@@ -7,7 +7,7 @@ pub const clutch_state = @import("clutch_state.zig");
 const usage =
     \\Usage: teerex send --socket ABS --session session:UUID --block block:UUID --from LABEL --message-file ABS|- [--timeout-ms N]
     \\Send FROM <label>: <file bytes> as one paste, then Enter, to an explicit existing terminal.
-    \\Requires Linux/macOS, Rex on PATH, existing API10..13 server, and canonical lowercase full IDs.
+    \\Requires Linux/macOS, Rex on PATH, existing API 10 or newer server, and canonical lowercase full IDs.
     \\Select a dedicated agent terminal: this can submit/execute input and does not establish prompt safety.
     \\--draft guard|ignore defaults guard: defer when input is present or unknown; send only on empty input.
     \\ignore uses raw paste and Enter on a released pane without draining queued messages.

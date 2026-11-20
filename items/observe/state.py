@@ -159,7 +159,11 @@ def main():
             return 124
         output.seek(0); raw = output.read(262145)
         if child.returncode or len(raw) > 262144:
-            print(json.dumps(dict(kind="agent_state", state="unknown", reason="collection_failed", completion="not_inferred")))
+            errors.seek(0)
+            detail = re.search(rb"(com\.superlogical\.terminal\.[a-z_]+|server\.version): [^\r\n]*code=(method_not_found|bad_request)\b",
+                               errors.read(4096))
+            reason = f"{detail[1].decode()}: {detail[2].decode()}" if detail else "collection_failed"
+            print(json.dumps(dict(kind="agent_state", state="unknown", reason=reason, completion="not_inferred")))
             return 1
     packet = json.loads(raw)
     result = classify(packet)

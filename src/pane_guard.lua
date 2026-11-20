@@ -1,3 +1,9 @@
+-- Keep only Rex's explicit compatibility error and the called method.
+local function rex_method_error(method, err)
+ if type(err) ~= "string" then return end
+ local code=err:match("code=(%w[%w_]*).?%s*$")
+ if code=="method_not_found" or code=="bad_request" then return method..": "..code end
+end
 -- Ownership is a written rule. Only the pane labelled seat, and its tab, are guarded.
 do
  local call=rex.call

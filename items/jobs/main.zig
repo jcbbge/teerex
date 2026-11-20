@@ -19,7 +19,7 @@ const usage =
     \\Registry locks (shared for list/doctor, exclusive otherwise) wait up to10000ms; registry_busy is retry-safe.
     \\List/doctor open existing files read-only and create no files, including no lock file.
     \\Registry must already be an absolute, private 0700 owned directory. Track retires same-server verified-absent entries; live/unknown records retained.
-    \\API13 Mac-arm64/Linux-amd64 only; no autostart, agents, daemon, automatic close or enforced deadlines.
+    \\API 13 or newer, Mac-arm64/Linux-amd64 only; no autostart, agents, daemon, automatic close or enforced deadlines.
     \\Ownership is recorded responsibility, not authority, native ownership, isolation or process control.
     \\Exit: 0 requested evidence/record verified, 1 error/refusal/unknown, 2 usage, 124 deadline, 130/143 signal.
     \\
@@ -96,7 +96,7 @@ fn fullId(value: []const u8, prefix: []const u8) bool {
     return true;
 }
 fn validSource(s: Source) bool {
-    return s.api_revision == 13 and (eq(s.platform, "darwin_arm64") or eq(s.platform, "linux_amd64")) and
+    return s.api_revision >= 13 and (eq(s.platform, "darwin_arm64") or eq(s.platform, "linux_amd64")) and
         textValid(s.rex_version, 128) and textValid(s.instance_id, 128) and textValid(s.host_id, 128);
 }
 fn validEntry(e: Entry) bool {

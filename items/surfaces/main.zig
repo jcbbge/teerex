@@ -27,7 +27,7 @@ const usage =
     \\       teerex surfaces inspect|focus|close --socket ABS --session session:UUID --pane block:UUID [--timeout-ms N]
     \\       teerex surfaces rename --socket ABS --session session:UUID (--window window:UUID | --pane block:UUID)
     \\         --label TEXT [--timeout-ms N]
-    \\Rename requires the server-advertised label method; fresh label/focus readback, no focus request or retry.
+    \\Rename calls the Rex label method and verifies the label and focus; no focus request or retry.
     \\       teerex surfaces move --socket ABS --session session:UUID --pane block:UUID --anchor block:UUID
     \\         [--direction right|left|up|down] [--ratio N] [--focus yes|no] [--timeout-ms N]
     \\Move preserves the same attached terminal; no creation. NEW pane share; focus defaults no and refuses
@@ -41,7 +41,7 @@ const usage =
     \\tab forbids one. Tiled defaults right, NEW pane share 1/3 (not Rex's before ratio). Float requires
     \\explicit fractional bounds inside the window. Tab forbids ratio/direction/bounds. No fallback/retry.
     \\Fresh session.view readback returns actual normalized geometry/label/host, not pixel or paint proof.
-    \\Open never requests focus or auto-close; no detached worker/autostart. API10..13; Unix; rex on PATH.
+    \\Open never requests focus or auto-close; no detached worker/autostart. API 10 or newer; Unix; rex on PATH.
     \\Deadline defaults 5000ms (100..60000), plus bounded cleanup. Inspect before any uncertain retry.
     \\Exit: 0 stated postcondition verified; 1 refusal/mismatch/uncertain;
     \\2 usage; 124 deadline; 130/143 cancellation. Program readiness/painted visibility not assessed.

@@ -7,8 +7,8 @@ end
 local v, version_error = rex.call("server.version")
 if not v then error(version_error) end
 local revision = v.api_revision
-if type(revision) ~= "number" or revision % 1 ~= 0 or revision < 10 or revision > 13 then
-    error("unsupported Rex API revision " .. tostring(revision) .. " (accepted: 10..13)")
+if type(revision) ~= "number" or revision % 1 ~= 0 or revision < 10 then
+    error("unsupported Rex API revision " .. tostring(revision) .. " (accepted: 10 and later)")
 end
 if type(rex.exec) ~= "table" or type(rex.exec.start) ~= "function" then
     error("Rex API revision " .. tostring(revision) .. " does not provide rex.exec.start")
