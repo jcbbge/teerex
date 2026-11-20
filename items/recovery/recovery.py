@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Bounded public-Rex recovery. No screen scraping, updater, close or retry."""
+"""Bounded public-Rex recovery. No updater, close or retry."""
 import argparse
 import contextlib
 import copy
@@ -8,8 +8,11 @@ import hashlib
 import json
 import math
 import os
+from pathlib import Path
+import pwd
 import re
 import selectors
+import shlex
 import shutil
 import signal
 import stat
@@ -20,19 +23,26 @@ import uuid
 
 # Embedded builds supply the shared guard; source-tree invocations use that same file.
 if "PANE_GUARD" not in globals():
-    from pathlib import Path
     PANE_GUARD = (Path(__file__).resolve().parents[2] / "src/pane_guard.lua").read_text()
 
 ADDRESS_KEYS = {"host", "server", "session_id", "block_id"}
 LAUNCH_KEYS = {"launch_id", "name", "owner", "purpose", "review_at", "target", "starter", "report_to",
                "profile", "argv", "cwd", "harness", "resume_session_id", "store", "created_at", "phase",
                "tracked", "protocol_acknowledged", "protocol_outcome", "brief_attempted", "immediate_child_term", "seat", "inbox"}
+HARNESSES = {"claude": "--resume", "codex": "resume", "pi": "--session"}
+# Only rexconfig's routing and working-list variables are eligible. No prompts,
+# hook payloads, command lines, credential variables or arbitrary AGENT_* names.
+RECOVERY_ENV = {
+    "AGENT_NAME", "AGENT_SESSION", "AGENT_PANE", "AGENT_REPORT_TO", "AGENT_REPORT_HOST",
+    "AGENT_SCRATCHPAD", "AGENT_PURPOSE", "AGENT_QUIET", "AGENT_CONTINUITY_FILE",
+    "AGENT_INBOX_REPLY", "AGENT_LAUNCH_ID", "AGENT_STEPS_DIR", "AGENT_STEPS_RECORDS",
+}
 OMISSIONS = {
     "draft": "unsupported_no_authoritative_input_buffer_API; never_inferred_from_rendered_text",
     "argv": "not_exposed_by_Rex; explicit_private_metadata_only",
-    "resume_session_id": "not_exposed_by_Rex; explicit_metadata_is_unverified_harness_state",
-    "credentials": "no_environment_or_credential_file_reads; explicit_argv_may_contain_secrets_and_stays_private",
-    "agent_relaunch": "withheld_requires_new_protocol_gate; historical_ACK_is_not_new_ACK",
+    "resume_session_id": "rexconfig_pane_identity_when_available; explicit_caller_metadata_is_unverified",
+    "credentials": "only_allowlisted_rexconfig_launch_environment; no_credential_file_reads",
+    "agent_relaunch": "native_restored_panes_only_with_resume_agents; structural_restore_withholds_agents",
     "focus_zoom_minimized_state": "recorded_but_not_reapplied; restored_panes_remain_inspectable",
     "board_state": "legacy_references_ignored",
     "application_internal_addresses": "argv_is_literal; embedded_pane_IDs_not_rewritten; relaunch_viewers_via_their_owning_command",
@@ -151,9 +161,9 @@ class Store:
         finally:
             os.close(fd)
 
-    def journal(self, record):
+    def journal(self, record, name="restore.jsonl"):
         # Created exclusively before mutation. Same file retained after any uncertainty.
-        fd = os.open("restore.jsonl", os.O_WRONLY | os.O_APPEND | os.O_NOFOLLOW, dir_fd=self.fd)
+        fd = os.open(name, os.O_WRONLY | os.O_APPEND | os.O_NOFOLLOW, dir_fd=self.fd)
         try:
             private_stat(fd)
             data = encoded(record) + b"\n"
@@ -308,14 +318,104 @@ def load_metadata(args, server):
     return result
 
 
+def agent_record(session, block):
+    return read_private(str(Path.home() / ".local/state/agent/identity" / session / (block + ".json")))
+
+
+def observed_harness(proc):
+    for process in [proc.get("foreground"), proc.get("child"), *(proc.get("ancestors") or [])]:
+        if not process:
+            continue
+        path = process.get("path") or ""
+        script = process.get("script") or ""
+        argv0 = process.get("argv0") or ""
+        for harness in HARNESSES:
+            if (process.get("name") == harness or Path(path).name == harness
+                    or Path(script).name == harness or Path(argv0).name == harness):
+                return harness
+        if "/claude/versions/" in path:
+            return "claude"
+        if "/pi-coding-agent/" in script:
+            return "pi"
+    return None
+
+
+def legacy_agent_environment(record, proc, session, block):
+    pid = record.get("launch_pid") or (proc.get("foreground") or {}).get("pid")
+    if type(pid) is not int or pid <= 0:
+        return None
+    try:
+        process = Path("/proc") / str(pid)
+        started = (process / "stat").read_text().rsplit(")", 1)[1].split()[19]
+        if record.get("launch_start") and started != record["launch_start"]:
+            return None
+        env = {}
+        for item in (process / "environ").read_bytes().split(b"\0"):
+            key, _, value = item.partition(b"=")
+            name = key.decode("ascii", errors="replace")
+            if name in RECOVERY_ENV or name in ("REX_SESSION", "REX_BLOCK"):
+                env[name] = os.fsdecode(value)
+        if (env.get("REX_SESSION"), env.get("REX_BLOCK")) != (session, block):
+            return None
+        return {key: value for key, value in env.items() if key in RECOVERY_ENV}
+    except (OSError, IndexError):
+        return None
+
+
+def capture_agent(proc, sid, bid, label, runner, process_available):
+    observed = observed_harness(proc)
+    try:
+        record = agent_record(sid, bid)
+    except FileNotFoundError:
+        return {"harness": observed, "name": label, "failure": "harness_has_no_pane_identity"} if observed else None
+    except (OSError, Refusal):
+        return {"harness": observed, "name": label, "failure": "pane_identity_unreadable"}
+    if not isinstance(record, dict) or (record.get("session"), record.get("pane")) != (sid, bid):
+        return {"harness": observed, "name": label, "failure": "agent_identity_pane_mismatch"}
+    harness = record.get("harness")
+    live_env = legacy_agent_environment(record, proc, sid, bid)
+    result = {"harness": harness, "name": record.get("name") or label}
+    if live_env is None and observed is None:
+        return None if process_available else dict(result, failure="agent_process_evidence_unavailable")
+    session_id = record.get("harness_session_id")
+    selector = (record.get("harness_session_file") or session_id) if harness == "pi" else session_id
+    if harness not in HARNESSES or observed and observed != harness:
+        return dict(result, failure="agent_identity_harness_mismatch")
+    if not text(session_id) or not text(selector) or selector.startswith("-"):
+        return dict(result, failure="harness_session_not_recorded")
+    if not live_env and not isinstance(record.get("recovery_env"), dict):
+        return dict(result, failure="agent_runtime_environment_unavailable")
+    env = record.get("recovery_env", live_env)
+    cwd = record.get("cwd")
+    if not text(cwd) or not os.path.isabs(cwd):
+        return dict(result, failure="agent_launch_cwd_unavailable")
+    model = record.get("recovery_model")
+    try:
+        config = json.loads((runner.resolve().parents[1] / "agent/harness.json").read_text())[harness]
+        flags = list(config["standing_flags"])
+        if model:
+            if "--model" in flags:
+                flags[flags.index("--model") + 1] = model
+            else:
+                flags += ["--model", model]
+        argv = config["argv"] + [HARNESSES[harness], selector] + flags
+        if harness == "codex":
+            argv += ["-c", "check_for_update_on_startup=false"]
+    except (OSError, ValueError, KeyError, IndexError, TypeError):
+        return dict(result, failure="standing_harness_configuration_unavailable")
+    return dict(result, session_id=session_id, selector=selector, cwd=cwd, model=model,
+                env=env, resume_argv=argv, runner=str(runner))
+
+
 def snapshot(rex, args):
     source = rex.identity()
     launches = load_metadata(args, rex.server)
     sessions = rex.call("session.list").get("sessions") or []
     require(isinstance(sessions, list), "invalid_session_inventory")
     result = {"schema_version": 1, "kind": "recovery_snapshot", "captured_at_unix_ms": int(time.time() * 1000),
-              "source": source, "sessions": [], "boards": None, "omissions": dict(OMISSIONS), "metadata_provenance": "explicit_private_caller_records_not_harness_verified",
+              "source": source, "sessions": [], "boards": None, "omissions": dict(OMISSIONS), "metadata_provenance": "rexconfig_pane_identity_and_explicit_private_caller_records",
               "consistency": "per_session_layout_double_checked; process_and_cross_session_state_not_atomic"}
+    runner = Path.home() / ".local/bin/agent-run"
     used = set()
     for s in sessions:
         sid = s["session_id"]
@@ -329,6 +429,7 @@ def snapshot(rex, args):
             pane = {"block": b, "process": None, "cwd": None, "process_status": "not_terminal", "launch": None,
                     "command_support": "unknown_no_argv_API", "draft_support": OMISSIONS["draft"]}
             if b.get("creator_name") == "com.superlogical.terminal":
+                proc = {}
                 try:
                     proc = rex.call("com.superlogical.terminal.process", {"session_id": sid, "block_id": b["block_id"], "args": {}})
                     # Store only process identity/cwd, not arbitrary returned fields.
@@ -337,6 +438,10 @@ def snapshot(rex, args):
                     pane["process_status"] = "observed_not_agent_lifecycle"
                 except Refusal as e:
                     pane["process_status"] = "unavailable:" + str(e)
+                if b.get("host_id") == source["host_id"]:
+                    agent = capture_agent(proc, sid, b["block_id"], b.get("label"), runner, pane["process"] is not None)
+                    if agent:
+                        pane["agent_recovery"] = agent
             ident = (rex.server, sid, b["block_id"])
             if ident in launches:
                 pane["launch"] = launches[ident]
@@ -391,6 +496,18 @@ def load_snapshot(store):
             if p.get("launch"):
                 p["launch"] = sanitize_launch(p["launch"], value["source"]["server"])
                 require(p["launch"]["target"]["session_id"] == sid and p["launch"]["target"]["block_id"] == bid, "snapshot_metadata_pane_mismatch")
+            agent = p.get("agent_recovery")
+            if agent:
+                require(isinstance(agent, dict) and text(agent.get("name")), "invalid_agent_recovery_record")
+                if not agent.get("failure"):
+                    require(agent.get("harness") in HARNESSES and text(agent.get("session_id"))
+                            and text(agent.get("selector")) and not agent["selector"].startswith("-")
+                            and all(text(agent.get(k)) and os.path.isabs(agent[k]) for k in ("cwd", "runner"))
+                            and isinstance(agent.get("resume_argv"), list) and agent["resume_argv"]
+                            and all(isinstance(v, str) and "\0" not in v for v in agent["resume_argv"])
+                            and isinstance(agent.get("env"), dict) and agent["env"].keys() <= RECOVERY_ENV
+                            and all(isinstance(v, str) and "\0" not in v for v in agent["env"].values()),
+                            "invalid_agent_recovery_launch")
     return value
 
 
@@ -421,6 +538,163 @@ def declared_addresses(saved):
         require(key(t) not in result or result[key(t)] == t, "conflicting_declared_host_for_same_Rex_pane")
         result[key(t)] = t
     return result
+
+
+def pane_locations(view):
+    return {b["block_id"]: (w["window_id"], b.get("label"), b.get("host_id"))
+            for w in view.get("windows") or [] for layer in w["layers"] for b in layer["blocks"]}
+
+
+def native_agents(saved):
+    for session in saved["sessions"]:
+        view = session["view"]
+        locations = pane_locations(view)
+        for pane in session["panes"]:
+            agent = pane.get("agent_recovery")
+            if agent is None:
+                continue
+            block = pane["block"]["block_id"]
+            yield view["session_id"], block, locations.get(block), pane, agent
+
+
+def native_plan(rex, saved):
+    current = rex.identity()
+    source = saved["source"]
+    context = {"snapshot_sha256": digest(saved), "target": current, "mode": "resume_agents"}
+    blockers = []
+    if (current["server"], current["host_id"]) != (source["server"], source["host_id"]):
+        blockers.append("agent_resume_requires_original_server_and_host")
+    if current["instance_id"] == source["instance_id"]:
+        blockers.append("agent_resume_requires_restarted_server_instance")
+    agents = [{"session_id": sid, "block_id": bid, "name": a["name"], "harness": a.get("harness"),
+               "label": p["block"].get("label"), "failure": a.get("failure")}
+              for sid, bid, _, p, a in native_agents(saved)]
+    if not agents:
+        blockers.append("snapshot_has_no_agent_panes")
+    return {"schema_version": 1, "kind": "agent_resume_plan", "context": context,
+            "confirmation": digest(context), "hard_blockers": blockers, "agents": agents,
+            "can_apply": not blockers}
+
+
+def resume_destination(rex, sid, bid, location, pane):
+    require(location is not None, "agent_pane_was_not_placed")
+    live = rex.call("session.view", {"session_id": sid})
+    require(pane_locations(live).get(bid) == location, "original_agent_pane_or_tab_changed")
+    process = rex.call("com.superlogical.terminal.process", {"session_id": sid, "block_id": bid, "args": {}})
+    child = process.get("child") or {}
+    foreground = process.get("foreground") or {}
+    shell = os.path.realpath(pwd.getpwuid(os.getuid()).pw_shell)
+    old_child = (pane.get("process") or {}).get("child", {})
+    require(child.get("pid") and child["pid"] == foreground.get("pid")
+            and child["pid"] != old_child.get("pid") and child.get("path") == shell
+            and child.get("argv0", "").startswith("-"), "original_pane_has_no_fresh_login_shell")
+
+
+def startup_prompt(rex, sid, bid):
+    # Report fixed descriptions, never capture text or input in the receipt.
+    try:
+        screen = rex.call("com.superlogical.terminal.format", {"session_id": sid, "block_id": bid,
+                                                                "args": {"format": "text", "trim": True}})["content"]
+    except (OSError, Refusal, KeyError):
+        screen = ""
+    for marker, description in (
+        ("Skip until next version", "Codex update menu"),
+        ("Do you trust the files in this folder", "workspace trust prompt"),
+        ("Do you trust this folder", "workspace trust prompt"),
+        ("Select a session to resume", "conversation picker"),
+        ("Sign in with ChatGPT", "sign-in prompt"),
+    ):
+        if marker in screen:
+            return "blocked at startup: " + description
+    return None
+
+
+def codex_has_rollout(record, session_id):
+    # Codex queues SessionStart until the next turn. Its new pane process can
+    # attest the selected conversation without submitting a prompt.
+    pid = record.get("launch_pid")
+    if type(pid) is not int or pid <= 0:
+        return False
+    process = Path("/proc") / str(pid)
+    try:
+        started = (process / "stat").read_text().rsplit(")", 1)[1].split()[19]
+        if started != record.get("launch_start") or (process / "exe").readlink().name != "codex":
+            return False
+        for fd in (process / "fd").iterdir():
+            try:
+                target = fd.readlink()
+            except FileNotFoundError:
+                continue
+            if target.is_absolute() and target.name.startswith("rollout-") and target.name.endswith("-" + session_id + ".jsonl"):
+                return True
+    except (OSError, IndexError):
+        pass
+    return False
+
+
+def apply_native(rex, saved, plan, store, args):
+    require(plan["can_apply"], "agent_resume_preflight_blocked")
+    require(args.confirm == plan["confirmation"], "exact_preview_confirmation_required; repeat_preview_after_drift")
+    journal = "agent-resume.jsonl"
+    store.create(journal, {"event": "begin", "plan": plan})
+    targets = list(native_agents(saved))
+    labels = {bid: pane["block"].get("label") for _, bid, _, pane, _ in targets}
+    snapshot_id = plan["context"]["snapshot_sha256"]
+    outcomes = []
+    pending = {}
+
+    def outcome(sid, bid, agent, status, reason=None, evidence=None):
+        result = {"event": "pane_outcome", "session_id": sid, "block_id": bid, "name": agent["name"],
+                  "label": labels[bid], "harness": agent.get("harness"), "outcome": status,
+                  "reason": reason, "evidence": evidence}
+        store.journal(result, journal)
+        outcomes.append(result)
+
+    for sid, bid, location, pane, agent in targets:
+        try:
+            require(not agent.get("failure"), agent.get("failure"))
+            resume_destination(rex, sid, bid, location, pane)
+            path = os.path.join(store.path, "snapshot.json")
+            # Only fixed runner arguments reach the login shell. Command, cwd and
+            # allowlisted environment stay inside the digest-bound private file.
+            data = shlex.join([agent["runner"], "--restart", path, snapshot_id]) + "\r"
+            require(not any(ord(c) < 32 or ord(c) == 127 for c in data[:-1]), "invalid_agent_runner_arguments")
+            store.journal({"event": "resume_write_attempt", "session_id": sid, "block_id": bid}, journal)
+            ack = rex.call("com.superlogical.terminal.write", {"session_id": sid, "block_id": bid,
+                                                             "args": {"data": data}})
+            require(ack.get("bytes_written") == len(data.encode()), "resume_write_ack_incomplete_no_retry")
+            pending[sid, bid] = agent
+        except (OSError, Refusal) as exc:
+            outcome(sid, bid, agent, "failed", str(exc))
+
+    deadline = time.monotonic() + rex.timeout
+    while pending and time.monotonic() < deadline:
+        for (sid, bid), agent in list(pending.items()):
+            try:
+                current = agent_record(sid, bid)
+                receipt = current.get("restart_recovery") or {}
+            except (OSError, Refusal):
+                continue
+            if receipt.get("snapshot_sha256") != snapshot_id:
+                continue
+            if receipt.get("state") in ("resumed", "failed"):
+                evidence = "matching_harness_session_start" if receipt["state"] == "resumed" else None
+                outcome(sid, bid, agent, receipt["state"], receipt.get("reason"), evidence)
+                del pending[sid, bid]
+            elif agent["harness"] == "codex" and codex_has_rollout(current, agent["session_id"]):
+                prompt = startup_prompt(rex, sid, bid)
+                outcome(sid, bid, agent, "failed" if prompt else "resumed", prompt,
+                        None if prompt else "codex_process_opened_original_rollout")
+                del pending[sid, bid]
+        if pending:
+            time.sleep(min(.2, max(0, deadline - time.monotonic())))
+    for (sid, bid), agent in pending.items():
+        reason = startup_prompt(rex, sid, bid) or "blocked at startup: no matching conversation acknowledgement"
+        outcome(sid, bid, agent, "failed", reason)
+    failed = sum(result["outcome"] == "failed" for result in outcomes)
+    store.journal({"event": "finished", "resumed": len(outcomes) - failed, "failed": failed}, journal)
+    return {"schema_version": 1, "kind": "agent_resume_result", "panes": outcomes,
+            "journal": os.path.join(store.path, journal), "failed": failed}, 3 if failed else 0
 
 
 def restore_plan(rex, saved, accept):
@@ -463,7 +737,7 @@ def restore_plan(rex, saved, accept):
             elif b.get("creator_name") != "com.superlogical.terminal" or b.get("flavor") != "com.superlogical.terminal.shell":
                 hard.append("unsupported_block_flavor:" + bid)
             launch = pane.get("launch") or {}
-            if launch.get("harness") or launch.get("resume_session_id"):
+            if pane.get("agent_recovery") or launch.get("harness") or launch.get("resume_session_id"):
                 reason = "agent_resume_withheld_requires_new_protocol_gate"
             elif not launch.get("argv") or not launch.get("cwd"):
                 reason = "command_or_cwd_unknown_holding_shell_only"
@@ -651,12 +925,26 @@ def summary(saved):
             "drafts_captured": False, "omissions": saved["omissions"], "snapshot_sha256": digest(saved)}
 
 
+def inspect_pane(pane):
+    launch = pane.get("launch") or {}
+    agent = pane.get("agent_recovery") or {}
+    runtime = None
+    if agent:
+        runtime = {"name": agent["name"], "harness": agent.get("harness"),
+                   "can_resume": not agent.get("failure"), "failure": agent.get("failure")}
+    return {"block": pane["block"], "cwd": pane["cwd"], "command_support": pane["command_support"],
+            "field_support": pane.get("field_support"), "harness": agent.get("harness") or launch.get("harness"),
+            "resume_id_support": "rexconfig_runtime_record" if runtime and runtime["can_resume"] else
+            "explicit_metadata_unverified" if launch.get("resume_session_id") else "unknown",
+            "agent_recovery": runtime}
+
+
 def main(argv=None):
-    parser = argparse.ArgumentParser(prog="teerex recovery", description="Private bounded Rex snapshot and restore (API 13 or newer), update inventory (API 10 or newer). Python 3.9+. No updater, close, screen scraping or retries.",
+    parser = argparse.ArgumentParser(prog="teerex recovery", description="Private bounded Rex snapshot and restore (API 13 or newer), update inventory (API 10 or newer). Python 3.9+. No updater, close or retries.",
                                      epilog="Exit 0: requested structural evidence only, not complete recovery; 1: refusal/uncertainty; 2: usage; 3: explicit partial restore; 124: controller deadline; 130/143: cancellation. See items/recovery/README.md for omissions.")
     sub = parser.add_subparsers(dest="operation", required=True)
-    descriptions = {"snapshot": "Capture layout/labels/hosts/process cwd plus explicit private launch references. No drafts or automatic argv/resume discovery.",
-                    "restore": "Default is read-only preview. Apply creates visible panes only on an empty same-host server, with exact target/impact hash confirmation. Agents require a fresh gate and are withheld.",
+    descriptions = {"snapshot": "Capture layout, process cwd, explicit private launch references and rexconfig agent resume records. No drafts.",
+                    "restore": "Read-only preview by default. Confirm structural restore on an empty same-host server, or --resume-agents in the original panes after a server restart.",
                     "update": "Read-only running-vs-installed CLI inventory and pane impact. Optional snapshot; update/restart/restore are manual, separate actions, never performed here.",
                     "inspect": "Read the private snapshot inventory and per-field support without contacting Rex or exposing full argv/resume IDs on stdout."}
     for name in ("snapshot", "restore", "update", "inspect"):
@@ -670,9 +958,11 @@ def main(argv=None):
         if name in ("snapshot", "update"):
             p.add_argument("--metadata", help="absolute private schema1 entries JSON; no credentials/briefs/drafts")
         if name == "restore":
-            p.add_argument("--apply", action="store_true", help="create visible panes; requires exact preview token; never closes old panes")
+            p.add_argument("--apply", action="store_true", help="apply the selected recovery mode with its exact preview token")
             p.add_argument("--confirm", help="exact confirmation hash from matching preview")
-            p.add_argument("--accept-omissions", action="store_true", help="preview/apply holding shells for missing commands or gated agents; never pretends resume")
+            mode = p.add_mutually_exclusive_group()
+            mode.add_argument("--accept-omissions", action="store_true", help="structural restore with holding shells for missing commands or gated agents")
+            mode.add_argument("--resume-agents", action="store_true", help="resume only captured agents in their original, natively restored panes")
         if name == "update":
             p.add_argument("--snapshot", action="store_true", help="save snapshot before manual update; requires --directory")
     args = parser.parse_args(argv)
@@ -704,8 +994,7 @@ def main(argv=None):
                 saved = load_snapshot(store)
             result = summary(saved)
             result["inventory"] = [{"session_id": s["view"]["session_id"], "label": s["view"].get("label"),
-                                    "panes": [{"block": p["block"], "cwd": p["cwd"], "command_support": p["command_support"], "field_support": p.get("field_support"),
-                                               "harness": (p.get("launch") or {}).get("harness"), "resume_id_support": "explicit_metadata_unverified" if (p.get("launch") or {}).get("resume_session_id") else "unknown"} for p in s["panes"]]} for s in saved["sessions"]]
+                                    "panes": [inspect_pane(p) for p in s["panes"]]} for s in saved["sessions"]]
         else:
             require(100 <= args.timeout_ms <= 60000, "timeout_must_be_100_to_60000_ms")
             rex = Rex(args.socket, args.timeout_ms / 1000)
@@ -716,9 +1005,10 @@ def main(argv=None):
                 require(not args.confirm or args.apply, "confirmation_is_only_for_apply")
                 with contextlib.closing(Store(args.directory)) as store:
                     saved = load_snapshot(store)
-                    result = restore_plan(rex, saved, args.accept_omissions)
+                    result = native_plan(rex, saved) if args.resume_agents else restore_plan(rex, saved, args.accept_omissions)
                     if args.apply:
-                        result, code = restore_apply(rex, saved, result, store, args)
+                        apply = apply_native if args.resume_agents else restore_apply
+                        result, code = apply(rex, saved, result, store, args)
                         print(json.dumps(result, ensure_ascii=False))
                         return code
             else:

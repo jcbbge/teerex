@@ -1,6 +1,6 @@
 # Recovery: inspect first, preserve omissions
 
-**Current alpha.5 ships this experimental combined-CLI structural-recovery slice, not complete agent-session or draft recovery or an independent cartridge.** Use [current setup](../../docs/concierge/setup.md) and the [alpha.5 release support guide](../../docs/releases/v0.1.0-alpha.5.md). Dated leaf-only validation below remains distinct from released-byte acceptance. `recovery snapshot` saves inspectable private evidence; `restore` previews by default and requires a separate exact confirmation to create visible panes. `update` inventories running versus installed Rex and hands off the actual update/restart to the operator. It never invokes an installer, closes a pane or restarts a server.
+`recovery snapshot` saves inspectable private evidence. `restore` previews by default and requires an exact confirmation to reconstruct an empty server or resume rexconfig agents in their original panes. `update` inventories running versus installed Rex and hands off the actual update or restart to the operator. Recovery never invokes an installer, closes a pane or restarts a server. See [current setup](../../docs/concierge/setup.md) for installation.
 
 Python 3.9+ stdlib and Rex are explicit prerequisites. Snapshot and restore require API 13 or newer. Read-only update inventory requires API 10 or newer; requesting a snapshot on an older API returns the inventory plus an explicit unsupported result, exit 1, without a snapshot or restart. API11 is not certified. Root CLI aliases expose `snapshot`, `restore` and `update`; the canonical module form below is `teerex recovery OP`.
 
@@ -29,15 +29,43 @@ A recovery file is private operator-owned state, not a portable permission grant
 | Host | Server `host_id`/`instance_id` and each block's public `host_id` | Same observed server host only. Attached foreign-host execution is blocked, never moved onto the command host. Host IDs describe shared files/account, not authentication. |
 | Cwd | Public foreground-process cwd when available, with provenance | Only explicit private launch cwd is replayed. `cd` failure exits 125 rather than executing in Rex's fallback home. No local existence check is mistaken for foreign-host evidence. |
 | Command/argv | Rex intentionally exposes executable identity/argv0, **not full arguments** | Full argv must come from explicit private metadata. Exact positional arguments, including empty strings, quotes and Unicode, are retained; no shell interpolation. |
-| Harness/resume ID | Optional explicit metadata only | Stored as **unverified** harness state. No generic Claude/Codex/pi resume adapter is proven; agent argv is never replayed blindly. Historical ACK is not a fresh protocol gate. |
+| Harness/resume ID | rexconfig's pane identity supplies the hook-reported Claude, Codex or pi session, exact resume argv, launch cwd and allowlisted agent environment. Caller-provided metadata is also supported. | `--resume-agents` reopens the captured conversation in its original pane after native Rex restore and verifies the selected conversation. Structural restore keeps its existing omission behavior. |
 | Reporting/starter/inbox | Explicit full `{host,server,session_id,block_id}` tuples | Exact old/new remap receipt; report/inbox environment references point to newly created panes. Cross-server/unmapped references are blocked. Conflicting host aliases for one Rex pane are refused. |
 | Seat | Explicit metadata boolean | Remapped receipt. Never inferred from a label, title or rendered prompt. |
 | Unsent drafts | **Unsupported: no authoritative input-buffer API** | No capture or paste-back. Not inferred from grey/dim suggestions, screen text, cursor position, `input_mode` or prompt shapes. Save real drafts separately before any restart. |
 | Focus, zoom, minimized layers | Original public view retained | Not reapplied: restored panes remain inspectable. No focus request is made, though Rex necessarily activates a first window in a new session. |
 | Detached blocks/nonterminal flavors | Inventoried explicitly | Detached blocks are not recreated as hidden programs. Nonterminal/foreign-host placed blocks are hard blockers. Explicit omission acceptance can skip detached blocks or create holding shells for unknown commands/gated agents. |
-| Credentials, environment, briefs, protocol tokens | No environment capture or credential/brief/protocol-file reads | Never recovered. Agent records are whitelisted; token/hook/brief paths are excluded. **Explicit argv can itself contain secrets** and remains private. |
+| Credentials, environment, briefs, protocol tokens | Only allowlisted rexconfig routing and working-list environment is captured. No credential, brief or protocol-file reads. | In-place resume carries the recorded agent environment. **Explicit caller argv can itself contain secrets** and remains private. |
 
-The saved `snapshot.json` contains raw public layout evidence, per-pane `field_support`, declared launch metadata and a fixed omissions record. `inspect` returns an inventory and support summaries without printing full argv or resume IDs; reading the private file itself reveals those explicitly supplied values. Process observations are not agent death/completion/readiness evidence. No screen capture is used by recovery.
+The saved `snapshot.json` contains raw public layout evidence, per-pane `field_support`, declared launch metadata and a fixed omissions record. `inspect` returns an inventory and support summaries without printing full argv or resume IDs. Snapshot does not capture screens. In-place resume checks known startup prompt text during failure diagnosis and reports a fixed reason without saving the screen.
+
+### Resume agents after native Rex restore
+
+Before the restart, take a snapshot and check that every expected agent has
+`inventory[].panes[].agent_recovery.can_resume` set to true. Save real drafts before
+restarting. Reserve the restored panes for recovery until apply completes.
+
+After the original endpoint answers from its new server instance, use the exact
+snapshot directory in both commands:
+
+```sh
+plan=$(teerex recovery restore --resume-agents --socket /ABS/rex.sock --directory /ABS/snapshot)
+confirm=$(printf '%s\n' "$plan" | jq -er 'select(.can_apply).confirmation')
+teerex recovery restore --resume-agents --socket /ABS/rex.sock --directory /ABS/snapshot \
+  --apply --confirm "$confirm"
+```
+
+The installed rexconfig runner starts the captured harness without a new prompt.
+Only exact original pane addresses in their original tabs with a fresh login
+shell receive a command. Apply leaves non-agent panes untouched. The private
+`agent-resume.jsonl` records every attempt and its outcome. Claude and pi report
+their selected session via startup hooks. Codex can defer its hook until the
+first turn, so its new Linux process can also confirm recovery by opening the
+original rollout. Recovery disables Codex's update check for that invocation.
+Recognized startup prompts appear in the failure reason. An acknowledgement
+timeout leaves the launch outcome unknown. Apply continues through individual
+failures, returns exit 3 when any pane failed and refuses to replay an existing
+journal.
 
 ## When
 
