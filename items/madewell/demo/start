@@ -1,0 +1,14 @@
+#!/bin/sh
+# The demo pane. Rex prompts (rex.ui) need a Rex app newer than build 2061, so the raw
+# input is typed here instead. Each Enter runs Made Well once, start to shipped.
+item=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+while :; do
+  printf '\n\033[1mMade Well\033[0m · type a raw input and press Enter (Enter alone = ping, q = quit): '
+  IFS= read -r raw || exit 0
+  [ "$raw" = q ] && exit 0
+  [ -n "$raw" ] || raw=ping
+  run=ping-$(date +%H%M%S)
+  inputs=$(printf '%s' "$raw" | python3 -c 'import json,sys; print(json.dumps([sys.stdin.read()]))')
+  printf 'run %s: discovery → promote → delivery (a Codex hand answers, a different hand verifies) → shipped\n' "$run"
+  "$item/bin/mw" "$item/demo/josh.lua" run="$run" live=true auto=true inputs="$inputs" --json
+done
