@@ -345,8 +345,24 @@ local function question(job, args)
   end
   job.state, job.message = "blocked", options.title
   mark(job, job.state, job.message)
-  -- A Rex prompt must be called at the script level, outside pcall.
-  local answer, reason = rex.ui[method](options)
+  -- Rex shows prompts only from an action the server loaded from init.lua (lua/madewell/actions.lua),
+  -- not from a `rex do` script, so the question runs as `rex do madewell_ui`, which waits for the answer.
+  local argv = { "rex" }
+  if os.getenv("MW_REX_SERVER") then argv[#argv + 1], argv[#argv + 2] = "-S", os.getenv("MW_REX_SERVER") end
+  for _, a in ipairs({ "do", "madewell_ui", "--args", rex.json.encode({ method = method, options = options }) }) do
+    argv[#argv + 1] = a
+  end
+  local result, exec_err = rex.exec(argv)
+  if not result then return fail(job, "cannot run rex do madewell_ui: " .. tostring(exec_err)) end
+  if not result.ok then
+    local why = (result.stderr or ""):gsub("%s+$", "")
+    if why:find("no action named", 1, true) or why:find("not found", 1, true) then
+      why = "the server has no madewell_ui action; load lua/madewell/actions.lua from init.lua (" .. why .. ")"
+    end
+    return fail(job, why ~= "" and why or ("rex do madewell_ui exited " .. tostring(result.code)))
+  end
+  local reply = rex.json.decode(result.stdout) or {}
+  local answer, reason = reply.answer, reply.reason
   if answer == nil then return fail(job, reason or "failed") end
   if list then
     local selected = {}

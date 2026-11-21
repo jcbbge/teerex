@@ -115,19 +115,9 @@ local function lua_and_questions()
   assert(block_exists, "failed block should remain open")
   print("Lua coroutines nested, a hand error named its key, and the independent hand finished")
 
-  local native_input, native_pick = rex.ui.input, rex.ui.pick
-  rex.ui.input = function(options)
-    assert(options.title == "Say it" and options.value == "edit me" and options.placeholder == "hint")
-    return " exactly "
-  end
-  rex.ui.pick = function(options)
-    if options.title == "Select" then
-      assert(options.multiple and options.items[1] == "left")
-      return { "left" }
-    end
-    assert(options.title == "Promote tasks" and options.multiple)
-    assert(options.items[1].selected and options.items[2].selected and options.items[2].title == "B")
-    return { "2" }
+  local function ui_calls()
+    local f = io.open(rex.args.ui_calls); if not f then return 0 end
+    local n = 0; for _ in f:lines() do n = n + 1 end; f:close(); return n
   end
   local function ask()
     local auto = { "unchanged" }
@@ -140,19 +130,18 @@ local function lua_and_questions()
   end
   values = run("questions", ask)
   assert(values[1] == " exactly " and values[2] == "left" and values[3] == "B")
-  rex.ui.input = function() error("replay asked again") end
-  rex.ui.pick = rex.ui.input
+  assert(ui_calls() == 3, "three questions should reach the madewell_ui action")
   values = run("questions", ask)
   assert(values[1] == " exactly " and values[2] == "left" and values[3] == "B")
   assert(#store:load("questions") == 8, "replay should add no journal entries")
-  rex.ui.input, rex.ui.pick = native_input, native_pick
+  assert(ui_calls() == 3, "replay asked again")
   ok, reason = pcall(run, "headless", function()
     return mw.ask{ title = "No Rex app on this server" }
   end)
-  assert(not ok and (reason == "ask.1: unsupported" or reason == "ask.1: no_client"), tostring(reason))
+  assert(not ok and reason == "ask.1: no_client", tostring(reason))
   local headless = store:load("headless")
   assert(headless[2].state == "failed" and reason:find(headless[2].reason, 1, true))
-  print("Question stubs verified answers, preselection and replay. Native Rex returned its headless reason")
+  print("Questions went through the server action madewell_ui: answers, preselection, no re-ask on replay, and the no_client reason")
 end
 
 local function span_seam()

@@ -12,6 +12,24 @@ import tempfile
 
 test_dir = Path(sys.argv[1]).resolve()
 item = test_dir.parent
+UI_DOUBLE = r'''
+rex.action { name = "madewell_ui", title = "Made Well question (test double)", args = { method = "string", options = "object" }, run = function(_, a)
+  local o = a.options
+  local f = assert(io.open("CALLS", "a")); f:write(o.title, "\n"); f:close()
+  if o.title == "Say it" then
+    assert(a.method == "input" and o.value == "edit me" and o.placeholder == "hint")
+    return { answer = " exactly " }
+  elseif o.title == "Select" then
+    assert(a.method == "pick" and o.multiple and o.items[1] == "left")
+    return { answer = { "left" } }
+  elseif o.title == "Promote tasks" then
+    assert(a.method == "pick" and o.multiple and o.items[1].selected and o.items[2].selected and o.items[2].title == "B")
+    return { answer = { "2" } }
+  end
+  return { reason = "no_client" }
+end }
+'''
+
 cases = sys.argv[2:] or ["one", "wiring", "lua", "span", "resume", "restart", "limit"]
 
 with tempfile.TemporaryDirectory(prefix="mw-core.", dir=os.getenv("XDG_RUNTIME_DIR")) as work:
@@ -22,10 +40,12 @@ with tempfile.TemporaryDirectory(prefix="mw-core.", dir=os.getenv("XDG_RUNTIME_D
     wrapper = item / "hand"
     shutil.copy2(wrapper if wrapper.exists() else test_dir / "hand-stub", fixture / "hand")
     (work / "state").mkdir()
-    (work / "init.lua").write_text("-- disposable Made Well checks\n")
+    # Stand-in for lua/madewell/actions.lua: same action name and reply shape, fixed answers, counted calls.
+    (work / "init.lua").write_text(UI_DOUBLE.replace("CALLS", str(work / "ui-calls")))
     socket = work / "rex.sock"
     env = os.environ.copy()
     env["TMPDIR"] = str(work)
+    env["MW_REX_SERVER"] = f"unix://{socket}"
     for key in ("REX_SESSION", "REX_BLOCK", "REX_CLIENT"):
         env.pop(key, None)
     rex = ["rex", "-S", f"unix://{socket}", "--autostart=false"]
@@ -46,7 +66,7 @@ with tempfile.TemporaryDirectory(prefix="mw-core.", dir=os.getenv("XDG_RUNTIME_D
     def config(case, **extra):
         return json.dumps(dict(item=str(fixture), root=str(work / "runs"), test=case,
             fifo=str(work / f"{case}.fifo"), retry_flag=str(work / "retried"),
-            restart_flag=str(work / "restarted"), **extra))
+            restart_flag=str(work / "restarted"), ui_calls=str(work / "ui-calls"), **extra))
 
     def run_case(session, case, **extra):
         command = [*rex, "do", "-s", session, str(test_dir / "core.lua"), "--args", config(case, **extra)]
