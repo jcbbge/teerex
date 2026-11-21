@@ -201,8 +201,11 @@ local function hand_start(job, packet)
   job.return_file = prefix .. ".return"
   write_file(input, packet)
   local command = {
-    "env", "MW_CALL=" .. job.key, "MW_INPUT=" .. input, "MW_RETURN=" .. job.return_file, wrapper,
+    "env", "MW_CALL=" .. job.key, "MW_INPUT=" .. input, "MW_RETURN=" .. job.return_file,
   }
+  -- A block starts with the Rex server's environment; a hand finds programs on its caller's PATH.
+  if os.getenv("PATH") then command[#command + 1] = "PATH=" .. os.getenv("PATH") end
+  command[#command + 1] = wrapper
   for _, arg in ipairs(body.argv) do command[#command + 1] = arg end
   local options = {
     shell = "none", command = command, cwd = os.getenv("HOME"), exit = { on_completion = false },
