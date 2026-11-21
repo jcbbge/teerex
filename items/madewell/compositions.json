@@ -2,24 +2,74 @@
   "_": "Josh's opinionated defaults: which functions each effort level prescribes per phase. Edit freely; an actor pins its plan when created (FOUNDATION: bedrock, effort dials). Brainstorm and land names are new defaults, not yet in FOUNDATION.",
   "brainstorm": {
     "skip": [],
-    "low": ["collect"],
-    "medium": ["collect", "expand"],
-    "high": ["collect", "expand", "cluster", "pick"]
+    "low": [
+      "collect"
+    ],
+    "medium": [
+      "collect",
+      "expand"
+    ],
+    "high": [
+      "collect",
+      "expand",
+      "cluster",
+      "pick"
+    ]
   },
   "discovery": {
     "skip": [],
-    "low": ["lookFirst"],
-    "medium": ["Declare", "lookFirst", "classify", "confirm"],
-    "high": ["Declare", "lookFirst", "classify", "Lenses", "oneThing", "route", "confirm"]
+    "low": [
+      "lookFirst"
+    ],
+    "medium": [
+      "Declare",
+      "lookFirst",
+      "classify",
+      "confirm"
+    ],
+    "high": [
+      "Declare",
+      "lookFirst",
+      "classify",
+      "Lenses",
+      "oneThing",
+      "route",
+      "confirm"
+    ]
   },
   "delivery": {
-    "low": ["implementation", "verification"],
-    "medium": ["ideation", "planning", "implementation", "verification"],
-    "high": ["ideation", "planning", "implementation", "verification", "independent verification"]
+    "low": [
+      "implementation",
+      "verification"
+    ],
+    "medium": [
+      "ideation",
+      "planning",
+      "implementation",
+      "verification"
+    ],
+    "high": [
+      "ideation",
+      "planning",
+      "implementation",
+      "verification",
+      "independent verification"
+    ]
   },
   "land": {
-    "low": ["reap"],
-    "medium": ["reap", "update docs"],
-    "high": ["reap", "update docs", "update directives", "retro"]
+    "skip": [],
+    "low": [
+      "reap"
+    ],
+    "medium": [
+      "reap",
+      "update docs"
+    ],
+    "high": [
+      "reap",
+      "update docs",
+      "update directives",
+      "retro"
+    ]
   }
 }

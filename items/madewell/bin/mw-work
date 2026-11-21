@@ -87,11 +87,17 @@ def who():
     return f"{os.environ.get('MW_HARNESS', 'shell')} {pane() or 'no-pane'}"
 
 
-def new(key, what, effort=None, links=()):
+def new(key, what, effort=None, links=(), parent=None):
     eff = dict(DEFAULT_EFFORT, **(effort or {}))
     doc = call(key, "POST", "/", {"what": what, "phase": next(p for p in PHASES if eff[p] != "skip"),
-                                  "effort": eff, "plan": plan_for(eff), "links": list(links)})
-    point(key)
+                                  "effort": eff, "plan": plan_for(eff), "links": list(links),
+                                  "parent": parent})
+    if parent:
+        up = call(parent, "GET")
+        call(parent, "POST", "/", {"children": sorted(set(up.get("children") or []) | {key})})
+        call(parent, "POST", "/event", {"kind": "delegated", "who": who(), "text": f"{key}: {what}"})
+    else:
+        point(key)
     call(key, "POST", "/event", {"kind": "created", "who": who(), "text": what})
     return doc
 
@@ -148,11 +154,14 @@ def hook(harness):
     p = pointer()
     if kind == "UserPromptSubmit":
         prompt = str(event.get("prompt") or "")
-        if p and not p.exists() and prompt.strip():
+        if p and not p.exists() and prompt.strip() and not os.environ.get("MW_HIRED"):
             # Josh opens a session for a scope of work: its first words open the actor.
             new(slug(prompt), short(prompt, 200))
         if p and p.exists():
-            call(current(), "POST", "/event", {"kind": "prompt", "who": "operator", "text": short(prompt, 4000)}, 5)
+            hired = os.environ.get("MW_HIRED")
+            call(current(), "POST", "/event", {"kind": "brief" if hired else "prompt",
+                                             "who": f"mw-drive → {hired}" if hired else "operator",
+                                             "text": short(prompt, 4000)}, 5)
     elif kind in ("Stop", "StopFailure") and p and p.exists():
         transcript = event.get("transcript_path") or event.get("session_file")
         text = event.get("last_assistant_message") or event.get("error") or event.get("message") or ""
@@ -175,16 +184,18 @@ def main(argv):
                 f.write(f"{datetime.datetime.now().isoformat()} {exc!r}\n")
         return
     if cmd == "new":
-        effort, links, pos = {}, [], []
+        effort, links, pos, parent = {}, [], [], None
         it = iter(rest)
         for a in it:
             if a == "--effort":
                 effort.update(dict(kv.split("=", 1) for kv in next(it).split(",")))
             elif a == "--link":
                 links.append(next(it))
+            elif a == "--parent":
+                parent = next(it)
             else:
                 pos.append(a)
-        out = new(pos[0], pos[1], effort, links)
+        out = new(pos[0], pos[1], effort, links, parent)
     elif cmd == "show":
         out = call(current(rest[0] if rest else None), "GET")
     elif cmd == "list":
