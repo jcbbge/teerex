@@ -56,8 +56,9 @@ teerex recovery restore --resume-agents --socket /ABS/rex.sock --directory /ABS/
 ```
 
 The installed rexconfig runner starts the captured harness without a new prompt.
-Only exact original pane addresses in their original tabs with a fresh login
-shell receive a command. Apply leaves non-agent panes untouched. The private
+Only exact original pane addresses in their original tabs with a fresh, idle
+shell (the user's login shell, or the plain interactive shell Rex restores for a
+pane opened without one, as `agent-spawn` opens every agent) receive a command. Apply leaves non-agent panes untouched. The private
 `agent-resume.jsonl` records every attempt and its outcome. Claude and pi report
 their selected session via startup hooks. Codex can defer its hook until the
 first turn, so its new Linux process can also confirm recovery by opening the

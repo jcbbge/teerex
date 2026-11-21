@@ -585,9 +585,16 @@ def resume_destination(rex, sid, bid, location, pane):
     foreground = process.get("foreground") or {}
     shell = os.path.realpath(pwd.getpwuid(os.getuid()).pw_shell)
     old_child = (pane.get("process") or {}).get("child", {})
+    # Rex restores a pane without its creation options, so a pane that agent-spawn opened with
+    # shell "none" comes back as the user's plain interactive shell (argv0 "/usr/bin/zsh"), and one
+    # opened with a shell comes back as a login shell ("-zsh"). Either is fresh and idle; the
+    # interactive shell's startup files give the runner its PATH (hive, 2026-11-20 restart: three
+    # spawned agents refused here while the seat resumed).
+    argv0 = child.get("argv0", "")
     require(child.get("pid") and child["pid"] == foreground.get("pid")
             and child["pid"] != old_child.get("pid") and child.get("path") == shell
-            and child.get("argv0", "").startswith("-"), "original_pane_has_no_fresh_login_shell")
+            and argv0 in ("-" + os.path.basename(shell), os.path.basename(shell), shell),
+            "original_pane_has_no_fresh_shell")
 
 
 def startup_prompt(rex, sid, bid):
@@ -655,7 +662,7 @@ def apply_native(rex, saved, plan, store, args):
             require(not agent.get("failure"), agent.get("failure"))
             resume_destination(rex, sid, bid, location, pane)
             path = os.path.join(store.path, "snapshot.json")
-            # Only fixed runner arguments reach the login shell. Command, cwd and
+            # Only fixed runner arguments reach the shell. Command, cwd and
             # allowlisted environment stay inside the digest-bound private file.
             data = shlex.join([agent["runner"], "--restart", path, snapshot_id]) + "\r"
             require(not any(ord(c) < 32 or ord(c) == 127 for c in data[:-1]), "invalid_agent_runner_arguments")
