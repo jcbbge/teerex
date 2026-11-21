@@ -1,7 +1,7 @@
 -- Josh's pseudo-code, as written (REX-BRAINSTORM.md, "Corrections to the fold", 13:43 CT):
 --   "var declare = declared(); var lookFirst = looked(); return [declare, lookFirst]"
 --   "while raw input > todo list. while todo list > each task > shipped."
--- Run: mw demo/josh.lua run=<name> [inputs='["ping"]'] [projects='["demo"]'] [live=true] [auto=true]
+-- Run: mw demo/josh.lua run=<name> [inputs='["ping"]' (else asked)] [projects='["demo"]'] [live=true] [auto=true]
 local mw = require "madewell"
 local args = rex.args
 
@@ -44,14 +44,17 @@ local delivery = mw.fn("delivery", function(task, project)
 end)
 
 return mw.run{ name = args.run or "josh", place = args.place, main = function()
-  local raw, projects = list(args.inputs, { "ping" }), list(args.projects, { "demo" })
+  local raw, projects = list(args.inputs, nil), list(args.projects, { "demo" })
+  if raw == nil then                                 -- capture: Josh types the raw input
+    raw = { mw.ask{ title = "Raw input for Made Well", value = "ping", confirm = "Start", timeout = 3600 } }
+  end
 
   local found = {}                                   -- while raw input > todo list
   while #raw > 0 do found[#found + 1] = discovery(table.remove(raw, 1)) end
   local todos = {}
   for _, d in ipairs(mw.await_all(found)) do todos[#todos + 1] = d[1] end
 
-  todos = mw.promote(todos, { title = "Promote which todos to tasks?", auto = args.auto })
+  todos = mw.promote(todos, { title = "Promote which todos to tasks?", auto = args.auto, timeout = 3600 })
   local shipped = {}                                 -- while todo list > each task > shipped
   while #todos > 0 do
     local task = table.remove(todos, 1)
@@ -61,6 +64,6 @@ return mw.run{ name = args.run or "josh", place = args.place, main = function()
   end
   shipped = mw.await_all(shipped)
   local seen = (not args.auto) and mw.ask{
-    title = "What do this run's tab marks and the Activity sidebar show? (one line)" } or nil
+    title = "What do this run's tab marks and the Activity sidebar show? (one line)", timeout = 3600 } or nil
   return { shipped = shipped, seen = seen }
 end }
