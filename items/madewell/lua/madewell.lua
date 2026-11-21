@@ -128,6 +128,27 @@ local function update_mark(job)
   mark(job, job.state, message)
 end
 
+local function update_hand_blocker(job)
+  local run = job.run
+  local status = rex.block.call("com.superlogical.terminal", "program_status", { block_id = job.block_id })
+  job.blocker = nil
+  for _, record in ipairs((status or {}).records or {}) do
+    if record.state == "blocked" then
+      job.blocker = record.msg or record.title or "Hand blocked"
+      break
+    end
+  end
+  local blocked
+  for _, hand in pairs(run.in_flight) do
+    if hand.blocker and (not blocked or hand.serial < blocked.serial) then blocked = hand end
+  end
+  local state, message = blocked and "blocked" or "working", blocked and blocked.blocker
+  if run.root.state ~= state or run.root.message ~= message then
+    run.root.state, run.root.message = state, message
+    update_mark(run.root)
+  end
+end
+
 local function fold(job)
   update_mark(job)
   while job.future.done and job.open_children == 0 and job.parent do
@@ -217,7 +238,9 @@ local function hand_start(job, packet)
   else
     local layout = rex.layout.block{ flavor = terminal, label = label, options = options }
     if run.place == "split" then
-      result, reason = rex.session.new_split{ focus = false, direction = "horizontal", side = "after", layout = layout }
+      result, reason = rex.session.new_split{
+        anchor_id = rex.block_id, focus = false, direction = "horizontal", side = "after", layout = layout,
+      }
     else
       result, reason = rex.session.new_window{ focus = false, window_label = job.key, layout = layout }
     end
@@ -465,6 +488,7 @@ local function prepare(job, inputs)
     run.in_flight[job.block_id] = job
     job.message = "Hand started"
     update_mark(job)
+    if run.hand_blockers then update_hand_blocker(job) end
   elseif kind == "question" then
     return true
   else
@@ -534,7 +558,7 @@ function mw.run(config)
       or require("madewell.store_file").new()
   end
   local run = {
-    name = config.name, place = place, store = store,
+    name = config.name, place = place, store = store, hand_blockers = config.hand_blockers,
     saved = {}, ready = {}, in_flight = {}, serial = 0, returned = 0, replayed = 0, failed = 0,
   }
   local view, reason = rex.session.view{}
@@ -542,6 +566,9 @@ function mw.run(config)
   run.session_id = assert(view.session_id, "Rex session id is unavailable")
   for _, entry in ipairs(store_call(run, "load")) do run.saved[entry.key] = entry end
   local root = new_job(run, nil, config.name, nil, config.main)
+  root.title = base64(config.title or config.name)
+  run.root = root
+  local hand_event = run.hand_blockers and "block_event" or "terminal.child_exited"
   mark(root, "working")
   run.ready[1] = root
   while (not run.mismatch and #run.ready > 0) or next(run.in_flight) do
@@ -549,11 +576,19 @@ function mw.run(config)
       local job = table.remove(run.ready)
       step(run, job)
     else
-      local event, wait_reason = rex.wait("terminal.child_exited", function(ev) return run.in_flight[ev.block_id] end)
+      local event, wait_reason = rex.wait(hand_event, function(ev)
+        return run.in_flight[ev.block_id] and (not run.hand_blockers or ev.name == "child_exited" or
+          ev.name == "program_status_changed" or ev.name == "program_status_removed")
+      end)
       assert(event, wait_reason)
       local job = run.in_flight[event.block_id]
-      run.in_flight[event.block_id] = nil
-      hand_exit(job, event.exit_code)
+      if not run.hand_blockers or event.name == "child_exited" then
+        run.in_flight[event.block_id] = nil
+        if run.hand_blockers and job.blocker then update_hand_blocker(job) end
+        hand_exit(job, event.exit_code)
+      else
+        update_hand_blocker(job)
+      end
     end
   end
   local failure = run.mismatch or root.future.reason

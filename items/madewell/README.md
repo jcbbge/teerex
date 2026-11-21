@@ -50,6 +50,8 @@ return mw.run{
 
 Calling a function starts its work and returns a future. The two `send` calls can run concurrently. Each `read` receives the corresponding return when it is ready. Use `mw.await(value)` or `mw.await_all(list)` when Lua needs the resolved values. Use `place = "tab"`, `"split"`, or `"detached"` in `mw.run` to choose where hands appear.
 
+A split opens beside the driver's Rex pane when run from a pane. Set `hand_blockers = true` to show a hand's blocked Program Status record on the driver while the call stays open. Set `title` to display a name for the driver while keeping a separate name for the journal.
+
 ## Compose discovery and delivery
 
 `require "madewell.defaults"` supplies Lua bodies to pass to `mw.fn`. Discovery starts its seven default steps independently and returns their results in step order. Delivery wires each step to the previous return and finishes with the verification return. Each hand starts its own Rex block, including implementation and verification.
