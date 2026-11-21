@@ -77,8 +77,10 @@ def point(key):
 
 def plan_for(effort):
     comps = json.loads((ITEM / "compositions.json").read_text())
-    return {ph: [{"id": i + 1, "step": s, "done": None} for i, s in enumerate(comps[ph].get(effort[ph], []))]
-            for ph in PHASES}
+    staff = json.loads((ITEM / "staffing.json").read_text())
+    note = lambda step: staff[staff["steps"].get(step, "thinking")]
+    return {ph: [{"id": i + 1, "step": s, "who": note(s), "done": None}
+                 for i, s in enumerate(comps[ph].get(effort[ph], []))] for ph in PHASES}
 
 
 def who():
