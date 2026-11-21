@@ -46,7 +46,7 @@ end)
 return mw.run{ name = args.run or "josh", place = args.place, main = function()
   local raw, projects = list(args.inputs, nil), list(args.projects, { "demo" })
   if raw == nil then                                 -- capture: Josh types the raw input
-    raw = { mw.ask{ title = "Raw input for Made Well", value = "ping", confirm = "Start", timeout = 3600 } }
+    raw = { mw.ask{ title = "Raw input?", value = "ping", confirm = "Start", timeout = 3600 } }
   end
 
   local found = {}                                   -- while raw input > todo list
@@ -54,7 +54,7 @@ return mw.run{ name = args.run or "josh", place = args.place, main = function()
   local todos = {}
   for _, d in ipairs(mw.await_all(found)) do todos[#todos + 1] = d[1] end
 
-  todos = mw.promote(todos, { title = "Promote which todos to tasks?", auto = args.auto, timeout = 3600 })
+  todos = mw.promote(todos, { title = "Promote to tasks?", auto = args.auto, timeout = 3600 })
   local shipped = {}                                 -- while todo list > each task > shipped
   while #todos > 0 do
     local task = table.remove(todos, 1)
@@ -63,7 +63,10 @@ return mw.run{ name = args.run or "josh", place = args.place, main = function()
     end
   end
   shipped = mw.await_all(shipped)
-  local seen = (not args.auto) and mw.ask{
-    title = "What do this run's tab marks and the Activity sidebar show? (one line)", timeout = 3600 } or nil
+  local seen = nil
+  if not args.auto then
+    print("\nShipped. Look at this tab's marks and the Activity sidebar, then answer the prompt in a few words.")
+    seen = mw.ask{ title = "What do the marks show?", timeout = 3600 }
+  end
   return { shipped = shipped, seen = seen }
 end }
