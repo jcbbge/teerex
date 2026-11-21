@@ -341,13 +341,22 @@ def observed_harness(proc):
 
 
 def legacy_agent_environment(record, proc, session, block):
-    pid = record.get("launch_pid") or (proc.get("foreground") or {}).get("pid")
-    if type(pid) is not int or pid <= 0:
-        return None
+    # The recorded launch, else the pane's foreground harness: an agent restarted by hand in its
+    # pane (the seat, hive 2026-11-20 10:48 CT) leaves the record naming a process that is gone.
+    launched = record.get("launch_pid")
+    foreground = (proc.get("foreground") or {}).get("pid")
+    for pid in dict.fromkeys(p for p in (launched, foreground) if type(p) is int and p > 0):
+        env = process_environment(pid, record.get("launch_start") if pid == launched else None, session, block)
+        if env is not None:
+            return env
+    return None
+
+
+def process_environment(pid, launch_start, session, block):
     try:
         process = Path("/proc") / str(pid)
         started = (process / "stat").read_text().rsplit(")", 1)[1].split()[19]
-        if record.get("launch_start") and started != record["launch_start"]:
+        if launch_start and started != launch_start:
             return None
         env = {}
         for item in (process / "environ").read_bytes().split(b"\0"):
@@ -383,9 +392,10 @@ def capture_agent(proc, sid, bid, label, runner, process_available):
         return dict(result, failure="agent_identity_harness_mismatch")
     if not text(session_id) or not text(selector) or selector.startswith("-"):
         return dict(result, failure="harness_session_not_recorded")
-    if not live_env and not isinstance(record.get("recovery_env"), dict):
+    # An agent started by hand carries none of the allowlisted variables: its empty set is known.
+    if live_env is None and not isinstance(record.get("recovery_env"), dict):
         return dict(result, failure="agent_runtime_environment_unavailable")
-    env = record.get("recovery_env", live_env)
+    env = record["recovery_env"] if isinstance(record.get("recovery_env"), dict) else live_env
     cwd = record.get("cwd")
     if not text(cwd) or not os.path.isabs(cwd):
         return dict(result, failure="agent_launch_cwd_unavailable")
