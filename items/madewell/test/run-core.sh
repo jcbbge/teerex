@@ -30,6 +30,11 @@ rex.action { name = "madewell_ui", title = "Made Well question (test double)", a
 end }
 '''
 
+# MW_TEST_ENGINE='{"endpoint":...,"credentials":...}' runs the cases on the engine journal instead.
+engine = {}
+if os.getenv("MW_TEST_ENGINE"):
+    engine = {"engine": dict(json.loads(os.environ["MW_TEST_ENGINE"]), prefix=f"gate-{os.getpid()}-")}
+
 cases = sys.argv[2:] or ["one", "wiring", "lua", "span", "resume", "restart", "limit"]
 
 with tempfile.TemporaryDirectory(prefix="mw-core.", dir=os.getenv("XDG_RUNTIME_DIR")) as work:
@@ -66,7 +71,7 @@ with tempfile.TemporaryDirectory(prefix="mw-core.", dir=os.getenv("XDG_RUNTIME_D
     def config(case, **extra):
         return json.dumps(dict(item=str(fixture), root=str(work / "runs"), test=case,
             fifo=str(work / f"{case}.fifo"), retry_flag=str(work / "retried"),
-            restart_flag=str(work / "restarted"), ui_calls=str(work / "ui-calls"), **extra))
+            restart_flag=str(work / "restarted"), ui_calls=str(work / "ui-calls"), **engine, **extra))
 
     def run_case(session, case, **extra):
         command = [*rex, "do", "-s", session, str(test_dir / "core.lua"), "--args", config(case, **extra)]

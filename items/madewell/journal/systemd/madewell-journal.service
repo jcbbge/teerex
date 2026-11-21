@@ -1,0 +1,15 @@
+# Made Well's journal node: serves the journal actors in the engine namespace madewell-journal.
+# Install only on Josh's yes (see ../README.md). Off: systemctl --user disable --now madewell-journal
+[Unit]
+Description=Made Well journal node (saved returns on the work engine)
+After=network-online.target
+
+[Service]
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+WorkingDirectory=%h/teerex/items/madewell/journal
+ExecStart=/usr/bin/env node node.mjs
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target

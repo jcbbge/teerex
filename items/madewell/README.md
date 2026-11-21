@@ -91,7 +91,7 @@ Omitting `steps` uses Josh's defaults. Supply an ordered list, including an empt
 
 ## Journal and resume
 
-By default, each run writes its journal and content blobs under `~/.local/state/madewell/runs/<run>/`. The journal records call keys, input and return hashes, attempts, outcomes, and answers. `mw.run{store = ...}` can select another journal backend.
+By default, each run writes its journal and content blobs under `~/.local/state/madewell/runs/<run>/`. The journal records call keys, input and return hashes, attempts, outcomes, and answers. `mw.run{store = ...}` can select another journal backend. Pass `store=engine` in a run's arguments to keep its journal on the work engine instead; see `journal/README.md`.
 
 Reissue the same command with the same run name and inputs to resume. Completed calls and answered questions replay from the journal. The first unfinished call starts a new attempt. A conflicting function or input at a saved call key stops the run and identifies the key. Use a fresh run name for a new experiment. A hand interrupted by a server restart runs again on resume, so make retryable hands safe to repeat.
 
@@ -99,4 +99,4 @@ Reissue the same command with the same run name and inputs to resume. Completed 
 
 This experimental teerex item runs on Linux with Rex Preview 22, a POSIX shell, and the system command-line utilities. The chosen agent CLI and its existing authentication are required only when launching that harness. Run it from the checkout. The launcher uses the available Rex server and does not install services, packages, or Rex configuration.
 
-`items/madewell/test/run-hands.sh` creates and removes an isolated Rex server and checks the wrappers. Add `--live` to make one real Codex call. Removing the checkout removes the launcher and source. The run directories are separate so saved results can be retained.
+`items/madewell/test/run-hands.sh` creates and removes an isolated Rex server and checks the wrappers. Add `--live` to make one real Codex call. `items/madewell/test/run-engine.sh` checks the engine journal against a running journal node. Removing the checkout removes the launcher and source. The run directories are separate so saved results can be retained.

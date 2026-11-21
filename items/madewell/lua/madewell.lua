@@ -523,8 +523,18 @@ function mw.run(config)
   assert(type(config.main) == "function", "main must be a Lua function")
   local place = config.place or "tab"
   assert(place == "tab" or place == "split" or place == "detached", "unknown hand placement " .. tostring(place))
+  -- The file journal is the default; `store=engine` in the run's arguments keeps saved returns on the work
+  -- engine (`engine={endpoint=..., credentials=...}` overrides where).
+  local store = config.store
+  if not store then
+    local args = rex.args or {}
+    local chosen = args.store or "file"
+    assert(chosen == "file" or chosen == "engine", "unknown store " .. tostring(chosen) .. " (file or engine)")
+    store = chosen == "engine" and require("madewell.store_engine").new(args.engine)
+      or require("madewell.store_file").new()
+  end
   local run = {
-    name = config.name, place = place, store = config.store or require("madewell.store_file").new(),
+    name = config.name, place = place, store = store,
     saved = {}, ready = {}, in_flight = {}, serial = 0, returned = 0, replayed = 0, failed = 0,
   }
   local view, reason = rex.session.view{}

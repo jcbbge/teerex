@@ -8,7 +8,16 @@ else
 end
 
 local mw = require "madewell"
-local store = require("madewell.store_file").new(assert(rex.args.root))
+local store
+if rex.args.engine then
+  -- The same cases on the engine journal; a per-gate prefix keeps each gate's runs apart.
+  local engine = require("madewell.store_engine").new(rex.args.engine)
+  store = setmetatable({}, { __index = function(_, method)
+    return function(_, name, ...) return engine[method](engine, rex.args.engine.prefix .. name, ...) end
+  end })
+else
+  store = require("madewell.store_file").new(assert(rex.args.root))
+end
 
 local function hand(script, ...)
   return { kind = "hand", argv = { "sh", "-eu", "-c", script, "core-test", ... }, duty = "Test duty" }
@@ -193,9 +202,11 @@ local function resume_after_failure()
   local before = store:load("resume")
   assert(#before == 4 and before[2].state == "returned" and before[4].state == "failed")
 
-  local journal = assert(io.open(rex.args.root .. "/resume/journal.jsonl", "ab"))
-  assert(journal:write('{"key":'))
-  assert(journal:close())
+  if not rex.args.engine then
+    local journal = assert(io.open(rex.args.root .. "/resume/journal.jsonl", "ab"))
+    assert(journal:write('{"key":'))
+    assert(journal:close())
+  end
   local native_window = rex.session.new_window
   local opened = {}
   rex.session.new_window = function(options)

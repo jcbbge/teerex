@@ -1,0 +1,11 @@
+# Re-mints the journal's two scoped tokens (the engine signs them for at most 24 h), then restarts the
+# node so it reconnects with its new token. Reads the engine admin token from ~/madewell/.env.
+[Unit]
+Description=Re-mint Made Well journal tokens
+
+[Service]
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+Type=oneshot
+WorkingDirectory=%h/teerex/items/madewell/journal
+ExecStart=/usr/bin/env node mint.mjs --admin-file %h/madewell/.env
+ExecStartPost=/usr/bin/systemctl --user try-restart madewell-journal.service
