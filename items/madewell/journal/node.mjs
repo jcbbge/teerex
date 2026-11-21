@@ -72,8 +72,10 @@ const journal = actor({
 });
 
 
-// The thing to be done. GET returns it; POST merges a JSON object into it; POST /log appends a line.
-// done is null until the work is checked: {"yes": true|false, "evidence": "...", "at": "..."}.
+// The thing to be done, whole. GET / returns it. POST / merges a JSON object into it.
+// POST /event appends {kind, who, text}. POST /task adds {what}. POST /check sets one task's or plan
+// step's done: {list: "tasks" | "plan.<phase>", id, yes, evidence}. done (the work's own) is null until
+// checked: {"yes": bool, "evidence": "...", "at": "..."}. plan is pinned at creation from the effort dials.
 const PHASES = ["brainstorm", "discovery", "delivery", "land"];
 const work = actor({
   options: { name: "Made Well work" },
@@ -88,29 +90,55 @@ const work = actor({
     const path = new URL(request.url).pathname.replace(/^\/request/, "") || "/";
     const now = new Date().toISOString();
     const [row] = await c.db.execute("SELECT json FROM doc WHERE id = 1");
-    const doc = row ? JSON.parse(row.json) : { what: null, phase: "brainstorm", effort: {},
-      tasks: [], todos: [], done: null, created: now };
-    if (request.method === "GET" && path === "/") {
-      const log = await c.db.execute("SELECT at, line FROM log ORDER BY seq");
-      return reply(200, JSON.stringify({ ...doc, log }));
-    }
-    if (request.method === "POST" && path === "/") {
-      let patch;
-      try { patch = JSON.parse(await request.text()); } catch { return fail(400, "body is not JSON"); }
-      if (!patch || typeof patch !== "object" || Array.isArray(patch)) return fail(400, "body must be an object");
-      if (patch.phase !== undefined && !PHASES.includes(patch.phase)) return fail(400, `phase is one of ${PHASES}`);
-      const next = { ...doc, ...patch, updated: now };
+    const doc = row ? JSON.parse(row.json) : { what: null, phase: "brainstorm", effort: {}, plan: {},
+      tasks: [], todos: [], links: [], done: null, created: now };
+    const save = async (next) => {
+      next.updated = now;
       await c.db.execute("INSERT INTO doc (id, json) VALUES (1, ?) ON CONFLICT(id) DO UPDATE SET json = excluded.json",
         JSON.stringify(next));
       return reply(200, JSON.stringify(next));
+    };
+    const body = async () => {
+      try { const v = JSON.parse(await request.text()); return v && typeof v === "object" && !Array.isArray(v) ? v : null; }
+      catch { return null; }
+    };
+    if (request.method === "GET" && path === "/") {
+      const log = (await c.db.execute("SELECT at, line FROM log ORDER BY seq")).map((r) => {
+        try { return { at: r.at, ...JSON.parse(r.line) }; } catch { return { at: r.at, kind: "note", text: r.line }; }
+      });
+      return reply(200, JSON.stringify({ ...doc, log }));
     }
-    if (request.method === "POST" && path === "/log") {
-      const line = (await request.text()).trim();
-      if (!line) return fail(400, "empty log line");
-      await c.db.execute("INSERT INTO log (at, line) VALUES (?, ?)", now, line);
+    if (request.method !== "POST") return fail(404, `no route ${request.method} ${path}`);
+    if (path === "/log" || path === "/event") {
+      const text = await request.text();
+      let event;
+      try { event = JSON.parse(text); } catch { event = { kind: "note", text: text.trim() }; }
+      if (!event || typeof event !== "object" || !event.text) return fail(400, "event needs text");
+      await c.db.execute("INSERT INTO log (at, line) VALUES (?, ?)", now, JSON.stringify(event));
       return reply(200, JSON.stringify({ at: now }));
     }
-    return fail(404, `no route ${request.method} ${path}`);
+    const patch = await body();
+    if (!patch) return fail(400, "body must be a JSON object");
+    if (path === "/") {
+      if (patch.phase !== undefined && !PHASES.includes(patch.phase)) return fail(400, `phase is one of ${PHASES}`);
+      return save({ ...doc, ...patch });
+    }
+    if (path === "/task") {
+      if (!patch.what) return fail(400, "task needs what");
+      const tasks = doc.tasks.map((t, i) => typeof t === "string" ? { id: i + 1, what: t, done: null } : t);
+      tasks.push({ id: Math.max(0, ...tasks.map((t) => t.id)) + 1, what: patch.what, done: null });
+      return save({ ...doc, tasks });
+    }
+    if (path === "/check") {
+      const list = patch.list === "tasks" ? doc.tasks
+        : patch.list?.startsWith("plan.") ? doc.plan?.[patch.list.slice(5)] : null;
+      const item = list?.find((t) => String(t.id) === String(patch.id));
+      if (!item) return fail(404, `no ${patch.list} item ${patch.id}`);
+      if (typeof patch.yes !== "boolean" || !patch.evidence) return fail(400, "check needs yes (bool) and evidence");
+      item.done = { yes: patch.yes, evidence: patch.evidence, at: now };
+      return save(doc);
+    }
+    return fail(404, `no route POST ${path}`);
   },
 });
 
