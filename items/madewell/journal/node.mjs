@@ -1,6 +1,7 @@
-// Made Well's journal node: serves one `journal` actor per run on the work engine.
-// Each actor keeps that run's saved returns in its own SQLite: an append-only list of
-// journal records and the content blobs they point at. It holds only its node token.
+// Made Well's Rivet runner. Two actors:
+//   work    — one per thing Josh wants done: the whole of it (phase, effort, tasks, todos, log, done).
+//   journal — one per Made Well script run: its saved returns and blobs.
+// It connects to hive's engine with the engine's own admin token from ~/madewell/.env.
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -8,10 +9,10 @@ import { actor, setup } from "rivetkit";
 import { db } from "rivetkit/db";
 
 const env = (name, fallback) => process.env[name] || fallback;
-const credentials = env("MW_JOURNAL_CREDENTIALS",
-  `${homedir()}/.local/share/agent-credentials/madewell-journal`);
-const token = readFileSync(`${credentials}/node.token`, "utf8").trim();
-if (!token) throw new Error(`empty node token in ${credentials}/node.token`);
+const envFile = env("MW_ENGINE_ENV", `${homedir()}/madewell/.env`);
+const token = (readFileSync(envFile, "utf8").split("\n")
+  .find((l) => l.startsWith("MADEWELL_ENGINE_ADMIN_TOKEN=")) || "").slice(28).trim();
+if (!token) throw new Error(`no MADEWELL_ENGINE_ADMIN_TOKEN in ${envFile}`);
 
 const SHA = /^[0-9a-f]{64}$/;
 const reply = (status, body, type = "application/json") =>
@@ -70,12 +71,55 @@ const journal = actor({
   },
 });
 
+
+// The thing to be done. GET returns it; POST merges a JSON object into it; POST /log appends a line.
+// done is null until the work is checked: {"yes": true|false, "evidence": "...", "at": "..."}.
+const PHASES = ["brainstorm", "discovery", "delivery", "land"];
+const work = actor({
+  options: { name: "Made Well work" },
+  db: db({
+    onMigrate: async (sql) => {
+      await sql.execute("CREATE TABLE IF NOT EXISTS doc (id INTEGER PRIMARY KEY CHECK (id = 1), json TEXT NOT NULL)");
+      await sql.execute("CREATE TABLE IF NOT EXISTS log (seq INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT NOT NULL, line TEXT NOT NULL)");
+    },
+  }),
+  actions: {},
+  onRequest: async (c, request) => {
+    const path = new URL(request.url).pathname.replace(/^\/request/, "") || "/";
+    const now = new Date().toISOString();
+    const [row] = await c.db.execute("SELECT json FROM doc WHERE id = 1");
+    const doc = row ? JSON.parse(row.json) : { what: null, phase: "brainstorm", effort: {},
+      tasks: [], todos: [], done: null, created: now };
+    if (request.method === "GET" && path === "/") {
+      const log = await c.db.execute("SELECT at, line FROM log ORDER BY seq");
+      return reply(200, JSON.stringify({ ...doc, log }));
+    }
+    if (request.method === "POST" && path === "/") {
+      let patch;
+      try { patch = JSON.parse(await request.text()); } catch { return fail(400, "body is not JSON"); }
+      if (!patch || typeof patch !== "object" || Array.isArray(patch)) return fail(400, "body must be an object");
+      if (patch.phase !== undefined && !PHASES.includes(patch.phase)) return fail(400, `phase is one of ${PHASES}`);
+      const next = { ...doc, ...patch, updated: now };
+      await c.db.execute("INSERT INTO doc (id, json) VALUES (1, ?) ON CONFLICT(id) DO UPDATE SET json = excluded.json",
+        JSON.stringify(next));
+      return reply(200, JSON.stringify(next));
+    }
+    if (request.method === "POST" && path === "/log") {
+      const line = (await request.text()).trim();
+      if (!line) return fail(400, "empty log line");
+      await c.db.execute("INSERT INTO log (at, line) VALUES (?, ?)", now, line);
+      return reply(200, JSON.stringify({ at: now }));
+    }
+    return fail(404, `no route ${request.method} ${path}`);
+  },
+});
+
 const app = setup({
   endpoint: env("MW_JOURNAL_ENDPOINT", "http://127.0.0.1:7420"),
   namespace: env("MW_JOURNAL_NAMESPACE", "madewell-journal"),
   token,
   node: { poolName: env("MW_JOURNAL_POOL", "journal") },
-  use: { journal },
+  use: { journal, work },
 });
 await app.startAndWait();
 console.log(`Made Well journal node connected: namespace ${env("MW_JOURNAL_NAMESPACE", "madewell-journal")}, pool ${env("MW_JOURNAL_POOL", "journal")}`);
