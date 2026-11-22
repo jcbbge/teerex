@@ -84,6 +84,23 @@ Omitting `steps` uses Josh's defaults. Supply an ordered list, including an empt
 
 `defaults.ground(fn, material)` and `defaults.rumen(fn, rules)` wrap any Lua callable. The material is included in each hand packet started inside the wrapped function, including its nested calls. The default delivery applies Ground to ideation and planning and Rumen to implementation and verification. Set a custom step's `span` to `"ground"` or `"rumen"` to use the corresponding material. The composition and effort guidance comes from the [Made Well Foundation](https://github.com/jcbbge/madewell/blob/main/FOUNDATION.md#bedrock-composition-spanning-processes-and-effort-dials).
 
+## Project cartridges
+
+Made Well stays project-agnostic; a project plugs its own setup in as a cartridge at
+`.madewell/cartridge.json` in its repo root:
+
+```json
+{"project": "example",
+ "checkpoints": [{"id": "data-loop", "steps": ["ideation", "planning"],
+                  "when": "the work changes a table", "ask": "Name every stop the field reaches.",
+                  "check": "optional command"}]}
+```
+
+`mw-drive` (and the Lua conductor, through `work-brief`) briefs each hand with the checkpoints its step
+names. `mw-work check plan.<phase> <id> yes` refuses the step until the evidence carries one line per
+checkpoint: `checkpoint <id>: <what it found, or n/a and why>`. A repo without a cartridge runs unchanged.
+The engine reads the cartridge from the hand's working directory, so a work runs in its project's checkout.
+
 ## Hand contract
 
 - `MW_CALL` identifies the call. `MW_INPUT` points to the packet containing the duty and each received value. A `--- Received: <key> sha256=<hex> bytes=<n> ---` header precedes its exact bytes. Inherited span material precedes the call arguments.
