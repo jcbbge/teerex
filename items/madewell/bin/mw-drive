@@ -65,6 +65,8 @@ HOW:
     Spawn and talk to agents only through Rex (rex, agent-send) and the actor, never a harness's own
     sub-agents.
   - Stay inside your step. Ask Josh only for a decision only he can make, with agent-ask.
+  - Test only the code you changed: the tests you wrote or changed and those that directly cover the
+    files you changed. Never the whole suite or a sweep of every consumer; a full run only when Josh asks.
 {checkpoints}
 """
 
