@@ -17,6 +17,9 @@ from pathlib import Path
 import subprocess
 import sys
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import mwground
+
 ITEM = Path(__file__).resolve().parents[1]
 MW = str(ITEM / "bin/mw-work")
 PHASES = ("brainstorm", "discovery", "delivery", "land")
@@ -36,6 +39,7 @@ def now():
 
 
 def briefing(key, doc, phase, step, who):
+    ground = mwground.brief(mwground.checkpoints(Path.cwd())) if step["step"] in mwground.GROUND_STEPS else ""
     asks = [e["text"] for e in doc.get("log", []) if e.get("kind") in ("prompt", "created")][:3]
     return f"""You are one hand on a piece of Josh's work. The work is a Rivet actor; you are disposable,
 the work is not. Everything you need is in the actor; everything you do goes back into it.
@@ -62,6 +66,7 @@ HOW:
     Spawn and talk to agents only through Rex (rex, agent-send) and the actor, never a harness's own
     sub-agents.
   - Stay inside your step. Ask Josh only for a decision only he can make, with agent-ask.
+{ground}
 """
 
 

@@ -17,6 +17,9 @@ import os
 from pathlib import Path
 import re
 import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import mwground
 import urllib.parse
 import urllib.request
 
@@ -205,6 +208,17 @@ def hook(harness):
                                          "actions": actions_since(transcript)}, 10)
 
 
+def refuse_ungrounded(phase, sid, evidence):
+    doc = call(current(), "GET")
+    step = next((s for s in doc.get("plan", {}).get(phase, []) if str(s["id"]) == str(sid)), None)
+    if not step or step["step"] not in mwground.GROUND_STEPS:
+        return
+    gaps = mwground.missing(mwground.checkpoints(Path.cwd()), evidence)
+    if gaps:
+        raise SystemExit(f"mw-work: {step['step']} is a Ground step; its evidence must answer every checkpoint "
+                         f"in .madewell/ground.json. Missing: " + ", ".join(f'"ground {g}: ..."' for g in gaps))
+
+
 def main(argv):
     if not argv or argv[0] in ("-h", "--help"):
         print(__doc__)
@@ -246,6 +260,8 @@ def main(argv):
     elif cmd == "task":
         out = call(current(), "POST", "/task", {"what": rest[0]})
     elif cmd == "check":
+        if rest[0].startswith("plan.") and rest[2] == "yes":
+            refuse_ungrounded(rest[0][5:], rest[1], rest[3])
         out = call(current(), "POST", "/check", {"list": rest[0], "id": rest[1], "yes": rest[2] == "yes",
                                                "evidence": rest[3]})
     elif cmd == "phase":
