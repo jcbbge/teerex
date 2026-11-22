@@ -219,6 +219,9 @@ def refuse_unchecked(phase, sid, evidence):
         raise SystemExit(f"mw-work: {step['step']} has checkpoints in {cartridge.get('project', 'this project')}'s "
                          f"cartridge ({mwcartridge.FILE}); its evidence must answer each. Missing: "
                          + ", ".join(f'"checkpoint {g}: ..."' for g in gaps))
+    failed = mwcartridge.failures(cartridge, step["step"], Path.cwd())
+    if failed:
+        raise SystemExit(f"mw-work: {step['step']} is refused; its Rumen did not pass.\n\n" + "\n\n".join(failed))
 
 
 def main(argv):

@@ -96,6 +96,10 @@ Made Well stays project-agnostic; a project plugs its own setup in as a cartridg
                   "check": "optional command"}]}
 ```
 
+Each checkpoint has a `span`. **Ground** (the default) is judgment before the work: the hand answers it in
+its evidence. **Rumen** is the mechanical flip side: a `run` command the engine executes in the repo root
+when the hand checks its step yes, refusing the step on a non-zero exit with the command's output.
+
 `mw-drive` (and the Lua conductor, through `work-brief`) briefs each hand with the checkpoints its step
 names. `mw-work check plan.<phase> <id> yes` refuses the step until the evidence carries one line per
 checkpoint: `checkpoint <id>: <what it found, or n/a and why>`. A repo without a cartridge runs unchanged.
