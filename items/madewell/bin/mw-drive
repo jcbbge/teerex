@@ -1,14 +1,10 @@
 #!/usr/bin/env python3
-"""Drive one work actor to done: walk its plan step by step, hire the agent each step's note names.
+"""Start the Made Well work actor.
 
-  mw-drive KEY            run here (this terminal becomes the work's block)
-  mw-drive --open KEY     open the work's own Rex block and drive it there
+  mw-drive KEY
+  mw-drive --open KEY
 
-Each step's note lists who works it (harness, model, effort), preferred first. The driver runs that
-agent headless with a Rex briefing and the actor as its context. The agent checks its step off with
-evidence (mw-work check). A step left unchecked, or a failed agent (a usage limit, a crash), goes to the
-next agent on the note. When every agent on a note fails, the work is flagged blocked and the driver
-stops. Rerunning resumes from the actor: checked steps are never redone.
+Both forms forward to mw-work go KEY. Read the work and its evidence with mw-work show KEY.
 """
 import datetime
 import json
@@ -22,7 +18,6 @@ import mwcartridge
 
 ITEM = Path(__file__).resolve().parents[1]
 MW = str(ITEM / "bin/mw-work")
-PHASES = ("brainstorm", "discovery", "delivery", "land")
 
 
 def work(*args):
@@ -41,14 +36,18 @@ def now():
 def briefing(key, doc, phase, step, who):
     checkpoints = mwcartridge.brief(mwcartridge.load(Path.cwd()), step["step"])
     asks = [e["text"] for e in doc.get("log", []) if e.get("kind") in ("prompt", "created")][:3]
+    driver = "your work actor" if os.environ.get("MW_WORK_ATTEMPT") else "mw-drive"
+    where = ("hive, without a terminal. Your address is AGENT_PANE=work:" + key
+             if os.environ.get("MW_WORK_ATTEMPT") else
+             f"hive, in Rex. Your block is REX_SESSION={os.environ.get('REX_SESSION', '?')} "
+             f"REX_BLOCK={os.environ.get('REX_BLOCK', '?')}.")
     return f"""You are one hand on a piece of Josh's work. The work is a Rivet actor; you are disposable,
 the work is not. Everything you need is in the actor; everything you do goes back into it.
 
-WHO: you are {who['harness']} ({who['model']}, effort {who['effort']}), hired by mw-drive for one step.
+WHO: you are {who['harness']} ({who['model']}, effort {who['effort']}), hired by {driver} for one step.
 WHAT: the work "{doc['what']}" (actor key {key}). Your step: {phase}/{step['step']} (id {step['id']}).
   Josh's own words for this work: {json.dumps(asks)}
-WHERE: hive, in Rex. This work's block is REX_SESSION={os.environ.get('REX_SESSION', '?')}
-  REX_BLOCK={os.environ.get('REX_BLOCK', '?')}. Read `rex __internal skill` before operating Rex.
+WHERE: {where} Read `rex __internal skill` before operating Rex.
 WHEN: {now()} (write times as CT).
 WHY: Made Well's grammar (brainstorm, discovery, delivery, land) drives this work to done yes or no.
   Your step is one function in it: take its input from the actor, return its output to the actor.
@@ -61,8 +60,8 @@ HOW:
     or, if it cannot be done, {MW} check plan.{phase} {step['id']} no "<why, what you tried, what is needed>".
   - You may delegate. A piece of work you hand off is its own work actor, a child of this one:
       {MW} new <child-key> "<what>" --parent {key} --effort discovery=low,delivery=medium
-      rex run --focus=false --label "work: <child-key>" -- {ITEM}/bin/mw-drive <child-key>
-    It runs its own Made Well in its own Rex block; read its result with {MW} show <child-key>.
+      {MW} go <child-key>
+    Its own work actor drives it. Read its result with {MW} show <child-key>.
     Spawn and talk to agents only through Rex (rex, agent-send) and the actor, never a harness's own
     sub-agents.
   - Stay inside your step. Ask Josh only for a decision only he can make, with agent-ask.
@@ -80,67 +79,15 @@ def command(who, prompt):
     raise ValueError(f"no launcher for harness {who['harness']}")
 
 
-def step_done(key, phase, sid):
-    doc = work("show", key)
-    return next(s for s in doc["plan"][phase] if s["id"] == sid).get("done"), doc
-
-
-def drive(key):
-    os.environ["MW_HARNESS"] = "mw-drive"
-    work("event", "--kind:driver", f"driver started in {os.environ.get('REX_BLOCK', 'no block')}")
-    while True:
-        doc = work("show", key)
-        if doc.get("done"):
-            print(f"{key}: done {'yes' if doc['done']['yes'] else 'no'}: {doc['done']['evidence']}")
-            return 0
-        open_steps = [(ph, s) for ph in PHASES for s in doc["plan"].get(ph, []) if not s.get("done")]
-        if not open_steps:
-            failed = [s for ph in PHASES for s in doc["plan"].get(ph, []) if not s["done"]["yes"]]
-            yes = not failed
-            evidence = "every step checked yes" if yes else f"{len(failed)} step(s) checked no"
-            work("done", "yes" if yes else "no", evidence)
-            print(f"{key}: done {'yes' if yes else 'no'} ({evidence})")
-            return 0 if yes else 1
-        phase, step = open_steps[0]
-        if doc.get("phase") != phase:
-            work("phase", phase)
-        print(f"{now()}  {phase}/{step['step']}")
-        for who in step.get("who") or []:
-            label = f"{who['harness']} {who['model']} {who['effort']}"
-            print(f"   → {label}", flush=True)
-            work("event", "--kind:hire", f"{phase}/{step['step']}: {label}")
-            env = dict(os.environ, MW_HIRED=label, MW_HARNESS=who["harness"])
-            run = subprocess.run(command(who, briefing(key, doc, phase, step, who)), text=True,
-                                 capture_output=True, env=env, stdin=subprocess.DEVNULL)
-            done, doc = step_done(key, phase, step["id"])
-            if done:
-                print(f"   ✓ {'yes' if done['yes'] else 'no'}: {done['evidence'][:200]}", flush=True)
-                break
-            reason = (run.stderr or run.stdout or "").strip().splitlines()[-1:] or ["no output"]
-            work("event", "--kind:failure", f"{label} left {phase}/{step['step']} unchecked "
-                 f"(exit {run.returncode}): {reason[0][:300]}")
-            print(f"   ✗ exit {run.returncode}: {reason[0][:200]}", flush=True)
-        else:
-            work("event", "--kind:blocked", f"every agent on {phase}/{step['step']}'s note failed")
-            print(f"{key}: blocked at {phase}/{step['step']}; every agent on its note failed")
-            return 2
-
-
 def main(argv):
     if not argv or argv[0] in ("-h", "--help"):
         print(__doc__)
         return 0
     if argv[0] == "--open":
-        key = argv[1]
-        subprocess.run(["rex", "run", "--focus=false", "--keep-open", "--label", f"work: {key}", "--",
-                        str(ITEM / "bin/mw-drive"), key], check=True)
-        return 0
-    key = argv[0]
-    # This terminal is the work's block: point it at the actor so every hired agent streams into it.
-    pointer = Path.home() / ".local/state/madewell/work/panes" / os.environ.get("REX_BLOCK", "no-block").replace(":", "-")
-    pointer.parent.mkdir(parents=True, exist_ok=True)
-    pointer.write_text(key + "\n")
-    return drive(key)
+        argv = argv[1:]
+    if len(argv) != 1:
+        raise SystemExit("usage: mw-drive [--open] KEY")
+    os.execv(MW, [MW, "go", argv[0]])
 
 
 if __name__ == "__main__":

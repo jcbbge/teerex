@@ -19,6 +19,23 @@ items/madewell/bin/mw items/madewell/demo/josh.lua --args '{"run":"ping-1","stor
 - **Library** calls the actor through the engine gateway with `curl`. The token comes from a header file,
   so it never enters argv. Each blob read is checked against its hash.
 
+## Drive a work from its checkout
+
+Run `mw-work go KEY` in the checkout where the work should run. Its actor walks the pinned plan
+on Rivet's schedule and starts a detached hand with the harness, model and effort on the step.
+`mw-work show KEY` shows the next uncompleted step, driver status and recorded outcomes.
+
+The default time allowed for a hand is 30 minutes. Set a step's `expectedSeconds` before starting
+to change it. An unchecked exit, negative check or stall moves to the next entry on the staffing
+note. When every entry fails, the work stays blocked and opens a decision card in Rex. An explicit
+retry starts a fresh round of the step. `mw-work stop KEY` records a permanent stop and reaps the
+active process group.
+
+`go` and `stop` use the existing engine admin credential through the local gateway. The node's systemd
+unit leaves detached hands running across node replacement. To stop an active work as part of a
+maintenance shutdown, run `mw-work stop KEY` first. The node and its replacement need the same
+local state directory and checkout paths for adoption.
+
 ## Access
 
 The engine signs both tokens itself (`POST /auth/tokens`). They are scoped to `madewell-journal`, and

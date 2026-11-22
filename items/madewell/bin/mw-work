@@ -3,6 +3,7 @@
 
   mw-work new KEY "WHAT" [--effort discovery=low,delivery=medium,...] [--link KEY]...
   mw-work show [KEY] | list
+  mw-work go KEY | stop KEY
   mw-work event "TEXT" [--kind note] | task "WHAT" | phase PHASE | link KEY
   mw-work check tasks|plan.PHASE ID yes|no "EVIDENCE"
   mw-work done yes|no "EVIDENCE"
@@ -44,8 +45,14 @@ def call(key, method, route="/", body=None, timeout=10):
     query = urllib.parse.urlencode({"rvt-namespace": NAMESPACE, "rvt-method": "getOrCreate",
                                     "rvt-runner": POOL, "rvt-key": key, "rvt-crash-policy": "sleep"})
     data = None if body is None else (body if isinstance(body, bytes) else json.dumps(body).encode())
+    admin = token()
+    headers = {"x-rivet-token": admin, "content-type": "application/json"}
+    if method == "POST":
+        headers["x-mw-work-control"] = admin
+    if os.environ.get("MW_WORK_ATTEMPT"):
+        headers["x-mw-work-attempt"] = os.environ["MW_WORK_ATTEMPT"]
     req = urllib.request.Request(f"{ENDPOINT}/gateway/work/request{route}?{query}", data=data, method=method,
-                                 headers={"x-rivet-token": token(), "content-type": "application/json"})
+                                 headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
             return json.loads(r.read() or b"null")
@@ -62,7 +69,15 @@ def pointer():
     return STATE / "panes" / block.replace(":", "-") if block else None
 
 
+def hired_key():
+    block = pane()
+    if os.environ.get("MW_WORK_ATTEMPT") and block and block.startswith("work:"):
+        return block.removeprefix("work:")
+    return None
+
+
 def current(key=None):
+    key = key or hired_key()
     if key:
         return key
     p = pointer()
@@ -182,6 +197,7 @@ def hook(harness):
     os.environ["MW_HARNESS"] = harness
     kind = event.get("hook_event_name")
     p = pointer()
+    bound = bool(hired_key()) or bool(p and p.exists())
     if kind == "UserPromptSubmit":
         prompt = str(event.get("prompt") or "")
         if p and not p.exists() and prompt.strip() and not os.environ.get("MW_HIRED"):
@@ -195,12 +211,14 @@ def hook(harness):
                 point(key)
             else:
                 new(slug(prompt), short(prompt, 200))
-        if p and p.exists():
+            bound = p.exists()
+        if bound:
             hired = os.environ.get("MW_HIRED")
             call(current(), "POST", "/event", {"kind": "brief" if hired else "prompt",
-                                             "who": f"mw-drive → {hired}" if hired else "operator",
+                                             "who": (f"work actor → {hired}" if hired_key() else
+                                                     f"mw-drive → {hired}" if hired else "operator"),
                                              "text": short(prompt, 4000)}, 5)
-    elif kind in ("Stop", "StopFailure") and p and p.exists():
+    elif kind in ("Stop", "StopFailure") and bound:
         transcript = event.get("transcript_path") or event.get("session_file")
         text = event.get("last_assistant_message") or event.get("error") or event.get("message") or ""
         call(current(), "POST", "/event", {"kind": "turn" if kind == "Stop" else "failure", "who": who(),
@@ -250,6 +268,11 @@ def main(argv):
             else:
                 pos.append(a)
         out = new(pos[0], pos[1], effort, links, parent)
+    elif cmd in ("go", "stop"):
+        if len(rest) != 1:
+            raise SystemExit(f"usage: mw-work {cmd} KEY")
+        data = {"cwd": str(Path.cwd()), "session": os.environ.get("REX_SESSION")} if cmd == "go" else {}
+        out = call(rest[0], "POST", f"/{cmd}", data, 60)
     elif cmd == "show":
         out = call(current(rest[0] if rest else None), "GET")
     elif cmd == "list":
@@ -265,6 +288,10 @@ def main(argv):
     elif cmd == "task":
         out = call(current(), "POST", "/task", {"what": rest[0]})
     elif cmd == "check":
+        if hired_key() and rest[0].startswith("plan.") and (
+            rest[0] != os.environ.get("MW_STEP_LIST") or rest[1] != os.environ.get("MW_STEP_ID")
+        ):
+            raise SystemExit("mw-work: check is outside this hand's assignment")
         if rest[0].startswith("plan.") and rest[2] == "yes":
             refuse_unchecked(rest[0][5:], rest[1], rest[3])
         out = call(current(), "POST", "/check", {"list": rest[0], "id": rest[1], "yes": rest[2] == "yes",

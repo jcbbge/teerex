@@ -8,6 +8,9 @@ After=network-online.target
 Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 WorkingDirectory=%h/teerex/items/madewell/journal
 ExecStart=/usr/bin/env node node.mjs
+# Work actors own detached hand groups. A node restart must leave them available for adoption.
+# Use mw-work stop KEY to stop work and reap its group.
+KillMode=process
 Restart=always
 RestartSec=10
 

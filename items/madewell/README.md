@@ -100,8 +100,8 @@ Each checkpoint has a `span`. **Ground** (the default) is judgment before the wo
 its evidence. **Rumen** is the mechanical flip side: a `run` command the engine executes in the repo root
 when the hand checks its step yes, refusing the step on a non-zero exit with the command's output.
 
-`mw-drive` (and the Lua conductor, through `work-brief`) briefs each hand with the checkpoints its step
-names. `mw-work check plan.<phase> <id> yes` refuses the step until the evidence carries one line per
+The work actor briefs each hand with the checkpoints its step names.
+`mw-work check plan.<phase> <id> yes` refuses the step until the evidence carries one line per
 checkpoint: `checkpoint <id>: <what it found, or n/a and why>`. A repo without a cartridge runs unchanged.
 The engine reads the cartridge from the hand's working directory, so a work runs in its project's checkout.
 
