@@ -147,6 +147,33 @@ def actions_since(transcript):
     return out
 
 
+def opener_work():
+    """The work of the pane that opened this one, from the launcher's record of its opener, or None."""
+    opener = (os.environ.get("AGENT_SPAWNER_ADDRESS") or os.environ.get("AGENT_REPORT_TO") or "").split()
+    if len(opener) < 2:
+        session, block = os.environ.get("REX_SESSION"), pane()
+        try:
+            record = json.loads((Path.home() / ".local/state/agent/identity" / session / (block + ".json")).read_text())
+            opener = record.get("spawned_by") or []
+        except (OSError, ValueError, TypeError):
+            return None
+    if len(opener) < 2 or opener[1] == pane():
+        return None
+    mark = STATE / "panes" / opener[1].replace(":", "-")
+    return mark.read_text().strip() if mark.exists() else None
+
+
+def brief_title(prompt):
+    """What the brief says the work is for: the line under its Purpose heading, else its first line."""
+    lines = [l.strip() for l in prompt.splitlines()]
+    for i, line in enumerate(lines):
+        if line.lstrip("#").strip().lower().startswith("purpose"):
+            rest = [l for l in lines[i + 1:] if l and not l.startswith("#")]
+            if rest:
+                return rest[0]
+    return next((l for l in lines if l), prompt)
+
+
 def hook(harness):
     event = json.loads(sys.stdin.read() or "{}")
     os.environ["MW_HARNESS"] = harness
@@ -155,8 +182,16 @@ def hook(harness):
     if kind == "UserPromptSubmit":
         prompt = str(event.get("prompt") or "")
         if p and not p.exists() and prompt.strip() and not os.environ.get("MW_HIRED"):
-            # Josh opens a session for a scope of work: its first words open the actor.
-            new(slug(prompt), short(prompt, 200))
+            # Every pane is on the work (Josh, 2026-11-22). An agent another agent opened inherits its
+            # opener's work as a child; only a pane nobody opened (Josh's) starts work from its first words.
+            parent = opener_work()
+            if parent:
+                name = os.environ.get("AGENT_NAME") or "agent"
+                key = slug(name)
+                new(key, short(f"{name}: {brief_title(prompt)}", 200), parent=parent)
+                point(key)
+            else:
+                new(slug(prompt), short(prompt, 200))
         if p and p.exists():
             hired = os.environ.get("MW_HIRED")
             call(current(), "POST", "/event", {"kind": "brief" if hired else "prompt",
