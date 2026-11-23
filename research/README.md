@@ -31,4 +31,4 @@ The original Amp records may require permission to open; they are not public Git
 
 [catalog.json](api/catalog.json) retains all **524** original entry identities/categories and original capture locations. It intentionally excludes vendor descriptions, schemas, and examples. Its `path`, line ranges, and `pointer` fields address files inside the separately retained `rex-index/` bundle, **not this repository**. Some entries explicitly describe unretrieved source references or unresolved contracts; their existence in the index does not mean those files were acquired.
 
-[Provenance](provenance/README.md) records the archive hash, acquisition manifest, capture checksums, and publication exclusions. Keep new-version observations separate rather than overwriting this capture. Start with the [level-one walkthrough](../docs/learning/level-1.md).
+[Provenance](provenance/README.md) records the archive hash, acquisition manifest, capture checksums, and publication exclusions. Keep new-version observations separate rather than overwriting this capture.
