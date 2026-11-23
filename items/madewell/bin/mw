@@ -1,5 +1,0 @@
-#!/bin/sh
-set -eu
-item=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-export LUA_PATH="$item/lua/?.lua;;"
-exec rex do "$@"
