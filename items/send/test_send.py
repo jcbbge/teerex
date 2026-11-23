@@ -466,7 +466,7 @@ os.execv({self.rex!r}, [{self.rex!r}, *args])
         self.assertEqual((directory / "draft").read_text(), "")
 
     def test_paused_target_is_refused_before_any_input(self):
-        stopped = subprocess.Popen(["sleep", "60"])
+        stopped = resources.start_process(["sleep", "60"])
         self.addCleanup(stopped.wait)
         self.addCleanup(stopped.kill)
         os.kill(stopped.pid, signal.SIGSTOP)
@@ -489,8 +489,8 @@ os.execv({self.rex!r}, [{self.rex!r}, *args])
     def test_node_pi_process_without_status_defers_missing_prompt(self):
         target, raw = self.fixture()
         self.rewrite_send_lua(
-            'rex.call("com.superlogical.terminal.process", target)',
-            '{foreground={name="node", argv0="node", script="/fixture/pi/dist/cli.js"}}')
+            'local process = read("com.superlogical.terminal.process", target)',
+            'local process = {foreground={name="node", argv0="node", script="/fixture/pi/dist/cli.js"}}')
         result, receipt = self.send(target)
         self.assertEqual(result.returncode, 0, receipt)
         self.assertEqual(receipt["outcome"], "queued")
@@ -526,36 +526,13 @@ os.execv({self.rex!r}, [{self.rex!r}, *args])
                          ["humanFROM worker: hello"])
         self.assertEqual((directory / "draft").read_text(), "")
 
-    def test_seat_refuses_paste_and_enter_and_preserves_the_draft(self):
-        target, directory = self.editor("", "race")
-        self.type_draft(target, "partially typed instruction")
-        result, queued = self.send(target, b"legacy report")
+    def test_pane_label_does_not_control_guarded_input(self):
+        target, raw = self.fixture()
+        self.rpc("session.set_block_label", dict(session_id=target[0], block_id=target[1], label="seat"))
+        result, receipt = self.send(target, b"reply")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertEqual(queued["outcome"], "queued")
-        rename = subprocess.run(
-            [BIN, "surfaces", "rename", "--socket", str(self.socket), "--session", target[0],
-             "--pane", target[1], "--label", "seat"],
-            env=self.env, capture_output=True, text=True, timeout=10,
-        )
-        self.assertEqual(rename.returncode, 0, rename.stdout + rename.stderr)
-        drain_result, drained = self.clutch(target, "drain")
-        self.assertEqual(drain_result.returncode, 1, drain_result.stdout + drain_result.stderr)
-        self.assertEqual(drained["queue"]["stopped"]["reason"], "seat_input_protected")
-        self.assertEqual(drained["queue"]["pending"], 1)
-        for mode, reason in (("guard", "queued_messages_pending"), ("ignore", "seat_input_protected")):
-            with self.subTest(mode=mode):
-                result = subprocess.run(
-                    self.command(target) + ["--draft", mode, "--no-queue"],
-                    env=self.env, capture_output=True, text=True, timeout=15,
-                )
-                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-                receipt = json.loads(result.stdout)
-                self.assertEqual(receipt["failure_reason"], reason)
-                self.assertFalse(receipt["paste"]["attempted"])
-                self.assertFalse(receipt["enter"]["attempted"])
-        self.received(directory / "bytes", b"partially typed instruction")
-        self.assertEqual((directory / "draft").read_text(), "partially typed instruction")
-        self.assertEqual((directory / "submissions").read_bytes(), b"")
+        self.assertEqual(receipt["outcome"], "events_acknowledged")
+        self.received(raw, self.pasted(b"reply", "worker"))
 
     def test_sender_name_does_not_require_caller_identity(self):
         target, raw = self.fixture()
@@ -591,17 +568,19 @@ os.execv({self.rex!r}, [{self.rex!r}, *args])
             platform="macos-arm64" if sys.platform == "darwin" else "linux-x86_64",
             socket=str(self.socket), rex=self.rex, teerex=BIN,
             store=self.env["TEEREX_BOARDS_STORE"])))))
-        wrapper_env = dict(self.env, PATH=str(bindir) + os.pathsep + self.env["PATH"],
-                           TEEREX_HOSTS=str(config), TEEREX_HOST="test")
-        wrapper = shutil.which("agent-send")
-        self.assertIsNotNone(wrapper, "installed agent-send required")
+        wrapper_env = dict(self.env, HOME=str(self.work), REX_SERVER=self.endpoint,
+                           PATH=str(bindir) + os.pathsep + self.env["PATH"], TEEREX_HOSTS=str(config))
+        wrapper_env.pop("REX_CLIENT", None)
+        rexconfig = os.environ.get("REXCONFIG_DIR")
+        wrapper = str(Path(rexconfig) / "bin/agent-send") if rexconfig else None
         commands = []
         for prefix in ("send refused:", "pane control refused;", "pane_guard_", "registered_seat_",
                        "agent-send: not delivered", "teerex send:"):
             commands.append(("relay-native-" + prefix,
                 self.command(target, (prefix + " diagnostic").encode(), sender="registered-a"), self.env))
-            commands.append(("relay-wrapper-" + prefix,
-                [wrapper, *target, "registered-a", prefix + " diagnostic"], wrapper_env))
+            if wrapper:
+                commands.append(("relay-wrapper-" + prefix,
+                    [wrapper, *target, "registered-a", prefix + " diagnostic"], wrapper_env))
         for label, command, environment in commands:
             with self.subTest(path=label):
                 result = subprocess.run(command, env=environment, capture_output=True,

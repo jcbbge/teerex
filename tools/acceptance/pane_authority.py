@@ -1,5 +1,4 @@
 """Real caller identities for tests that control disposable Rex panes."""
-import json
 import os
 import pty
 from pathlib import Path
@@ -23,22 +22,6 @@ def caller(test, rpc, env, root, session_id=None):
     env.update(REX_SESSION=sid, REX_BLOCK=made['block_ids'][0],
                LC_REX_SESSION=sid, LC_REX_BLOCK=made['block_ids'][0])
     return env
-
-
-def session(binary, socket, env, label):
-    result = subprocess.run([binary, 'surfaces', 'session', 'ensure', '--socket', str(socket), '--label', label],
-                            env=env, capture_output=True, text=True, timeout=10)
-    if result.returncode:
-        raise AssertionError(result.stdout + result.stderr)
-    return json.loads(result.stdout)['resolved']['session_id']
-
-
-def operator(command, env, **kwargs):
-    """Exercise the explicit human path, in an actual disposable interactive tty."""
-    environment = {k: v for k, v in env.items() if not k.startswith(('AGENT_', 'LC_AGENT_'))}
-    environment['TEEREX_OPERATOR'] = '1'
-    at = 3 if len(command) > 2 and command[1] == '--rex' else 1
-    return terminal([*command[:at], '--operator', *command[at:]], environment, **kwargs)
 
 
 def terminal(command, env, **kwargs):

@@ -89,7 +89,7 @@ jobs:
         run: zig build -Doptimize=ReleaseSmall -Dtarget=${{ matrix.target }}
 
       - name: Run native child supervisor regressions
-        run: zig test --dep pane_guard -Mroot=src/child_test.zig -Mpane_guard=src/pane_guard.zig
+        run: zig test src/child_test.zig
 
       - name: Verify static Linux executable
         if: runner.os == 'Linux'
@@ -102,16 +102,6 @@ jobs:
             echo 'Linux CLI must not depend on a dynamic loader or shared libraries' >&2
             exit 1
           fi
-
-      - name: Run offline comparison regressions without Rex
-        if: runner.os == 'Linux'
-        env:
-          TEEREX_BIN: ${{ github.workspace }}/zig-out/bin/teerex
-        run: python3 items/observe/test_observe.py CompareTest -v
-
-      - name: Run installer lifecycle and public release controls
-        if: runner.os == 'Linux' || matrix.rex-api == 13
-        run: env -u TEEREX_CALL_LOG_DIR python3 tools/install/test_install.py --public -v
 
       - name: Cross-build Apple-silicon CLI
         if: runner.os == 'Linux'
@@ -149,13 +139,6 @@ jobs:
           grep -E "^api: revision $REX_API \\(" "$RUNNER_TEMP/rex-version.txt"
           echo "$RUNNER_TEMP/rex-bin" >> "$GITHUB_PATH"
 
-      - name: Run disposable-Rex observation, comparison and watch regressions
-        env:
-          TEEREX_BIN: ${{ github.workspace }}/zig-out/bin/teerex
-        run: |
-          python3 items/observe/test_observe.py -v
-          python3 items/observe/test_state.py -v
-
       - name: Run disposable-Rex mailbox send regressions
         env:
           TEEREX_BIN: ${{ github.workspace }}/zig-out/bin/teerex
@@ -164,60 +147,12 @@ jobs:
           python3 items/send/test_send.py -v
           python3 items/clutch/test_clutch.py -v
 
-      - name: Run explicit named-host and embedded fleet bridge contracts
+          python3 items/clutch/test_queue.py -v
+          python3 items/clutch/test_queue_store.py -v
+
+      - name: Run public help and refusal contracts
         env:
           TEEREX_BIN: ${{ github.workspace }}/zig-out/bin/teerex
         run: |
           python3 src/test_help.py -v
-          python3 src/test_targets.py -v
-
-      - name: Run visible surfaces contracts
-        env:
-          TEEREX_BIN: ${{ github.workspace }}/zig-out/bin/teerex
-          REX_BIN: ${{ runner.temp }}/rex-bin/rex
-        run: python3 items/surfaces/test_surfaces.py -v
-
-      - name: Prepare disposable Linux SSH and fence acceptance
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y bubblewrap openssh-server slirp4netns
-          sudo install -d -m 755 /run/sshd
-          # Ubuntu restricts unprofiled user namespaces. Grant only the fixture's
-          # bwrap executable; never disable the system-wide AppArmor restriction.
-          cat > "$RUNNER_TEMP/teerex-ci-bwrap.apparmor" <<'PROFILE'
-          abi <abi/4.0>,
-          include <tunables/global>
-          profile teerex-ci-bwrap /usr/bin/bwrap flags=(unconfined) {
-            userns,
-          }
-          PROFILE
-          sudo apparmor_parser --skip-kernel-load "$RUNNER_TEMP/teerex-ci-bwrap.apparmor"
-          sudo apparmor_parser --add "$RUNNER_TEMP/teerex-ci-bwrap.apparmor"
-          sysctl kernel.apparmor_restrict_unprivileged_userns
-          bwrap --ro-bind / / /bin/true
-
-      - name: Run API13 recovery integration
-        if: matrix.rex-api == 13
-        env:
-          TEEREX_BIN: ${{ github.workspace }}/zig-out/bin/teerex
-          REX_BIN: ${{ runner.temp }}/rex-bin/rex
-        run: |
-          python3 items/recovery/test_recovery.py -v
-          python3 tools/fleet-install/test_fleet_install.py -v
-
-      - name: Run private records offline and disposable Rex contracts
-        if: matrix.rex-api == 13
-        env:
-          TEEREX_BIN: ${{ github.workspace }}/zig-out/bin/teerex
-          REX_BIN: ${{ runner.temp }}/rex-bin/rex
-        run: |
-          python3 items/records/test_records.py -v
-          python3 items/records/test_decisions.py -v
-
-      - name: Run older API recovery update inventory/refusal
-        if: matrix.rex-api != 13
-        env:
-          TEEREX_BIN: ${{ github.workspace }}/zig-out/bin/teerex
-          REX_BIN: ${{ runner.temp }}/rex-bin/rex
-        run: python3 items/recovery/test_recovery.py -v
+          python3 src/test_refusal_next.py -v

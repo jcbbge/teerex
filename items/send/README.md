@@ -1,8 +1,8 @@
 # send
 
-[Operator/agent addendum: Who, What, When, Where, Why, How](../../docs/concierge/features.md#8-send-one-whole-message-paste-then-enter) covers current alpha.5 use, platform/API support, verification, privacy and recovery. [Current setup](../../docs/concierge/setup.md) installs alpha.5; the [standalone send cartridge](../../docs/cartridges.md) keeps native message transport. Separate paste/Enter ACKs are not atomic delivery or consumption; no blind resend is safe.
-
-**Experimental terminal-input module, not a global messaging authority.** `rex_send.run(allocator, args) !u8` uses the shared `supervised_child` ABI and is integrated into the combined CLI and native cartridge builds. Combined root routing is a separate boards-store operation; the standalone payload does not acquire that Python-backed routing surface. Installation does not change Rex configuration, agent-core files or running personal servers. Historical compatibility-only alpha.2 did not include send.
+Send one message with guarded paste and Enter. The receipt reports which
+events Rex acknowledged. For application consumption, rexconfig's
+`agent-send` checks the recipient's status or transcript.
 
 ## Cooperative human hold and placeholders
 
@@ -56,11 +56,7 @@ With label `worker` and canonical IDs, the measured preflight overhead is 234 by
 
 ## Receipt and unknowns
 
-A registered agent claiming another registered agent, the seat, or a person-facing
-name returns a `send_result` refusal with the reason on stderr and in
-`failure_reason`, before the Rex backend runs. Service and unclaimed labels are
-accepted without a generated-sender marker, including from retained supervisors.
-A marker never authorizes impersonating another registered identity.
+Sender and seat policy are enforced by rexconfig.
 Bodies beginning with `send refused:`, `pane control refused;`, `pane_guard_`,
 `registered_seat_`, `agent-send: not delivered`, or `teerex send:` (after
 leading whitespace) are rejected as `refusal_text_is_not_a_message` before
@@ -80,7 +76,7 @@ Message contents are omitted from the receipt, but the Rex JSON arguments can ap
 
 ## Validation — 12 November 2026
 
-Run `TEEREX_BIN=/absolute/tested/teerex REX_BIN=/absolute/tested/rex python3 items/send/test_send.py`. The public suite creates private disposable servers with explicit sockets, `/dev/null` configuration, private state, and restore disabled. A raw, no-echo terminal program records consumed PTY bytes independently of teerex's ACK receipt. This proves the synthetic fixture's bytes, not arbitrary applications' consumption. No M5/hive server was accessed or restarted.
+Run `TEEREX_BIN=/absolute/tested/teerex REX_BIN=/absolute/tested/rex python3 items/send/test_send.py`. Set `REXCONFIG_DIR` to a rexconfig checkout to include the diagnostic relay checks through `agent-send`. The public suite creates private disposable servers with explicit sockets, `/dev/null` configuration, private state, and restore disabled. A raw, no-echo terminal program records consumed PTY bytes independently of teerex's ACK receipt. This proves the synthetic fixture's bytes, not arbitrary applications' consumption. No M5/hive server was accessed or restarted.
 
 | Runtime actually exercised | Result on final behavior |
 | --- | --- |

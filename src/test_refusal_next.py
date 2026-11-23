@@ -65,19 +65,8 @@ class RefusalNextTest(unittest.TestCase):
                         expected='before sending again')
         self.assertFalse(json.loads(p.stdout)['retry_safe'])
 
-    def test_surfaces(self):
-        self.refusal('surfaces', 'open', '--not-an-option', expected='teerex surfaces --help')
-        self.refusal('surfaces', 'resolve', '--socket', self.root / 'absent.sock',
-                     '--session', SESSION, '--pane', BLOCK, '--timeout-ms', '100', expected='before changing it again')
-
-    def test_named_host_routing_refusal(self):
-        for command in ('send', 'surfaces'):
-            with self.subTest(command=command):
-                self.refusal('--config', self.root / 'absent.json', '--host', 'fixture', command,
-                             expected='Check the selected host and configuration file')
-
     def test_help_and_success_do_not_print_next(self):
-        for command in ('send', 'surfaces'):
+        for command in ('send', 'clutch'):
             with self.subTest(command=command):
                 p = subprocess.run([BIN, command, '--help'], env=self.env, capture_output=True, text=True, timeout=15)
                 self.assertEqual(p.returncode, 0, p.stdout + p.stderr)

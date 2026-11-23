@@ -114,17 +114,6 @@ pub const Result = struct {
     group_kill: ?GroupSignal,
 };
 
-pub fn guardFailure(stderr: []const u8) ?[]const u8 {
-    const reasons = [_][]const u8{"seat_tab_label_protected"};
-    for (reasons) |reason| {
-        if (std.mem.indexOf(u8, stderr, reason)) |start| {
-            const end = std.mem.indexOfScalarPos(u8, stderr, start, '\n') orelse stderr.len;
-            return stderr[start..end];
-        }
-    }
-    return null;
-}
-
 fn rexLaunchError(err: anyerror, original: []const []const u8, selected: []const []const u8) anyerror {
     if (err == error.FileNotFound and original.len != 0 and std.mem.eql(u8, original[0], "rex")) {
         std.debug.print("teerex: Rex executable '{s}' not found; set --rex or TEEREX_INTERNAL_REX (default rex is searched on PATH)\n", .{selected[0]});
@@ -148,14 +137,12 @@ pub fn collect(allocator: std.mem.Allocator, argv: []const []const u8, env: *con
         break :blk selected;
     } else argv;
     defer if (selected_argv.ptr != argv.ptr) allocator.free(selected_argv);
-    // All native Lua transports share the guard, including cleanup paths.
-    var guarded: std.ArrayList([]const u8) = .empty;
-    defer guarded.deinit(allocator);
-    try guarded.appendSlice(allocator, selected_argv);
-    var script_file: ?@import("pane_guard").ScriptFile = null;
+    // Keep the Rex program in an owner-only file for the child invocation.
+    var command: std.ArrayList([]const u8) = .empty;
+    defer command.deinit(allocator);
+    try command.appendSlice(allocator, selected_argv);
+    var script_file: ?@import("rex_script.zig").ScriptFile = null;
     defer if (script_file) |file| file.deinit();
-    var guard_source: ?[]const u8 = null;
-    defer if (guard_source) |s| allocator.free(s);
     var endpoint: ?[]const u8 = null;
     var lua = false;
     for (selected_argv, 0..) |arg, i| {
@@ -166,15 +153,14 @@ pub fn collect(allocator: std.mem.Allocator, argv: []const []const u8, env: *con
         for (selected_argv, 0..) |arg, i| {
             if (std.mem.eql(u8, arg, "-e") and i + 1 < selected_argv.len) {
                 const script = selected_argv[i + 1];
-                guard_source = try std.mem.concat(allocator, u8, &.{ @import("pane_guard").source, script });
-                script_file = try @import("pane_guard").ScriptFile.init(allocator, guard_source.?);
-                guarded.items[i] = script_file.?.path;
-                _ = guarded.orderedRemove(i + 1);
+                script_file = try @import("rex_script.zig").ScriptFile.init(allocator, script);
+                command.items[i] = script_file.?.path;
+                _ = command.orderedRemove(i + 1);
                 break;
             }
         }
     }
-    var child = std.process.Child.init(guarded.items, allocator);
+    var child = std.process.Child.init(command.items, allocator);
     child.stdin_behavior = if (@hasDecl(@TypeOf(receiver.*), "inherit_stdin") and @TypeOf(receiver.*).inherit_stdin) .Inherit else .Ignore;
     child.stdout_behavior = .Pipe;
     child.stderr_behavior = .Pipe;

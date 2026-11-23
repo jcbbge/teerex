@@ -2,8 +2,7 @@
 
 [The workflow](../.github/workflows/ci.yml) is started manually with
 `workflow_dispatch`. Pushes and pull requests do not start it. It is a background
-check, not an estate installation gate. Changes are checked locally on hive and
-the M5; the estate build and installation procedure is linked below.
+check, not an estate installation gate. The estate installs teerex on hive through rexconfig.
 
 The workflow does not release, deploy, create tags, install a service or change
 personal Rex configuration. Its token has `contents: read`, and checkout does
@@ -16,10 +15,6 @@ workflow source, not a claim that the current commit has passed a hosted run.
 | --- | --- | --- |
 | Linux API13 and Apple-silicon cross-build | `ubuntu-24.04`, x86-64 | `x86_64-linux-musl`; also cross-build `aarch64-macos` |
 | Mac API13 (Rex preview.16) | `macos-26`, arm64 | `aarch64-macos` |
-
-The Mac API10 and API12 lanes were removed. The workflow still contains
-conditional older-API refusal steps, but neither active matrix entry selects
-them. API11 and other Rex builds are not certified by this matrix.
 
 Both lanes check Zig formatting, build `ReleaseSmall`, and run the native child
 supervisor regressions. They select Python 3.13 and checksum-pinned Zig 0.15.2.
@@ -38,34 +33,12 @@ The workflow does not configure branch protection.
 The workflow's commands are the source of truth for suite selection. Current
 runtime selections on both API13 lanes are:
 
-- observation, comparison, watch and inferred state:
-  `items/observe/test_observe.py`, `items/observe/test_state.py`;
-- guarded send and cooperative holds: `items/send/test_send.py`,
-  `items/clutch/test_clutch.py`;
-- public help and named-host routing: `src/test_help.py`, `src/test_targets.py`;
-- surfaces: `items/surfaces/test_surfaces.py`;
-- recovery and fleet installation: `items/recovery/test_recovery.py`,
-  `tools/fleet-install/test_fleet_install.py`;
-- records and decisions: `items/records/test_records.py`,
-  `items/records/test_decisions.py`;
-- installer lifecycle and public-release controls:
-  `tools/install/test_install.py --public`.
+- guarded send: `items/send/test_send.py`
+- cooperative holds and queue: `items/clutch/test_clutch.py`,
+  `items/clutch/test_queue.py`, and `items/clutch/test_queue_store.py`
+- public help and refusal receipts: `src/test_help.py` and `src/test_refusal_next.py`
 
-These are file selections, not fixed test counts. Individual suites can select
-platform-specific cases; the workflow source and test decorators show those
-limits. The removed agent controller's launch/callback/channel/fence suites are
-not part of this workflow.
-
-Linux additionally runs the comparison class before downloading Rex, checks the
-static executable, and cross-builds for Mac. The comparison class repeats
-cases in the later full observation suite. The Linux preparation step installs disposable SSH/fence dependencies
-and a fixture-specific bubblewrap AppArmor profile; it does not disable the
-system-wide user-namespace restriction.
-
-The separate [loopback SSH acceptance](../tools/fleet-install/test_ssh.py) is an
-opt-in check requiring disposable sshd/sudo and generated keys. The workflow
-prepares SSH dependencies, but does not directly invoke that script. Preparation
-alone must not be counted as an executed SSH acceptance result.
+Linux also checks the static executable and cross-builds for Apple silicon.
 
 ## Rex pins and isolation
 

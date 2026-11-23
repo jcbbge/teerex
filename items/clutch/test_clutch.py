@@ -65,6 +65,15 @@ class ClutchTest(fixtures.SendTest):
         self.assertIsNone(repeated["record"])
         self.assertFalse(state.exists())
 
+    def test_clutch_defaults_to_rex_server(self):
+        target, _ = self.fixture()
+        env = dict(self.env, REX_SERVER=self.endpoint)
+        for verb, held in (("take", True), ("status", True), ("release", False)):
+            command = [fixtures.BIN, "clutch", verb, "--session", target[0], "--pane", target[1]]
+            result = subprocess.run(command, env=env, capture_output=True, text=True, timeout=10)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(json.loads(result.stdout)["held"], held)
+
     def test_held_refuses_with_no_input_even_when_draft_is_ignored_then_release_delivers(self):
         target, raw = self.fixture()
         self.clutch("take", target)
@@ -235,133 +244,7 @@ class ClutchTest(fixtures.SendTest):
         self.assertFalse(Path(taken["state_file"]).exists())
         self.assertEqual(list(root.iterdir()), [root / "clutch.lock"])
 
-    def test_prune_settle_preserves_live_owner_until_killed(self):
-        root = Path(self.env["TEEREX_CLUTCH_DIR"])
-        root.mkdir(mode=0o700)
-        settle = root / ("a" * 32 + ".settle")
-        settle.touch(mode=0o600)
-        link = root / ("b" * 32 + ".settle")
-        link.symlink_to(settle)
-        owner = resources.start_process([
-            sys.executable, "-c",
-            "import fcntl, sys, signal; f = open(sys.argv[1], 'w'); "
-            "fcntl.flock(f, fcntl.LOCK_SH); print('locked', flush=True); signal.pause()",
-            str(settle),
-        ], stdout=subprocess.PIPE, text=True)
-        self.addCleanup(self.cleanup_process, owner)
-        self.assertEqual(owner.stdout.readline().strip(), "locked")
-        result, applied = self.prune("--apply")
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertEqual(applied["removed"], [])
-        self.assertIn(dict(file=settle.name, reason="live_settle_owner"), applied["skipped"])
-        self.cleanup_process(owner)
-        result, plan = self.prune()
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertEqual(plan["selected"], [dict(file=settle.name, reason="unowned_settle_file")])
-        self.assertTrue(settle.exists())
-        result, applied = self.prune("--apply")
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertEqual(applied["removed"], [settle.name])
-        self.assertFalse(settle.exists())
-        self.assertTrue(link.is_symlink())
-
-    def test_prune_plans_then_removes_only_released_gone_records(self):
-        live, _ = self.fixture()
-        dead, _ = self.fixture()
-        held, _ = self.fixture()
-        files = []
-        for target in (live, dead, held):
-            _, value = self.clutch("take", target)
-            file = Path(value["state_file"])
-            if target != held:
-                record = json.loads(file.read_text()); record["held"] = False
-                file.write_text(json.dumps(record))
-            files.append(file)
-        self.rpc("block.close", {"session_id": dead[0], "block_id": dead[1]})
-        self.rpc("block.close", {"session_id": held[0], "block_id": held[1]})
-        missing = self.work / "gone.sock"
-        orphan = self.orphan_record(files[0], missing)
-        before = {p.name: p.read_bytes() for p in orphan.parent.iterdir()}
-        result, plan = self.prune()
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertEqual({p["file"] for p in plan["selected"]}, {files[1].name, orphan.name})
-        self.assertEqual(plan["removed"], [])
-        self.assertEqual(before, {p.name: p.read_bytes() for p in orphan.parent.iterdir()})
-        result, applied = self.prune("--apply")
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertEqual(set(applied["removed"]), {files[1].name, orphan.name})
-        self.assertTrue(files[0].exists() and files[2].exists())
-
-    def test_prune_preserves_corrupt_linked_unknown_and_concurrently_taken_records(self):
-        target, _ = self.fixture()
-        _, taken = self.clutch("take", target)
-        file = Path(taken["state_file"])
-        # A take between plan and apply must win, even after a prior released plan.
-        record = json.loads(file.read_text()); record["held"] = False
-        file.write_text(json.dumps(record))
-        self.rpc("block.close", {"session_id": target[0], "block_id": target[1]})
-        _, plan = self.prune()
-        self.assertEqual(len(plan["selected"]), 1)
-        self.clutch("take", target)
-        _, applied = self.prune("--apply")
-        self.assertEqual(applied["removed"], [])
-        original = file.read_bytes()
-        outside = self.work / "outside"; outside.write_bytes(original)
-        file.unlink(); file.symlink_to(outside)
-        _, applied = self.prune("--apply")
-        self.assertEqual(applied["removed"], [])
-        self.assertEqual(outside.read_bytes(), original)
-        file.unlink(); file.write_text("invalid JSON"); file.chmod(0o600)
-        _, applied = self.prune("--apply")
-        self.assertEqual(applied["removed"], [])
-        file.unlink()
-        # An existing non-socket endpoint is uncertain, never proof of disappearance.
-        socket = self.work / "uncertain.sock"; socket.write_text("not a socket")
-        source = self.work / 'prune-record-source.json'
-        source.write_bytes(original)
-        file = self.orphan_record(source, socket)
-        source.unlink()
-        _, applied = self.prune("--apply")
-        self.assertEqual(applied["removed"], [])
-        self.assertTrue(file.exists())
-
-
-
-
-    def test_palette_fragment_is_exclusive_and_uses_invoking_pane(self):
-        fragment = self.work / "clutch.lua"
-        controller = self.work / 'pinned-clutch'
-        controller.write_text('#!/bin/sh\nexec ' + shlex.join([fixtures.BIN, '--rex', self.rex]) + ' "$@"\n')
-        controller.chmod(0o700)
-        result = subprocess.run([fixtures.BIN, "clutch", "palette", "--file", str(fragment), "--socket", str(self.socket), '--teerex', str(controller)],
-                                capture_output=True, text=True, env=self.env, timeout=5)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        source = fragment.read_text()
-        self.assertIn("Take control of this pane", source)
-        self.assertIn("Hand back", source)
-        self.assertIn("ctx.session_id", source)
-        self.assertIn("ctx.block_id", source)
-        self.assertIn("-- teerex-surface-action:teerex_clutch_take", source)
-        result = subprocess.run([fixtures.BIN, "clutch", "palette", "--file", str(fragment), "--socket", str(self.socket)],
-                                capture_output=True, text=True, env=self.env, timeout=5)
-        self.assertNotEqual(result.returncode, 0)
-        self.assertEqual(fragment.read_text(), source)
-        target, raw = self.fixture()
-        self.config.write_text(source)
-        self.rpc("server.config_reload", {})
-        for action, expected in (("teerex_clutch_take", True), ("teerex_clutch_release", False)):
-            result = self.rex_json("do", "--session", target[0], "--block", target[1], action)
-            self.assertEqual(result["held"], expected)
-            _, status = self.clutch("status", target)
-            self.assertEqual(status["held"], expected)
-        self.assertEqual(raw.read_bytes(), b"")
-        self.config.write_text("")
-        self.rpc("server.config_reload", {})
-
-
-
 def load_tests(loader, suite, pattern):
-    # Reuse only the disposable fixture helpers, not a second copy of the send suite.
     return unittest.TestSuite(ClutchTest(name) for name in ClutchTest.__dict__ if name.startswith("test_"))
 
 

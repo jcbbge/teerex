@@ -1,3 +1,9 @@
+-- Keep only Rex's explicit compatibility error and the called method.
+local function rex_method_error(method, err)
+ if type(err) ~= "string" then return end
+ local code=err:match("code=(%w[%w_]*).?%s*$")
+ if code=="method_not_found" or code=="bad_request" then return method..": "..code end
+end
 -- Fixed code, JSON arguments. One attached connection; no focus lookup or retry.
 local a = rex.args
 local function emit(v)
@@ -19,7 +25,6 @@ for _, w in ipairs(view.windows or {}) do
     for _, l in ipairs(w.layers or {}) do
         for _, b in ipairs(l.blocks or {}) do
             if b.block_id == a.block_id and b.creator_name == "com.superlogical.terminal" then
-                if b.label == "seat" then refuse("seat_input_protected"); return end
                 terminal = true
             end
         end
@@ -33,7 +38,6 @@ if not terminal then
     if incompatible then refuse(incompatible); return end
     for _,b in ipairs(type(listed)=="table" and listed.blocks or {}) do
         if b.block_id==a.block_id and b.creator_name=="com.superlogical.terminal" and b.placement=="detached" then
-            if b.label == "seat" then refuse("seat_input_protected"); return end
             terminal=true
         end
     end

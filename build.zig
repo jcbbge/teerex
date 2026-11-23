@@ -14,31 +14,11 @@ pub fn build(b: *std.Build) void {
     const build_version = b.addOptions();
     build_version.addOption([]const u8, "version", b.option([]const u8, "version", "Release/build identity without the leading v") orelse localVersion(b));
     exe.root_module.addOptions("build_version", build_version);
-    const fleet_sources = b.addOptions();
-    for ([_][]const u8{ "controller", "worker", "installer", "resolver" }, [_][]const u8{ "tools/fleet-install/fleet_install.py", "tools/fleet-install/worker.py", "tools/install/teerex-install", "src/targets.py" }) |name, path| {
-        const source = b.build_root.handle.readFileAlloc(b.allocator, path, 1024 * 1024) catch @panic("fleet support source unavailable");
-        fleet_sources.addOption([]const u8, name, source);
-    }
-    const fleet_module = fleet_sources.createModule();
-    exe.root_module.addImport("fleet_sources", fleet_module);
-    const observation = b.createModule(.{
-        .root_source_file = b.path("items/observe/main.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    const state_sources = b.addOptions();
-    state_sources.addOption([]const u8, "draft", b.build_root.handle.readFileAlloc(b.allocator, "items/send/draft.lua", 32768) catch @panic("send draft source unavailable"));
-    observation.addOptions("state_sources", state_sources);
-    exe.root_module.addImport("rex_observe", observation);
     const child = b.createModule(.{
         .root_source_file = b.path("src/child.zig"),
         .target = target,
         .optimize = optimize,
     });
-    observation.addImport("supervised_child", child);
-    const pane_guard = b.createModule(.{ .root_source_file = b.path("src/pane_guard.zig"), .target = target, .optimize = optimize });
-    child.addImport("pane_guard", pane_guard);
-    exe.root_module.addImport("pane_guard", pane_guard);
     exe.root_module.addImport("supervised_child", child);
     const send = b.createModule(.{
         .root_source_file = b.path("items/send/main.zig"),
@@ -51,24 +31,6 @@ pub fn build(b: *std.Build) void {
     exe.root_module.addImport("rex_clutch", clutch);
     clutch.addImport("supervised_child", child);
     exe.root_module.addImport("rex_send", send);
-    const surfaces = b.createModule(.{
-        .root_source_file = b.path("items/surfaces/main.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    surfaces.addImport("supervised_child", child);
-    exe.root_module.addImport("rex_surfaces", surfaces);
-    const recovery = b.createModule(.{
-        .root_source_file = b.path("items/recovery/main.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    recovery.addImport("supervised_child", child);
-    recovery.addImport("pane_guard", pane_guard);
-    exe.root_module.addImport("rex_recovery", recovery);
-    const records = b.createModule(.{ .root_source_file = b.path("items/records/main.zig"), .target = target, .optimize = optimize });
-    records.addImport("supervised_child", child);
-    exe.root_module.addImport("rex_records", records);
     b.installArtifact(exe);
 
     const run = b.addRunArtifact(exe);

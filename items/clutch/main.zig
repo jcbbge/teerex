@@ -7,12 +7,10 @@ const usage =
     \\Held panes and guarded drafts queue without input; send --no-queue uses a bounded wait.
     \\release deletes the hold and drains. drain leaves the hold unchanged. Uncertain claims never replay.
     \\Private state: TEEREX_CLUTCH_DIR or ~/.local/state/teerex/clutch (0700), per canonical socket/session/pane.
-    \\prune [--apply]: plan/remove released records whose socket/session/pane is absent; preserves held/unknown; also cleans unowned settle files. Python3.9+.
     \\status and queue inspection read only; release also drains any pending queue on repeat. status is saved state, not live evidence.
     \\No expiry, automatic release, background drain or retry loop. Python3.9+ required for queue/drain.
     \\Store errors produce named failure_reason; send treats unreadable state as unknown and continues.
     \\Binds teerex writers only, never raw Rex writers or human keys. Not a server input lease.
-    \\Palette: teerex clutch palette --file ABS --socket ABS [--teerex ABS]
     \\Creates a new native two-action fragment; rexconfig owns installation and key bindings.
     \\Palette generation does not reload config or type. Hand back calls release, which may drain queued input.
     \\Exit: 0 recorded/status/queue/drained/generated; 1 unavailable/refused or drain stopped; 2 usage.
@@ -35,18 +33,6 @@ fn execute(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
     if (args.len == 1 and std.mem.eql(u8, args[0], "--help")) {
         try std.fs.File.stdout().writeAll(usage);
         return 0;
-    }
-    if (args.len > 0 and std.mem.eql(u8, args[0], "palette")) {
-        var argv: std.ArrayList([]const u8) = .empty;
-        try argv.appendSlice(allocator, &.{ "python3", "-I", "-c", @embedFile("palette.py"), try std.fs.selfExePathAlloc(allocator) });
-        try argv.appendSlice(allocator, args[1..]);
-        return std.process.execv(allocator, argv.items);
-    }
-    if (args.len > 0 and std.mem.eql(u8, args[0], "prune")) {
-        var argv: std.ArrayList([]const u8) = .empty;
-        try argv.appendSlice(allocator, &.{ "python3", "-I", "-c", @embedFile("prune.py") });
-        try argv.appendSlice(allocator, args[1..]);
-        return std.process.execv(allocator, argv.items);
     }
     var options = std.StringHashMap([]const u8).init(allocator);
     if (args.len == 0 or (!std.mem.eql(u8, args[0], "take") and !std.mem.eql(u8, args[0], "release") and !std.mem.eql(u8, args[0], "status") and !std.mem.eql(u8, args[0], "queue") and !std.mem.eql(u8, args[0], "drain"))) {

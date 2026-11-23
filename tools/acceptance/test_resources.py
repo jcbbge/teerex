@@ -238,19 +238,3 @@ def start_process(argv, *args, **kwargs):
     process.resource_record = record
     owner.add(record)
     return process
-
-
-def own_pane(binary, socket, session, block):
-    """Register the exact address from a successful real-server creation receipt."""
-    environment = {key: value for key, value in os.environ.items() if key in (
-        'HOME', 'PATH', 'AGENT_SESSION', 'AGENT_PANE', 'REX_SESSION', 'REX_BLOCK',
-        'LC_REX_SESSION', 'LC_REX_BLOCK', 'TEEREX_BOARDS_STORE', 'AGENT_REGISTRY', 'XDG_STATE_HOME')}
-    run().add(dict(kind='pane', command=[str(binary), 'surfaces', 'close', '--socket', str(socket),
-                    '--session', session, '--pane', block], environment=environment))
-
-
-def forget_pane(block):
-    owner = run()
-    owner.records = [record for record in owner.records
-                     if record['kind'] != 'pane' or record['command'][-1] != block]
-    owner.save()

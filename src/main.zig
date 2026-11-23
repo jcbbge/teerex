@@ -2,35 +2,16 @@ const std = @import("std");
 const version = @import("build_version").version;
 
 const usage =
-    \\teerex: an inspectable Rex operating layer
+    \\teerex: guarded input for Rex panes
     \\Usage: teerex [--rex ABS] COMMAND ...
-    \\       teerex --config ABS --host NAME COMMAND ...
-    \\       teerex targets resolve --config ABS --host NAME
-    \\       teerex targets exec --config ABS --host NAME [--tty] -- COMMAND ...
     \\       teerex --version
     \\
-    \\Operating-layer commands:
-    \\  surfaces resolve|session ensure|ensure|open|inspect|rename|move|focus|close  Visible terminals
-    \\  records init|new|park|add|attach|set|close|show|resume|navigate|list|lint|export|forget|forget-scratchpad  Private evidence and reasoning
-    \\  recovery snapshot|inspect|restore|update      Private snapshots and reviewed restoration
-    \\  snapshot|restore|update                       Recovery aliases; update is manual handoff
-    \\  fleet install|rollback                       Explicit named-host installation plan/apply
-    \\  targets resolve|exec                         Named-host lookup and explicit transport
-    \\  clutch take|release|drain|status|queue|palette|prune  Cooperative human takeover and hand-back
-    \\Pane observation and messaging: observe, compare, watch, send
-    \\Socket verbs default --socket from percent-decoded REX_SERVER (unix://), then platform home/runtime path.
-    \\Defaulted observe/watch receipts report socket_source. Explicit and named-host calls retain their contracts.
-    \\Use COMMAND --help for exact flags, effects, evidence and limits.
-    \\Inspectable Rex utilities: reads, waits, guarded sends, surfaces, records and recovery.
-    \\When: explicit invocation.
-    \\Where: configured command host; paths belong there, never silently uploaded.
-    \\Why: report actual activity/results and unknowns, not infer readiness or completion.
-    \\How: explicit config/host or socket/full IDs; no retries, fallback or autostart.
-    \\Python3.9+ is required for targets, recovery, records and fleet.
-    \\Seat-tab label protection is shared by pane closing and moving paths. SSH trust/key are explicit.
-    \\Personal install/restart/close/config actions need their own authorization.
-    \\Guides: docs/usage.md and items/{surfaces,recovery,records}/README.md.
+    \\  send                              Guarded paste and Enter with a JSON receipt
+    \\  clutch take|release|status|queue|drain
+    \\                                      Cooperative holds and queued delivery
     \\
+    \\Socket: --socket ABS, then unix:// REX_SERVER, then the local runtime path.
+    \\Use teerex COMMAND --help for flags and receipts.
 ;
 
 var active_command: []const u8 = "";
@@ -45,8 +26,6 @@ fn nextAction(code: u8) void {
     }
     const action = if (eq(active_command, "send"))
         "Confirm the target pane and whether the message arrived with its owner before sending again."
-    else if (eq(active_command, "surfaces"))
-        "Inspect the selected session and pane with teerex surfaces resolve before changing it again."
     else
         "teerex --help";
     std.debug.print("next: {s}\n", .{action});
@@ -66,17 +45,6 @@ fn finish(_: std.mem.Allocator, code: u8) noreturn {
     std.process.exit(code);
 }
 
-fn python(allocator: std.mem.Allocator, args: []const []const u8) !void {
-    var argv: std.ArrayList([]const u8) = .empty;
-    try argv.appendSlice(allocator, &.{ "python3", "-I", "-c", @embedFile("targets.py") });
-    try argv.appendSlice(allocator, args);
-    return std.process.execv(allocator, argv.items);
-}
-
-fn send(allocator: std.mem.Allocator, args: []const []const u8) !u8 {
-    return @import("rex_send").run(allocator, args);
-}
-
 fn run(allocator: std.mem.Allocator) !void {
     const all = try std.process.argsAlloc(allocator);
     var args: []const []const u8 = all[1..];
@@ -88,24 +56,6 @@ fn run(allocator: std.mem.Allocator) !void {
     if (args.len == 0 or (args.len == 1 and std.mem.eql(u8, args[0], "--help"))) {
         try std.fs.File.stdout().writeAll(usage);
         return;
-    }
-    if (std.mem.eql(u8, args[0], "targets")) return python(allocator, args[1..]);
-    if (std.mem.eql(u8, args[0], "--config") or std.mem.eql(u8, args[0], "--host")) {
-        var config: ?[]const u8 = null;
-        var host: ?[]const u8 = null;
-        var i: usize = 0;
-        while (i < args.len and std.mem.startsWith(u8, args[i], "--")) : (i += 2) {
-            if (i + 1 >= args.len) return error.GlobalOptionNeedsValue;
-            if (std.mem.eql(u8, args[i], "--config") and config == null) {
-                config = args[i + 1];
-            } else if (std.mem.eql(u8, args[i], "--host") and host == null) {
-                host = args[i + 1];
-            } else return error.UnknownOrRepeatedGlobalOption;
-        }
-        var forwarded: std.ArrayList([]const u8) = .empty;
-        try forwarded.appendSlice(allocator, &.{ "exec", "--config", config orelse return error.ExplicitConfigRequired, "--host", host orelse return error.ExplicitHostRequired, "--" });
-        try forwarded.appendSlice(allocator, args[i..]);
-        return python(allocator, forwarded.items);
     }
     if (std.mem.eql(u8, args[0], "--rex")) {
         if (args.len < 3 or !std.fs.path.isAbsolute(args[1])) return error.ExplicitRexExecutableRequired;
@@ -119,42 +69,17 @@ fn run(allocator: std.mem.Allocator) !void {
         std.debug.print("teerex: explicit Rex executable {s}; selected by --rex, not authenticated\n", .{args[1]});
         return std.process.execve(allocator, forwarded.items, &env);
     }
-    args = try withOperator(allocator, args);
     args = try withDefaultSocket(allocator, args);
     const command = args[0];
     const rest = args[1..];
-    if (std.mem.eql(u8, command, "fleet") and rest.len > 0 and (std.mem.eql(u8, rest[0], "install") or std.mem.eql(u8, rest[0], "rollback"))) {
-        const sources = @import("fleet_sources");
-        var forwarded: std.ArrayList([]const u8) = .empty;
-        try forwarded.appendSlice(allocator, &.{ "python3", "-I", "-c", @embedFile("fleet_bridge.py"), sources.controller, sources.worker, sources.installer, sources.resolver });
-        try forwarded.appendSlice(allocator, rest);
-        return std.process.execv(allocator, forwarded.items);
-    }
-    if (std.mem.eql(u8, command, "records")) finish(allocator, try @import("rex_records").run(allocator, rest));
-    if (std.mem.eql(u8, command, "recovery")) finish(allocator, try @import("rex_recovery").run(allocator, rest));
-    if (std.mem.eql(u8, command, "snapshot") or std.mem.eql(u8, command, "restore") or std.mem.eql(u8, command, "update")) finish(allocator, try @import("rex_recovery").run(allocator, args));
-    if (std.mem.eql(u8, command, "surfaces")) finish(allocator, try @import("rex_surfaces").run(allocator, rest));
-    if (std.mem.eql(u8, command, "clutch")) finish(allocator, try @import("rex_clutch").run(allocator, rest));
-    if (std.mem.eql(u8, command, "send")) finish(allocator, try send(allocator, rest));
-    if (eq(command, "observe") or eq(command, "compare") or eq(command, "watch")) finish(allocator, try @import("rex_observe").runObservations(allocator, args));
+    if (eq(command, "clutch")) finish(allocator, try @import("rex_clutch").run(allocator, rest));
+    if (eq(command, "send")) finish(allocator, try @import("rex_send").run(allocator, rest));
     std.debug.print("teerex: unknown command {s}; see teerex --help\n", .{command});
     finish(allocator, 2);
 }
 
 fn eq(a: []const u8, b: []const u8) bool {
     return std.mem.eql(u8, a, b);
-}
-
-// Kept as a compatibility flag; pane authority no longer depends on the caller.
-fn withOperator(allocator: std.mem.Allocator, args: []const []const u8) ![]const []const u8 {
-    var clean: std.ArrayList([]const u8) = .empty;
-    var program = false;
-    for (args) |arg| {
-        if (eq(arg, "--")) program = true;
-        if (!program and eq(arg, "--operator")) continue;
-        try clean.append(allocator, arg);
-    }
-    return clean.items;
 }
 
 fn hasOption(args: []const []const u8, flag: []const u8) bool {
@@ -165,25 +90,11 @@ fn hasOption(args: []const []const u8, flag: []const u8) bool {
     return false;
 }
 
-// Defaults fill required live targets. Configuration-backed and optional socket
-// selectors retain their own precedence; incomplete invocations reach leaf usage.
 fn takesSocket(args: []const []const u8) bool {
-    if (args.len == 0 or hasOption(args, "--help")) return false;
-    const command = args[0];
-    if (eq(command, "surfaces")) {
-        if (args.len > 2 and eq(args[1], "session") and eq(args[2], "ensure")) return hasOption(args, "--label");
-        return hasOption(args, "--session");
-    }
-    if (eq(command, "snapshot") or eq(command, "restore") or eq(command, "update") or eq(command, "recovery")) {
-        if (eq(command, "recovery") and (args.len < 2 or eq(args[1], "inspect"))) return false;
-        return hasOption(args, "--directory") or hasOption(args, "--timeout-ms");
-    }
-    if (!hasOption(args, "--session")) return false;
-    if (!hasOption(args, "--block")) return false;
-    if (eq(command, "observe")) return true;
-    if (eq(command, "watch")) return hasOption(args, "--baseline") and (hasOption(args, "--timeout-ms") or hasOption(args, "--no-deadline"));
-    if (eq(command, "send")) return hasOption(args, "--from") and hasOption(args, "--message-file");
-    return false;
+    if (args.len == 0 or hasOption(args, "--help") or !hasOption(args, "--session")) return false;
+    if (eq(args[0], "clutch")) return hasOption(args, "--pane");
+    return eq(args[0], "send") and hasOption(args, "--block") and
+        hasOption(args, "--from") and hasOption(args, "--message-file");
 }
 
 const SocketSelection = struct { path: []const u8, source: []const u8 };
@@ -223,17 +134,8 @@ fn withDefaultSocket(allocator: std.mem.Allocator, args: []const []const u8) ![]
         if (eq(arg, "--socket")) return args;
     }
     if (!takesSocket(args)) return args;
-    var env = try std.process.getEnvMap(allocator);
+    const env = try std.process.getEnvMap(allocator);
     const selected = try defaultSocket(allocator, &env);
-    try env.put("TEEREX_SOCKET_SOURCE", selected.source);
-    // The invocation owns this arena for its lifetime. Publish one complete,
-    // null-terminated environment for both native leaf snapshots and execv.
-    const environ = try std.process.createNullDelimitedEnvMap(allocator, &env);
-    if (@import("builtin").link_libc) {
-        std.c.environ = environ.ptr;
-    } else {
-        std.os.environ = @as([*][*:0]u8, @ptrCast(environ.ptr))[0..environ.len];
-    }
     @import("supervised_child").socket_source = selected.source;
     var resolved: std.ArrayList([]const u8) = .empty;
     var at: usize = 1;
