@@ -42,18 +42,12 @@ runtime selections on both API13 lanes are:
   `items/observe/test_observe.py`, `items/observe/test_state.py`;
 - guarded send and cooperative holds: `items/send/test_send.py`,
   `items/clutch/test_clutch.py`;
-- board event feed and responsibility registry:
-  `items/boardfeed/test_feed.py`, `items/jobs/test_jobs.py`;
 - public help and named-host routing: `src/test_help.py`, `src/test_targets.py`;
 - surfaces: `items/surfaces/test_surfaces.py`;
 - recovery and fleet installation: `items/recovery/test_recovery.py`,
   `tools/fleet-install/test_fleet_install.py`;
-- board replay: `items/board/test_board.py`;
 - records and decisions: `items/records/test_records.py`,
   `items/records/test_decisions.py`;
-- visible execution and execution cleanup: `items/run/test_visible.py`,
-  `items/run/test_run.py`;
-- doctor: `items/doctor/test_doctor.py`;
 - installer lifecycle and public-release controls:
   `tools/install/test_install.py --public`.
 
@@ -62,18 +56,11 @@ platform-specific cases; the workflow source and test decorators show those
 limits. The removed agent controller's launch/callback/channel/fence suites are
 not part of this workflow.
 
-Linux additionally runs the comparison class before downloading Rex, an
-explicit offline-only doctor pass, static executable checks, and the Mac
-cross-build. The comparison class repeats cases in the later full observation
-suite. The Linux preparation step installs disposable SSH/fence dependencies
+Linux additionally runs the comparison class before downloading Rex, checks the
+static executable, and cross-builds for Mac. The comparison class repeats
+cases in the later full observation suite. The Linux preparation step installs disposable SSH/fence dependencies
 and a fixture-specific bubblewrap AppArmor profile; it does not disable the
 system-wide user-namespace restriction.
-
-Linux execution and doctor regression suites are selected by the workflow.
-Doctor's Linux receipt still labels `run` as `not_applicable` with a macOS-only
-reason in [its implementation](../items/doctor/main.zig). That is a diagnostic
-limitation: it does not establish that Linux execution is unavailable. Doctor
-checks advertised bindings; it does not certify command behavior.
 
 The separate [loopback SSH acceptance](../tools/fleet-install/test_ssh.py) is an
 opt-in check requiring disposable sshd/sudo and generated keys. The workflow
@@ -130,6 +117,5 @@ individual contracts and receipts for what each check establishes.
 ## Estate builds (hive and M5)
 
 Use the [rexconfig build and install procedure](https://github.com/jcbbge/rexconfig#readme)
-for the estate. It owns the pinned build, cross-compilation on hive, verified
-installation and live checks on both machines. Disposable CI commands are not
+for the estate. It owns the pinned build and verified installation on hive. Disposable CI commands are not
 an M5 native-build or estate-install procedure.

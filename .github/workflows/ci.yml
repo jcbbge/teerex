@@ -109,13 +109,6 @@ jobs:
           TEEREX_BIN: ${{ github.workspace }}/zig-out/bin/teerex
         run: python3 items/observe/test_observe.py CompareTest -v
 
-      - name: Run disposable-Linux doctor offline regressions
-        if: runner.os == 'Linux'
-        env:
-          TEEREX_BIN: ${{ github.workspace }}/zig-out/bin/teerex
-          TEEREX_OFFLINE_ONLY: '1'
-        run: python3 items/doctor/test_doctor.py -v
-
       - name: Run installer lifecycle and public release controls
         if: runner.os == 'Linux' || matrix.rex-api == 13
         run: env -u TEEREX_CALL_LOG_DIR python3 tools/install/test_install.py --public -v
@@ -171,20 +164,6 @@ jobs:
           python3 items/send/test_send.py -v
           python3 items/clutch/test_clutch.py -v
 
-      - name: Run API13 board event feed contracts
-        if: matrix.rex-api == 13
-        env:
-          TEEREX_BIN: ${{ github.workspace }}/zig-out/bin/teerex
-          REX_BIN: ${{ runner.temp }}/rex-bin/rex
-        run: python3 items/boardfeed/test_feed.py -v
-
-      - name: Run API13 responsibility registry and presentation regressions
-        if: matrix.rex-api == 13
-        env:
-          TEEREX_BIN: ${{ github.workspace }}/zig-out/bin/teerex
-          REX_BIN: ${{ runner.temp }}/rex-bin/rex
-        run: python3 items/jobs/test_jobs.py -v
-
       - name: Run explicit named-host and embedded fleet bridge contracts
         env:
           TEEREX_BIN: ${{ github.workspace }}/zig-out/bin/teerex
@@ -227,12 +206,6 @@ jobs:
           python3 items/recovery/test_recovery.py -v
           python3 tools/fleet-install/test_fleet_install.py -v
 
-      - name: Run board replay PTY and named-host jump contracts
-        env:
-          TEEREX_BIN: ${{ github.workspace }}/zig-out/bin/teerex
-          REX_BIN: ${{ runner.temp }}/rex-bin/rex
-        run: python3 items/board/test_board.py -v
-
       - name: Run private records offline and disposable Rex contracts
         if: matrix.rex-api == 13
         env:
@@ -248,27 +221,3 @@ jobs:
           TEEREX_BIN: ${{ github.workspace }}/zig-out/bin/teerex
           REX_BIN: ${{ runner.temp }}/rex-bin/rex
         run: python3 items/recovery/test_recovery.py -v
-
-      - name: Run API13 visible foreground execution and cleanup contracts
-        if: matrix.rex-api == 13
-        env:
-          TEEREX_BIN: ${{ github.workspace }}/zig-out/bin/teerex
-          REX_BIN: ${{ runner.temp }}/rex-bin/rex
-        run: python3 items/run/test_visible.py -v
-
-      - name: Refuse visible execution before creation on older APIs
-        if: matrix.rex-api != 13
-        env:
-          TEEREX_BIN: ${{ github.workspace }}/zig-out/bin/teerex
-          REX_BIN: ${{ runner.temp }}/rex-bin/rex
-        run: python3 items/run/test_visible.py VisibleTest.test_observed_api_gate_precedes_creation -v
-
-      - name: Run disposable execution and cleanup regressions
-        env:
-          TEEREX_BIN: ${{ github.workspace }}/zig-out/bin/teerex
-        run: python3 items/run/test_run.py -v
-
-      - name: Run disposable doctor regressions
-        env:
-          TEEREX_BIN: ${{ github.workspace }}/zig-out/bin/teerex
-        run: python3 items/doctor/test_doctor.py -v

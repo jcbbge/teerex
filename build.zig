@@ -35,18 +35,11 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    const rex_run = b.createModule(.{
-        .root_source_file = b.path("items/run/main.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
     observation.addImport("supervised_child", child);
     const pane_guard = b.createModule(.{ .root_source_file = b.path("src/pane_guard.zig"), .target = target, .optimize = optimize });
     child.addImport("pane_guard", pane_guard);
     exe.root_module.addImport("pane_guard", pane_guard);
-    rex_run.addImport("supervised_child", child);
     exe.root_module.addImport("supervised_child", child);
-    exe.root_module.addImport("rex_run", rex_run);
     const send = b.createModule(.{
         .root_source_file = b.path("items/send/main.zig"),
         .target = target,
@@ -58,20 +51,6 @@ pub fn build(b: *std.Build) void {
     exe.root_module.addImport("rex_clutch", clutch);
     clutch.addImport("supervised_child", child);
     exe.root_module.addImport("rex_send", send);
-    const doctor = b.createModule(.{
-        .root_source_file = b.path("items/doctor/main.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    doctor.addImport("supervised_child", child);
-    exe.root_module.addImport("rex_doctor", doctor);
-    const jobs = b.createModule(.{
-        .root_source_file = b.path("items/jobs/main.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    jobs.addImport("supervised_child", child);
-    exe.root_module.addImport("rex_jobs", jobs);
     const surfaces = b.createModule(.{
         .root_source_file = b.path("items/surfaces/main.zig"),
         .target = target,
@@ -90,10 +69,6 @@ pub fn build(b: *std.Build) void {
     const records = b.createModule(.{ .root_source_file = b.path("items/records/main.zig"), .target = target, .optimize = optimize });
     records.addImport("supervised_child", child);
     exe.root_module.addImport("rex_records", records);
-    const board = b.createModule(.{ .root_source_file = b.path("items/board/main.zig"), .target = target, .optimize = optimize });
-    board.addImport("fleet_sources", fleet_module);
-    exe.root_module.addImport("rex_board", board);
-    exe.root_module.addImport("rex_boardfeed", b.createModule(.{ .root_source_file = b.path("items/boardfeed/main.zig"), .target = target, .optimize = optimize }));
     b.installArtifact(exe);
 
     const run = b.addRunArtifact(exe);

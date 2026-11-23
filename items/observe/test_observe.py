@@ -460,11 +460,6 @@ class ObserveTest(unittest.TestCase):
         explicit = self.observe(self.a)
         self.assertNotIn("socket_source", json.loads(explicit.stdout))
         self.assertEqual(set(json.loads(explicit.stdout)["capture"]), {"scope", "portion", "max_bytes", "complete", "content"})
-        if self.rex_json("api", "call", "server.version")["api_revision"] == 13:
-            probe = subprocess.run([str(BIN), "boards", "probe"], env=dict(isolated_environment(), REX_SERVER=encoded),
-                                   capture_output=True, text=True, timeout=10)
-            self.assertEqual(probe.returncode, 0, probe.stderr)
-            self.assertEqual(json.loads(probe.stdout)["socket_source"], "REX_SERVER")
         for endpoint in ("tcp://localhost:123", "unix://relative", "unix:///tmp/%QQ", "unix:///tmp/%+1", "unix:///tmp/%00"):
             result = subprocess.run(command, env=dict(isolated_environment(), REX_SERVER=endpoint),
                                     capture_output=True, text=True, timeout=5)
@@ -474,17 +469,20 @@ class ObserveTest(unittest.TestCase):
     def test_platform_socket_default_is_reported_without_contact(self):
         if not ROOT_SOCKET_DEFAULTS: self.skipTest("combined-root defaults do not apply to standalone cartridges")
         shim = self.root / "socket-default-rex"
-        shim.write_text(f"#!{sys.executable}\nimport sys\nsys.exit(7)\n")
+        shim.write_text(
+            f"#!{sys.executable}\nimport os,sys\n"
+            "print(os.environ['TEEREX_SOCKET_SOURCE'], sys.argv[sys.argv.index('--server')+1], file=sys.stderr)\n"
+            "sys.exit(7)\n")
         shim.chmod(0o700)
-        env = dict(isolated_environment(), TEEREX_REX=str(shim), TEEREX_INTERNAL_REX=str(shim))
+        env = dict(isolated_environment(), TEEREX_INTERNAL_REX=str(shim))
         env.pop("REX_SERVER", None)
-        result = subprocess.run([str(BIN), "doctor", "--timeout-ms", "5000"], env=env, capture_output=True, text=True, timeout=5)
+        command = [str(BIN), "observe", "--session", self.a[0], "--block", self.a[1]]
+        result = subprocess.run(command, env=env, capture_output=True, text=True, timeout=5)
         self.assertEqual(result.returncode, 1, result.stderr)
-        packet = json.loads(result.stdout)
-        self.assertEqual(packet["socket_source"], "platform_default")
+        self.assertEqual(result.stdout, "")
         expected = (str(Path.home() / "Library/Application Support/rex/server.sock") if sys.platform == "darwin"
                     else f"/run/user/{os.getuid()}/rex/server.sock")
-        self.assertEqual(packet["server"], "unix://" + expected)
+        self.assertIn("platform_default unix://" + expected, result.stderr)
 
     def test_tail_exact_unicode_and_same_blob_continuation(self):
         text = ('head α🙂 \\ \" <&>\t\n' * 900) + "LATEST β🙂 END\n"
@@ -1110,14 +1108,15 @@ class ObserveTest(unittest.TestCase):
         missing = self.root / "watch-missing.sock"
         before["target"]["server"] = "unix://" + str(missing)
         baseline.write_text(json.dumps(before), encoding="utf-8")
-        for env in [None, dict(isolated_environment(), PATH="/no-rex-available")]:
+        for env, reason in [(None, "ObservationCommandFailed"),
+                            (dict(isolated_environment(), PATH="/no-rex-available"), "RexExecutableNotFound")]:
             with self.subTest(env=env is None):
                 result = subprocess.run(self.watch_command(self.a, baseline, socket=missing), env=env,
                                         capture_output=True, text=True, timeout=5)
                 self.assertEqual(result.returncode, 1, result.stderr)
                 packet = json.loads(result.stdout)
                 self.assertEqual(packet["outcome"], "observation_failed")
-                self.assertEqual(packet["failure_reason"], "ObservationCommandFailed")
+                self.assertEqual(packet["failure_reason"], reason)
                 self.assertIsNone(packet["last_comparison"])
                 self.assertIsNone(packet["unknown_fields"])
                 self.assertFalse(missing.exists())
@@ -1286,9 +1285,9 @@ class ObserveTest(unittest.TestCase):
                          "if f then f:close(); error('CONTROLLED_QUERY_FAILURE') end; "
                          "return original(...) end\n")
                 shim.write_text(
-                    f"#!{sys.executable}\nimport os,sys\n"
-                    "i=sys.argv.index('-e')+1\n"
-                    f"sys.argv[i]={fault!r}+sys.argv[i]\n"
+                    f"#!{sys.executable}\nimport os,sys\nfrom pathlib import Path\n"
+                    "script=Path(sys.argv[sys.argv.index('--args')-1])\n"
+                    f"script.write_text({fault!r}+script.read_text())\n"
                     f"os.execv({self.rex!r},[{self.rex!r},*sys.argv[1:]])\n", encoding="utf-8",
                 )
                 shim.chmod(0o700)

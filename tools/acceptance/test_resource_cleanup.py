@@ -90,8 +90,7 @@ class CleanupTest(unittest.TestCase):
     def test_test_and_proof_allocators_use_owned_helpers(self):
         root = Path(__file__).resolve().parents[2]
         paths = {*root.glob('items/**/test*.py'), *root.glob('src/test*.py'),
-                 *root.glob('tools/**/test*.py'), *root.glob('tools/acceptance/*.py'),
-                 root / 'items/board/measure.py', root / 'items/board/measure_memory.py'}
+                 *root.glob('tools/**/test*.py'), *root.glob('tools/acceptance/*.py')}
         unmanaged = []
         for path in paths:
             # F6 deliberately hands detached children to its enclosing proof,

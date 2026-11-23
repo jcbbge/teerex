@@ -1,10 +1,8 @@
 # Select and verify teerex
 
-For hive and the M5, use the single
+On hive, use the
 [rexconfig build and install procedure](https://github.com/jcbbge/rexconfig#readme).
-It owns the build pin, cross-compilation, verified managed installation and live
-checks. Read it before changing either machine. A manually copied binary is not
-a complete managed release.
+It owns the build pin, verified managed installation and live checks.
 
 For the general installer contract, archive checks, retained-version rollback and
 removal, see [install.md](../install.md). For named-host deployment receipts, see
@@ -18,13 +16,9 @@ After installation, inspect the selected executable:
 ```sh
 teerex --version
 teerex --help
-teerex doctor --all
 ```
 
-`doctor --all` checks configured builds, Rex connectivity, guarded surface
-resolution, rexconfig drift and harness-hook presence. It reports what it checked;
-it does not certify every utility workflow. Run the focused live check for the
-operation being changed. Installation does not restart Rex.
+Run the focused live check for the operation being changed. Installation leaves Rex running.
 
 ## Read a pane
 

@@ -65,52 +65,23 @@ class RefusalNextTest(unittest.TestCase):
                         expected='before sending again')
         self.assertFalse(json.loads(p.stdout)['retry_safe'])
 
-
-
-
-
     def test_surfaces(self):
         self.refusal('surfaces', 'open', '--not-an-option', expected='teerex surfaces --help')
         self.refusal('surfaces', 'resolve', '--socket', self.root / 'absent.sock',
                      '--session', SESSION, '--pane', BLOCK, '--timeout-ms', '100', expected='before changing it again')
 
-    def test_ask(self):
-        self.refusal('ask', expected='teerex ask --help')
-        self.refusal('ask', '--store', self.root / 'boards', '--host', 'fixture', '--socket', '/absent.sock',
-                     '--session', SESSION, '--block', BLOCK, '--from', 'fixture', '--teerex', BIN,
-                     '--card-file', self.root / 'absent.json', expected='before sending again')
-
-    def test_board(self):
-        self.refusal('board', '--not-an-option', expected='teerex board --help')
-        self.refusal('board', '--replay', self.root / 'absent.jsonl', '--json', expected='teerex board --help')
-
-        self.refusal('board', 'feed', '--not-an-option', expected='teerex board feed --help')
-        self.refusal('board', 'feed', '--config', 'relative', '--once', expected='teerex board feed --help')
-
-    def test_boards(self):
-        self.refusal('boards', 'state', 'inspect', '--store', 'relative', expected='teerex boards --help')
-        self.refusal('boards', 'inbox', '--not-an-option', expected='teerex boards inbox --help')
-
-    def test_doctor(self):
-        self.refusal('doctor', '--not-an-option', expected='teerex doctor --help')
-        self.refusal('doctor', '--socket', self.root / 'absent.sock', '--timeout-ms', '100', expected='server socket')
-        self.refusal('doctor', '--all', '--config', self.root / 'absent.json', expected='teerex doctor --all --help')
-
     def test_named_host_routing_refusal(self):
-        for command in ('send', 'scratch', 'surfaces', 'ask', 'board', 'doctor'):
+        for command in ('send', 'surfaces'):
             with self.subTest(command=command):
                 self.refusal('--config', self.root / 'absent.json', '--host', 'fixture', command,
                              expected='Check the selected host and configuration file')
 
     def test_help_and_success_do_not_print_next(self):
-        for command in ('send', 'scratch', 'surfaces', 'ask', 'board', 'boards', 'doctor'):
+        for command in ('send', 'surfaces'):
             with self.subTest(command=command):
                 p = subprocess.run([BIN, command, '--help'], env=self.env, capture_output=True, text=True, timeout=15)
                 self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
                 self.assertNotIn('next: ', p.stderr)
-        p = subprocess.run([BIN, 'scratch', 'path'], env=self.env, capture_output=True, text=True, timeout=15)
-        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
-        self.assertNotIn('next: ', p.stderr)
 
 
 if __name__ == '__main__':

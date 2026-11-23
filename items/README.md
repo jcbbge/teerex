@@ -1,35 +1,13 @@
-# Independent cartridges
+# teerex items
 
-**Alpha.5 operating-layer additions:** [surfaces](surfaces/README.md), [boards](boards/README.md) and [recovery](recovery/README.md) are tested composed commands in the combined CLI. They are not yet independent native cartridge packages; the established ten-Mac/seven-Linux payload catalog below is unchanged. [Named fleet installation](../docs/fleet-install.md) installs the combined CLI. Read the [alpha.5 scope and unfinished migration gates](../docs/releases/v0.1.0-alpha.5.md), not the historical alpha.4 checklist as a promise of full operating-layer completion.
+| Item | Commands |
+| --- | --- |
+| [Send](send/README.md) | `send` |
+| [Surfaces](surfaces/README.md) | `surfaces` |
+| [Clutch](clutch/README.md) | `clutch` |
+| [Observe](observe/README.md) | `observe`, `watch`, `compare` |
+| [Records](records/README.md) | `records` |
+| [Recovery](recovery/README.md) | `recovery`, `snapshot`, `restore`, `update` |
 
-[Records](records/README.md) adds private evidence and Rex park/resume as a combined-CLI composition, not a cartridge.
-
-**Ten experimental items exist:** [observe/compare/watch](observe/README.md), [run](run/README.md), [offstage](offstage/README.md), [doctor](doctor/README.md), [maneuver-check and libraries](maneuvers/README.md), [filter and historical cache](filter/README.md), visible [spawn](spawn/README.md), whole-message [send](send/README.md), [jobs/presentation](jobs/README.md), and [read-only adapters](adapters/README.md). Alpha.4 adds [independent native cartridge packaging/lifecycle](../docs/cartridges.md), separate from the [shared-CLI installer](../docs/install.md). Mac catalogs contain ten payloads; Linux seven, excluding runtime run/doctor/offstage. No item is ready; ready-only all selects zero unless experiments are explicitly admitted. New commands are not in older tagged binaries; use [current alpha.5 setup](../docs/concierge/setup.md) and the [exact release](../docs/releases/v0.1.0-alpha.5.md) before installation. This does not define a native Rex graphical plugin API.
-
-Each independently packaged helper is a **cartridge** in the shared console, with its own `items/<item-id>/` directory; new combined-CLI modules are not cartridges merely because they have an item directory. A cartridge can be a Lua script, configuration action, terminal program, or another supported extension. Do not create empty item directories just to make the catalogue look populated.
-
-Cartridges use the same human/agent-facing individual or bulk lifecycle. Alpha.4's [exact dependency, cooperative in-use and retained-data contract](../docs/cartridges.md) implements that boundary without claiming Rex hot-unload, sandbox enforcement or permissions from installation. Removal can refuse while a cooperating invocation/dependent is active; it never deletes data or kills workers.
-
-## What a real item must provide
-
-Keep this in the item's README and implementation; independently packaged payloads also follow the existing [schema-1 manifest contract](../docs/cartridges.md#manifest-and-dependency-contract):
-
-- A stable item ID, purpose, lifecycle status, and exact supported Rex/runtime/OS versions. Use `proposed`, `experimental`, or `ready` honestly.
-- Its own source/configuration and provenance/license/dependency information. Do not bundle Rex itself without permission.
-- Individual install, invocation, verification, upgrade, and uninstall instructions. Explain destination paths, required permissions, and every persistent change.
-- No silent replacement of `init.lua`, key bindings, server configuration, or another item's files. Back up and explain any intentional integration.
-- Observable verification on the claimed Rex version and environment. A copied example or schema match is not an end-to-end test.
-- Explicit treatment of secrets, remote hosts, process lifetime, and user approval for consequential controls.
-- A usable human workflow and documented agent-facing contract. Work through permissions and lifecycle behavior collaboratively when the relevant operation needs them; do not require an upfront system-wide questionnaire or equate first-class agent use with unrestricted authority.
-
-Only a tested, independently installable item can be marked `ready` and enter the [all-items collection](../collections/all.md). Record compatibility conflicts and exclusions rather than treating bulk installation as permission to overwrite files.
-
-The first item addresses Phase 3 #1's bounded, target-attributed observation, with Phase 3 #8 limited to the method bindings it needs. It does not assume that a Rivet API, native graphical plugin SDK, or VPS deployment exists. Joshua approved small build-and-validate increments after accepting the phase review as definitive history. The initial preference was a minimal Zig CLI on his M5 MacBook. His subsequent setup brief adds the existing hive/Linux target and visible spawn/send, not a new VPS deployment or finalized console design; see the [direction record](../docs/direction.md).
-
-Its `watch` command adds C09's read-only `observe_until_changed` and selected status-report predicate without inventing another cartridge: a caller-selected baseline/target, bounded foreground polling, separate value/availability/unknown evidence and deadline/cancellation/error outcomes. It shares tested process-group supervision with `run`, not terminal-input authority or a background service. One persistent Rex/Lua connection performs the same five non-atomic reads per sample. A retained matching status report does not satisfy the predicate unless its evidence differs from the original baseline; a match never proves completion or freshness. The [observation contract](observe/README.md#acquisition-sustained-polling-and-status-evidence--12-november-2026) records measured acquisition/CPU gains and limitations, including the concrete finding that native Rex ownership is not an input lease.
-
-The next item addresses Phase 3 #3's selected run-and-collect slice through Rex's local Lua subprocess interface: explicit argv/cwd, bounded captured bytes, real exit/timeout evidence and scoped cancellation/cleanup. It does not grant authority to type into an existing terminal, run on the selected server, or kill arbitrary jobs. The [run contract](run/README.md) records actual child-lifetime findings and limits rather than claiming a sandbox or whole-process-tree guarantee. Non-Rex ownership groups remain preserved and unassigned.
-
-The Phase 3 #4 offstage slice creates one addressable terminal outside layouts with an explicit purpose, foreground owner, deadline and close rule. It observes real reported exit, verifies created-block absence and labels uncertain creation/cleanup separately. It never adopts existing blocks or changes windows/focus. SIGKILL/crash can leave a terminal; resistant descendants can outlive close. This is a bounded C12/C13 subset, not a durable registry, automatic C14 presentation or C15 isolation.
-
-Phase 3 #6's maneuver-check is only a manually authored recognizable-start check against saved evidence, with exact match/mismatch/unknown results. It provides no replay, fresh-prompt guard or approval. Phase 3 #7's offline filter only omits identical heavy evidence payloads and retains every adjacent comparison/unknown plus a full latest checkpoint. Phase 3 #8's Mac doctor accepts integer API10–13 with overlapping CLI/server support and checks selected advertised shapes/bindings without terminal reads or program execution; it does not certify behavior/permission, and spawn/send/offstage remain unassessed by doctor. Each item's README documents these narrower contracts, evidence and outstanding original requirements.
+The [usage guide](../docs/usage.md) has examples. The [fleet installer](../docs/fleet-install.md)
+handles installation and rollback of the combined CLI.

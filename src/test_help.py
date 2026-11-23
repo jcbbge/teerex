@@ -33,14 +33,11 @@ class PythonHelpTest(unittest.TestCase):
                                 capture_output=True, text=True, timeout=10)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("unknown command", (result.stdout + result.stderr).lower())
-        help_result = subprocess.run([BIN, "run-visible", "--help"], env=isolated_environment(),
-                                     capture_output=True, text=True, timeout=10)
-        self.assertEqual(help_result.returncode, 0)
-        self.assertNotIn("--channel-dir", help_result.stdout)
 
     def test_retired_commands_are_unknown(self):
         for command in ("tour", "cartridges", "mcp", "replay", "adapters", "maneuver-check",
-                        "filter", "log", "offstage", "spawn", "waiting", "docs"):
+                        "filter", "offstage", "spawn", "waiting", "board", "boardfeed",
+                        "jobs", "log", "docs", "doctor", "run", "run-visible"):
             with self.subTest(command=command):
                 result = subprocess.run([BIN, command], env=isolated_environment(),
                                         capture_output=True, text=True, timeout=10)
@@ -64,7 +61,6 @@ class PythonHelpTest(unittest.TestCase):
             ("records",),
             ("recovery",), ("targets",),
             ("targets", "resolve"), ("targets", "exec"),
-            ("run-visible",), ("run-visible", "receipt"),
             ("observe", "--state"), ("clutch", "palette"),
             ("fleet", "install"), ("fleet", "rollback"),
         ]

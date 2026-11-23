@@ -13,11 +13,10 @@ NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}\Z")
 PATH_FIELDS = ("home", "socket", "rex", "teerex")
 # Selectors belong to complete leaves, not command families. Offline leaves receive
 # no Rex target.
-SELECTORS = {("board", "feed"): ("socket",), **{(verb,): ("socket",) for verb in
-                ("observe", "watch", "run", "run-visible", "doctor", "snapshot", "restore", "update")},
+SELECTORS = {**{(verb,): ("socket",) for verb in
+                ("observe", "watch", "snapshot", "restore", "update")},
              **{("surfaces", op): ("socket",) for op in ("open", "ensure", "resolve", "inspect", "rename", "move", "focus", "close")},
              **{("surfaces", "session", op): ("socket",) for op in ("ensure", "close")},
-             **{("jobs", op): ("socket",) for op in ("track", "inspect", "adopt", "present", "forget")},
              **{("recovery", op): ("socket",) for op in ("snapshot", "restore", "update")},
              ("send",): ("socket",),
              **{("clutch", op): ("socket",) for op in ("take", "release", "drain", "status", "queue", "palette")},

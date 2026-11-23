@@ -34,7 +34,7 @@ const usage =
     \\a focused source because Rex moves its focus too. Explicit yes permits that and verifies focus.
     \\Focus explicitly selects the pane/window. Close explicitly ends that block, including the last pane;
     \\close verifies absence from view/list, not death of all descendant/remote processes.
-    \\close --publish-receipt-file ABS atomically completes a private prepared run-visible receipt.json.
+    \\close --publish-receipt-file ABS atomically completes a private prepared close receipt.json.
     \\Target must match; one close attempt; hard exit after timeout+2000ms includes publication.
     \\If killed, prepared exit/output evidence remains, with block_absence unknown.
     \\Open actual terminal programs, not graphical widgets. Tiled/float need an attached terminal anchor;
@@ -194,7 +194,7 @@ fn executionFailure(allocator: std.mem.Allocator, action: []const u8, err: anyer
     return std.fmt.allocPrint(allocator, "{s}: {s}", .{ action, detail });
 }
 
-// Detached run-visible prepares exit/output evidence before its own pane is closed.
+// A caller can prepare a receipt before its pane is closed.
 // Only this already bounded native close may replace unknown absence with its ACK.
 const ReceiptPublisher = struct {
     dir: std.fs.Dir,

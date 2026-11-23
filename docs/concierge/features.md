@@ -8,16 +8,13 @@ provides examples. Paths and endpoints belong to the selected command host.
 | --- | --- |
 | Read a pane or inspect its reported state | [observe](../../items/observe/README.md): attributed screen/process/status evidence and explicit unknowns |
 | Compare observations or wait for change | [compare and watch](../../items/observe/README.md): retain source identity and distinguish a change from successful completion |
-| Run a visible command and recover its actual exit/output | [run-visible](../../items/run/VISIBLE.md): explicit argv, environment, working directory and receipt |
 | Deliver one guarded message | [send](../../items/send/README.md): typing guard, input evidence and cooperative hold handling |
 | Open, resolve, move, focus or close terminals | [surfaces](../../items/surfaces/README.md): visible Rex objects and exact target receipts |
-| View live panes, tasks and machine vitals | [board](../../items/board/README.md) and [board feed](../../items/boardfeed/README.md): read projections from their current sources |
 | Keep evidence, decisions or a parked handoff | [records](../../items/records/README.md): private structured records and attached evidence |
 | Hold and hand back a pane | [clutch](../../items/clutch/README.md): cooperative takeover and queued delivery |
 | Snapshot or review restoration | [recovery](../../items/recovery/README.md): explicit snapshots and reviewed restore operations |
 | Select another command host | [named hosts](../alpha5.md): explicit target configuration and transport |
 | Install a selected build or activate a retained build | [fleet](../fleet-install.md) and [setup](setup.md): verified per-host installation receipts |
-| Inspect configuration and connectivity | `doctor --all`: configured build, Rex, rexconfig and hook checks |
 
 ## Agent lifecycle
 

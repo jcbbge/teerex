@@ -1,6 +1,6 @@
 # teerex
 
-Josh's operating layer for [Rex](https://www.superlogical.com/rex): one CLI that every agent and every human uses to run, watch, message and arrange work in Rex terminals on his machines (hive and the M5). It is personal software for an opinionated SDLC. It is not a Rex fork, a daemon or a plugin.
+Josh's operating layer for [Rex](https://www.superlogical.com/rex): a CLI on hive for reading, watching, messaging and arranging Rex terminals. It is personal software for an opinionated SDLC. It is not a Rex fork, a daemon or a plugin.
 
 Start with [docs/usage.md](docs/usage.md), the guide to the Rex utilities.
 
@@ -11,14 +11,13 @@ Licensed under [Apache-2.0](LICENSE) for teerex's original material. Third-party
 | Need | Command |
 | --- | --- |
 | Read a pane, or wait until it changes or reports done/error | `observe` (`--tail` for the newest output, `--state` for agent state), `watch`, `compare` |
-| Run a command in a visible tab and get its real exit and output | `run-visible` (`--detach` returns at once; `run-visible receipt` reads the result) |
 | Open, find, rename, move, focus or close panes and sessions | `surfaces open/ensure/resolve/rename/move/focus/close`, `surfaces session ensure/close` |
 | Message a pane without clobbering what someone is typing | `send` (typing guard on by default) |
 | Take a pane back from agents, and hand it back | `clutch take/release` (cooperative) |
-| See who owns what and what ran | `jobs`, `board` |
+| Store private evidence and decisions | `records` |
 | Survive a Rex restart | `recovery snapshot/restore/update` |
-| Work on another machine by name | `--config ~/.config/teerex/hosts.json --host hive\|m5 COMMAND …` |
-| Check the machine | `doctor` |
+| Select a configured command host | `--config ~/.config/teerex/hosts.json --host hive COMMAND …` |
+| Install or roll back a verified build | `fleet install/rollback` |
 
 Managed workers report each turn end with one `DONE` or `NOT DONE` answer. Full last words accompany completion or a flag once; waiting answers contain the wait and next check time.
 
@@ -35,9 +34,9 @@ like `records_store`. It is a path on the selected command host. If omitted,
 recovery uses `<host.home>/.local/state/teerex-recovery`.
 
 ```sh
-teerex --config ~/.config/teerex/hosts.json --host m5 recovery snapshot
-teerex --config ~/.config/teerex/hosts.json --host m5 recovery inspect
-teerex --config ~/.config/teerex/hosts.json --host m5 recovery restore
+teerex --config ~/.config/teerex/hosts.json --host hive recovery snapshot
+teerex --config ~/.config/teerex/hosts.json --host hive recovery inspect
+teerex --config ~/.config/teerex/hosts.json --host hive recovery restore
 ```
 
 Routing supplies `--root` and the selected host's socket where needed.

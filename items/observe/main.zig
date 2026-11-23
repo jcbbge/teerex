@@ -38,26 +38,6 @@ const observation_usage =
     \\
 ;
 
-const usage = observation_usage ++
-    \\       teerex run --socket /absolute/path --cwd /absolute/path [--timeout-ms N] [--max-bytes N] -- ARGV...
-    \\       teerex offstage --socket /absolute/path --session session:UUID --cwd /absolute/path --purpose TEXT --timeout-ms N -- ARGV...
-    \\       teerex doctor --socket /absolute/path [--timeout-ms N] [--baseline FILE]
-    \\       teerex maneuver-check --definition FILE --observation FILE --socket /absolute/path --session session:UUID --block block:UUID
-    \\       teerex maneuver-check --library FILE --list
-    \\       teerex maneuver-check --library FILE [--before FILE] --observation FILE --socket /absolute/path --session session:UUID --block block:UUID
-    \\       teerex filter --sample FILE --sample FILE [--sample FILE ...]
-    \\       teerex filter cache put|get|purge --help
-    \\       teerex jobs track|list|inspect|adopt|present|forget --help
-    \\       teerex adapters generate|call --help
-    \\       teerex send --socket /absolute/path --session session:UUID --block block:UUID --from LABEL --message-file /absolute/path [--timeout-ms N]
-    \\       teerex spawn --socket /absolute/path --session session:UUID --name LABEL --cwd /absolute/path
-    \\                    --report-to-session session:UUID --report-to-block block:UUID [--timeout-ms N] -- ARGV...
-    \\
-    \\Run executes supplied argv LOCALLY on macOS, not in a terminal or on the selected server.
-    \\Run is not a sandbox: the program can modify files/use your account's authority. See run --help.
-    \\
-;
-
 const Process = struct {
     pid: i64,
     name: []const u8,
@@ -317,13 +297,6 @@ const WatchCollector = struct {
     }
 };
 
-pub fn main() void {
-    run() catch |err| {
-        std.debug.print("teerex: {s}\n", .{@errorName(err)});
-        std.process.exit(1);
-    };
-}
-
 fn usageError(message: []const u8) noreturn {
     std.debug.print("teerex: {s}\n{s}", .{ message, observation_usage });
     std.process.exit(2);
@@ -337,27 +310,6 @@ fn fullId(value: []const u8, prefix: []const u8) bool {
         } else if (!std.ascii.isHex(c)) return false;
     }
     return true;
-}
-
-fn run() !void {
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena.deinit();
-    const allocator = arena.allocator();
-    const args = try std.process.argsAlloc(allocator);
-    if (args.len == 2 and std.mem.eql(u8, args[1], "--help")) {
-        try std.fs.File.stdout().writeAll(usage);
-        return;
-    }
-    if (args.len >= 2 and std.mem.eql(u8, args[1], "run")) std.process.exit(try @import("rex_run").run(allocator, args[2..]));
-    if (args.len >= 2 and std.mem.eql(u8, args[1], "offstage")) std.process.exit(try @import("rex_offstage").run(allocator, args[2..]));
-    if (args.len >= 2 and std.mem.eql(u8, args[1], "doctor")) std.process.exit(try @import("rex_doctor").run(allocator, args[2..]));
-    if (args.len >= 2 and std.mem.eql(u8, args[1], "jobs")) std.process.exit(try @import("rex_jobs").run(allocator, args[2..]));
-    if (args.len >= 2 and std.mem.eql(u8, args[1], "adapters")) std.process.exit(try @import("rex_adapters").run(allocator, args[2..]));
-    if (args.len >= 2 and std.mem.eql(u8, args[1], "maneuver-check")) std.process.exit(try @import("rex_maneuvers").run(allocator, args[2..], @This()));
-    if (args.len >= 2 and std.mem.eql(u8, args[1], "filter")) std.process.exit(try @import("rex_filter").run(allocator, args[2..], @This()));
-    if (args.len >= 2 and std.mem.eql(u8, args[1], "send")) std.process.exit(try @import("rex_send").run(allocator, args[2..]));
-    if (args.len >= 2 and std.mem.eql(u8, args[1], "spawn")) std.process.exit(try @import("rex_spawn").run(allocator, args[2..]));
-    std.process.exit(try runObservations(allocator, args[1..]));
 }
 
 /// Observation-only CLI entry point. Args start with observe, compare, or watch,

@@ -11,21 +11,18 @@ const usage =
     \\
     \\Operating-layer commands:
     \\  surfaces resolve|session ensure|ensure|open|inspect|rename|move|focus|close  Visible terminals
-    \\  board [--replay FILE] | feed              Live themed stream and machine vitals
     \\  records init|new|park|add|attach|set|close|show|resume|navigate|list|lint|export|forget|forget-scratchpad  Private evidence and reasoning
     \\  recovery snapshot|inspect|restore|update      Private snapshots and reviewed restoration
     \\  snapshot|restore|update                       Recovery aliases; update is manual handoff
     \\  fleet install|rollback                       Explicit named-host installation plan/apply
     \\  targets resolve|exec                         Named-host lookup and explicit transport
-    \\  run-visible                                  Visible noninteractive argv, output and actual exit
     \\  clutch take|release|drain|status|queue|palette|prune  Cooperative human takeover and hand-back
-    \\Existing tools: observe, compare, watch, run, doctor, send,
-    \\                jobs
+    \\Pane observation and messaging: observe, compare, watch, send
     \\Socket verbs default --socket from percent-decoded REX_SERVER (unix://), then platform home/runtime path.
-    \\Defaulted observe/watch/doctor receipts report socket_source. Explicit and named-host calls retain their contracts.
+    \\Defaulted observe/watch receipts report socket_source. Explicit and named-host calls retain their contracts.
     \\Use COMMAND --help for exact flags, effects, evidence and limits.
-    \\Inspectable Rex utilities: reads, waits, guarded sends, surfaces, records, recovery and boards.
-    \\When: explicit invocation; visible commands and boards remain inspectable.
+    \\Inspectable Rex utilities: reads, waits, guarded sends, surfaces, records and recovery.
+    \\When: explicit invocation.
     \\Where: configured command host; paths belong there, never silently uploaded.
     \\Why: report actual activity/results and unknowns, not infer readiness or completion.
     \\How: explicit config/host or socket/full IDs; no retries, fallback or autostart.
@@ -50,10 +47,6 @@ fn nextAction(code: u8) void {
         "Confirm the target pane and whether the message arrived with its owner before sending again."
     else if (eq(active_command, "surfaces"))
         "Inspect the selected session and pane with teerex surfaces resolve before changing it again."
-    else if (eq(active_command, "board"))
-        "Check the selected hosts with teerex doctor --all; run teerex board --help for command options."
-    else if (eq(active_command, "doctor"))
-        "Check the selected Rex executable and server socket; run teerex doctor --help for selection flags."
     else
         "teerex --help";
     std.debug.print("next: {s}\n", .{action});
@@ -96,16 +89,6 @@ fn run(allocator: std.mem.Allocator) !void {
         try std.fs.File.stdout().writeAll(usage);
         return;
     }
-    if (eq(args[0], "doctor") and hasOption(args, "--all")) {
-        const source = @embedFile("doctor_all.py");
-        const resolver = try std.json.Stringify.valueAlloc(allocator, @embedFile("targets.py"), .{});
-        const worker = try std.json.Stringify.valueAlloc(allocator, source, .{});
-        const script = try std.fmt.allocPrint(allocator, "import types,sys\ntargets=types.ModuleType('targets')\nexec({s},targets.__dict__)\nWORKER_SOURCE={s}\n{s}\nsys.exit(main())", .{ resolver, worker, source });
-        var forwarded: std.ArrayList([]const u8) = .empty;
-        try forwarded.appendSlice(allocator, &.{ "python3", "-I", "-c", script });
-        try forwarded.appendSlice(allocator, args[1..]);
-        return std.process.execv(allocator, forwarded.items);
-    }
     if (std.mem.eql(u8, args[0], "targets")) return python(allocator, args[1..]);
     if (std.mem.eql(u8, args[0], "--config") or std.mem.eql(u8, args[0], "--host")) {
         var config: ?[]const u8 = null;
@@ -140,10 +123,6 @@ fn run(allocator: std.mem.Allocator) !void {
     args = try withDefaultSocket(allocator, args);
     const command = args[0];
     const rest = args[1..];
-    if (std.mem.eql(u8, command, "board")) {
-        if (rest.len > 0 and std.mem.eql(u8, rest[0], "feed")) finish(allocator, try @import("rex_boardfeed").run(allocator, rest[1..]));
-        finish(allocator, try @import("rex_board").run(allocator, rest));
-    }
     if (std.mem.eql(u8, command, "fleet") and rest.len > 0 and (std.mem.eql(u8, rest[0], "install") or std.mem.eql(u8, rest[0], "rollback"))) {
         const sources = @import("fleet_sources");
         var forwarded: std.ArrayList([]const u8) = .empty;
@@ -155,10 +134,6 @@ fn run(allocator: std.mem.Allocator) !void {
     if (std.mem.eql(u8, command, "recovery")) finish(allocator, try @import("rex_recovery").run(allocator, rest));
     if (std.mem.eql(u8, command, "snapshot") or std.mem.eql(u8, command, "restore") or std.mem.eql(u8, command, "update")) finish(allocator, try @import("rex_recovery").run(allocator, args));
     if (std.mem.eql(u8, command, "surfaces")) finish(allocator, try @import("rex_surfaces").run(allocator, rest));
-    if (std.mem.eql(u8, command, "run")) finish(allocator, try @import("rex_run").run(allocator, rest));
-    if (std.mem.eql(u8, command, "run-visible")) finish(allocator, try @import("rex_run").runVisible(allocator, rest));
-    if (std.mem.eql(u8, command, "doctor")) finish(allocator, try @import("rex_doctor").run(allocator, rest));
-    if (std.mem.eql(u8, command, "jobs")) finish(allocator, try @import("rex_jobs").run(allocator, rest));
     if (std.mem.eql(u8, command, "clutch")) finish(allocator, try @import("rex_clutch").run(allocator, rest));
     if (std.mem.eql(u8, command, "send")) finish(allocator, try send(allocator, rest));
     if (eq(command, "observe") or eq(command, "compare") or eq(command, "watch")) finish(allocator, try @import("rex_observe").runObservations(allocator, args));
@@ -195,8 +170,6 @@ fn hasOption(args: []const []const u8, flag: []const u8) bool {
 fn takesSocket(args: []const []const u8) bool {
     if (args.len == 0 or hasOption(args, "--help")) return false;
     const command = args[0];
-    if (eq(command, "jobs") and args.len > 1 and (eq(args[1], "doctor") or eq(args[1], "list"))) return false;
-    if (eq(command, "doctor")) return args.len > 1 and (hasOption(args, "--baseline") or hasOption(args, "--timeout-ms"));
     if (eq(command, "surfaces")) {
         if (args.len > 2 and eq(args[1], "session") and eq(args[2], "ensure")) return hasOption(args, "--label");
         return hasOption(args, "--session");
@@ -205,14 +178,11 @@ fn takesSocket(args: []const []const u8) bool {
         if (eq(command, "recovery") and (args.len < 2 or eq(args[1], "inspect"))) return false;
         return hasOption(args, "--directory") or hasOption(args, "--timeout-ms");
     }
-    if (eq(command, "run")) return hasOption(args, "--cwd") and hasCommand(args);
     if (!hasOption(args, "--session")) return false;
-    if (eq(command, "run-visible")) return hasOption(args, "--cwd");
     if (!hasOption(args, "--block")) return false;
     if (eq(command, "observe")) return true;
     if (eq(command, "watch")) return hasOption(args, "--baseline") and (hasOption(args, "--timeout-ms") or hasOption(args, "--no-deadline"));
     if (eq(command, "send")) return hasOption(args, "--from") and hasOption(args, "--message-file");
-    if (eq(command, "jobs")) return hasOption(args, "--registry");
     return false;
 }
 
@@ -272,9 +242,4 @@ fn withDefaultSocket(allocator: std.mem.Allocator, args: []const []const u8) ![]
     try resolved.appendSlice(allocator, &.{ "--socket", selected.path });
     try resolved.appendSlice(allocator, args[at..]);
     return resolved.items;
-}
-
-fn hasCommand(args: []const []const u8) bool {
-    for (args, 0..) |arg, i| if (eq(arg, "--")) return i + 1 < args.len;
-    return false;
 }

@@ -356,7 +356,7 @@ No general multi-agent controller, second sandbox platform, egress proxy or allo
 - [H04/H05 briefs](../teerex-delegation-briefs.md#h04--authority-isolation-and-privacy-boundaries)
 - [roadmap current plan](../../roadmap.md#current-phased-plan--13-november-2026)
 - [agents contract, #14/#21](../../../items/agents/README.md#source-only-compute-routing-and-scoped-delivery-issues14-and21)
-- [jobs](../../../items/jobs/README.md)
+- [jobs](https://github.com/jcbbge/teerex/blob/b555d9ff1f60870a144e48f3b531ec9f12d4f36a/items/jobs/README.md)
 - [boards](../../../items/boards/README.md)
 - [recovery](../../../items/recovery/README.md)
 - [alpha5](../../alpha5.md)

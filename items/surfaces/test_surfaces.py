@@ -192,7 +192,7 @@ class SurfacesTest(unittest.TestCase):
             r = subprocess.run([BIN, "surfaces", args[0], "--socket", str(self.socket), *args[1:]],
                                capture_output=True, text=True, env=self.env, timeout=5)
             self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
-        needle = 'local view=rex.call("session.view",{session_id=session.session_id})'
+        needle = 'local view=call("session.view",{session_id=session.session_id})'
         self.shim("import subprocess,sys\nfrom pathlib import Path\nargs=sys.argv[1:]\n"
                   + "if '-e' in args:\n i=args.index('-e')+1\n args[i]=args[i].replace("
                   + repr(needle) + ",'local view=nil')\n"
@@ -491,8 +491,9 @@ class SurfacesTest(unittest.TestCase):
 
     def test_ensure_concurrent_duplicate_readback_is_uncertain_without_retry(self):
         # Inject a second client-equivalent creation between receipt and fresh view.
-        needle = 'local after=rex.call("session.view",{session_id=a.session_id})'
-        injected = 'rex.call(method,params)\n' + needle
+        needle = ('local after=call("session.view",{session_id=a.session_id})\n'
+                  '    result.actual=locate(after,made.block_ids[1])')
+        injected = 'call(method,params)\n    ' + needle
         self.shim("import subprocess,sys\nfrom pathlib import Path\nargs=sys.argv[1:]\n"
                   + "if '-e' in args:\n i=args.index('-e')+1\n args[i]=args[i].replace("
                   + repr(needle) + "," + repr(injected) + ")\n"

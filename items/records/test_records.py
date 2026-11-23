@@ -759,22 +759,24 @@ class LiveRecordsTest(RecordsFixture):
         self.assertNotIn(token, json.dumps(exported))
         self.assertEqual(exported["uncertainty"]["text"], "[REDACTED]")
 
-    def test_C07_real_run_failure_and_success_evidence(self):
+    def test_C07_rex_exit_evidence_and_historical_packet_ingestion(self):
         packets = []
-        envfile = self.root / "env.json"
-        envfile.write_text("{}")
-        envfile.chmod(0o600)
         for label, code in (("failure", 1), ("success", 0)):
-            value = self.raw("run-visible", "--socket", self.socket, "--session", self.session, "--cwd", self.root,
-                             "--env-file", envfile, "--stdin-file", "/dev/null", "--app", "records", "--title", label,
-                             "--output-dir", self.root / label, "--", sys.executable, "-c", "import sys; sys.exit(" + str(code) + ")", code=code)
-            path = self.root / (label + ".json")
-            path.write_text(json.dumps(value))
-            packets.append(path)
+            run = subprocess.run(
+                self.base + ["run", "--wait", "--keep-open", "--focus=false", "--shell=none", "--json",
+                             "--session", self.session, "--cwd", str(self.root), "--label", label,
+                             "--", sys.executable, "-c", "import sys; sys.exit(" + str(code) + ")"],
+                capture_output=True, text=True, timeout=15,
+            )
+            self.assertEqual(run.returncode, code, run.stdout + run.stderr)
+            block, = json.loads(run.stdout)["block_ids"]
+            packets.append(self.packet(label, run.returncode, target=dict(
+                host="fixture", server="unix://" + str(self.socket), session_id=self.session, block_id=block)))
         digests = [hashlib.sha256(p.read_bytes()).hexdigest() for p in packets]
         self.park(extra=("--evidence", str(packets[0])))
         self.attach(packets[1], assertion="passed")
         evidence = self.resume()["evidence"]
+        self.assertEqual(evidence[0]["teerex"]["packet_kind"], "run_visible_result")
         self.assertEqual(evidence[0]["teerex"]["exit"]["code"], 1)
         self.assertFalse(evidence[0]["teerex"]["reported_success"])
         self.assertEqual(evidence[1]["teerex"]["exit"]["code"], 0)

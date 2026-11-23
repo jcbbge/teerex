@@ -322,7 +322,7 @@ The source baseline is `244d893`; upstream through `4282f23` was checked for ove
 
 - **Planning:** [roadmap](../../roadmap.md#prepare-readiness-and-a-baseline-in-parallel) (Q02/Q05/Q10/Q11/Q12/C31/C32/N09); [PDF inventory](../teerex-pdf-work-inventory.md) C31 (P2:p7), C32 (P2:pp7–8), V11.
 - **Product docs:** [alpha5.md](../../alpha5.md); [cartridges.md](../../cartridges.md); [alpha.5 release](../../releases/v0.1.0-alpha.5.md).
-- **Item contracts:** [observe](../../../items/observe/README.md); [run-visible](../../../items/run/VISIBLE.md) and its [acceptance](../../../items/run/ACCEPTANCE.md); [agents](../../../items/agents/README.md#stops-exits-and-deliberate-presentation); [doctor](../../../items/doctor/README.md).
+- **Item contracts:** [observe](../../../items/observe/README.md); [run-visible](https://github.com/jcbbge/teerex/blob/b555d9ff1f60870a144e48f3b531ec9f12d4f36a/items/run/VISIBLE.md) and its [acceptance](https://github.com/jcbbge/teerex/blob/b555d9ff1f60870a144e48f3b531ec9f12d4f36a/items/run/ACCEPTANCE.md); [agents](../../../items/agents/README.md#stops-exits-and-deliberate-presentation); [doctor](https://github.com/jcbbge/teerex/blob/b555d9ff1f60870a144e48f3b531ec9f12d4f36a/items/doctor/README.md).
 - **Code read:** `tools/cartridges/package.py`, `cartridges.py`, `test_payloads.py`, `manifests/source.json`; `items/observe/test_observe.py`; `.github/workflows/ci.yml` (Rex pins).
 - **Live identity:** hive's `rex version --json` (`348d751…`, API13).
 - **Authority:** `~/rivet/work/seat-2026-11-13/overnight-2026-11-13.md`.

@@ -114,25 +114,17 @@ class TargetsTest(unittest.TestCase):
         self.assertIn("duplicate config key", result.stderr)
 
     def test_selected_host_literal_argv_status_and_no_secret_receipt(self):
-        secret = "literal ; touch " + str(self.root / "MUST_NOT_EXIST") + " $(false) α"
-        result = self.call("--config", str(self.config), "--host", "hive", "run-visible", "--session", "session:test", "--", "sh", "-c", secret)
-        self.assertEqual(result.returncode, 7, result.stderr)
-        self.assertEqual(json.loads(self.output.read_text()), ["--rex", self.host["rex"], "run-visible", "--socket", self.host["socket"], "--session", "session:test", "--", "sh", "-c", secret])
-        self.assertFalse((self.root / "MUST_NOT_EXIST").exists())
-        self.assertNotIn(secret, result.stderr)
-        receipt = json.loads(result.stderr)
-        self.assertEqual(receipt["host_id"], "fixture")
-        self.assertIs(receipt["retry"], False)
-
-    def test_visible_execution_routes_socket_without_parsing_literal_argv(self):
-        command = ["run-visible", "--session", "session:12345678-1234-1234-1234-123456789abc",
-                   "--cwd", str(self.root), "--env-file", str(self.root / "env.json"),
-                   "--stdin-file", "/dev/null", "--app", "fixture", "--title", "Visible α",
-                   "--", "/absolute/program", "--socket", "literal-not-a-selector", "--tty"]
+        literal = "literal ; touch " + str(self.root / "MUST_NOT_EXIST") + " $(false) α"
+        command = ["surfaces", "ensure", "--session", "any", "--", "sh", "-c", literal]
         result = self.call("--config", str(self.config), "--host", "hive", *command)
         self.assertEqual(result.returncode, 7, result.stderr)
         self.assertEqual(json.loads(self.output.read_text()),
-                         ["--rex", self.host["rex"], "run-visible", "--socket", self.host["socket"], *command[1:]])
+                         ["--rex", self.host["rex"], *command[:2], "--socket", self.host["socket"], *command[2:]])
+        self.assertFalse((self.root / "MUST_NOT_EXIST").exists())
+        self.assertNotIn(literal, result.stderr)
+        receipt = json.loads(result.stderr)
+        self.assertEqual(receipt["host_id"], "fixture")
+        self.assertIs(receipt["retry"], False)
 
     def test_named_surface_rename_routes_exact_target_and_literal_label(self):
         for target in (("--window", "window:12345678-1234-1234-1234-123456789abc"),
@@ -191,13 +183,10 @@ class TargetsTest(unittest.TestCase):
         cases = []
         cases += [(["surfaces", op], socket) for op in ("open", "ensure", "resolve", "inspect", "rename", "move", "focus", "close")]
         cases += [(["surfaces", "session", "ensure"], socket)]
-        cases += [(["jobs", op], [] if op == "list" else socket)
-                  for op in ("list", "track", "inspect", "adopt", "present", "forget")]
         cases += [(["recovery", op], (["--root", self.host["home"] + "/.local/state/teerex-recovery"] if op != "update" else []) + ([] if op == "inspect" else socket))
                   for op in ("inspect", "snapshot", "restore", "update")]
         cases += [([op], (["--root", self.host["home"] + "/.local/state/teerex-recovery"] if op != "update" else []) + socket) for op in ("snapshot", "restore", "update")]
         cases += [(["clutch", op], socket) for op in ("take", "release", "drain", "status", "queue", "palette")]
-        cases += [(["run-visible", "receipt"], [])]
         for path, selectors in cases:
             with self.subTest(path=path):
                 # Public argv fixture tests placement without running a mutation or using help to bypass injection.
@@ -210,22 +199,6 @@ class TargetsTest(unittest.TestCase):
             result = self.call("--config", str(self.config), "--host", "hive", "surfaces", "inspect", selector)
             self.assertNotEqual(result.returncode, 0)
             self.assertFalse(self.output.exists())
-
-    def test_named_offline_jobs_uses_real_leaf_parser(self):
-        self.host["teerex"] = str(BIN.resolve())
-        rex = self.root / "must not invoke Rex"
-        rex.write_text("#!/bin/sh\nprintf called > '" + str(self.output) + "'\nexit 99\n")
-        rex.chmod(0o700)
-        self.host["rex"] = str(rex)
-        self.save()
-        def invoke(*command, expected=0):
-            p = self.call("--config", str(self.config), "--host", "hive", *command)
-            self.assertEqual(p.returncode, expected, p.stderr + p.stdout)
-            return json.loads(p.stdout)
-        jobs = self.root / "jobs"
-        jobs.mkdir(mode=0o700)
-        invoke("jobs", "list", "--registry", str(jobs))
-        self.assertFalse(self.output.exists(), "offline leaves must not invoke Rex")
 
     def test_embedded_fleet_installs_exact_native_bytes_without_source_tree(self):
         # The installed CLI must carry its reviewed support files, not locate this checkout.
